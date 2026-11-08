@@ -161,6 +161,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       onOpenDatabase?: (database: string) => void;
       /** The Action owner's Deploy; absent while the Source's Account is not current. */
       deploy: ReturnType<typeof createDeploymentActions>['deploy'] | null;
+      cancel?: ReturnType<typeof createDeploymentActions>['cancel'] | null;
       /** The page's one approval continuation: a held review opens the existing approval page. */
       review: DeploymentReviewHandle;
       /** Names a sibling Environment a variable reference points at, from the page's Environment list. */
@@ -476,6 +477,9 @@ export const DeploymentEnvironmentDetail = React.memo(
               ? { kind: 'detachKeepRunning' }
               : { kind: 'afterTeardown', deploymentIds: settledTeardowns },
             { confirmed: true }),
+        recovery: { controller: props.controller, environmentId: props.environmentId,
+          cancel: props.cancel ?? null, review, onOpenReceipt: props.onOpenReceipt,
+          onHistory: () => onNavigate({ tab: 'history', section: null }) },
         onApproval: review.request,
         onDone: (outcome) => {
           if (outcome.kind === 'deleted') onDeleted?.();

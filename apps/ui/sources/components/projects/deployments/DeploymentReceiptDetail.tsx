@@ -64,6 +64,7 @@ import {
 } from './deploymentPresentation';
 import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPress } from './deploymentActionOutcome';
+import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
@@ -121,7 +122,6 @@ export const DeploymentReceiptDetail = React.memo(
     // Each control keeps its own answer, so the banner speaks for the press it follows.
     const rollbackPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const againPress = useDeploymentPress(props.review, props.onOpenReceipt);
-    const cancelPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const receipt = useDeploymentReceipt(
       props.controller,
       props.environmentId,
@@ -129,6 +129,9 @@ export const DeploymentReceiptDetail = React.memo(
       props.demand,
     );
     const value = receipt.snapshot.value;
+    const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
+      receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
+    });
     const machineIds = React.useMemo(
       () => value?.content.machines ?? [],
       [value?.content.machines],
@@ -189,7 +192,7 @@ export const DeploymentReceiptDetail = React.memo(
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
       ? readDeploymentRefusalRecoveryV1(facts.failure.code, facts.failure) : null;
-    const { rollback, cancel, deploy, teardown, promote, environmentId, phone } = props;
+    const { rollback, deploy, teardown, promote, environmentId, phone } = props;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const canRollBack = retainedTarget !== null && rollback !== null;
@@ -201,27 +204,6 @@ export const DeploymentReceiptDetail = React.memo(
       if (!rollback) return;
       void rollbackPress.press(() => rollback({ environmentId, deploymentId,
         ...(restoreBackupId === undefined ? {} : { restoreBackupId }) }));
-    };
-    // Cancel is the server's call: offered only on an explicit yes, never on false or an older reader's silence.
-    const canCancel = cancel !== null && value.cancellable === true;
-    // An accepted cancel settles on this receipt; it stays pressed until the receipt read stops offering it.
-    const cancelRequested = cancelPress.outcome?.kind === 'receipt' || cancelPress.outcome?.kind === 'started';
-    const requestCancel = () => {
-      if (!cancel) return;
-      void cancelPress.press(() => cancel({ environmentId, deploymentId: deployment.id,
-        expectedReceiptRevision: deployment.revision }), { openReceipt: false });
-    };
-    // The receipt owner's phase fact (T2-RECEIPT): when the previous version is or may be stopped, Cancel asks first,
-    // because cancelling never brings it back. No phase check here; without the fact, Cancel runs at once.
-    const consequence = value.cancellationConsequence;
-    const pressCancel = () => {
-      if (!consequence) { requestCancel(); return; }
-      Modal.alert(t('projects.deployments.receipt.cancelAskTitle'),
-        consequence.kind === 'service-down-until-rollback'
-          ? t('projects.deployments.receipt.cancelStopped') : t('projects.deployments.receipt.cancelMayStop'), [
-          { text: t('projects.deployments.receipt.cancelKeepGoing'), style: 'cancel' },
-          { text: t('projects.deployments.receipt.cancelAnyway'), style: 'destructive', onPress: requestCancel },
-        ]);
     };
     // Deploy again builds this receipt's own commit through the Environment's runtime link, as "Redeploy" does.
     const availability = environmentValue ? deploymentDeployAvailability(environmentValue) : null;

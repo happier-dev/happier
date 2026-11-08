@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+const operationRpc = vi.hoisted(() => vi.fn());
+// Daemon RPC is the observation transport boundary; all Action and outcome logic stays real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: operationRpc }));
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
@@ -249,6 +253,50 @@ describe('Environment deletion client over the Action owner', () => {
             presentUserConfirmation: { actionId: 'deployments.targets.unlink' },
         })).toMatchObject({ kind: 'refused', code: 'deployment_teardown_required' }); });
         expect(hook.getCurrent().outcome).toMatchObject({ kind: 'refused', code: 'deployment_teardown_required' });
+    });
+
+    it.each(['succeeded', 'failed', 'unrelated'] as const)('settles a lost teardown response from its exact retained operation (%s)', async settlement => {
+        const f = await setup();
+        const machineId = f.detail.environment.controllerMachineId!;
+        let requestId: string | undefined;
+        let effects = 0;
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: (_input, context) => {
+                requestId = context.requestId; effects++;
+                throw new TypeError('net::ERR_NETWORK_CHANGED');
+            } });
+        const calls: string[] = [];
+        operationRpc.mockImplementation(async (params: { method: string; payload: unknown }) => {
+            calls.push(params.method);
+            const retained: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-teardown', revision: 1,
+                actionId: 'deployments.teardown', requestId: settlement === 'unrelated' ? 'another-click' : requestId,
+                state: 'running', scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
+                createdAt: 1, startedAt: 2, cancellation: 'supported' };
+            if (params.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
+                expect(params.payload).toEqual({ requestIdentity: { actionId: 'deployments.teardown', requestId } });
+                return { items: [retained], nextCursor: null };
+            }
+            expect(params.payload).toEqual({ operationId: retained.operationId, waitForTerminal: true });
+            return { kind: 'found', operation: settlement === 'failed'
+                ? { ...retained, revision: 2, state: 'failed', settledAt: 3,
+                    error: { errorCode: 'deployment_conflict', error: 'deployment_conflict', effectAttempted: false } }
+                : { ...retained, revision: 2, state: 'succeeded', settledAt: 3, result: {
+                    ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 3,
+                    deploymentId: 'teardown-1', deploymentRevision: 1, state: 'succeeded', environmentRemoved: true } } };
+        });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        await act(async () => {
+            expect(await hook.getCurrent().stopAndRemove(null)).toMatchObject(settlement === 'succeeded'
+                ? { kind: 'deleted', detached: false }
+                : { kind: 'refused', code: settlement === 'failed' ? 'deployment_conflict' : 'outcome_unknown' });
+        });
+        expect(effects).toBe(1);
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+        expect(calls).toEqual(settlement === 'unrelated' ? [ACTION_OPERATION_RPC_METHODS_V2.list]
+            : [ACTION_OPERATION_RPC_METHODS_V2.list, ACTION_OPERATION_RPC_METHODS_V2.get]);
     });
 
     it.each([false, true])('consumes final Environment removal from the one root teardown (whole Environment %s)', async wholeEnvironment => {

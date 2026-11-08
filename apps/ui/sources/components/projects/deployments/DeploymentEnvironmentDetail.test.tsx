@@ -345,9 +345,10 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('keeps Delete open with the running deployment cause and Stop remedy', async () => {
+  it.each(['history', 'stop'] as const)('keeps Delete open with the running deployment cause and actionable %s remedy', async remedy => {
     const detail = environmentDetailForHome();
-    const { controller } = controllerFor({ detail });
+    const running = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'running-deploy', state: 'running' }) });
+    const { controller } = controllerFor({ detail, receipt: { ...running, cancellable: true } });
     const { ModalProvider } = await import('@/modal');
     const { createDeploymentActions } = await import('./deploymentActions');
     const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
@@ -360,11 +361,19 @@ describe('Project deployments page', () => {
       ok: false, error: 'deployment_in_progress', deploymentId: 'running-deploy', href: '/retained-receipt',
     } });
     const onDeleted = vi.fn();
+    const onNavigate = vi.fn();
+    const deleteRequestsBefore = homes.requestsFor(deletionPath).length;
+    const stopRequestsBefore = homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/deployments/running-deploy/transitions`).length;
+    const actions = createDeploymentActions(lifetime, scope.projectSourceId);
+    homes.answer(scope.serverId, `POST /v1/deployments/environments/${detail.environment.id}/deployments/running-deploy/transitions`, { body: {
+      ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+      deploymentId: 'running-deploy', deploymentRevision: 2, state: 'running',
+    } });
     try {
       const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
-        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={onDeleted} />
+        disposition={actions} cancel={actions.cancel} onNavigate={onNavigate} onDeleted={onDeleted} />
       </ModalProvider>);
       await waitForContent(screen, 'project-deployments.environment.menu');
       await screen.pressByTestIdAsync('project-deployments.environment.menu');
@@ -377,7 +386,18 @@ describe('Project deployments page', () => {
       });
       expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('deployment_in_progress')!.remedy);
       expect(onDeleted).not.toHaveBeenCalled();
-      expect(homes.requestsFor(deletionPath)).toHaveLength(1);
+      expect(homes.requestsFor(deletionPath)).toHaveLength(deleteRequestsBefore + 1);
+      await waitForContent(screen, `project-deployments.disposition.${remedy}`);
+      await screen.pressByTestIdAsync(`project-deployments.disposition.${remedy}`);
+      if (remedy === 'history') {
+        expect(onNavigate).toHaveBeenCalledWith({ tab: 'history', section: null });
+        expect(screen.findByTestId('project-deployments.disposition')).toBeNull();
+      } else {
+        await waitForHomeGovernance(() => expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/deployments/running-deploy/transitions`)).toHaveLength(stopRequestsBefore + 1));
+        expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/deployments/running-deploy/transitions`).at(-1)?.input)
+          .toMatchObject({ kind: 'cancel', deploymentId: 'running-deploy', expectedReceiptRevision: running.deployment.revision });
+      }
+      expect(homes.requestsFor(deletionPath)).toHaveLength(deleteRequestsBefore + 1);
     } finally { await act(async () => { controller.retire(); }); }
   });
 
@@ -397,7 +417,8 @@ describe('Project deployments page', () => {
       </ModalProvider>);
       await selectEnvironmentTab(screen, 'settings');
       await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
-      expect(screen.findByTestId('project-deployments.disposition.choice:detach')).toBeNull();
+      // The retained Machine association can still be detached even with no deployed workload.
+      expect(screen.findByTestId('project-deployments.disposition.choice:detach')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       await screen.pressByTestIdAsync('project-deployments.disposition.cancel');
     } finally { await act(async () => { controller.retire(); }); }

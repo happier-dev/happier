@@ -1,8 +1,8 @@
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,6 +16,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { projectUiAccountRequesterInvocation } from '@/sync/ops/actions/accountActionTransport';
 import { randomUUID } from '@/platform/randomUUID';
+import { getActionOperation, listActionOperations } from '@/sync/ops/actionOperations';
 import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -37,11 +38,39 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
         }) : null;
         if (needsInvocation && !invocation) return failure('admission_unavailable');
-        return executeOriginalAccountMachineAction({ account, actionId, machineId,
-            requestId: context.actionRequestId ?? randomUUID(), input,
+        const requestId = context.actionRequestId ?? randomUUID();
+        const result = await executeOriginalAccountMachineAction({ account, actionId, machineId,
+            requestId, input,
             actionCaller: context.actionCaller, authority: context.authority,
             ...(invocation ? { invocation } : {}), signal: context.signal,
             onTransportIssued: context.onTransportIssued });
+        if (actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1 || result.ok
+            || !isActionOutcomeUnknownErrorCodeV1(result.errorCode)) return result;
+        // A lost HTTP response is not a failed teardown. Join this request's existing
+        // runner; never resubmit the effect or infer success from Environment absence.
+        try {
+            const transport = { serverId: account.serverId, accountId: account.accountId, machineId, signal: context.signal };
+            const matches = (operation: import('@happier-dev/protocol/actions/operations/v1').ActionOperationSnapshotV1) =>
+                operation.actionId === actionId && operation.requestId === requestId
+                && operation.scope.accountId === account.accountId && operation.scope.machineId === machineId;
+            const page = await listActionOperations({ ...transport, request: { requestIdentity: { actionId, requestId } } });
+            const retained = page.items.find(matches);
+            if (!retained) return result;
+            const read = await getActionOperation({ ...transport, operationId: retained.operationId, waitForTerminal: true });
+            account.assertCurrent();
+            if (read.kind !== 'found' || !matches(read.operation) || read.operation.operationId !== retained.operationId
+                || read.operation.revision < retained.revision) return result;
+            if (read.operation.state === 'succeeded') {
+                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(read.operation.result);
+                if (settled.success && 'environmentId' in settled.data && 'environmentId' in input
+                    && settled.data.environmentId === input.environmentId) return { ok: true as const, result: settled.data };
+            } else if (read.operation.state === 'failed' && read.operation.error) {
+                return { ok: false as const, ...read.operation.error };
+            }
+        } catch {
+            // Observation can also be unavailable; keep the original uncertainty.
+        }
+        return result;
     }
     async function storage(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1, context: ActionExecutorContext) {
         account.assertCurrent();

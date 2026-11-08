@@ -462,6 +462,7 @@ const ProjectDeploymentsPage = React.memo(
           lifetime={props.lifetime}
           setBindings={props.actions?.setBindings ?? null}
           disposition={disposition}
+          cancel={props.actions?.cancel ?? null}
           restore={props.actions?.restore ?? null}
           restart={props.actions?.restart ?? null}
           onOpenRecoveryDestination={openRecoveryDestination}

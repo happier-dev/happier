@@ -46,6 +46,14 @@ admitted-child transport. Prepared references stay pinned through review. Only
 explicit `detachKeepRunning` uses Account storage. Native admission explains unsupported target shapes with a sanitized
 cause, a reason and a remedy.
 
+In 0.3 development, a lost teardown HTTP response follows the existing controller
+Action operation selected by the original request identity. The terminal operation
+result decides success or failure; Environment absence alone does not prove the
+requested cleanup completed. Failed observation retains the unknown outcome.
+This recovery neither repeats teardown nor adds a polling timer. A removal refused
+because a deploy is running offers History and the receipt's existing Stop Action,
+using the receipt owner's cancellability and cancellation-consequence facts.
+
 In 0.3 development, Stop and remove reviews native named volumes through the same
 `deployments.teardown` Action with `mode: 'preview'`. The controller observes
 Compose-labelled volume membership on the recorded target Machine, including a

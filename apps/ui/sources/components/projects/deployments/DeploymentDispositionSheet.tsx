@@ -19,7 +19,11 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 
 import type { DeploymentEnvironmentDeletionOutcome } from './useDeploymentEnvironmentDeletion';
-import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
+import { useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentCancellation } from './useDeploymentCancellation';
+import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
+import type { createDeploymentActions } from './deploymentActions';
+import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTabState } from './DeploymentTabState';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -28,6 +32,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 type Choice = 'remove' | 'detach';
+const NO_REVIEW: DeploymentReviewHandle = { pendingId: null, request: () => {}, open: () => {} };
 const PRESENTED = { mounted: true, visible: true, focused: true } as const;
 
 export type DeploymentDispositionSheetInput = Readonly<{
@@ -35,6 +40,9 @@ export type DeploymentDispositionSheetInput = Readonly<{
   subject:
     | Readonly<{ kind: 'environment' }>
     | Readonly<{ kind: 'target'; targetLinkId: string }>;
+  recovery?: Readonly<{ controller: DeploymentReadControllerV1; environmentId: string;
+    cancel: ReturnType<typeof createDeploymentActions>['cancel'] | null; review: DeploymentReviewHandle;
+    onOpenReceipt: (deploymentId: string) => void; onHistory: () => void }>;
   name: string;
   /** Where its services run, by name ("vps-1"); null when no Machine is linked. */
   machine: string | null;
@@ -90,6 +98,13 @@ function DeploymentDispositionSheet(
   const volumesConfirmed = volumeReview?.every(volume => volumeChoices[volume.name] !== 'delete'
     || confirmations[volume.name] === volume.name) ?? true;
   const [refused, setRefused] = React.useState<Extract<DeploymentEnvironmentDeletionOutcome, { kind: 'refused' }> | null>(null);
+  const blocked = DeploymentActionFailureV1Schema.safeParse(refused?.failure?.details);
+  const blockedId = blocked.success && blocked.data.error === 'deployment_in_progress' ? blocked.data.deploymentId : null;
+  const blockedReceipt = useDeploymentReceipt(props.recovery?.controller ?? null,
+    props.recovery?.environmentId ?? null, blockedId, PRESENTED);
+  const cancellation = useDeploymentCancellation({ receipt: blockedId ? blockedReceipt.snapshot.value : null,
+    cancel: props.recovery?.cancel ?? null, review: props.recovery?.review ?? NO_REVIEW,
+    onOpenReceipt: props.recovery?.onOpenReceipt ?? (() => {}) });
   const machine = keepNamesWhole(props.machine ?? t('projects.deployments.aMachine'));
   const target = props.subject.kind === 'target';
   const domainInput = choice === 'remove' ? props.domains : undefined;
@@ -324,6 +339,12 @@ function DeploymentDispositionSheet(
               : t('projects.deployments.deleteRefused', { name: props.name })
           }
           reason={failure?.reason ?? undefined}
+          action={blockedId && props.recovery ? { label: t('projects.deployments.history'),
+            testID: 'project-deployments.disposition.history', onPress: () => { props.onClose(); props.recovery!.onHistory(); } } : undefined}
+          secondaryAction={blockedId && cancellation.canCancel ? { label: t('common.stop'),
+            testID: 'project-deployments.disposition.stop', onPress: cancellation.pressCancel,
+            busy: cancellation.press.running || cancellation.cancelRequested,
+            disabled: cancellation.press.running || cancellation.cancelRequested || cancellation.press.reviewPending } : undefined}
           diagnosticCode={refused.code}
           diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
         />
