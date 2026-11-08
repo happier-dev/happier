@@ -146,8 +146,10 @@ export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1,
 export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId' | 'submittedNativeEffect'>,
     supportedIntents: RetentionCapabilitiesV1['supportedIntents'],
     enrolledMachine?: Readonly<{ machineId: string; online: boolean }>): ('start' | 'stop' | 'suspend' | 'resume')[] {
-    const power = enrolledMachine?.machineId === machine.enrolledMachineId && enrolledMachine?.online
-        ? 'running' : machine.observation?.power;
+    // Presence can outlive a native Stop. Use it only while native power is unanswered.
+    const observedPower = machine.observation?.power;
+    const power = observedPower && observedPower !== 'unknown' ? observedPower
+        : enrolledMachine?.machineId === machine.enrolledMachineId && enrolledMachine?.online ? 'running' : observedPower;
     if (power !== 'running' && power !== 'stopped' && power !== 'suspended') return [];
     const declared = supportedIntents.filter((intent): intent is 'start' | 'stop' | 'suspend' | 'resume' =>
         intent === 'start' || intent === 'stop' || intent === 'suspend' || intent === 'resume');

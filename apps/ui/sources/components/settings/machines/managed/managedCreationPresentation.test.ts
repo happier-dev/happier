@@ -142,6 +142,12 @@ describe('managed creation presentation', () => {
     const unjoined = { ...stopped, enrolledMachineId: undefined };
     expect(isManagedCreationStateRowVisible(unjoined, managedCreationState(unjoined))).toBe(true);
   });
+  it.each(['stopped', 'suspended'] as const)('offers wake after native %s while enrolled presence still says online', power => {
+    const parked = { ...machine, enrolledMachineId: 'guest', desired: power === 'stopped' ? 'stop' as const : 'suspend' as const,
+      observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 2, power, storage: 'retained' }) };
+    expect(managedReceiptPowerIntents(parked, ['start', 'stop', 'suspend', 'resume'],
+      { machineId: 'guest', online: true })).toEqual([power === 'stopped' ? 'start' : 'resume']);
+  });
   it('never offers opposite power actions while power is unknown, and one action once it is observed', () => {
     const intents: RetentionCapabilitiesV1['supportedIntents'] = ['start', 'stop', 'delete'];
     const at = (power?: 'running' | 'stopped' | 'unknown') => ProviderObservationV1Schema.parse({
