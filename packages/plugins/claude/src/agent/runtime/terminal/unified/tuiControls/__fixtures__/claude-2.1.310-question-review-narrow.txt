@@ -1,0 +1,40 @@
+  retaining the selected option across tab
+  navigation; Retain the complete wrapped option
+  label while reviewing all selected answers before
+  submission. Second question exactly: Which
+  synthetic confirmation size should be selected
+  when the narrow terminal also wraps the second
+  question and its final review answer? Header
+  Confirmation. multiSelect false. Options with
+  exact labels: Use the smaller confirmation scope
+  while preserving the complete original answer
+  label; Use the larger confirmation scope while
+  preserving the complete original answer label.
+  Give every option a short description. After all
+  answers say only NARROW_MULTI_DONE and answers.
+
+────────────────────────────────────────────────────
+←  ☒ Ingredients  ☒ Confirmation  ✔ Submit  →
+
+Review your answers
+
+ │ ● Which synthetic validation ingredients should
+ │   remain selected when a narrow terminal wraps
+ │   both the question and its option labels across
+ │   several display rows?
+   → Preserve the complete wrapped question while
+   retaining the selected option across tab
+   navigation, Retain the complete wrapped option
+   label while reviewing all selected answers before
+   submission
+ │ ● Which synthetic confirmation size should be
+ │   selected when the narrow terminal also wraps
+ │   the second question and its final review
+ │   answer?
+   → Use the larger confirmation scope while
+   preserving the complete original answer label
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

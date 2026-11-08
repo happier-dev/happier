@@ -1,0 +1,25 @@
+{
+  "questions": [
+    {
+      "question": "Which harmless synthetic layout should this isolated scratch preview probe select?",
+      "header": "Preview probe",
+      "options": [
+        {
+          "label": "Compact fixture (Recommended)",
+          "description": "Use a compact public synthetic fixture with a simple header.",
+          "preview": "Current fixture:        Proposed fixture:\n+----------------+      +----------------+\n| Synthetic pane |  ->  | Compact pane   |\n| First row      |      | One row        |\n| Second row     |      | Public fixture |\n+----------------+      +----------------+\nNo account settings or user sessions are changed."
+        },
+        {
+          "label": "Keep fixture rows",
+          "description": "Keep the harmless synthetic rows as they are.",
+          "preview": "Keep fixture\n+--------------+\n| First row    |\n| Second row   |\n+--------------+"
+        },
+        {
+          "label": "Record only",
+          "description": "Record this synthetic preview without changing another runtime."
+        }
+      ],
+      "multiSelect": false
+    }
+  ]
+}

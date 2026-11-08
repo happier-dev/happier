@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { answerClaudeNativeQuestion, parseClaudeNativeQuestionScreen } from './nativeQuestion.js';
+import { answerClaudeNativeQuestion, matchesClaudeNativeQuestionScreen, parseClaudeNativeQuestionScreen } from './nativeQuestion.js';
 import { createFakeControlPort } from './fakeControlPort.js';
 import { parseClaudeScreenState, resolveClaudeScreenInFlightSteerVeto } from '../screenState.js';
 import { encodeClaudeNativeTextInput as wrapBracketedPaste } from './controlRuntime.js';
@@ -35,6 +35,349 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+
+  it('answers the sole current question when its heading is above the terminal viewport', async () => {
+    const clipped = single.slice(single.indexOf('❯ 1. Amber'));
+    const port = createFakeControlPort({ captures: [clipped, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions,
+      answers: { 'Which probe color?': ['Amber'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter']);
+
+    const changed = createFakeControlPort({ captures: [clipped.replace('Amber', 'Other')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: changed, questions,
+      answers: { 'Which probe color?': ['Amber'] },
+    })).resolves.toMatchObject({ status: 'failed' });
+    expect(changed.sentKeys).toEqual([]);
+
+    const ambiguous = createFakeControlPort({ captures: [clipped] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: ambiguous,
+      questions: [
+        { ...questions[0]!, header: 'First', question: 'First color?' },
+        { ...questions[0]!, header: 'Second', question: 'Second color?' },
+      ],
+      answers: { 'First color?': ['Amber'], 'Second color?': ['Amber'] },
+    })).resolves.toMatchObject({ status: 'failed' });
+    expect(ambiguous.sentKeys).toEqual([]);
+  });
+
+  it('waits for delayed text rendering without typing or submitting twice', async () => {
+    const empty = freeform.replace('Otter freeform probe', 'Type something.');
+    const port = createFakeControlPort({ captures: [empty, empty, '', freeform, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, verifyPollTimeoutMs: 5, port,
+      questions: [{ question: 'Which probe animal?', header: 'Animal', options: [{ label: 'Cat' }, { label: 'Dog' }] }],
+      answers: { 'Which probe animal?': ['Otter freeform probe'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentLiteral).toEqual(['Otter freeform probe']);
+    expect(port.sentKeys).toEqual(['Enter']);
+  });
+
+  it('resumes its unchanged wrapped draft after an interrupted attempt', async () => {
+    const filled = fixture('wrapped');
+    const text = Array.from({ length: 32 }, (_, index) => `word${String(index + 1).padStart(2, '0')}`).join(' ');
+    const shown = parseClaudeNativeQuestionScreen(filled)!.options.at(-1)!.label;
+    const empty = filled.replace(shown.split('\n').join('\n     '), 'Type something.');
+    const state = { drafts: new Map<number, string>(), questionIndex: -1 };
+    const params = { ...controls, state,
+      questions: [{ question: 'Which comma probe?', header: 'Comma', options: [{ label: 'Alpha, beta' }, { label: '雪 🦦' }] }],
+      answers: { 'Which comma probe?': [text] },
+    };
+    const first = createFakeControlPort({ captures: [empty, ''] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: first })).resolves.toMatchObject({ status: 'failed' });
+    const retry = createFakeControlPort({ captures: [filled, idle] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry })).resolves.toEqual({ status: 'answered' });
+    expect(retry.sentLiteral).toEqual([]);
+    expect(retry.sentKeys).toEqual(['Enter']);
+    const changed = createFakeControlPort({ captures: [filled.replace('word01', 'edited')] });
+    await expect(answerClaudeNativeQuestion({ ...params, state: { drafts: state.drafts, questionIndex: state.questionIndex }, port: changed })).resolves.toMatchObject({ status: 'failed' });
+    expect(changed.sentKeys).toEqual([]);
+  });
+
+  it('reports sent-but-unconfirmed answers and makes a retry verification-only', async () => {
+    const state = { drafts: new Map<number, string>(), questionIndex: -1 };
+    const params = { ...controls, state, questions, answers: { 'Which probe color?': ['Amber'] } };
+    const port = createFakeControlPort({ captures: [single] });
+    await expect(answerClaudeNativeQuestion({ ...params, port, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'submitted' });
+    const retry = createFakeControlPort({ captures: [single] });
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry, verifyApplied: () => 'matched' })).resolves.toEqual({ status: 'answered' });
+    expect(retry.sentKeys).toEqual([]);
+    expect(retry.sentLiteral).toEqual([]);
+    expect(retry.captureCount()).toBe(0);
+    await expect(answerClaudeNativeQuestion({ ...params, port: retry,
+      answers: { 'Which probe color?': ['Blue'] }, verifyApplied: () => 'pending',
+    })).resolves.toEqual({ status: 'failed', reason: 'native_question_already_submitted' });
+    expect(retry.sentKeys).toEqual([]);
+  });
+
+  it('reports the failed answer state without recording question or answer content', async () => {
+    const failures: unknown[] = [];
+    const text = 'Private freeform answer';
+    const empty = freeform.replace('Otter freeform probe', 'Type something.');
+    const port = createFakeControlPort({ captures: [empty, freeform.replace('Otter freeform probe', 'Different terminal draft')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port,
+      questions: [{ question: 'Which probe animal?', header: 'Animal', options: ['Cat', 'Dog'] }],
+      answers: { 'Which probe animal?': [text] }, onFailure: (failure) => failures.push(failure),
+    })).resolves.toEqual({ status: 'failed', reason: 'native_freeform_not_applied' });
+    expect(failures).toEqual([expect.objectContaining({
+      reason: 'native_freeform_not_applied', questionIndex: 0, questionCount: 1,
+      lastInput: 'text', ownedDraftLength: text.length,
+      screen: expect.objectContaining({ kind: 'question', notes: 'none', freeform: { length: 24, lines: 1 } }),
+    })]);
+    expect(JSON.stringify(failures)).not.toContain(text);
+    expect(JSON.stringify(failures)).not.toContain('Different terminal draft');
+    expect(JSON.stringify(failures)).not.toContain('Which probe animal?');
+    expect(port.sentKeys).toEqual([]);
+  });
+
+  it('submits its own freeform answer when typing scrolls the entire question heading out of view', async () => {
+    const initial = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.initial.txt', import.meta.url), 'utf8');
+    const filled = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.filled.txt', import.meta.url), 'utf8');
+    const input: { questions: { question: string; options: unknown[] }[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform-input.json', import.meta.url), 'utf8'));
+    const text = ('This is harmless synthetic freeform text for an isolated diagnostic. The public fixture should preserve the selected status and explain each ordinary display change without changing any real settings. '.repeat(4)).trim();
+    const answers = { [String(input.questions[0]!.question)]: [text] };
+    const port = createFakeControlPort({ captures: [initial, filled, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentLiteral).toEqual([text]);
+    expect(port.sentKeys).toEqual(['Enter']);
+
+    // A cropped preexisting draft has no operation-owned page identity. Changed choices,
+    // foreign draft text, and a different active dialog must never receive Enter.
+    for (const captures of [
+      [filled],
+      [initial, filled.replace('Publish changes only (Recommended)', 'Publish another choice')],
+      [initial, filled.replace('This is harmless synthetic freeform text', 'Someone else edited this text')],
+      [initial, filled + '\nUnrecognized active dialog'],
+    ]) {
+      const changed = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port: changed, questions: input.questions, answers })).resolves.toMatchObject({ status: 'failed' });
+      expect(changed.sentKeys).not.toContain('Enter');
+    }
+  });
+
+  it('answers every question and submits when narrow tabs and Submit wrap into aligned columns', async () => {
+    // Tab columns captured from Claude 2.1.316 at 48 columns.
+    const input = ['Color mode', 'Glass style', 'Phone hints'].map((header, index) => ({
+      ...questions[0]!, header, question: `Which probe color for panel ${index + 1}?`,
+    }));
+    const header = (answered: number) => [
+      `←  ${answered > 0 ? '☒' : '☐'} Color    ${answered > 1 ? '☒' : '☐'} Glass      ${answered > 2 ? '☒' : '☐'} Phone     ✔       →`,
+      '  mode       style        hints       Submit',
+    ].join('\n');
+    const pages = input.map((question, index) => single
+      .replace(' ☐ Header Color', header(index))
+      .replaceAll('Which probe color?', question.question));
+    const reviewed = [header(3), '', 'Review your answers', '',
+      ...input.flatMap((question) => [` ● ${question.question}`, '   → Amber']),
+      '', 'Ready to submit your answers?', '', '❯ 1. Submit answers', '  2. Cancel',
+    ].join('\n');
+    const parsed = parseClaudeNativeQuestionScreen(reviewed);
+    expect(parsed?.tabs).toEqual(input.map(({ header }) => ({ header: header.replace(' ', '\n'), answered: true })));
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.map((question, index) => index === 1
+      ? { ...question, header: 'Glass other' } : question))).toBe(false);
+    const splitView = ['─'.repeat(48), ...reviewed.split('\n')]
+      .map((line) => `${line.padEnd(52)}Adjacent panel`).join('\n');
+    const splitPresentation = parseClaudeNativeQuestionScreen(splitView);
+    expect(splitPresentation).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(splitPresentation!, input)).toBe(true);
+    const port = createFakeControlPort({ captures: [...pages, reviewed, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input,
+      answers: Object.fromEntries(input.map((question) => [question.question, ['Amber']])),
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter', 'Enter', 'Enter', 'Enter']);
+  });
+
+  it('recognizes and answers preview choices without treating the last choice or side panel as freeform input', async () => {
+    const screen = [
+      '────────────────────────────────────────────────────────────────────────────────',
+      ' ☐ Preview', '', 'Which synthetic layout?', '',
+      '❯ 1. Amber      ┌────────────────────────────────────────────────────────────┐',
+      '  2. Blue       │ Synthetic preview content                                 │',
+      '                └────────────────────────────────────────────────────────────┘',
+      '', '                Notes: press n to add notes', '',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '  Chat about this', '',
+      'Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel',
+    ].join('\n');
+    const input = [{ question: 'Which synthetic layout?', header: 'Preview', multiSelect: false,
+      options: [{ label: 'Amber', preview: 'Synthetic preview content' }, { label: 'Blue' }],
+    }];
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.options.map((option) => option.label)).toEqual(['Amber', 'Blue']);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    const blue = focus(screen, '1. Amber', '2. Blue');
+    const port = createFakeControlPort({ captures: [screen, blue, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input,
+      answers: { 'Which synthetic layout?': ['Blue'] },
+    })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['ArrowDown', 'Enter']);
+    expect(port.sentLiteral).toEqual([]);
+  });
+
+  it('matches live preview labels including wraps and protects notes or chat focus before sending keys', async () => {
+    const capture = (name: string) => readFileSync(new URL(`./__fixtures__/claude-2.1.310-question-preview-${name}.txt`, import.meta.url), 'utf8');
+    const input: { questions: { question: string; options: unknown[] }[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.310-question-preview-input.json', import.meta.url), 'utf8'));
+    const screen = capture('single.initial');
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...input.questions[0]!, options: ['Compact fixture (Recommended)', 'Keep fixture rows', 'Record only'] }])).toBe(false);
+    const answers = { [String(input.questions[0]!.question)]: ['Record only'] };
+    const notesScreens = [
+      ...['notes.empty', 'notes.escaped', 'notes.continued'].map(capture),
+      capture('notes.empty').replace('Notes: Add notes on this design…', 'Notes: press n to add notes'),
+    ];
+    for (const [index, notesScreen] of notesScreens.entries()) {
+      const reason = index === 0 || index === 3 ? 'local_notes_editor_active' : 'local_notes_draft_present';
+      const failures: unknown[] = [];
+      const port = createFakeControlPort({ captures: [notesScreen] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers,
+        onFailure: (failure) => failures.push(failure),
+      })).resolves.toEqual({ status: 'failed', reason });
+      expect(failures).toEqual([expect.objectContaining({ reason, lastInput: null,
+        screen: expect.objectContaining({ notes: index === 0 || index === 3 ? 'editing' : 'draft' }),
+      })]);
+      expect(port.sentKeys).toEqual([]);
+      expect(port.sentLiteral).toEqual([]);
+      const laterPage = notesScreen.replace(' ☐ Preview probe', '← ☐ Header Color ☐ Preview probe ✔ Submit →');
+      const laterPort = createFakeControlPort({ captures: [laterPage] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port: laterPort, questions: [...questions, ...input.questions],
+        answers: { ...answers, 'Which probe color?': ['Amber'] },
+      })).resolves.toEqual({ status: 'failed', reason });
+      expect(laterPort.sentKeys).toEqual([]);
+    }
+    const changedNotes = focus(screen, '1. Compact fixture', '2. Keep fixture rows').replace('Notes: press n to add notes', 'Notes: A terminal note');
+    const changedPort = createFakeControlPort({ captures: [screen, changedNotes] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: changedPort, questions: input.questions, answers })).resolves.toEqual({ status: 'failed', reason: 'local_notes_draft_present' });
+    expect(changedPort.sentKeys).toEqual(['ArrowDown']);
+    const freeformPort = createFakeControlPort({ captures: [screen] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: freeformPort, questions: input.questions,
+      answers: { [String(input.questions[0]!.question)]: ['An arbitrary freeform answer'] },
+    })).resolves.toEqual({ status: 'failed', reason: 'native_freeform_unrepresentable' });
+    expect(freeformPort.sentKeys).toEqual([]);
+    expect(parseClaudeNativeQuestionScreen(capture('chat.focus'))).toBeNull();
+  });
+
+  it('matches the live 80x24 question with offscreen tabs to its unique complete hook-owned question and choices', () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped.txt', import.meta.url), 'utf8');
+    const input: { questions: readonly unknown[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped-input.json', import.meta.url), 'utf8'));
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).toMatchObject({ kind: 'question', tabs: null });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [input.questions[0]!, ...input.questions])).toBe(false);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(screen.split('\n').slice(1).join('\n'))!, input.questions)).toBe(true);
+    const width = screen.split('\n').find((line) => /^─+$/u.test(line))!.length;
+    const split = screen.split('\n').map((line) => `${line.padEnd(width + 4)}Unrelated adjacent panel`).join('\n');
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(split)!, input.questions)).toBe(true);
+    const state = parseClaudeScreenState(screen);
+    expect(state.nativeQuestionPresentation).not.toBeNull();
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('native_question');
+  });
+
+  it('identifies and answers a clipped question from its visible suffix and complete choices', async () => {
+    const clipped = single.slice(single.indexOf('Which probe color?\n\n❯ 1.'));
+    const parsed = parseClaudeNativeQuestionScreen(clipped);
+    expect(parsed).toMatchObject({ kind: 'question', question: 'Which probe color?' });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...questions[0]!, question: 'Which other probe color?' }])).toBe(false);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...questions[0]!, options: ['Amber', 'Green'] }])).toBe(false);
+    const suffix = clipped.replace('Which probe color?', 'probe color?');
+    for (const screen of [clipped, suffix]) {
+      const port = createFakeControlPort({ captures: [screen, idle] });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions, answers: { 'Which probe color?': ['Amber'] } })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys).toEqual(['Enter']);
+    }
+    const presentation = parseClaudeNativeQuestionScreen(suffix)!;
+    const ambiguous = [
+      { ...questions[0]!, question: 'Which first probe color?' },
+      { ...questions[0]!, question: 'Which second probe color?' },
+    ];
+    expect(matchesClaudeNativeQuestionScreen(presentation, ambiguous)).toBe(false);
+    expect(matchesClaudeNativeQuestionScreen(presentation, [ambiguous[0]!, { ...ambiguous[1]!, options: ['Amber', 'Green'] }])).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(single.replaceAll('Which probe color?', 'probe color?'))!, questions)).toBe(false);
+    const ambiguousPort = createFakeControlPort({ captures: [suffix] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: ambiguousPort, questions: ambiguous,
+      answers: { 'Which first probe color?': ['Amber'], 'Which second probe color?': ['Blue'] },
+    })).resolves.toEqual({ status: 'failed', reason: 'native_question_changed' });
+    expect(ambiguousPort.sentKeys).toEqual([]);
+    expect(parseClaudeNativeQuestionScreen(clipped.replace('Enter to select · ↑/↓ to navigate · Esc to cancel', '❯ Next task'))).toBeNull();
+  });
+
+  it('retains visible tabs without their upper rule and matches a complete review after its tabs scroll offscreen', () => {
+    const noUpperRule = single.slice(single.indexOf(' ☐ Header Color'));
+    const question = parseClaudeNativeQuestionScreen(noUpperRule);
+    expect(question).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(question!, questions)).toBe(true);
+    const clippedReview = review.slice(review.indexOf('Review your answers'));
+    const parsed = parseClaudeNativeQuestionScreen(clippedReview);
+    expect(parsed).toMatchObject({ kind: 'review', tabs: null });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, multipleQuestions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [multipleQuestions[1]!, multipleQuestions[0]!])).toBe(false);
+    expect(parseClaudeNativeQuestionScreen(clippedReview + '\nUnknown active dialog')).toBeNull();
+    const incomplete = partialReview.slice(partialReview.indexOf('Review your answers'));
+    expect(parseClaudeNativeQuestionScreen(incomplete)).toBeNull();
+  });
+
+  it('matches every question in the live 80x21 review with offscreen tabs before final submission', () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped-review.txt', import.meta.url), 'utf8');
+    const input: { questions: readonly unknown[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.310-question-clipped-review-input.json', import.meta.url), 'utf8'));
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).toMatchObject({ kind: 'review', tabs: null });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions.slice(1))).toBe(false);
+    const partial = screen.replace(/^.*● S1:.+\n/mu, '');
+    const partialReview = parseClaudeNativeQuestionScreen(partial);
+    expect(partialReview === null || !matchesClaudeNativeQuestionScreen(partialReview, input.questions)).toBe(true);
+  });
+
+  it('matches the complete visible suffix after a real Claude 316 review clips a long answer above the viewport', () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-overflow-review.txt', import.meta.url), 'utf8');
+    const input: { questions: unknown[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.316-question-overflow-input.json', import.meta.url), 'utf8'));
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).toMatchObject({ kind: 'review', reviewClipped: true });
+    expect(parsed?.reviewAnswers).toHaveLength(2);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input.questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [...input.questions].reverse())).toBe(false);
+    for (const source of [screen, review.slice(review.indexOf('Review your answers'))]) {
+      const numberedAnswer = source.replace(/(→ [^\n]+)/u, '$1\n   1. Submit answers\n   2. Cancel');
+      const numbered = parseClaudeNativeQuestionScreen(numberedAnswer);
+      expect(numbered).not.toBeNull();
+      expect(numbered?.reviewAnswers[0]?.answer).toContain('1. Submit answers\n2. Cancel');
+    }
+    const changed = screen.replace('Q3: A task-owned', 'Q3: A different');
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(changed)!, input.questions)).toBe(false);
+    expect(parseClaudeNativeQuestionScreen(screen.replace(' │ ● Q4:', 'Unexpected content\n │ ● Q4:'))).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(screen.replace('Ready to submit your answers?', '⚠ You have not answered all questions\nReady to submit your answers?'))).toBeNull();
+    expect(parseClaudeScreenState(screen).nativeQuestionPresentation).not.toBeNull();
+  });
+
+  it('recognizes an overflowing review by its complete visible suffix and submits after inspecting every question page', async () => {
+    const clipped = review.slice(review.indexOf(' ● Which probe size?'));
+    const parsed = parseClaudeNativeQuestionScreen(clipped);
+    expect(parsed).toMatchObject({ kind: 'review', reviewClipped: true, reviewAnswers: [{ question: 'Which probe size?', answer: 'Large' }] });
+    expect(matchesClaudeNativeQuestionScreen(parsed!, multipleQuestions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [...multipleQuestions].reverse())).toBe(false);
+    const apple = multi.replace('1. [ ] Apple', '1. [✔] Apple');
+    const pearFocus = focus(apple, '1. [✔] Apple', '2. [ ] Pear');
+    const pear = pearFocus.replace('2. [ ] Pear', '2. [✔] Pear');
+    const flow = [multi, apple, pearFocus, pear, size, focus(size, '1. Small', '2. Large'), clipped, idle];
+    for (const captures of [flow, [clipped, size, ...flow]]) {
+      const port = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys.at(-1)).toBe('Enter');
+      if (captures[0] === clipped) expect(port.sentKeys.slice(0, 2)).toEqual(['ShiftTab', 'ShiftTab']);
+    }
+    const wrong = createFakeControlPort({ captures: [...flow.slice(0, -2), clipped.replace('→ Large', '→ Small')] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: wrong, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'native_review_answers_mismatch' });
+    expect(wrong.sentKeys.filter((key) => key === 'Enter')).toHaveLength(3);
+    const premature = createFakeControlPort({ captures: [...flow.slice(0, 4), clipped] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: premature, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'native_review_answers_mismatch' });
+    expect(premature.sentKeys.filter((key) => key === 'Enter')).toHaveLength(2);
+    expect(parseClaudeNativeQuestionScreen(clipped + '\nUnknown dialog')).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(clipped.slice(clipped.indexOf('Ready to submit your answers?')))).toBeNull();
+  });
+
   it('recognizes the live Claude 309 question above its trailing native session-title rule', () => {
     const screen = readFileSync(new URL('./__fixtures__/claude-2.1.309-question-session-title.txt', import.meta.url), 'utf8');
     expect(parseClaudeNativeQuestionScreen(screen)).toMatchObject({ kind: 'question', question: 'Which live Happier probe color?' });
@@ -43,7 +386,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
   });
   it('recognizes native questions, multi-select progress, review and inline freeform without reading transcript echoes', () => {
     expect(parseClaudeNativeQuestionScreen(single)).toMatchObject({ kind: 'question', question: 'Which probe color?' });
-    expect(parseClaudeNativeQuestionScreen(multi)?.options.slice(0, 3)).toEqual([
+    expect(parseClaudeNativeQuestionScreen(multi)?.options.slice(0, 3)).toMatchObject([
       { label: 'Apple', focused: true, checked: false },
       { label: 'Pear', focused: false, checked: false },
       { label: 'Plum', focused: false, checked: false },
@@ -54,11 +397,120 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(parseClaudeNativeQuestionScreen(partialReview)).toMatchObject({ kind: 'review', reviewAnswers: [{ question: 'Which probe size?', answer: 'Small' }] });
     expect(parseClaudeNativeQuestionScreen(freeform)?.options.at(-1)?.label).toBe('Otter freeform probe');
     expect(parseClaudeNativeQuestionScreen(`${single}\n${idle}`)).toBeNull();
-    expect(parseClaudeNativeQuestionScreen(single.replaceAll('Which probe color?', 'Which probe\ncolor?'))).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(single.replaceAll('Which probe color?', 'Which probe\ncolor?'))).toMatchObject({ question: 'Which probe\ncolor?' });
     const state = parseClaudeScreenState(single);
     expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
     expect(state.inputBoxInteractive).toBe(false);
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('native_question');
+  });
+
+  it('recognizes and answers wrapped decorated questions without confusing an adjacent panel with the dialog', async () => {
+    const wrapped = single.replaceAll('Which probe color?', '│ Which probe\n│ color?');
+    const width = single.split('\n').find((line) => /^─+$/u.test(line))!.length;
+    const besidePanel = wrapped.split('\n').map((line, index) => `${line.padEnd(width + 4)}${index === 0 ? 'Changed files' : 'unrelated pane text'}`).join('\n');
+    const presentation = parseClaudeNativeQuestionScreen(besidePanel);
+    expect(presentation).toMatchObject({ question: 'Which probe\ncolor?' });
+    expect(matchesClaudeNativeQuestionScreen(presentation!, questions)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(presentation!, [{ ...questions[0]!, question: 'Which other probe color?' }])).toBe(false);
+    const port = createFakeControlPort({ captures: [besidePanel, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions, answers: { 'Which probe color?': ['Amber'] } })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter']);
+  });
+
+  it('uses the same rendered question identity while navigating between wrapped native pages and review', async () => {
+    const wrappedMulti = multi.replaceAll('Which probe fruits?', '│ Which probe\n│ fruits?');
+    const wrappedSize = size.replaceAll('Which probe size?', '│ Which probe\n│ size?');
+    const wrappedReview = review.replace('● Which probe fruits?', '● Which probe\n   fruits?').replace('● Which probe size?', '● Which probe\n   size?').replace('→ Apple, Pear', '→ Apple,\n   Pear');
+    const apple = wrappedMulti.replace('1. [ ] Apple', '1. [✓] Apple');
+    const pearFocus = focus(apple, '1. [✓] Apple', '2. [ ] Pear');
+    const pear = pearFocus.replace('2. [ ] Pear', '2. [✓] Pear');
+    const flow = [wrappedMulti, apple, pearFocus, pear, wrappedSize, focus(wrappedSize, '1. Small', '2. Large'), wrappedReview, idle];
+    const clippedFlow = flow.map((screen) => screen.includes('│ Which probe')
+      ? screen.slice(screen.indexOf('│ Which probe') + '│ Which probe\n'.length)
+      : screen);
+    for (const captures of [flow, clippedFlow, [clippedFlow[4]!, ...clippedFlow]]) {
+      const port = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+      expect(port.sentKeys).toEqual([...(captures.length > flow.length ? ['ShiftTab'] : []), 'Enter', 'ArrowDown', 'Enter', 'Tab', 'ArrowDown', 'Enter', 'Enter']);
+    }
+  });
+
+  it('correlates provider line breaks and wrapped option labels through the same native identity', async () => {
+    const input = [{ ...questions[0]!, question: 'Which probe\ncolor?', options: [
+      { label: 'Amber label long', description: 'Warm amber probe color.' },
+      questions[0]!.options[1]!,
+    ] }];
+    const screen = single.replace('1. Amber', '1. Amber label\n     long');
+    const presentation = parseClaudeNativeQuestionScreen(screen);
+    expect(matchesClaudeNativeQuestionScreen(presentation!, input)).toBe(true);
+    const port = createFakeControlPort({ captures: [screen, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input, answers: { 'Which probe\ncolor?': ['Amber label long'] } })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter']);
+    const cropped = parseClaudeNativeQuestionScreen(screen.replace('     long\n', ''));
+    expect(matchesClaudeNativeQuestionScreen(cropped!, input)).toBe(false);
+  });
+
+  it('answers the live Claude 310 narrow form with complete wrapped labels and descriptions', async () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-narrow.txt', import.meta.url), 'utf8');
+    const question = 'Which approach should this synthetic narrow terminal validation use when the question text and every option label naturally wrap across several display lines?';
+    const first = 'Preserve the complete wrapped question and option labels while answering through the existing app controls';
+    const second = 'Keep the complete wrapped question and option labels while answering locally in the terminal';
+    const input = [{ question, header: 'Approach', options: [first, second], multiSelect: false }];
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    const port = createFakeControlPort({ captures: [screen, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input, answers: { [question]: [first] } })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentKeys).toEqual(['Enter']);
+  });
+
+  it('recognizes narrow multi-question footers and decorated review rows from real Claude 310 captures', () => {
+    const initial = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-multi-narrow.txt', import.meta.url), 'utf8');
+    const second = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-second-narrow.txt', import.meta.url), 'utf8');
+    const reviewed = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-review-narrow.txt', import.meta.url), 'utf8');
+    expect(parseClaudeNativeQuestionScreen(initial)).toMatchObject({ kind: 'question', multiSelect: true });
+    expect(parseClaudeNativeQuestionScreen(second)).toMatchObject({ kind: 'question', multiSelect: false });
+    expect(parseClaudeNativeQuestionScreen(reviewed)).toMatchObject({ kind: 'review', reviewAnswers: [
+      { question: expect.stringContaining('Which synthetic validation ingredients'), answer: expect.stringContaining('Preserve the complete wrapped question') },
+      { question: expect.stringContaining('Which synthetic confirmation size'), answer: expect.stringContaining('Use the larger confirmation scope') },
+    ] });
+    expect(parseClaudeNativeQuestionScreen(`${initial}\nUnexpected active dialog`)).toBeNull();
+  });
+
+  it('matches unspaced soft wraps and clips panes by display columns without splitting Unicode graphemes', () => {
+    const expected = 'x'.repeat(75);
+    const wrapped = single.replaceAll('Which probe color?', `│ ${expected.slice(0, 38)}\n│ ${expected.slice(38)}`);
+    const input = [{ ...questions[0]!, question: expected }];
+    const parsed = parseClaudeNativeQuestionScreen(wrapped);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    const clipped = wrapped.slice(wrapped.indexOf(`│ ${expected.slice(0, 38)}`)).replace(`│ ${expected.slice(0, 38)}`, `│ ${expected.slice(6, 38)}`);
+    expect(matchesClaudeNativeQuestionScreen(parseClaudeNativeQuestionScreen(clipped)!, input)).toBe(true);
+    const combined = 'e\u0301'.repeat(65);
+    const withCombiningMarks = single.replaceAll('Which probe color?', combined);
+    expect(parseClaudeNativeQuestionScreen(withCombiningMarks)?.question).toBe(combined);
+    const width = single.split('\n').find((line) => /^─+$/u.test(line))!.length;
+    const text = '雪'.repeat(40);
+    const rows = single.replaceAll('Which probe color?', text).split('\n');
+    const withWidePane = rows.map((line) => line === text ? `${text}${' '.repeat(width + 4 - 80)}RIGHT_PANEL_CONTENT` : `${line.padEnd(width + 4)}RIGHT_PANEL_CONTENT`).join('\n');
+    const wide = parseClaudeNativeQuestionScreen(withWidePane);
+    expect(wide?.question).toBe(text);
+    expect(matchesClaudeNativeQuestionScreen(wide!, [{ ...questions[0]!, question: text }])).toBe(true);
+  });
+
+  it('matches native abbreviated tab captions against full hook-owned questions at phone width', () => {
+    const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-question-four-narrow.txt', import.meta.url), 'utf8');
+    const input = ['Containment', 'Secrets', 'Naming', 'Root servers'].map((header) => ({
+      header, question: `${header}: Which synthetic choice?`, multiSelect: false, options: ['Alpha', 'Beta'],
+    }));
+    const parsed = parseClaudeNativeQuestionScreen(screen);
+    expect(parsed).not.toBeNull();
+    expect(matchesClaudeNativeQuestionScreen(parsed!, input)).toBe(true);
+    expect(matchesClaudeNativeQuestionScreen(parsed!, [{ ...input[0]!, question: 'A different current question?' }, ...input.slice(1)])).toBe(false);
+  });
+
+  it('preserves literal gutter characters inside a multiline review answer', () => {
+    const text = review.replace('→ Apple, Pear', '→ Apple,\n   │ preserve this answer text');
+    expect(parseClaudeNativeQuestionScreen(text)?.reviewAnswers[0]?.answer).toBe('Apple,\n│ preserve this answer text');
   });
 
   it('submits only after exact provider question and choices match and final response disappears', async () => {
@@ -71,13 +523,18 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(changed.sentKeys).toEqual([]);
   });
 
-  it('checks missing selections, advances question pages, verifies every review answer, then submits once', async () => {
+  it.each([false, true])('checks selections and submits the exact native review (quoted labels: %s)', async (quoted) => {
     const apple = multi.replace('1. [ ] Apple', '1. [✓] Apple');
     const pearFocus = focus(apple, '1. [✓] Apple', '2. [ ] Pear');
     const pear = pearFocus.replace('2. [ ] Pear', '2. [✓] Pear');
     const largeFocus = focus(size, '1. Small', '2. Large');
-    const port = createFakeControlPort({ captures: [multi, apple, pearFocus, pear, size, largeFocus, review, idle] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'answered' });
+    const labels = { Apple: 'Ask probe', Pear: 'Lab first, then decide', Large: 'Say "hello"' };
+    const replaceLabels = (text: string) => quoted ? text.replace(/Apple|Pear|Large/g, (label) => labels[label as keyof typeof labels]) : text;
+    const reviewed = quoted ? replaceLabels(review).replace('→ Ask probe, Lab first, then decide', '→ Ask probe, "Lab first, then decide"') : review;
+    const input = quoted ? multipleQuestions.map((question) => ({ ...question, options: question.options.map((option) => ({ ...option, label: replaceLabels(option.label) })) })) : multipleQuestions;
+    const answers = quoted ? Object.fromEntries(Object.entries(fruitAnswers).map(([key, values]) => [key, values.map(replaceLabels)])) : fruitAnswers;
+    const port = createFakeControlPort({ captures: [...[multi, apple, pearFocus, pear, size, largeFocus].map(replaceLabels), reviewed, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input, answers })).resolves.toEqual({ status: 'answered' });
     expect(port.sentKeys).toEqual(['Enter', 'ArrowDown', 'Enter', 'Tab', 'ArrowDown', 'Enter', 'Enter']);
   });
 
@@ -179,7 +636,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     await expect(answerClaudeNativeQuestion({ ...controls, port: own, questions: nativeQuestions, answers: { 'Which comma probe?': [text] } })).resolves.toEqual({ status: 'answered' });
     expect(own.sentLiteral).toEqual([text]);
     const local = createFakeControlPort({ captures: [filled] });
-    await expect(answerClaudeNativeQuestion({ ...controls, port: local, questions: nativeQuestions, answers: { 'Which comma probe?': [shown] } })).resolves.toEqual({ status: 'failed', reason: 'local_answer_conflict' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: local, questions: nativeQuestions, answers: { 'Which comma probe?': [shown] } })).resolves.toEqual({ status: 'failed', reason: 'local_freeform_conflict' });
     expect(local.sentKeys).toEqual([]);
     expect(local.sentLiteral).toEqual([]);
   });
@@ -196,7 +653,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     await expect(answerClaudeNativeQuestion({ ...controls, port: mismatched, questions, answers: { 'Which probe color?': ['Amber'] }, verifyApplied: () => 'mismatched' })).resolves.toEqual({ status: 'failed', reason: 'native_answer_mismatch' });
     const pending = createFakeControlPort({ captures: [single], onSendSpecialKey: () => { current = false; } });
     current = true;
-    await expect(answerClaudeNativeQuestion({ ...controls, port: pending, questions, answers: { 'Which probe color?': ['Amber'] }, isCurrent: () => current, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'failed', reason: 'native_answer_unverified' });
+    await expect(answerClaudeNativeQuestion({ ...controls, port: pending, questions, answers: { 'Which probe color?': ['Amber'] }, isCurrent: () => current, verifyApplied: () => 'pending' })).resolves.toEqual({ status: 'submitted' });
   });
 
   it('leaves the multiline editor through Next and verifies complete multiline review before final Submit', async () => {

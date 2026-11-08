@@ -1,0 +1,24 @@
+│ S1: A synthetic client reads task-owned fixture updates from a scratch server
+│ and displays a simple status indicator. Which isolated validation path should
+│ this harmless probe use?
+
+❯ 1. Keep synthetic updates (Recommended)
+     The scratch client announces a simple test capability at its local
+     handshake and receives synthetic status transitions. Clients without the
+     test marker keep fixture updates through the existing adapter. The adapter
+     stays confined to this task-owned probe and never affects a user session.
+     Machines go first; synthetic sessions follow after this screen geometry has
+     been captured.
+  2. Use a fresh fixture
+     The scratch server tells only this synthetic client to load another
+     harmless text fixture before status is shown. This alternative changes no
+     account setting, authentication profile, persistent rule, or existing user
+     session and is included only to occupy the native description rows.
+  3. Defer the scratch check
+     Keep the synthetic fixture unchanged. Capture the current native prompt and
+     continue only after the parser owner provides the current-source fix.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

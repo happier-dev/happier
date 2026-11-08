@@ -1,4 +1,4 @@
-import { summarizeAgentRequestQuestions, type AgentRequestQuestionSummary } from '@happier-dev/plugin-sdk/sessions';
+import { summarizeAgentRequestQuestions } from '@happier-dev/plugin-sdk/sessions';
 import { StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswersV1 } from '@happier-dev/plugin-sdk/sessions';
 
 const ASK_USER_QUESTION_TOOL_NAMES = new Set<string>([
@@ -31,7 +31,19 @@ export function normalizeAskUserQuestionAnswers(value: unknown): Record<string, 
     return Object.keys(answers).length > 0 ? answers : null;
 }
 
-export function normalizeAskUserQuestionInputForPublication(toolName: string, toolInput: unknown): unknown {
+/** Native single-select previews replace the inline freeform row with choice annotations. */
+export function isClaudeNativePreviewQuestion(question: unknown): boolean {
+    return isPlainObject(question) && question.multiSelect !== true && question.multiple !== true
+        && Array.isArray(question.options) && question.options.some((option: unknown) => (
+            isPlainObject(option) && typeof option.preview === 'string' && option.preview.trim().length > 0
+        ));
+}
+
+export function normalizeAskUserQuestionInputForPublication(
+    toolName: string,
+    toolInput: unknown,
+    context?: Readonly<{ native: boolean }>,
+): unknown {
     if (!isAskUserQuestionToolName(toolName)) return toolInput;
     if (!isPlainObject(toolInput)) return toolInput;
 
@@ -41,6 +53,11 @@ export function normalizeAskUserQuestionInputForPublication(toolName: string, to
     let mutated = false;
     const questions = questionsRaw.map((question) => {
         if (!isPlainObject(question)) return question;
+        if (context?.native && isClaudeNativePreviewQuestion(question)) {
+            if (question.freeform === false) return question;
+            mutated = true;
+            return { ...question, freeform: false };
+        }
         if ('freeform' in question && typeof question.freeform !== 'undefined') {
             return question;
         }
@@ -53,58 +70,67 @@ export function normalizeAskUserQuestionInputForPublication(toolName: string, to
     return { ...toolInput, questions };
 }
 
-/** Native Claude emits checkbox labels in provider option order, keyed by provider text. */
-export function buildNativeAskUserQuestionAnswersForClaude(
+/** Map canonical answers to provider text/order, then encode for the Claude delivery boundary. */
+export function buildAskUserQuestionAnswersForClaude(
     questions: readonly unknown[],
     answers: StructuredQuestionAnswersV1,
+    format: 'native' | 'hook',
 ): Readonly<Record<string, string>> {
     const summary = summarizeAgentRequestQuestions(questions);
-    const ordered = Object.create(null) as Record<string, readonly string[]>;
+    const projected = Object.create(null) as Record<string, string>;
     for (const question of summary) {
         const selected = answers[question.answerKey] ?? [];
-        ordered[question.question] = [
+        const values = [
             ...question.choices.filter((choice) => selected.includes(choice.value)).map((choice) => choice.label),
             ...selected.filter((value) => !question.choices.some((choice) => choice.value === value)),
         ];
+        // Claude Code 2.1.316 uses this encoding in both its review and tool result.
+        projected[question.question] = format === 'native' && question.selection === 'multiple'
+            ? values.map((value) => value.includes(', ') || value.includes('"') ? JSON.stringify(value) : value).join(', ')
+            : values.join(', ');
     }
-    return Object.freeze(normalizeAskUserQuestionAnswers(ordered) ?? {});
+    return Object.freeze(projected);
 }
 
 
 
-/** Decode only a unique provider-order join; comma-bearing labels remain indivisible. */
-function decodeClosedNativeChoiceAnswers(
-    choices: AgentRequestQuestionSummary['choices'],
-    value: string,
-): readonly string[] | null {
-    const states = new Map<number, readonly (readonly string[])[]>([[0, [[]]]]);
-    for (const choice of choices) {
-        for (const [offset, paths] of [...states]) {
-            const prefix = (offset === 0 ? '' : ', ') + choice.label;
-            if (!value.startsWith(prefix, offset)) continue;
-            const nextOffset = offset + prefix.length;
-            // Two distinct paths suffice to establish ambiguity; this does not limit valid answers.
-            states.set(nextOffset, [
-                ...(states.get(nextOffset) ?? []),
-                ...paths.map(path => [...path, choice.value]),
-            ].slice(0, 2));
+/** Decode Claude's checkbox scalar: only delimiter- or quote-bearing values are JSON strings. */
+function decodeNativeCheckboxAnswers(value: string): readonly string[] | null {
+    const values: string[] = [];
+    let remaining = value;
+    while (remaining.length) {
+        if (remaining.startsWith('"')) {
+            const quoted = remaining.match(/^"(?:[^"\\]|\\.)*"/s)?.[0];
+            if (!quoted) return null;
+            try {
+                const decoded: unknown = JSON.parse(quoted);
+                if (typeof decoded !== 'string') return null;
+                values.push(decoded);
+            } catch {
+                return null;
+            }
+            remaining = remaining.slice(quoted.length);
+        } else {
+            const separator = remaining.indexOf(', ');
+            const label = separator < 0 ? remaining : remaining.slice(0, separator);
+            if (!label.length || label.includes('"')) return null;
+            values.push(label);
+            remaining = remaining.slice(label.length);
         }
+        if (!remaining.length) return values;
+        if (!remaining.startsWith(', ') || remaining.length === 2) return null;
+        remaining = remaining.slice(2);
     }
-    const paths = states.get(value.length);
-    return paths?.length === 1 && paths[0]!.length > 0 ? paths[0]! : null;
+    return null;
 }
 
-/**
- * Project observed native scalars only when their canonical array is recoverable.
- * A custom multi-select value may contain the same comma join as selected choices;
- * returning null preserves that uncertainty instead of inventing answer history.
- */
+/** Recover canonical answer arrays from observed native review/tool-result scalars. */
 export function normalizeNativeAskUserQuestionAnswers(
     questions: readonly unknown[],
     providerAnswers: unknown,
 ): StructuredQuestionAnswersV1 | null {
     if (!isPlainObject(providerAnswers)) return null;
-    const publication = normalizeAskUserQuestionInputForPublication('AskUserQuestion', { questions });
+    const publication = normalizeAskUserQuestionInputForPublication('AskUserQuestion', { questions }, { native: true });
     const summary = summarizeAgentRequestQuestions(isPlainObject(publication) && Array.isArray(publication.questions) ? publication.questions : []);
     if (!summary.length || summary.length !== questions.length
         || new Set(summary.map(question => question.answerKey)).size !== questions.length
@@ -114,17 +140,15 @@ export function normalizeNativeAskUserQuestionAnswers(
     for (const question of summary) {
         const value = Object.hasOwn(providerAnswers, question.question) ? providerAnswers[question.question] : undefined;
         if (typeof value !== 'string' || !value.length) return null;
-        if (question.selection === 'multiple' && !question.allowCustom) {
-            const selected = decodeClosedNativeChoiceAnswers(question.choices, value);
-            if (!selected) return null;
-            answers[question.answerKey] = selected;
-            continue;
+        const values = question.selection === 'multiple' ? decodeNativeCheckboxAnswers(value) : [value];
+        if (!values) return null;
+        const selected: string[] = [];
+        for (const label of values) {
+            const matches = question.selection === 'text' ? [] : question.choices.filter(choice => choice.label === label);
+            if (matches.length > 1 || (matches.length === 0 && !question.allowCustom)) return null;
+            selected.push(matches[0]?.value ?? label);
         }
-        if (question.selection === 'multiple'
-            && question.choices.some(choice => value.startsWith(choice.label + ', '))) return null;
-        const matches = question.selection === 'text' ? [] : question.choices.filter(choice => choice.label === value);
-        if (matches.length > 1 || (matches.length === 0 && !question.allowCustom)) return null;
-        answers[question.answerKey] = [matches[0]?.value ?? value];
+        answers[question.answerKey] = selected;
     }
     const parsed = StructuredQuestionAnswersV1Schema.safeParse(answers);
     return parsed.success ? parsed.data : null;

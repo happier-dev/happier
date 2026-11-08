@@ -1,0 +1,22 @@
+  1. Publish changes only (Recommended)
+     Keep a public synthetic status current when the fixture changes. Record its
+     timestamp only for the stopped synthetic example.
+  2. Keep periodic updates
+     Retain the harmless periodic publication in this disposable example. This
+     does not change any actual running process or setting.
+❯ 3. This is harmless synthetic freeform text for an isolated diagnostic. The
+     public fixture should preserve the selected status and explain each
+     ordinary display change without changing any real settings. This is
+     harmless synthetic freeform text for an isolated diagnostic. The public
+     fixture should preserve the selected status and explain each ordinary
+     display change without changing any real settings. This is harmless
+     synthetic freeform text for an isolated diagnostic. The public fixture
+     should preserve the selected status and explain each ordinary display
+     change without changing any real settings. This is harmless synthetic
+     freeform text for an isolated diagnostic. The public fixture should
+     preserve the selected status and explain each ordinary display change
+     without changing any real settings.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

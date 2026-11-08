@@ -1,0 +1,24 @@
+   SYNTHETIC LINE 4: This harmless task-owned freeform text must stay exactly as
+   entered.
+   SYNTHETIC LINE 5: This harmless task-owned freeform text must stay exactly as
+   entered.
+   SYNTHETIC LINE 6: This harmless task-owned freeform text must stay exactly as
+   entered.
+   SYNTHETIC LINE 7: This harmless task-owned freeform text must stay exactly as
+   entered.
+   SYNTHETIC LINE 8: This harmless task-owned freeform text must stay exactly as
+   entered.
+   SYNTHETIC LINE 9: This harmless task-owned freeform text must stay exactly as
+   entered.
+ │ ● Q3: A task-owned synthetic shortcut starts a harmless fixture check in this
+ │   scratch workspace and records a plain status marker. Which shortcut choice
+ │   should the isolated validation keep without changing any global shortcut?
+   → Beta synthetic
+ │ ● Q4: A harmless synthetic warning explains that fixture text is public and
+ │   disposable. Which warning choice should this scratch validation keep?
+   → Alpha synthetic (Recommended)
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
