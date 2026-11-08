@@ -91,6 +91,7 @@ type TurnReply = { assistantText: string; actions: VoiceAssistantAction[]; speec
 let turnReplies: (index: number, message: string) => TurnReply = () => ({ assistantText: 'Done.', actions: [] });
 let turnIndex = 0;
 let rejectStart = false;
+let handledHttpStatus = 200;
 let webhookCatalog = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [] });
 let webhookRevision = 1;
 const repliesByStream = new Map<string, TurnReply>();
@@ -226,6 +227,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     directPendingEntered = createDeferred<void>();
     turnIndex = 0;
     rejectStart = false;
+    handledHttpStatus = 200;
     turnReplies = () => ({ assistantText: 'I found Claude and Codex.', actions: [] });
     repliesByStream.clear();
     webhookRevision = 1;
@@ -284,7 +286,10 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
           deliveryStatus: { status: 'deliveryMode' in body && body.deliveryMode === 'external_handoff' ? 'external_handoff' : 'queued' } } });
       }
       const handled = /\/pending\/([^/]+)\/delivery\/handled$/.exec(request.path);
-      if (request.method === 'POST' && handled) { events.push(`settle:${decodeURIComponent(handled[1]!)}`); return Response.json({}); }
+      if (request.method === 'POST' && handled) {
+        events.push(`settle:${decodeURIComponent(handled[1]!)}`);
+        return Response.json(handledHttpStatus === 200 ? {} : { error: 'internal' }, { status: handledHttpStatus });
+      }
       if (/^\/v1\/sessions\/[^/]+\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
       return sessionMetadata.handle(request.url, { method: request.method,
         ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) })
@@ -749,6 +754,38 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     expect(events).toEqual([`enqueue:${localId}`, `dispatch:${localId}`, `settle:${localId}`]);
   });
 
+  it('finishes the accepted spoken reply and accepts the next turn after a handled HTTP 500', async () => {
+    const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
+    handledHttpStatus = 500;
+    const settings = buildAccountSettings();
+    const config = readLocalConversationVoiceSettings(settings.voice);
+    const spokenSettings = { ...settings, voice: { ...settings.voice, providers: { ...settings.voice.providers,
+      local_conversation: { schemaVersion: 1, config: { ...config, tts: { autoSpeakReplies: true, provider: 'device' } } },
+    } } };
+    speech.speak.mockReset();
+    speech.speak.mockImplementation((_text, options) => { options.onStart?.(); options.onDone?.(); });
+
+    await expect(sendVoiceTextTurn({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings: spokenSettings, userText: 'next',
+      playbackController: createVoicePlaybackController(), voiceAgentSessions,
+    })).resolves.toBeUndefined();
+
+    expect(speech.speak.mock.calls.map(call => call[0])).toEqual(['I found Claude and Codex.']);
+    expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(true);
+    expect(turnIndex).toBe(1);
+    expect(account.requests.filter(request => request.method === 'POST' && /\/delivery\/handled$/.test(request.path))).toHaveLength(1);
+    expect(account.requests.filter(request => request.method === 'POST' && /\/delivery\/block$/.test(request.path))).toHaveLength(0);
+
+    handledHttpStatus = 200;
+    await sendVoiceTextTurn({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings: spokenSettings, userText: 'continue',
+      playbackController: createVoicePlaybackController(), voiceAgentSessions,
+    });
+    expect(speech.speak.mock.calls.map(call => call[0])).toEqual(['I found Claude and Codex.', 'I found Claude and Codex.']);
+    expect(turnIndex).toBe(2);
+    expect(pendingWrites()).toHaveLength(2);
+  });
+
   it('trims the control session id while preserving daemon transcript ownership', async () => {
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
 
@@ -861,7 +898,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         playbackController: createVoicePlaybackController(),
         voiceAgentSessions,
       }),
-    ).rejects.toThrow('voice_turn_dispatch_ambiguous');
+    ).rejects.toThrow('send_failed');
     // Direct dispatch never publishes its own failure; the lifecycle caller owns it.
     expect(voiceConversationRuntimeMachine.getSnapshot().error).toBeNull();
     expect(pendingWrites('s1')).toEqual([]);

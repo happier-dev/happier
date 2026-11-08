@@ -44,7 +44,7 @@ export async function dispatchForegroundVoiceTextTurnQa(text: string): Promise<V
     if (!result.ok) {
         throw new Error(result.message ?? result.reason);
     }
-    if (result.disposition !== 'settled') {
+    if (result.disposition !== 'settled' && result.disposition !== 'accepted_unsettled') {
         throw new Error(result.disposition === 'ambiguous'
             ? 'foreground_voice_text_turn_qa_dispatch_ambiguous'
             : 'foreground_voice_text_turn_qa_dispatch_pending');

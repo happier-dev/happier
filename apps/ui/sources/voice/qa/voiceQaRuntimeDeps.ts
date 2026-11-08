@@ -149,7 +149,7 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
                 },
             });
             if (!result.ok) throw new Error(result.message ?? result.reason);
-            if (result.disposition === 'settled') return;
+            if (result.disposition === 'settled' || result.disposition === 'accepted_unsettled') return;
             throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
         },
         waitForInterruptedLocalAssistantTurn: async ({ conversationSessionId, timeoutMs, baseline }) => {

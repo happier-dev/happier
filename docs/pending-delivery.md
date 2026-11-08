@@ -197,6 +197,15 @@ available. The provider or Run ingress still admits actual execution. Ordinary
 runner-bound input retains exact Machine-target admission. The existing handled
 settlement commits the accepted transcript and retires the reservation.
 
+`submitDurableVoiceTextTurn` separates provider acceptance from that settlement
+write. If the provider accepts the turn but the handled request fails, its reply
+continues and the result is `accepted_unsettled`, with the settlement error. The
+reservation remains in external handoff; Voice does not redispatch it, block it
+as uncertain execution, or disconnect the call. The owner records a content-free
+settlement diagnostic. A later turn can proceed independently. A rejection before
+provider acceptance and a failure of the actual reply retain their existing
+failure paths; neither is converted into settlement success.
+
 ## Correlated Session answers (0.3 development)
 
 `session.message.send` has one canonical `reply` intent: `none`, `wait`, or

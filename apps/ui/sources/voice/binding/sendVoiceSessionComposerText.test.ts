@@ -28,6 +28,8 @@ import type { PartialOptions } from '@elevenlabs/client';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'web' } }));
 
@@ -62,6 +64,7 @@ const pendingPostSchema = z.strictObject({
     deliveryMode: z.optional(z.literal('external_handoff')),
     requestedAction: PendingRequestedActionV1Schema,
     targetMachineId: z.optional(z.string()),
+    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
 });
 type PendingPost = z.infer<typeof pendingPostSchema>;
 let enqueued: PendingPost | null = null;
@@ -125,6 +128,7 @@ async function restorePendingHttpAccount() {
     const metadata = createSessionMetadataHttpBoundary(() => getStorage().getState().sessions);
     const promptCatalog = createPromptLibraryCatalogBoundary({ settingsVersion: 1 });
     const purposes = createConnectedPurposeCatalogHttpBoundary();
+    const kv = createAccountKvHttpFixture();
     const features = createRootLayoutFeaturesResponse();
     const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'composer-account' });
     features.capabilities.session.pendingInput = { protocolVersion: 1 };
@@ -136,6 +140,8 @@ async function restorePendingHttpAccount() {
         serverUrl: `https://voice-composer-${++homeSequence}.example.test`, accountId: 'composer-account', credentialScope: 'restored-home',
         request: createSessionReadBatchFetchBoundary(async (input, init) => {
             const path = new URL(String(input)).pathname;
+            const kvResponse = await kv.handleFetch(input, init);
+            if (kvResponse) return kvResponse;
             const purposeResponse = await purposes.handle(input, init);
             if (purposeResponse) return purposeResponse;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
@@ -461,18 +467,17 @@ describe('Voice composer through Sync HTTP custody', () => {
             pendingDeliveryBlockedReason: 'delivery_outcome_uncertain' })]);
     });
 
-    it('keeps an HTTP settlement rejection ambiguous after provider admission', async () => {
+    it('keeps provider acceptance distinct from an HTTP settlement failure without blocking or redispatching', async () => {
         handledResponse = async () => Response.json({ error: 'settlement_failed' }, { status: 500 });
         const result = await sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1', text: 'hello', localId: 'method-unavailable',
             getAdapter: getVoiceAdapterRegistry().get,
         });
-        expect(result).toEqual({ ok: true, localId: 'method-unavailable', disposition: 'ambiguous',
-            message: 'Failed to mark pending delivery handled (500)' });
+        expect(result).toEqual({ ok: true, localId: 'method-unavailable', disposition: 'accepted_unsettled',
+            errorCode: 'voice_pending_settlement_failed', message: 'pending settlement failed: Failed to mark pending delivery handled (500)' });
         expect(providerMessages).toEqual(['hello']);
         expect(httpEvents).toEqual(['enqueue:method-unavailable', 'provider:hello', 'settle:method-unavailable']);
-        expect(deliveryStatus).toEqual({ status: 'blocked', reason: 'delivery_outcome_uncertain' });
-        expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'method-unavailable', pendingDeliveryStatus: 'blocked',
-            pendingDeliveryBlockedReason: 'delivery_outcome_uncertain' })]);
+        expect(deliveryStatus).toEqual({ status: 'external_handoff' });
+        expect(pendingRows()).toEqual([expect.objectContaining({ localId: 'method-unavailable', pendingDeliveryStatus: 'external_handoff' })]);
     });
 
     it('keeps an untyped native method-unavailable failure uncertain rather than inferring definite rejection', async () => {
@@ -784,7 +789,7 @@ describe('Voice composer through Sync HTTP custody', () => {
             } else if (outcome === 'selection-unavailable' || outcome === 'target-offline') expect(result).toMatchObject({ ok: false, localId,
                 reason: 'terminal_rejected', message: outcome === 'selection-unavailable' ? 'voice_agent_selection_unavailable' : expect.any(String) });
             else if (outcome === 'aborted-settlement-failed') expect(result).toMatchObject({ ok: true, localId,
-                disposition: 'ambiguous', message: expect.stringContaining('pending settlement failed:') });
+                disposition: 'accepted_unsettled', message: expect.stringContaining('pending settlement failed:') });
             else expect(result).toEqual(outcome === 'unacknowledged'
                 ? { ok: true, localId, disposition: 'ambiguous', message: 'send_failed' }
                 : { ok: true, localId, disposition: 'settled' });

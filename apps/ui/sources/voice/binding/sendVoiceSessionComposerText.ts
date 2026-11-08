@@ -16,6 +16,7 @@ import { resolveVoiceSessionComposerRouting } from './voiceSessionComposerRoutin
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getVoiceSessionPresentedAttemptId, recordVoiceSessionFirstSuccessInput } from '@/voice/session/voiceSessionStore';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { log } from '@/log';
 
 export type VoiceTextTurnPendingPort = Readonly<{
     enqueuePendingMessage(params: Readonly<{
@@ -39,7 +40,7 @@ export type DurableVoiceTextTurnResult =
     | Readonly<{
         ok: true;
         localId: string;
-        disposition: 'pending' | 'settled' | 'ambiguous';
+        disposition: 'pending' | 'settled' | 'accepted_unsettled' | 'ambiguous';
         message?: string;
         errorCode?: string;
     }>
@@ -141,8 +142,6 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
     let acceptanceSettled = false;
     let acceptanceSettlementError: unknown;
     let acceptancePromise: Promise<void> | null = null;
-    /** Resolves once the durable settlement write finished, success or failure. */
-    let acceptanceCompletion: Promise<void> = Promise.resolve();
     const onAccepted = (): Promise<void> => {
         if (acceptancePromise) return acceptancePromise;
         acceptanceStarted = true;
@@ -155,9 +154,13 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
             acceptanceSettled = true;
         }, (error: unknown) => {
             acceptanceSettlementError = error;
-            throw error;
+            // Provider acceptance already happened. A failed bookkeeping write
+            // retains pending custody without aborting the admitted reply.
+            log.log(`[voicePendingSettlement] ${JSON.stringify({
+                phase: 'handled',
+                errorCode: readSafeVoiceRuntimeFailureCode(error) ?? 'voice_pending_settlement_failed',
+            })}`);
         });
-        acceptanceCompletion = acceptancePromise.catch(() => undefined);
         return acceptancePromise;
     };
 
@@ -171,7 +174,7 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
     // A dispatcher may acknowledge acceptance without awaiting the durable
     // settlement write (or abandon it on abort), so the write can still be in
     // flight here. Settlement is only known once that write resolved.
-    await acceptanceCompletion;
+    await acceptancePromise;
 
     if (dispatchFailure) {
         const { error } = dispatchFailure;
@@ -222,12 +225,12 @@ export async function submitDurableVoiceTextTurn(params: Readonly<{
     }
     if (!acceptanceSettled) {
         const message = combineVoiceTextTurnSettlementError(undefined, acceptanceSettlementError);
-        const errorCode = readSafeVoiceRuntimeFailureCode(acceptanceSettlementError);
+        const errorCode = readSafeVoiceRuntimeFailureCode(acceptanceSettlementError) ?? 'voice_pending_settlement_failed';
         return {
             ok: true,
             localId,
-            disposition: 'ambiguous',
-            ...(errorCode ? { errorCode } : {}),
+            disposition: 'accepted_unsettled',
+            errorCode,
             ...(message ? { message } : {}),
         };
     }
