@@ -3,31 +3,70 @@ import { describe, expect, it } from 'vitest';
 import { classifyCodexConnectedServiceAuthFailure } from './failure.js';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
-  it('normalizes native serverOverloaded evidence without relying on provider prose', () => {
+  it('preserves provider timing on an already classified usage-limit path without changing milliseconds to seconds', () => {
     expect(classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,
-      error: { turn: { error: { codexErrorInfo: 'serverOverloaded', message: 'Request failed', retry_after_ms: 1500 } } },
-      serviceId: 'openai-codex', profileId: 'work', groupId: 'pool',
-    })).toMatchObject({ kind: 'capacity', limitCategory: 'capacity', quotaScope: 'provider', retryAfterMs: 1500 });
+      genericRuntimeIssueSource: 'usage_limit',
+      error: { error: { message: 'Request failed', resetsAtMs: 10_000_000_000, retryAfterMs: 1_250 } },
+      serviceId: 'openai-codex', profileId: 'member', groupId: 'pool',
+    })).toMatchObject({ kind: 'usage_limit', resetsAtMs: 10_000_000_000, retryAfterMs: 1_250 });
+  });
+
+  it('normalizes native serverOverloaded evidence without relying on provider prose', () => {
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: {
+          turn: {
+            error: {
+              codexErrorInfo: 'serverOverloaded',
+              message: 'Request failed',
+              retry_after_ms: 1500,
+            },
+          },
+        },
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
+      kind: 'capacity',
+      limitCategory: 'capacity',
+      quotaScope: 'provider',
+      retryAfterMs: 1500,
+    });
   });
   it.each([
     "model 'gpt-6.1-sol' is not enabled in rustponsesapi",
     'The gpt-6.1-sol model is not available for your account.',
-  ])('classifies account model eligibility errors only on provider error paths: %s', (message) => {
-    const input = {
-      error: new Error(message),
-      serviceId: 'openai-codex',
-      profileId: 'account',
-      groupId: 'happier',
-    };
-    expect(classifyCodexConnectedServiceAuthFailure({ ...input, providerErrorPath: true })).toMatchObject({
-      kind: 'plan',
-      limitCategory: 'plan_invalid',
-      quotaScope: 'model',
-      providerLimitId: 'gpt-6.1-sol',
-    });
-    expect(classifyCodexConnectedServiceAuthFailure({ ...input, providerErrorPath: false })).toBeNull();
-  });
+  ])(
+    'classifies account model eligibility errors only on provider error paths: %s',
+    (message) => {
+      const input = {
+        error: new Error(message),
+        serviceId: 'openai-codex',
+        profileId: 'account',
+        groupId: 'happier',
+      };
+      expect(
+        classifyCodexConnectedServiceAuthFailure({
+          ...input,
+          providerErrorPath: true,
+        }),
+      ).toMatchObject({
+        kind: 'plan',
+        limitCategory: 'plan_invalid',
+        quotaScope: 'model',
+        providerLimitId: 'gpt-6.1-sol',
+      });
+      expect(
+        classifyCodexConnectedServiceAuthFailure({
+          ...input,
+          providerErrorPath: false,
+        }),
+      ).toBeNull();
+    },
+  );
 
   it('classifies ChatGPT account model incompatibility as plan-invalid recovery evidence', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
@@ -35,7 +74,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       error: {
         error: {
           type: 'invalid_request_error',
-          message: "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+          message:
+            "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
         },
       },
       serviceId: 'openai-codex',
@@ -51,17 +91,93 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       source: 'structured_provider_error',
     });
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: new Error('Codex process error: CodexAppServerTurnFailure: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-5.6-sol\' model is not supported when using Codex with a ChatGPT account."}}'),
-      serviceId: 'openai-codex',
-      profileId: 'free-account',
-      groupId: 'happier',
-    })).toMatchObject({
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: new Error(
+          'Codex process error: CodexAppServerTurnFailure: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-5.6-sol\' model is not supported when using Codex with a ChatGPT account."}}',
+        ),
+        serviceId: 'openai-codex',
+        profileId: 'free-account',
+        groupId: 'happier',
+      }),
+    ).toMatchObject({
       kind: 'plan',
       quotaScope: 'model',
       providerLimitId: 'gpt-5.6-sol',
     });
+  });
+
+  it('classifies a sanitized host diagnostic from its retained model-entitlement evidence', () => {
+    const diagnostic = {
+      code: 'provider_model_not_found',
+      severity: 'error',
+      message:
+        "The connected account cannot use model 'gpt-6.1-sol'. Choose another model.",
+      details: {
+        v: 1,
+        source: 'provider',
+        runtimeAuthClassification: {
+          kind: 'plan',
+          limitCategory: 'plan_invalid',
+          quotaScope: 'model',
+          providerLimitId: 'gpt-6.1-sol',
+          serviceId: 'openai-codex',
+          profileId: 'member-a',
+          groupId: 'happier',
+          groupGeneration: 9,
+          expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+          source: 'structured_provider_error',
+        },
+      },
+    };
+    const input = {
+      error: diagnostic,
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'member-a',
+      groupId: 'happier',
+    };
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        ...input,
+        providerErrorPath: true,
+      }),
+    ).toMatchObject({
+      kind: 'plan',
+      limitCategory: 'plan_invalid',
+      quotaScope: 'model',
+      providerLimitId: 'gpt-6.1-sol',
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'member-a',
+      groupId: 'happier',
+      groupGeneration: 9,
+      expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+    });
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        ...input,
+        providerErrorPath: false,
+      }),
+    ).toBeNull();
+    // Retained evidence only carries the model refusal; other kinds keep their own closed evidence.
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        ...input,
+        providerErrorPath: true,
+        error: {
+          ...diagnostic,
+          code: 'codex_turn_failed',
+          message: 'Codex turn failed.',
+          details: {
+            runtimeAuthClassification: {
+              ...diagnostic.details.runtimeAuthClassification,
+              kind: 'auth_expired',
+              limitCategory: 'auth_invalid',
+            },
+          },
+        },
+      }),
+    ).toBeNull();
   });
 
   it('recognizes structured usage-limit failures and extracts provider metadata', () => {
@@ -110,18 +226,20 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   });
 
   it('uses the published numeric-epoch threshold for structured reset evidence', () => {
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: {
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
         error: {
-          codexErrorInfo: 'UsageLimitExceeded',
-          resets_at: 10_000_000_000,
+          error: {
+            codexErrorInfo: 'UsageLimitExceeded',
+            resets_at: 10_000_000_000,
+          },
         },
-      },
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: null,
-    })).toMatchObject({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: null,
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       resetsAtMs: 10_000_000_000_000,
     });
@@ -149,50 +267,56 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   });
 
   it('recognizes structured Codex usage-limit code variants', () => {
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: {
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
         error: {
-          codexErrorInfo: 'usageLimitExceeded',
-          message: 'request failed',
+          error: {
+            codexErrorInfo: 'usageLimitExceeded',
+            message: 'request failed',
+          },
         },
-      },
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    })).toMatchObject({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       source: 'structured_provider_error',
     });
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: {
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
         error: {
-          code: 'usage_limit_reached',
-          message: 'request failed',
+          error: {
+            code: 'usage_limit_reached',
+            message: 'request failed',
+          },
         },
-      },
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    })).toMatchObject({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       source: 'structured_provider_error',
     });
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: {
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
         error: {
-          code: 'UsageLimitReached',
-          message: 'request failed',
+          error: {
+            code: 'UsageLimitReached',
+            message: 'request failed',
+          },
         },
-      },
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    })).toMatchObject({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       source: 'structured_provider_error',
     });
@@ -205,7 +329,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       providerErrorPath: true,
       error: {
         error: {
-          message: "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 30th, 2026 10:23 PM.",
+          message:
+            "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 30th, 2026 10:23 PM.",
           codexErrorInfo: 'UsageLimitExceeded',
           plan_type: 'plus',
         },
@@ -225,27 +350,32 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   });
 
   it('recognizes the observed Codex usage-limit message only on provider error paths', () => {
-    const message = "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 5:27 PM.";
+    const message =
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 5:27 PM.";
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: new Error(message),
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: null,
-    })).toMatchObject({
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: new Error(message),
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: null,
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       limitCategory: 'usage_limit',
       source: 'stable_provider_message',
     });
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: false,
-      error: new Error(message),
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: null,
-    })).toBeNull();
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: false,
+        error: new Error(message),
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: null,
+      }),
+    ).toBeNull();
   });
 
   it('routes temporary provider throttles as retry controls instead of usage-limit fallback', () => {
@@ -253,7 +383,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       providerErrorPath: true,
       error: {
         error: {
-          message: 'API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited',
+          message:
+            'API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited',
           retry_after_ms: 2_500,
         },
       },
@@ -271,20 +402,23 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   });
 
   it('classifies provider-scoped model capacity for durable retry recovery', () => {
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: {
-        turn: {
-          error: {
-            message: 'Selected model is at capacity. Please try a different model.',
-            codexErrorInfo: 'other',
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: {
+          turn: {
+            error: {
+              message:
+                'Selected model is at capacity. Please try a different model.',
+              codexErrorInfo: 'other',
+            },
           },
         },
-      },
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    })).toMatchObject({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
       kind: 'capacity',
       limitCategory: 'capacity',
       quotaScope: 'provider',
@@ -297,13 +431,17 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   });
 
   it('classifies revoked application network permission as a transient provider failure', () => {
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: new Error('Fatal error: application network permission was revoked'),
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    })).toMatchObject({
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: new Error(
+          'Fatal error: application network permission was revoked',
+        ),
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      }),
+    ).toMatchObject({
       kind: 'capacity',
       limitCategory: 'capacity',
       quotaScope: 'provider',
@@ -313,14 +451,18 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   it('does not treat ambiguous local-time retry wording as authoritative reset metadata', () => {
     const now = new Date(2026, 4, 17, 16, 0, 0, 0).getTime();
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: new Error("You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 5:27 PM."),
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: null,
-      nowMs: now,
-    })).toMatchObject({
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: new Error(
+          "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 5:27 PM.",
+        ),
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: null,
+        nowMs: now,
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       resetsAtMs: null,
       source: 'stable_provider_message',
@@ -330,14 +472,18 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   it('does not treat ambiguous full-date retry wording as authoritative reset metadata', () => {
     const now = new Date(2026, 4, 17, 16, 0, 0, 0).getTime();
 
-    expect(classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error: new Error("You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 27th, 2026 3:55 PM."),
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: null,
-      nowMs: now,
-    })).toMatchObject({
+    expect(
+      classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error: new Error(
+          "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at May 27th, 2026 3:55 PM.",
+        ),
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: null,
+        nowMs: now,
+      }),
+    ).toMatchObject({
       kind: 'usage_limit',
       resetsAtMs: null,
       source: 'stable_provider_message',
@@ -350,7 +496,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       error: {
         turn: {
           error: {
-            message: 'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.',
+            message:
+              'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.',
             codex_error_info: 'Unauthorized',
           },
         },
@@ -372,7 +519,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       error: {
         turn: {
           error: {
-            message: 'unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request',
+            message:
+              'unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request',
             code: 'token_revoked',
           },
         },
@@ -391,10 +539,14 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
   it('classifies Codex workspace routing discovery 401 as authentication failure', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,
-      error: { turn: { error: {
-        message: 'workspace routing discovery unauthorized (401)',
-        codex_error_info: 'other',
-      } } },
+      error: {
+        turn: {
+          error: {
+            message: 'workspace routing discovery unauthorized (401)',
+            codex_error_info: 'other',
+          },
+        },
+      },
       serviceId: 'openai-codex',
       profileId: null,
       groupId: null,
@@ -412,7 +564,8 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       providerErrorPath: true,
       error: {
         error: {
-          message: 'Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.',
+          message:
+            'Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.',
         },
       },
       serviceId: 'openai-codex',
@@ -448,9 +601,12 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
     ],
     [
       'unauthenticated application error',
-      Object.assign(new Error('Unauthenticated: Bearer sk-private-unauthenticated'), {
-        code: 'unauthenticated',
-      }),
+      Object.assign(
+        new Error('Unauthenticated: Bearer sk-private-unauthenticated'),
+        {
+          code: 'unauthenticated',
+        },
+      ),
       'sk-private-unauthenticated',
     ],
     [
@@ -459,31 +615,31 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
         code: -32603,
         data: {
           error: {
-            message: 'Encountered invalidated oauth token for user: sk-private-data-message',
+            message:
+              'Encountered invalidated oauth token for user: sk-private-data-message',
           },
         },
       }),
       'sk-private-data-message',
     ],
-  ] as const)('classifies the canonical app-server auth input %s without retaining raw error material', (
-    _label,
-    error,
-    secret,
-  ) => {
-    const result = classifyCodexConnectedServiceAuthFailure({
-      providerErrorPath: true,
-      error,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      groupId: 'pool',
-    });
+  ] as const)(
+    'classifies the canonical app-server auth input %s without retaining raw error material',
+    (_label, error, secret) => {
+      const result = classifyCodexConnectedServiceAuthFailure({
+        providerErrorPath: true,
+        error,
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        groupId: 'pool',
+      });
 
-    expect(result).toMatchObject({
-      kind: 'auth_expired',
-      limitCategory: 'auth_invalid',
-      source: 'structured_provider_error',
-    });
-    expect(JSON.stringify(result)).not.toContain(secret);
-    expect(JSON.stringify(result)).not.toContain('Bearer');
-  });
+      expect(result).toMatchObject({
+        kind: 'auth_expired',
+        limitCategory: 'auth_invalid',
+        source: 'structured_provider_error',
+      });
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(JSON.stringify(result)).not.toContain('Bearer');
+    },
+  );
 });

@@ -13,6 +13,37 @@ import {
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it.each(['usageLimitExceeded', 'usageLimitReached', 'insufficient_quota'])(
+    'retains structured %s exhaustion and explicit provider timing',
+    (code) => {
+      const failure = createCodexAppServerTurnFailure({
+        value: { turn: { error: {
+          code,
+          message: 'Request failed',
+          resetsAtMs: 1_799_999_999_000,
+          retryAfterMs: 90_000,
+        } } },
+        authContext: { profileId: 'exhausted-member', groupId: 'pool' },
+      });
+      expect(readCodexAppServerTurnFailureDiagnostic(failure)).toMatchObject({
+        failureReason: 'usage_limit',
+      });
+      expect(failure).toMatchObject({ runtimeAuthClassification: {
+        kind: 'usage_limit', limitCategory: 'usage_limit',
+        resetsAtMs: 1_799_999_999_000, retryAfterMs: 90_000,
+      } });
+    },
+  );
+
+  it.each([
+    new Error('Required authoritative session snapshot refresh failed for session-fixture'),
+    Object.assign(new Error('Agent isolation is unavailable.'), { code: 'agent_isolation_unavailable' }),
+  ])('keeps the captured J6 startup failures outside quota recovery: %s', (error) => {
+    const failure = createCodexAppServerTurnFailure({ value: error, phase: 'client_start' });
+    expect(readCodexAppServerTurnFailureDiagnostic(failure).failureReason).toBe('unclassified_provider_error');
+    expect(failure).toMatchObject({ runtimeAuthClassification: null });
+  });
+
   it('keeps retryability and vendor request identity on a classified usage failure', () => {
     const failure = createCodexAppServerTurnFailure({ value: { turn: { error: {
       codexErrorInfo: 'UsageLimitExceeded', message: 'Usage limit reached', requestId: 'req-quota-fixture',

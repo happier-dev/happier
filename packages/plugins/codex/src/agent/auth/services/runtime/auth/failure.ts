@@ -1,5 +1,5 @@
 import { parseTimestampMs } from '@happier-dev/plugin-sdk';
-import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
 
 type ProviderLimitCategory = ReturnType<typeof classifyProviderLimitEvidence>['category'];
 
@@ -112,11 +112,8 @@ function readErrorText(value: unknown): string {
 }
 
 function isStructuredUsageLimitCode(value: string | null): boolean {
-  return value === 'UsageLimitExceeded'
-    || value === 'UsageLimitReached'
-    || value === 'usageLimitExceeded'
-    || value === 'usage_limit_exceeded'
-    || value === 'usage_limit_reached';
+  const evidence = classifyProviderLimitEvidence({ code: value });
+  return evidence.category === 'usage_limit' && evidence.confidence === 'high';
 }
 
 function isStructuredAuthExpiredCode(value: string | null): boolean {
@@ -206,6 +203,11 @@ function readRetryAfterMs(record: Record<string, unknown> | null): number | null
   return readDurationSecondsAsMs(record?.retryAfter ?? record?.retry_after ?? record?.['retry-after']);
 }
 
+function readProviderResetAtMs(record: Record<string, unknown> | null): number | null {
+  return readDurationMs(record?.resetsAtMs)
+    ?? readResetAtMs(record?.resetsAt ?? record?.resets_at);
+}
+
 function readStableRetryTimeResetAtMs(text: string, nowMs: number): number | null {
   const fullDateMatch = /\btry\s+again\s+at\s+([A-Z][a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,\s+(\d{4})\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/iu.exec(text);
   if (fullDateMatch) {
@@ -270,6 +272,34 @@ function buildClassification(
   };
 }
 
+/**
+ * A sanitized host diagnostic cannot carry the provider text that names the
+ * refused model, so the Codex turn-failure producer retains that bounded
+ * model-entitlement evidence in its details. Other kinds keep their own codes.
+ */
+function readRetainedModelEntitlementEvidence(value: unknown): Readonly<{
+  providerLimitId: string;
+  profileId: string | null;
+  groupId: string | null;
+  groupGeneration: number | null;
+  credentialRevision: string | null;
+  source: CodexConnectedServiceRuntimeFailureClassification['source'];
+}> | null {
+  const details = isRecord(value) && isRecord(value.details) ? value.details : null;
+  const evidence = isRecord(details?.runtimeAuthClassification) ? details.runtimeAuthClassification : null;
+  const providerLimitId = readString(evidence?.providerLimitId);
+  if (!evidence || !providerLimitId || evidence.kind !== 'plan'
+    || evidence.limitCategory !== 'plan_invalid' || evidence.quotaScope !== 'model') return null;
+  return {
+    providerLimitId,
+    profileId: readString(evidence.profileId),
+    groupId: readString(evidence.groupId),
+    groupGeneration: readNonNegativeInteger(evidence.groupGeneration),
+    credentialRevision: readString(evidence.expectedCredentialRevision),
+    source: evidence.source === 'stable_provider_message' ? 'stable_provider_message' : 'structured_provider_error',
+  };
+}
+
 const codexUsageLimitRecoveryAction = { kind: 'quota_recovery_required' } as const;
 
 export function classifyCodexConnectedServiceAuthFailure(
@@ -284,13 +314,33 @@ export function classifyCodexConnectedServiceAuthFailure(
       kind: 'usage_limit',
       limitCategory: 'usage_limit',
       resetsAtMs:
-        readResetAtMs(record?.resetsAt ?? record?.resets_at)
+        readProviderResetAtMs(record)
         ?? readStableRetryTimeResetAtMs(text, input.nowMs ?? Date.now()),
       retryAfterMs: readRetryAfterMs(record),
       planType: readString(record?.planType ?? record?.plan_type),
       rateLimits: record?.rateLimits ?? record?.rate_limits ?? null,
       source: 'structured_provider_error',
       recoveryAction: codexUsageLimitRecoveryAction,
+    });
+  }
+
+  const retainedModelRefusal = input.providerErrorPath ? readRetainedModelEntitlementEvidence(input.error) : null;
+  if (retainedModelRefusal) {
+    return buildClassification({
+      ...input,
+      profileId: retainedModelRefusal.profileId ?? input.profileId,
+      groupId: retainedModelRefusal.groupId ?? input.groupId,
+      sourceAccountIdentity: {
+        ...input.sourceAccountIdentity,
+        groupGeneration: retainedModelRefusal.groupGeneration,
+        credentialRevision: retainedModelRefusal.credentialRevision,
+      },
+    }, {
+      kind: 'plan',
+      limitCategory: 'plan_invalid',
+      quotaScope: 'model',
+      providerLimitId: retainedModelRefusal.providerLimitId,
+      source: retainedModelRefusal.source,
     });
   }
 
@@ -329,7 +379,7 @@ export function classifyCodexConnectedServiceAuthFailure(
       limitCategory: 'capacity',
       quotaScope: 'provider',
       retryAfterMs: readRetryAfterMs(record),
-      resetsAtMs: readResetAtMs(record?.resetsAt ?? record?.resets_at),
+      resetsAtMs: readProviderResetAtMs(record),
       source: record ? 'structured_provider_error' : 'stable_provider_message',
     });
   }
@@ -338,7 +388,8 @@ export function classifyCodexConnectedServiceAuthFailure(
     return buildClassification(input, {
       kind: 'usage_limit',
       limitCategory: 'usage_limit',
-      resetsAtMs: readStableRetryTimeResetAtMs(text, input.nowMs ?? Date.now()),
+      resetsAtMs: readProviderResetAtMs(record)
+        ?? readStableRetryTimeResetAtMs(text, input.nowMs ?? Date.now()),
       retryAfterMs: readRetryAfterMs(record),
       source: 'stable_provider_message',
       recoveryAction: codexUsageLimitRecoveryAction,
@@ -376,7 +427,9 @@ export function classifyCodexConnectedServiceAuthFailure(
     return buildClassification(input, {
       kind: 'usage_limit',
       limitCategory: 'usage_limit',
-      resetsAtMs: readStableRetryTimeResetAtMs(text, input.nowMs ?? Date.now()),
+      resetsAtMs: readProviderResetAtMs(record)
+        ?? readStableRetryTimeResetAtMs(text, input.nowMs ?? Date.now()),
+      retryAfterMs: readRetryAfterMs(record),
       source: 'stable_provider_message',
       recoveryAction: codexUsageLimitRecoveryAction,
     });
