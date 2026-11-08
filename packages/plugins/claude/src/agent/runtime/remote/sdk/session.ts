@@ -1948,6 +1948,12 @@ export function createClaudeAgentSdkTurnOperations(
                 const isSuccessfulResultMessage = isSdkResultMessage(message)
                     && message.subtype === 'success'
                     && message.is_error !== true;
+                if (nextProviderFailure || (isSdkResultMessage(message) && !isSuccessfulResultMessage)) {
+                    // Recovery needs the same persisted conversation proof as a
+                    // successful turn. Drain pending native rows before failure
+                    // publication, so a fresh quota turn can retain its identity.
+                    await resumeIdentityOwner?.settleCurrentCandidate();
+                }
                 if (!isSdkResultMessage(message) && (params.publishSdkMessages === true
                     || (params.publishTranscriptMessages === true && message.type === 'stream_event'))) {
                     const runtimeEvent = mapSdkRuntimeEvent({

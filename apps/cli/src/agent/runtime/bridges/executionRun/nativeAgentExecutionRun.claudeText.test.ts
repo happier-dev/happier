@@ -30,13 +30,27 @@ afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
 it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota failures through real recovery with continuation %s', async resumeMode => {
     const sdk = createSdkExecFixture();
+    const readNativePromptCount = () => sdk.written.filter(record => record !== null && typeof record === 'object'
+        && 'type' in record && record.type === 'user').length;
     const boundary = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
         { exec: sdk.service });
+    let persistedPrompt = '';
+    // Native JSONL persistence is an OS boundary. The accepted prompt is already
+    // on disk when quota fails, but its file notification has not arrived yet.
+    vi.mocked(boundary.agentRuntime.transcripts.fileFollow.follow).mockImplementation(async input => ({
+        id: 'quota-native-proof', close: async () => {}, drainNow: async () => {
+            await input.onLine({ line: JSON.stringify({ type: 'user', uuid: 'quota-user-row',
+                sessionId: 'native-consecutive-quota', message: { role: 'user', content: persistedPrompt } }),
+                sourcePath: input.path, sequence: 1 });
+        },
+    }));
     const runtime = createClaudeNativeRuntime({
         resolveSupportsEffort: async () => false, resolveSupportsSystemPromptSnapshotOff: async () => false,
         openSession: async ({ request }) => createClaudeAgentSdkTurnOperations({
             ctx: boundary, directory: request.cwd, happierSessionId: request.sessionId,
             launchEnv: {}, permissionMode: 'default',
+            enableSessionResumability: true,
+            ...(request.kind === 'resume' ? { initialProviderSessionId: request.providerSessionId } : {}),
         }),
     });
     const rows = new Map<string, unknown>();
@@ -100,31 +114,44 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
             expectedProcesses += 1;
             await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses));
             const process = sdk.processes.at(-1)!;
-            await process.emit({ type: 'system', subtype: 'init', session_id: 'native-consecutive-quota', tools: [] });
+            await vi.waitFor(() => expect(process.written).toContainEqual(expect.objectContaining({ type: 'user' })));
+            // The process transport fixture carries unknown vendor JSON.
+            const submitted = process.written.find(record => record !== null && typeof record === 'object'
+                && 'type' in record && record.type === 'user') as { message: { content: string } };
+            persistedPrompt = submitted.message.content;
+            await sdk.emitSessionHook('native-consecutive-quota', { hook_event_name: 'SessionStart',
+                source: attempt === 1 ? 'startup' : 'resume', transcript_path: '/tmp/claude-consecutive-quota/native.jsonl' });
+            await sdk.emitSessionHook('native-consecutive-quota', { hook_event_name: 'UserPromptSubmit', prompt: persistedPrompt });
             await process.emit({ type: 'assistant', uuid: `weekly-error-${attempt}`, session_id: 'native-consecutive-quota',
                 isApiErrorMessage: true, isSidechain: false, error: 'rate_limit',
                 message: { role: 'assistant', stop_reason: 'stop_sequence', content: [{ type: 'text',
                     // The second quota follows the first reset and continuation.
                     text: `You've hit your weekly limit · resets Nov ${attempt === 1 ? 14 : 21}, 4pm (Europe/Amsterdam)` }] } });
+            let initialSettled: Awaited<ReturnType<typeof manager.readTurnStream>> | undefined;
             await vi.waitFor(async () => {
                 const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor: 0, waitForEvents: false });
+                if (read.done) initialSettled = read;
                 expect(read.done).toBe(true);
-                if (resumeMode === 'off') {
-                    expect(read.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
-                } else {
-                    const speech = read.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment');
-                    expect(speech).toHaveLength(1);
-                    expect(read.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
-                        text: expect.stringContaining('Happier will retry automatically at') } });
-                }
             });
+            if (resumeMode === 'off') {
+                expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+            } else {
+                const speech = initialSettled!.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment');
+                expect(speech).toHaveLength(1);
+                expect(initialSettled!.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
+                    text: expect.stringContaining('Happier will retry automatically at') } });
+            }
             if (resumeMode === 'standard') {
                 const waiting = temporaryThrottleScheduler.read('run:claude-consecutive-quota');
                 expect(waiting).toMatchObject({ status: 'waiting', attemptCount: 0 });
+                expect(initialSettled!.terminalEvent).toMatchObject({ output: {
+                    text: expect.stringContaining(new Date(waiting!.nextRetryAtMs!).toLocaleString()),
+                } });
                 expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('active_turn');
                 expect(recoveryDecisions).toHaveLength(attempt - 1);
                 // A second spoken commit must consume the retained waiting fact,
                 // without trying to admit another native turn or cancelling it.
+                const nativePromptsBeforeRepeat = readNativePromptCount();
                 const repeated = await manager.startTurnStream({ voiceAgentId, userText: 'Are you still waiting?' });
                 let settled: Awaited<ReturnType<typeof manager.readTurnStream>> | undefined;
                 await vi.waitFor(async () => {
@@ -136,8 +163,14 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                 expect(settled!.events.filter(event => event.t === 'error')).toEqual([]);
                 expect(settled!.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
                     text: expect.stringContaining('Happier will retry automatically at') } });
+                expect(settled!.terminalEvent).toMatchObject({ output: {
+                    text: initialSettled!.terminalEvent?.t === 'voice_output'
+                        && initialSettled!.terminalEvent.output.kind === 'turn_final'
+                        ? initialSettled!.terminalEvent.output.text : undefined,
+                } });
                 expect(settled!.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toHaveLength(1);
                 expect(sdk.processes).toHaveLength(expectedProcesses);
+                expect(readNativePromptCount()).toBe(nativePromptsBeforeRepeat);
                 expect(temporaryThrottleScheduler.read('run:claude-consecutive-quota')).toMatchObject({ status: 'waiting', attemptCount: 0 });
                 expect(recoveryDecisions).toHaveLength(attempt - 1);
                 // Advance the real scheduler's provider reset boundary. Voice did
