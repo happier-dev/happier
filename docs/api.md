@@ -3677,9 +3677,10 @@ For an existing passage thread, `doc.edit.propose` may instead supply only
 `discussionRef`, `localId`, `after` and optional `reason`; the Doc adapter resolves
 the latest committed passage comment's anchor against the current Doc before
 approval, including any explicit reattachment. The margin and resolver share the
-passage owner: a proposal accepted into the current revision places the thread on
-its replacement at the reviewed source offset. Otherwise the anchor quote must be
-unambiguous. Missing or ambiguous passages return `doc_passage_mismatch`; approval
+passage owner: in development source, accepted replacement text stays placed in
+later revisions through the same unambiguous quote relocation as an original
+passage. A later explicit reattachment takes precedence over an older acceptance.
+Otherwise the anchor quote must be unambiguous. Missing or ambiguous passages return `doc_passage_mismatch`; approval
 replay retains the resolved basis. `after` replaces exactly the quoted span and
 preserves surrounding text.
 Explicit passage inputs retain their authored basis, and acceptance still

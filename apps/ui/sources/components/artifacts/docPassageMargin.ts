@@ -43,7 +43,7 @@ export type DocPassageMarginThread<
   replies: readonly M[];
   /** The suggested edit the thread's card shows: the one still open, else the one accepted into this version, else the latest. */
   proposal: M | null;
-  /** The suggested edit accepted into the revision being read, which may precede a later open one. */
+  /** The accepted edit the current words derive from, which may precede a later open suggestion. */
   acceptedProposal: M | null;
   /**
    * The open suggestion as it would change the text being read: only while the Doc is at the revision it
@@ -75,9 +75,8 @@ const sameRevision = (left: ArtifactRevisionV1, right: ArtifactRevisionV1) =>
  * Place each passage thread of a Doc against the revision being read.
  *
  * A passage is found by `locateDocPassageV1` (its stored source range at its own revision, an
- * unambiguous unchanged quote at another; never the first duplicate). A suggestion accepted into
- * the revision being read marks its revised text, checked at the same source offset. Anything else
- * is detached: the thread keeps its old quote and says the passage changed.
+ * unambiguous unchanged quote at another; never the first duplicate). Accepted replacement text
+ * follows that same placement rule in subsequent revisions.
  */
 export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
   input: Readonly<{

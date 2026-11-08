@@ -44,25 +44,31 @@ export type DocPassageThreadLocationV1 = DocPassageLocationV1
 
 /** One placement basis for the margin and subsequent proposals in an existing thread. */
 export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV1,
-  'seq' | 'content' | 'docEditProposalDispositionV1'>>(input: Readonly<{
+  'seq' | 'content' | 'replyTarget' | 'docEditProposalDispositionV1'>>(input: Readonly<{
     target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1; messages: readonly M[];
   }>): Readonly<{ location: DocPassageThreadLocationV1; quote: string; acceptedProposal: M | null }> {
+  const anchor = selectDocPassageThreadAnchorMessageV1(input.messages);
   let acceptedProposal: M | null = null;
   for (const message of input.messages) {
     const disposition = message.docEditProposalDispositionV1;
     if (message.content && 'kind' in message.content && message.content.kind === 'doc_edit_proposal'
       && disposition?.state === 'accepted'
-      && disposition.acceptedRevision.headerVersion === input.revision.headerVersion
-      && disposition.acceptedRevision.bodyVersion === input.revision.bodyVersion
+      && message.seq >= (anchor?.seq ?? 0)
+      && disposition.acceptedRevision.headerVersion <= input.revision.headerVersion
+      && disposition.acceptedRevision.bodyVersion <= input.revision.bodyVersion
       && (!acceptedProposal || message.seq > acceptedProposal.seq)) acceptedProposal = message;
   }
   const content = acceptedProposal?.content;
-  if (content && 'kind' in content && content.kind === 'doc_edit_proposal') {
+  const disposition = acceptedProposal?.docEditProposalDispositionV1;
+  if (content && 'kind' in content && content.kind === 'doc_edit_proposal' && disposition?.state === 'accepted') {
     const { target, after } = content.proposal;
     const start = target.range.start;
-    if (after.length > 0 && input.source.slice(start, start + after.length) === after) {
-      return { location: { state: 'revised', range: { start, end: start + after.length } },
-        quote: after, acceptedProposal };
+    if (after.length > 0) {
+      const location = locateDocPassageV1({ source: input.source, revision: input.revision,
+        target: { ...target, revision: disposition.acceptedRevision,
+          range: { start, end: start + after.length }, quote: after } });
+      if (location.state !== 'detached') return {
+        location: { state: 'revised', range: location.range }, quote: after, acceptedProposal };
     }
   }
   return { location: locateDocPassageV1(input), quote: input.target.quote, acceptedProposal };

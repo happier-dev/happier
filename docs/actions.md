@@ -3470,6 +3470,16 @@ transcript-derived detail for those admitted Sessions; disabling it keeps the
 interval facts and explicit partial detail without reading message pages.
 `includeWorkEvidence` controls native SCM outcomes. All three default to true
 for direct Usage Actions, and the accounting HTTP adapter removes all three.
+The optional host-only `includeCoach` clause controls Coach evaluation over
+those facts: omitted preserves direct Action behavior, while builtin widgets
+enable it only for Coach. Accounting and Session-evidence HTTP requests omit
+this projection clause, so it does not change private-evidence admission.
+The optional host-only `includeQuota` clause controls allowance and pool
+acquisition and projection. Omitted preserves direct Action demand; builtin
+Capacity, Projections, Resets, Plan fit and Coach request it explicitly. Capacity
+still reads current allowance without requesting history. Non-quota slices do
+not acquire allowance or replace the Account owner's retained allowance.
+Accounting and Session-evidence HTTP adapters omit this clause as well.
 Builtin accounting widgets and filter inventory request none; outcome and
 Project-ledger widgets request SCM evidence only. Period summary, Parallel work
 and Night shift request Session summaries without transcript detail. General
@@ -3488,6 +3498,12 @@ proves the same sequence, readable transcript access and content mode. Partial
 pages retain partial coverage; repeating the same page is not historical catch-up.
 Failed or wholly unopened reads remain retryable, and Account or credential
 retirement clears the private evidence.
+
+Accounting dispatch is acknowledged by the shared read owner before a new
+Resource read publishes or traverses retained Session inputs. This waits for
+request issuance, never its response. Successfully admitted, unchanged Session
+inputs return directly; only pending or changed inputs allocate asynchronous
+read continuations. The same input owner retains invalidation and cancellation.
 
 The Session-evidence read publishes admitted interval facts before requested
 transcript detail finishes. Its existing source states distinguish
@@ -4353,6 +4369,9 @@ aborting an uncommitted materialization is not committed-copy deletion authority
 
 In development source, readonly personal copy review uses the strict safe/read
 `projects.worker.copy.inspect` Action, including the Fresh copies UI helper.
+Original Account ingress signs this exact read without disclosing requester
+credentials and requires Manage access to the addressed SOURCE. The raw Sync
+inspection RPC remains restricted to the Machine custodian.
 Its binding reaches the incumbent Sync committed-copy inspection owner, which
 refreshes current Home rows around target inspection, checks current Manage
 ingress and installation lifetime, and derives the review fingerprint from the
@@ -8978,6 +8997,13 @@ the existing child review. This continuation supplies neither a new local grant
 nor a rewritten root Machine identity; ordinary native authorization and domain
 revision checks still apply.
 
+In development 0.3, an original host Service Stop Ask stays with the original
+Account key-holder. Human CLI approval delivers the exact reviewed Stop through
+the existing signed credential-free native carrier. The original Account keeps
+the approval Artifact; replay does not disclose its sign-in or send a generic
+`approval.request.decide` to the Service's Machine. Already signed native
+approvals keep their originating Machine custody.
+
 Development trigger saves can opt into exact-input consent with
 `workflow.trigger.add { actionApproval: 'automatic', ... }` or the same choice
 in a selected trigger's update patch. The host materializes the child inputs
@@ -9933,9 +9959,10 @@ before/after text, reason and full base revision. Posting one changes no Doc tex
 `reason`. The shared Doc adapter reads the thread's latest committed passage
 comment (including an explicit reattachment), then reads the current Doc through
 `doc.read`. The shared passage owner places both the margin and the next proposal
-on a suggestion's replacement when it was accepted into the current revision and
-still occupies its reviewed source offset; otherwise it locates the anchor quote
-unambiguously. It binds that current quote, range and full revision before approval;
+on an accepted suggestion's replacement, including unambiguous relocation in later
+revisions using the original quote-placement rule. A later explicit reattachment
+takes precedence over an older acceptance; otherwise the anchor quote is located
+unambiguously. This is development source behavior. The adapter binds the current quote, range and full revision before approval;
 a missing or ambiguous passage returns `doc_passage_mismatch`. `after` replaces
 exactly that quoted span, preserving all surrounding text. Approval replay keeps that reviewed basis
 without another anchor or Doc read. The explicit `target`, `baseRevision` and

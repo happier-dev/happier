@@ -122,7 +122,7 @@ describe('buildDocPassageMargin', () => {
     ]);
   });
 
-  it('marks the revised text and names the acceptance only while the accepted revision is the one being read', () => {
+  it('keeps accepted text placed after unrelated edits without changing its acceptance revision', () => {
     const replay = passage(source1, 'A replay shows two rows.');
     const after = 'A replay shows one row with a replayed badge.';
     const source2 = source1.replace('A replay shows two rows.', after);
@@ -161,13 +161,25 @@ describe('buildDocPassageMargin', () => {
       revision: r2,
     });
 
-    const later = buildDocPassageMargin({
-      source: `${source2} More.`,
-      revision: { headerVersion: 1, bodyVersion: 3 },
-      threads,
-    });
-    expect(later.accepted).toBeNull();
-    expect(later.threads[0]!.location.state).toBe('detached');
+    for (const source of [`${source2} More.`, `Introduction. ${source2}`]) {
+      const later = buildDocPassageMargin({
+        source,
+        revision: { headerVersion: 1, bodyVersion: 3 },
+        threads,
+      });
+      expect(later.threads[0]!.location).toEqual({
+        state: 'revised',
+        range: { start: source.indexOf(after), end: source.indexOf(after) + after.length },
+      });
+      expect(readDocPassageThreadQuote(later.threads[0]!)).toBe(after);
+      expect(later.accepted).toEqual(current.accepted);
+    }
+    // Later revisions use the same unambiguous relocation rule as original quotes.
+    const ambiguous = buildDocPassageMargin({ source: `${source2} ${after}`,
+      revision: { headerVersion: 1, bodyVersion: 3 }, threads });
+    expect(ambiguous.threads[0]!.location.state).toBe('detached');
+    const earlier = buildDocPassageMargin({ source: source2, revision: r1, threads });
+    expect(earlier.threads[0]!.location.state).toBe('detached');
   });
 
   it('reads the accepted edit from the proposal accepted into this revision while a later proposal stays open', () => {
@@ -269,5 +281,19 @@ describe('buildDocPassageMargin', () => {
     });
     expect(margin.threads).toEqual([]);
     expect(margin.unreadable).toBe(1);
+  });
+
+  it('keeps a later attachment as the placement basis after an older edit was accepted', () => {
+    const original = passage(source1, 'A replay shows two rows.');
+    const after = 'A replay now shows one row.';
+    const source2 = source1.replace(original.quote, after);
+    const attached = passage(source2, 'Escalate to on-call.', r2);
+    const messages = [comment('d-replay', original), proposal('d-replay', original, after, {
+      state: 'accepted', acceptedRevision: r2, decidedBy: { accountId: 'you', atMs: 500 },
+    }), { ...comment('d-replay', attached), seq: 3 }];
+    const thread = buildDocPassageMargin({ source: `${source2} More.`,
+      revision: { ...r2, bodyVersion: 3 }, threads: [{ discussionId: 'd-replay', messages }] }).threads[0]!;
+    expect(thread.location).toEqual({ state: 'relocated', range: attached.range });
+    expect(readDocPassageThreadQuote(thread)).toBe(attached.quote);
   });
 });
