@@ -87,7 +87,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
         return [
             ...(machines.length > 0 ? [{ ...folder, category: '' }] : []),
             ...(onClone ? [{ id: 'clone', testID: `${props.testID}:clone`, title: t('projects.identity.addClone'), icon: <Icon name="download" size={16} />, category: '' }] : []),
-            ...(fromSessions ? [{ id: 'sessions', testID: `${props.testID}:sessions`, title: t('projects.identity.fromYourSessions'),
+            ...(sessionItems.length > 0 ? [{ id: 'sessions', testID: `${props.testID}:sessions`, title: t('projects.identity.fromYourSessions'),
                 icon: <Icon name="chat-circle" size={16} />, category: '',
                 submenu: { items: sessionItems, search: true, searchPlaceholder: t('projects.identity.fromYourSessionsSearch') } }] : []),
             ...yourSources,

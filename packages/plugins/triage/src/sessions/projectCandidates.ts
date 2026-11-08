@@ -149,7 +149,9 @@ export async function readTriageProjectRegistryV1(
 ): Promise<TriageProjectRegistryReadV1> {
     let result: unknown;
     try {
-        result = await host.executeAction(TRIAGE_PROJECTS_LIST_ACTION_ID_V1, {}, options);
+        // A review places into any checkout of the repository, not only the
+        // Projects the person keeps in their list (owner 11-08 curated list).
+        result = await host.executeAction(TRIAGE_PROJECTS_LIST_ACTION_ID_V1, { includeUnlisted: true }, options);
     } catch {
         // A client that cannot serve the Action and a call that failed both
         // arrive here as one rejection. Neither is an empty registry, and

@@ -28,6 +28,12 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { buildProjectsTreeHiddenItems, buildProjectsTreeProjects, type ProjectsTreeProject } from './projectsTreeRows';
+import { storage } from '@/sync/domains/state/storage';
+import { listSessionFolders } from '@/utils/sessions/recentPaths';
+import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
@@ -43,6 +49,9 @@ type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean>
  * Projects column, so the two can never disagree about what a project is or what it does.
  */
 type TreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null }>;
+
+/** A Session folder no checkout covers yet: its Add opens it through Project Open on its Machine. */
+const SESSION_FOLDER_KEY_PREFIX = 'session-folder:';
 
 export function useProjectsListModel() {
     const navigateToOpen = useNavigateToProjectOpen();
@@ -386,18 +395,43 @@ export function useProjectsListModel() {
         if (group) void setProjectHidden(group.projectKey, false);
     }, [groups.hiddenProjectGroups, groups.unlistedProjectGroups, setProjectHidden]);
     /**
-     * "From your sessions" in the + menu: folders only a Session brought, newest first, named like the tree's rows.
-     * Built when the menu opens, never while it is closed.
+     * "From your sessions" in the + menu: every folder a Session of this Account ran in that is not in the list yet,
+     * on any Machine, named like the tree's rows. Folders with an accepted checkout come first (their Add is the
+     * visibility write); a folder no checkout covers (no SCM, so no automatic checkout) opens through Project Open on
+     * its Machine, which adds it. Built when the menu opens, never while it is closed; an empty read draws no entry.
      */
-    const readFromSessions = React.useCallback(() => buildProjectsTreeProjects({
-        groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName,
-        machine: machineId => {
+    const readFromSessions = React.useCallback(() => {
+        const machine = (machineId: string) => {
             const facts = treeMachines[machineId];
             return { name: facts?.name ?? t('machine.unlistedMachine'), homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
-        },
-    }), [groups.unlistedProjectGroups, treeMachines]);
-    const fromSessions = React.useMemo(() => groups.unlistedProjectGroups.length > 0
-        ? { read: readFromSessions, onAdd: showHiddenProject } : null, [groups.unlistedProjectGroups.length, readFromSessions, showHiddenProject]);
+        };
+        const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName, machine });
+        const refs = Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [];
+        const serverId = activeServer.serverId;
+        // The Session list census of this Home: the rows the sessions list itself draws.
+        const sessions = Object.values(readSessionListRowsForServerId(storage.getState().sessionListRowsByServerId, serverId) ?? {});
+        const folders = listSessionFolders(sessions).filter(folder => !refs.some(ref => ref.machineId === folder.machineId
+            && isWorkspacePathWithinRootV1(folder.path, ref.rootPath)));
+        return [...accepted, ...folders.map((folder): ProjectsTreeProject => {
+            const name = resolveWorkspacePathBasenameV1(folder.path) ?? folder.path;
+            const where = machine(folder.machineId);
+            const key = `${SESSION_FOLDER_KEY_PREFIX}${folder.machineId}:${folder.path}`;
+            return { key, name, checkouts: [{ refId: key, machineId: folder.machineId, machineName: where.name, label: name,
+                path: formatPathRelativeToHome(folder.path, where.homeDir ?? undefined), attention: null,
+                ...(where.online === false ? { offline: true } : {}) }] };
+        })];
+    }, [activeServer.serverId, groups.unlistedProjectGroups, treeMachines, workspaceRefsV1]);
+    const addFromSessions = React.useCallback((key: string) => {
+        if (!key.startsWith(SESSION_FOLDER_KEY_PREFIX)) { showHiddenProject(key); return; }
+        const rest = key.slice(SESSION_FOLDER_KEY_PREFIX.length);
+        const separator = rest.indexOf(':');
+        const serverId = String(activeServer.serverId ?? '').trim();
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (separator <= 0 || !serverId || !lifetime?.isCurrent() || lifetime.scope.serverId !== serverId) return;
+        void seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId: rest.slice(0, separator),
+            source: { kind: 'folder', path: rest.slice(separator + 1) }, materialization: { kind: 'attach' } }, navigate: navigateToOpen });
+    }, [activeServer.serverId, navigateToOpen, showHiddenProject]);
+    const fromSessions = React.useMemo(() => ({ read: readFromSessions, onAdd: addFromSessions }), [readFromSessions, addFromSessions]);
 
     /** "Group with…" targets: the other Projects in the list, named like their rows. Read when a menu opens. */
     const { treeProjects } = treeProjection;

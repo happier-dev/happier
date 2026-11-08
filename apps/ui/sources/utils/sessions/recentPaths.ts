@@ -18,6 +18,46 @@ type RecentPathSessionSource = (Pick<
         'id' | 'createdAt' | 'updatedAt' | 'metadata' | 'metadataLayoutVersion'
     >) & Readonly<{ serverId?: string }>;
 
+/** The folder one Session ran in (its Machine and path), or null for a Happier-private folder or an unresolved one. */
+function readSessionFolder(session: RecentPathSessionSource, preferProvidedSessionMetadata: boolean | undefined):
+    Readonly<{ machineId: string; path: string; timestamp: number }> | null {
+    const metadata = readSessionOwnerMetadataView({
+        metadataLayoutVersion: 'metadataLayoutVersion' in session ? session.metadataLayoutVersion : undefined,
+        metadata: session.metadata ?? null,
+        ownerMetadataView: 'ownerMetadataView' in session ? session.ownerMetadataView : undefined,
+    });
+    // A private folder is never a recent folder (it is Happier's, not one the person chose).
+    if (!metadata || readSessionDirectoryKind(metadata) === 'managed') return null;
+    const reachableTarget = preferProvidedSessionMetadata ? null : readMachineTargetForSession(session.id);
+    // One display resolution per session: reading the machine id and the path separately
+    // resolved the same target, and re-read the same project, twice per session.
+    const displayIdentity = reachableTarget
+        ? null
+        : readDisplayIdentityForSession({
+            sessionId: preferProvidedSessionMetadata ? session.id : null,
+            serverId: session.serverId,
+            metadata,
+            preferProvidedMetadata: preferProvidedSessionMetadata === true,
+        });
+    const machineId = reachableTarget?.machineId ?? displayIdentity?.machineId ?? '';
+    const path = reachableTarget?.basePath ?? displayIdentity?.basePath ?? '';
+    return machineId && path ? { machineId, path, timestamp: session.updatedAt || session.createdAt } : null;
+}
+
+/** Every folder these Sessions ran in, on any Machine, newest first and once each. */
+export function listSessionFolders(sessions: ReadonlyArray<RecentPathSessionSource>):
+    ReadonlyArray<Readonly<{ machineId: string; path: string; timestamp: number }>> {
+    const newest = new Map<string, Readonly<{ machineId: string; path: string; timestamp: number }>>();
+    for (const session of sessions) {
+        const folder = readSessionFolder(session, false);
+        if (!folder) continue;
+        const key = `${folder.machineId}\u0000${folder.path}`;
+        const known = newest.get(key);
+        if (!known || folder.timestamp > known.timestamp) newest.set(key, folder);
+    }
+    return [...newest.values()].sort((a, b) => b.timestamp - a.timestamp);
+}
+
 export function getRecentPathsForMachine(params: {
     machineId: string;
     recentMachinePaths: ReadonlyArray<Readonly<{ machineId: string; path: string }>>;
@@ -47,37 +87,10 @@ export function getRecentPathsForMachine(params: {
 
         params.sessions.forEach((item) => {
             if (typeof item === 'string') return;
-            const session = item;
-            const metadata = readSessionOwnerMetadataView({
-                metadataLayoutVersion: 'metadataLayoutVersion' in session ? session.metadataLayoutVersion : undefined,
-                metadata: session.metadata ?? null,
-                ownerMetadataView: 'ownerMetadataView' in session ? session.ownerMetadataView : undefined,
-            });
-            // A private folder is never a recent folder (it is Happier's, not one the person chose).
-            if (!metadata || readSessionDirectoryKind(metadata) === 'managed') return;
-            const reachableTarget = params.preferProvidedSessionMetadata
-                ? null
-                : readMachineTargetForSession(session.id);
-            // One display resolution per session: reading the machine id and the path separately
-            // resolved the same target, and re-read the same project, twice per session.
-            const displayIdentity = reachableTarget
-                ? null
-                : readDisplayIdentityForSession({
-                    sessionId: params.preferProvidedSessionMetadata ? session.id : null,
-                    serverId: session.serverId,
-                    metadata,
-                    preferProvidedMetadata: params.preferProvidedSessionMetadata === true,
-                });
-            const sessionMachineId = reachableTarget?.machineId ?? displayIdentity?.machineId ?? '';
-            const path = reachableTarget?.basePath ?? displayIdentity?.basePath ?? '';
-            if (sessionMachineId === params.machineId && path) {
-                if (!pathSet.has(path)) {
-                    pathSet.add(path);
-                    pathsWithTimestamps.push({
-                        path,
-                        timestamp: session.updatedAt || session.createdAt,
-                    });
-                }
+            const folder = readSessionFolder(item, params.preferProvidedSessionMetadata);
+            if (folder?.machineId === params.machineId && !pathSet.has(folder.path)) {
+                pathSet.add(folder.path);
+                pathsWithTimestamps.push({ path: folder.path, timestamp: folder.timestamp });
             }
         });
 

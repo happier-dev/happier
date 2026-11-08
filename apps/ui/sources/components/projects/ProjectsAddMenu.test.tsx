@@ -88,14 +88,14 @@ describe('ProjectsAddMenu "From your sessions" (owner 11-08)', () => {
     expect(onAdd).toHaveBeenCalledWith('older');
   });
 
-  it('offers no "From your sessions" entry when there is nothing to add', async () => {
+  it('offers no "From your sessions" entry when its read finds nothing to add', async () => {
     const screen = await renderScreen(
       <ProjectsAddMenu
         testID="add"
         machines={[]}
         onAdd={async () => {}}
         onClone={() => {}}
-        fromSessions={null}
+        fromSessions={{ read: () => [], onAdd: () => {} }}
       />,
     );
     await screen.pressByTestIdAsync('add');

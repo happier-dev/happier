@@ -32,7 +32,7 @@ describe('the project registry read', () => {
 
         expect(host.executeAction).toHaveBeenCalledWith(
             TRIAGE_PROJECTS_LIST_ACTION_ID_V1,
-            {},
+            { includeUnlisted: true },
             undefined,
         );
         expect(read).toEqual({
@@ -62,6 +62,18 @@ describe('the project registry read', () => {
      * words in front of a reader, so a rejected call must never read as an
      * empty registry.
      */
+    it('places into every checkout, not only the Projects the person listed (owner 11-08 curated list; TL-A 11-08)', async () => {
+        // The host's projects.list contract: the person's Projects by default, every checkout with includeUnlisted.
+        const sessionFolder = { ...ROW, projectKey: { id: 'workspace_2' }, machineId: 'online-machine', rootPath: '/tmp/forge-qa' };
+        const host = { executeAction: vi.fn(async (_id: string, input: { includeUnlisted?: boolean }) =>
+            ({ items: input.includeUnlisted === true ? [ROW, sessionFolder] : [ROW], truncated: false })) };
+
+        const read = await readTriageProjectRegistryV1(host);
+
+        expect(read.status === 'read' ? read.projects.map(project => project.machineId) : read.status)
+            .toEqual(['machine-1', 'online-machine']);
+    });
+
     it('never reports a rejected call as an empty registry', async () => {
         const host = {
             executeAction: vi.fn(async () => { throw new Error('unsupported_action:projects.list'); }),

@@ -17,6 +17,7 @@ installUiListsCommonModuleMocks();
 const projectOpenAccountActionBoundary = vi.hoisted(() => ({
     capture: false,
     calls: [] as unknown[],
+    opened: null as null | import('@happier-dev/protocol/projects/openProjectV1').OpenProjectResultV1,
 }));
 let projectOpenDraftServerRow: SessionDraftRecordV2 | null = null;
 
@@ -26,7 +27,7 @@ vi.mock('@/sync/api/externalActionAccountTransport', async (importOriginal) => {
     return { ...real, executeOriginalAccountMachineAction: async (params: unknown) => {
         if (!projectOpenAccountActionBoundary.capture) return real.executeOriginalAccountMachineAction(params as never);
         projectOpenAccountActionBoundary.calls.push(params);
-        return { ok: true, result: { kind: 'refused', code: 'FEATURE_UNSUPPORTED' } };
+        return { ok: true, result: projectOpenAccountActionBoundary.opened ?? { kind: 'refused', code: 'FEATURE_UNSUPPORTED' } };
     } };
 });
 
@@ -57,6 +58,7 @@ beforeEach(() => {
     projectOpenDraftServerRow = null;
     projectOpenAccountActionBoundary.capture = false;
     projectOpenAccountActionBoundary.calls = [];
+    projectOpenAccountActionBoundary.opened = null;
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
 });
 afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
@@ -103,6 +105,46 @@ async function seedOpenDraft(draftId: string, scope = { serverId: 'home', accoun
 }
 
 describe('Project Open rendered choices', () => {
+    it('adds a Project opened from a folder to the Projects list (owner 11-08: the list shows Projects the person added)', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000085';
+        const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        onTestFinished(() => home.reset());
+        const serverId = await home.addHome({ name: 'Project Open', serverUrl: 'https://home.test',
+            serverIdentityId: 'srv_project_open_add', accountId: 'account', currentAccount: true });
+        installFileFindAccountBoundaryMocks(serverId, 'account');
+        const scope = { serverId, accountId: 'account' };
+        await seedOpenDraft(draftId, scope);
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId, machineId: 'machine',
+            source: { kind: 'folder', path: '/Users/tester/fixture' }, materialization: { kind: 'attach' } } } });
+        const checkout = { id: 'fixture-ref', serverId, machineId: 'machine', rootPath: '/Users/tester/fixture', createdAtMs: 1, projectKey: 'fixture-ref' };
+        const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowMutationRequestV1Schema } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] }) });
+        const written: unknown[] = [];
+        home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: async (_input, request) => {
+            const mutation = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(String(request.init?.body)));
+            written.push(...mutation.mutations.map(change => ({ key: change.key, expectedRevision: change.expectedRevision,
+                value: change.content && 'v' in change.content ? (change.content.v as { value: unknown }).value : change.content })));
+            return { status: 200, body: { status: 'updated', cursor: 1,
+                rows: mutation.mutations.map(change => ({ key: change.key, revision: 0, content: change.content })) } };
+        } });
+        projectOpenAccountActionBoundary.capture = true;
+        projectOpenAccountActionBoundary.opened = { kind: 'opened', setup: 'notRequired', directory: checkout.rootPath,
+            workspace: { serverId, machineId: 'machine', workspaceId: checkout.id, rootPath: checkout.rootPath },
+            facts: { projectKey: checkout.projectKey } };
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId }} />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.submit')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('projects.open.submit');
+        await vi.waitFor(() => expect(projectOpenAccountActionBoundary.calls).toHaveLength(1));
+        await vi.waitFor(() => expect(written).not.toEqual([]));
+        // No Session or recency marks a folder the person added: its organization row says it is shown.
+        expect(written).toEqual([{ key: { kind: 'project-organization', serverId: 'srv_project_open_add', projectKey: checkout.projectKey },
+            expectedRevision: 'absent', value: { hidden: false } }]);
+    });
+
     it('keeps same-name Machines distinguishable and retains the selected id when reopened after presence changes', async () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         const seeded = await seedOpenDraft(draftId);

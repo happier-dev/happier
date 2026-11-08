@@ -101,6 +101,36 @@ afterEach(async () => {
     await disconnectActiveServerConnection(); await homes.reset();
 });
 
+describe('"From your sessions" (TL-A 11-08)', () => {
+    it('offers every folder a Session ran in that no checkout covers, on any Machine, and adds one through Project Open', async () => {
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine', activeAt: Date.now() })], true, { sourceServerId: serverId });
+        const ran = (id: string, machineId: string, path: string, updatedAt: number) =>
+            createSessionListRenderableSessionFixture({ id, updatedAt, metadata: { machineId, path } });
+        await act(async () => {
+            storage.setState({ sessionListRowsByServerId: { [serverId]: {
+                // Inside the person's checkout /repo: already their Project.
+                inside: ran('inside', 'machine', '/repo/packages/app', 30),
+                // No SCM, so no automatic checkout: the folder alone.
+                scratch: ran('scratch', 'machine', '/tmp/forge-qa-scratch', 20),
+                // A Machine this Home no longer lists still names its folder.
+                elsewhere: ran('elsewhere', 'gone-machine', '/srv/notes', 10),
+            } } });
+        });
+        const hook = await renderHook(() => useProjectsListModel());
+        const offered = hook.getCurrent().fromSessions!.read();
+        expect(offered.map(project => [project.name, project.checkouts[0]!.machineId])).toEqual([
+            ['forge-qa-scratch', 'machine'],
+            ['notes', 'gone-machine'],
+        ]);
+        await act(async () => { hook.getCurrent().fromSessions!.onAdd(offered[0]!.key); });
+        // Desktop opens Project Open as a dialog over the list, with the folder's draft.
+        const { Modal } = await import('@/modal');
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
+        expect(vi.mocked(Modal.show).mock.calls.at(-1)![0]).toMatchObject({ props: { routeParams: { serverId } } });
+        await hook.unmount();
+    });
+});
+
 describe('PF3 real Projects model → tree cost', () => {
     async function mountTree() {
         const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });

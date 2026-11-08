@@ -42,7 +42,14 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
                 try {
                     account = await captureLazyActionAccountContext(result.workspace.serverId);
                     if (!isCurrent() || account.accountId !== options.scope.accountId) return;
-                    await createUiProjectAccountRowsClient(account).read();
+                    const rows = createUiProjectAccountRowsClient(account);
+                    await rows.read();
+                    if (!isCurrent()) return;
+                    // Opening a Project here is the person adding it, so the Projects list shows it (owner 11-08).
+                    // The list is not the open: a failed write leaves the Project unlisted and still focuses it.
+                    await rows.mutateOrganization({ serverId: account.serverId,
+                        projectKey: result.facts?.projectKey ?? result.workspace.workspaceId,
+                        mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(() => undefined);
                     if (!isCurrent()) return;
                 } catch {
                     if (isCurrent()) setFocusUnavailable(true);
