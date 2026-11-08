@@ -1,8 +1,8 @@
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import axios from '@/api/client/credentialAxios';
-import { AccountApiTokenSelfV1Schema, AccountApiTokenEncryptionAccessResponseV1Schema,
-  ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { AccountApiTokenEncryptionAccessResponseV1Schema,
+  ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { readApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -76,9 +76,10 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
   if (!('credentialId' in root) || root.sessionActionOrigin || root.workflowActionOrigin
     || !http || http.accountId !== root.accountId
     || http.serverIdentityId !== root.serverIdentityId || !root.accountEncryptionMode) return null;
+  const mode = root.accountEncryptionMode;
   let live = true;
   let key: Uint8Array | null = null;
-  const isCurrent = async () => live && !signal?.aborted && await http.isCurrent() && live && !signal?.aborted;
+  const isCurrent = async () => live && !signal?.aborted && await http.isCurrent();
   const request = async (method: 'GET' | 'POST', path: string, body?: unknown) => {
     if (!await isCurrent()) throw new Error('action_forbidden');
     const headers = await http.createRequestHeaders({ method, path, ...(body === undefined ? {} : { body }),
@@ -86,14 +87,11 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
     if (!headers) throw new Error('action_forbidden');
     const response = await axios.request<unknown>({ url: `${http.serverHttpBaseUrl}${path}`, method, headers,
       ...(body === undefined ? {} : { data: body }), ...(signal ? { signal } : {}), validateStatus: () => true });
-    if (response.status !== 200 || !await isCurrent()) throw new Error('action_forbidden');
+    if (response.status !== 200) throw new Error('action_forbidden');
     return response.data;
   };
   try {
-    const self = AccountApiTokenSelfV1Schema.parse(await request('GET', ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1));
-    if (self.accountId !== root.accountId || self.credentialId !== root.credentialId || self.parentTokenId !== null
-      || self.accountEncryptionMode !== root.accountEncryptionMode || !sameStrictJsonValue(self.grant, root.grant)) return null;
-    if (self.accountEncryptionMode === 'e2ee') {
+    if (mode === 'e2ee') {
       const access = readApiTokenDeploymentContentAccess(authorization);
       if (!access) return null;
       const wrapped = AccountApiTokenEncryptionAccessResponseV1Schema.parse(await request('POST', ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, {}));
@@ -118,11 +116,11 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
       },
       getAccountEncryptionMode: async () => {
         if (!await isCurrent()) throw new Error('action_forbidden');
-        return self.accountEncryptionMode;
+        return mode;
       } });
     const projection: TokenProjection = {
-      accountId: root.accountId, serverId: http.serverId, accountEncryptionMode: self.accountEncryptionMode, isCurrent,
-      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: self.accountEncryptionMode, material,
+      accountId: root.accountId, serverId: http.serverId, accountEncryptionMode: mode, isCurrent,
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode, material,
         randomBytes: length => new Uint8Array(randomBytes(length)) }),
       readArtifact: async (ref, options) => {
         if (ref.serverId !== root.serverIdentityId && ref.serverId !== http.serverId || !await isCurrent()
@@ -133,11 +131,11 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
           authorizationHeaders: async req => {
             const headers = await http.createRequestHeaders({ ...req, effectActionId: root.actionId,
               ...(options.signal ? { signal: options.signal } : {}) });
-            if (!headers || !await isCurrent()) throw new Error('action_forbidden');
+            if (!headers) throw new Error('action_forbidden');
             return { ...headers };
           },
         }));
-        return artifact && await isCurrent() ? { artifactId: artifact.artifactId, header: artifact.header,
+        return artifact ? { artifactId: artifact.artifactId, header: artifact.header,
           document: { artifactId: artifact.artifactId, header: artifact.header, body: artifact.body, revision: artifact.revision } } : null;
       },
     };

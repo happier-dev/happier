@@ -62,16 +62,12 @@ describe('token deployment authoring through the native Account HTTP owner', () 
       createRequestHeaders: async () => ({ 'x-test-root': 'signed' }),
     } };
     let selfReads = 0;
-    let initialSelf: 'unavailable' | 'mode-mismatch' | 'ready' = 'unavailable';
     let wrappedAccountId = 'another-account';
     vi.spyOn(axios, 'request').mockImplementation(async request => {
       const path = new URL(String(request.url)).pathname;
       if (path === '/v1/auth/api-tokens/self') {
         selfReads++;
-        return initialSelf !== 'unavailable' && selfReads === 1 ? { status: 200, data: {
-          accountId, accountEncryptionMode: initialSelf === 'mode-mismatch' ? 'plain' : 'e2ee',
-          credentialId: tokenId, parentTokenId: null, expiresAt: null, grant, embedConfig: null } }
-          : { status: 503, data: { error: 'unavailable' } };
+        return { status: 503, data: { error: 'unavailable' } };
       }
       if (path === '/v1/auth/api-tokens/encryption-access') return { status: 200, data: { v: 1, accountId: wrappedAccountId, tokenId,
         encryptionAccess: wrapApiTokenEncryptionAccessV1({ context: { serverIdentityId: 'srv_home', accountId, tokenId, contentPublicKey },
@@ -101,15 +97,8 @@ describe('token deployment authoring through the native Account HTTP owner', () 
     });
     const retire = retainApiTokenDeploymentContentAccess(authorization, { contentPublicKey,
       wrappingSecret: encodeBase64(wrappingSecret, 'base64url') });
-    // New projections still prove Account mode and bind the acquired key before publishing custody.
+    // S8: Home's signed root supplies mode; acquired key custody still binds the Account.
     expect(await prepareApiTokenDeploymentAccountProjection(authorization)).toBeNull();
-    selfReads = 0;
-    initialSelf = 'mode-mismatch';
-    expect(await prepareApiTokenDeploymentAccountProjection(authorization)).toBeNull();
-    selfReads = 0;
-    initialSelf = 'ready';
-    expect(await prepareApiTokenDeploymentAccountProjection(authorization)).toBeNull();
-    selfReads = 0;
     wrappedAccountId = accountId;
     const custody = await prepareApiTokenDeploymentAccountProjection(authorization);
     try {
@@ -123,7 +112,7 @@ describe('token deployment authoring through the native Account HTTP owner', () 
       await expect(store.read('22222222-2222-4222-8222-222222222222', { prepareRecipients: false,
         includeSharedAudience: false, authorizationHeaders: async () => ({ 'x-test-root': 'signed' }) }))
         .resolves.toMatchObject({ body: '{"candidate":true}' });
-      expect(selfReads).toBe(1);
+      expect(selfReads).toBe(0);
       storedMode = 'plain';
       await expect(store.read('22222222-2222-4222-8222-222222222222', { prepareRecipients: false,
         includeSharedAudience: false, authorizationHeaders: async () => ({ 'x-test-root': 'signed' }) }))
