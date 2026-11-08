@@ -25,7 +25,9 @@ const transfer = vi.hoisted(() => ({ fetch: vi.fn<typeof fetch>() }));
 vi.mock('@/utils/system/runtimeFetch', async importOriginal => {
   const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
   return { ...actual, runtimeFetch: (...args: Parameters<typeof fetch>) => String(args[0]).includes('/machine-transfers/direct/')
-    ? transfer.fetch(...args) : actual.runtimeFetch(...args) };
+    ? transfer.fetch(...args) : actual.runtimeFetch(...args) ,
+      get runtimeFetchManualResponse() { return this.runtimeFetch; },
+  };
 });
 // Keep Action approval, output validation, restore dispatch and notices real.
 // The remote Machine RPC is the genuine network boundary.

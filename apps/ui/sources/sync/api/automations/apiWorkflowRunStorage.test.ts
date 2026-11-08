@@ -11,7 +11,9 @@ import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serve
 
 // Public capability discovery and captured HTTP are network boundaries.
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 afterEach(() => { runtimeFetch.mockReset(); vi.restoreAllMocks(); });
 
 it('shares only admitted read bytes across invocation transports and leaves cancellation and writes independent', async () => {

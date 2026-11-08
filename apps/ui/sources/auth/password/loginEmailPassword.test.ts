@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loginEmailPassword, type EmailPasswordLoginTarget } from './loginEmailPassword';
-import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, createPasswordEnvelopeAadV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { createPasswordEnvelopeAadV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { deriveKey } from '@/encryption/deriveKey';
 import { sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
@@ -9,7 +10,9 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
 // The network is the boundary; request transport and protocol parsing stay real.
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 
 const target: EmailPasswordLoginTarget = {
     endpointUrl: 'https://password-home.example.test',

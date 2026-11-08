@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT } from '@happier-dev/protocol/sessions';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
@@ -25,6 +26,7 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: vi.fn(async () => new Response('{}', { status: 200 })),
     resetRuntimeFetch: () => {},
     setRuntimeFetch: () => {},
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 async function boot(socketRole?: Readonly<{ clientType: 'session-scoped'; sessionId: string }>, encryption: Encryption | null = null,
@@ -189,8 +191,49 @@ describe('apiSocket transports and roles', () => {
         }
     });
 
+    it('holds an early Machine RPC on the active socket until the Machine list opens its key', async () => {
+        const machineId = 'early-rpc-machine';
+        const serverId = resolveServerProfileScopeIdForIdentifier(getActiveServerSnapshot().serverId);
+        const secret = new Uint8Array(32).fill(3);
+        const dataKey = new Uint8Array(32).fill(4);
+        const source = await Encryption.create(secret);
+        await source.initializeMachines(new Map([[machineId, dataKey]]));
+        const encryption = await Encryption.create(secret);
+        const cold = createMachineFixture({ id: machineId, storageMode: 'e2ee', metadata: null,
+            dataEncryptionKey: encodeBase64(await source.encryptEncryptionKey(dataKey), 'base64') });
+        storage.setState({ machines: { [machineId]: cold }, machineListStatusByServerId: { [serverId]: 'loading' } });
+        const { apiSocket, socket } = await boot(undefined, encryption, serverId);
+        const rpcCalls = () => socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL).length;
+        // A first-paint caller (Project favicon) asks before Sync's Machine list has opened this key.
+        // Reporting the key as missing sends the caller to a second, scoped socket to the same Home.
+        let rejected: unknown = null;
+        const pending = apiSocket.machineRPC(machineId, 'method-test', {}, { timeoutMs: 5_000 }).catch(error => { rejected = error; });
+        await act(async () => { await Promise.resolve(); });
+        expect(rejected).toBeNull();
+        expect(rpcCalls()).toBe(0);
+        const metadata = await source.getMachineEncryption(machineId)!.encryptMetadata(createMachineFixture().metadata!);
+        await act(async () => {
+            await fetchAndApplyMachines({
+                credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'self' })).toString('base64')}.signature`,
+                    secret: encodeBase64(secret) }, expectedAccountMode: 'e2ee', sourceServerId: serverId,
+                encryption, machineDataKeys: new Map(),
+                request: async () => new Response(JSON.stringify([{ ...cold, metadata }])),
+                getMachineSnapshot: () => storage.getState().machines,
+                getExistingMachine: id => storage.getState().machines[id],
+                applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
+                    { sourceServerId: serverId, ...options }),
+                applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+                onListComplete: () => storage.getState().markMachineListSettled(serverId),
+            });
+        });
+        await vi.waitFor(() => expect(rpcCalls()).toBe(1));
+        expect(String((rejected as Error | null)?.message ?? '')).not.toContain('Machine encryption not found');
+        apiSocket.disconnect();
+        await pending;
+    });
+
     it('rejects unwrapped live-stream pixels at socket ingress', async () => {
-        const { MACHINE_LIVE_STREAM_SOCKET_EVENT } = await import('@happier-dev/protocol');
+        const { MACHINE_LIVE_STREAM_SOCKET_EVENT} = await import('@happier-dev/protocol/machines/peer/mediation/stream/v1');
         const { apiSocket, trigger } = await boot();
         const received = vi.fn();
         const error = vi.fn();
@@ -308,3 +351,6 @@ describe('apiSocket transports and roles', () => {
         resetExternalSessionStatusDemandCoordinatorForTests();
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

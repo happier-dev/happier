@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
-import { IrohMachineHandshakeV1Schema, PeerTcpTunnelOpenV2Schema, verifyPeerRouteEphemeralProofV2 } from '@happier-dev/protocol';
+import { IrohMachineHandshakeV1Schema} from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { PeerTcpTunnelOpenV2Schema} from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
+import { verifyPeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -32,7 +34,11 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         getCredentialsForServerUrl: async () => ({ token: boundaries.credentialsToken }),
     } });
 });
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: Parameters<typeof boundaries.fetch>) => boundaries.fetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: Parameters<typeof boundaries.fetch>) => boundaries.fetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
+// Host event transport is a native boundary; the Browser subscription and engine stay real.
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => undefined }));
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -140,6 +146,35 @@ afterEach(async () => {
 });
 
 describe('native preview viewer access', () => {
+    it.each(['localhost:42511', 'lumen.test:42511', '[::1]:42511'])('keeps displayed Service address navigation on the current private viewer across direct and relay access (%s)', async (serviceAddressLabel) => {
+        const input = { ...baseInput, serverId, serviceAddressLabel };
+        const hook = await renderHook(useNativeDirectPreview, { initialProps: input });
+        await flushHookEffects({ cycles: 40 });
+        await hook.rerender({ ...input, requestedUrl: 'https://external.example.test/away' });
+        expect(hook.getCurrent().url).toBe('https://external.example.test/away');
+        await hook.rerender({ ...input, requestedUrl: `http://${serviceAddressLabel}/b?tab=2#heading` });
+        expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123/b?tab=2#heading');
+        // Native-only previews use the same alias while their private lease is authoritative.
+        await hook.rerender({ ...input, fallbackUrl: null, requestedUrl: `http://${serviceAddressLabel}/c` });
+        expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123/c');
+        expect(boundaries.fetch.mock.calls.filter(([url]) => url.includes('/access'))).toHaveLength(1);
+        // A different listener is not the displayed Service, even on the same host.
+        await hook.rerender({ ...input, requestedUrl: 'http://localhost:42512/unrelated' });
+        expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123/start');
+        await act(async () => { storage.setState(state => ({ localSettings: { ...state.localSettings, homeApplicationCarrierEligibility: 'standard_only' } })); });
+        await flushHookEffects({ cycles: 40 });
+        await hook.rerender({ ...input, requestedUrl: `http://${serviceAddressLabel}/d?tab=3#end` });
+        const actual = new URL(hook.getCurrent().url!);
+        const admitted = new URL(serverAccessResponse().accessUrl);
+        expect(actual.origin).toBe(admitted.origin);
+        expect(actual.pathname).toBe('/d');
+        expect(actual.searchParams.get('tab')).toBe('3');
+        expect(actual.searchParams.get('previewToken') === admitted.searchParams.get('previewToken')).toBe(true);
+        expect(actual.hash).toBe('#end');
+        expect(boundaries.fetch.mock.calls.filter(([url]) => url.includes('/access'))).toHaveLength(2);
+        await hook.unmount();
+    });
+
     it('retires an acquired native listener on terminal mux failure and resumes fresh server admission at the current path', async () => {
         const hook = await renderHook(useNativeDirectPreview, { initialProps: { ...baseInput, serverId } });
         await flushHookEffects({ cycles: 40 });
@@ -273,6 +308,9 @@ describe('native preview viewer access', () => {
         expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123/start');
         await hook.rerender({ ...baseInput, serverId, requestedUrl: 'https://preview.example.test//same-origin-path?x=1' });
         expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123//same-origin-path?x=1');
+        await hook.rerender({ ...baseInput, serverId, reloadCommandId: 'retained-preview:reload',
+            requestedUrl: 'https://preview.example.test//same-origin-path?x=1' });
+        expect(hook.getCurrent().url).toBe('http://127.0.0.1:42123//same-origin-path?x=1');
         expect(boundaries.fetch.mock.calls.filter(([url]) => url.includes('/access'))).toHaveLength(1);
         await hook.rerender({ ...baseInput, serverId, previewId: null });
         expect(hook.getCurrent().localOrigin).toBeNull();
@@ -404,6 +442,32 @@ describe('native preview viewer access', () => {
         expect(serverCalls).toHaveLength(1);
         expect(serverCalls[0]?.[1]?.method).toBe('POST');
         expect(new Headers(serverCalls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer header.eyJzdWIiOiJ2aWV3ZXItYWNjb3VudCJ9.signature');
+        await hook.unmount();
+    });
+
+    it('retries a failed view on fresh registration without retrying failure alone or refreshing a healthy viewer', async () => {
+        const input = { ...baseInput, serverId, nativeDirectEnabled: false, viewFailed: false };
+        const hook = await renderHook(useNativeDirectPreview, { initialProps: input });
+        const serverCalls = () => boundaries.fetch.mock.calls.filter(([url, init]) => url.includes('/access') && isServerAccessCall(init));
+        await flushHookEffects({ cycles: 40 });
+        expect(hook.getCurrent().acquiring).toBe(false);
+        expect(serverCalls()).toHaveLength(1);
+        const healthy = { ...input, fallbackUrl: `${fallbackUrl}?previewToken=healthy-registration` };
+        await hook.rerender(healthy);
+        await flushHookEffects();
+        expect(serverCalls()).toHaveLength(1);
+        await hook.rerender({ ...healthy, viewFailed: true });
+        await flushHookEffects();
+        expect(serverCalls()).toHaveLength(1);
+        const reopened = { ...healthy, viewFailed: true, fallbackUrl: `${fallbackUrl}?previewToken=reopened-registration` };
+        await hook.rerender(reopened);
+        await flushHookEffects({ cycles: 40 });
+        expect(hook.getCurrent()).toMatchObject({ acquiring: false, reasonCode: null });
+        expect(hook.getCurrent().url).not.toBeNull();
+        expect(serverCalls()).toHaveLength(2);
+        await hook.rerender(reopened);
+        await flushHookEffects();
+        expect(serverCalls()).toHaveLength(2);
         await hook.unmount();
     });
 
@@ -577,9 +641,44 @@ describe('native preview viewer access', () => {
         const screen = await renderScreen(React.createElement(BrowserViewHost, props));
         await flushHookEffects({ cycles: 40 });
         expect(boundaries.fetch.mock.calls.some(([url]) => url.endsWith('/v1/local-services/preview/preview-1/access'))).toBe(true);
-        const opened = boundaries.invoke.mock.calls.find(([command]) => command === 'desktop_browser_open_view');
-        expect(JSON.stringify(opened?.[1])).toContain('http://127.0.0.1:42123/start');
+        await vi.waitFor(() => {
+            const opened = boundaries.invoke.mock.calls.find(([command]) => command === 'desktop_browser_open_view');
+            expect(JSON.stringify(opened?.[1])).toContain('http://127.0.0.1:42123/start');
+        });
         expect(screen.tree.findAllHostsByTestId('native-preview-elsewhere')).toHaveLength(0);
+        // Keep the consumed native view path while its exact lease closes. The real
+        // access hook must mint fresh relay admission and deliver it to the native view.
+        await screen.update(React.createElement(BrowserViewHost, { ...props, view: { ...view, currentUrl: 'http://127.0.0.1:42123/a' } }));
+        await act(async () => { boundaries.terminalWaiters.get('lease-1')?.resolve(null); });
+        await flushHookEffects({ cycles: 40 });
+        expect(boundaries.fetch.mock.calls.filter(([, init]) => isServerAccessCall(init))).toHaveLength(1);
+        const loads = () => boundaries.invoke.mock.calls.flatMap(([command, args]) => {
+            if (command !== 'desktop_browser_open_view' && command !== 'desktop_browser_navigate') return [];
+            const request = args?.request;
+            if (!request || typeof request !== 'object' || !('url' in request) || typeof request.url !== 'string') return [];
+            const url = new URL(request.url);
+            return [{ origin: url.origin === 'https://preview.example.test' ? 'relay' : 'native', path: url.pathname,
+                admitted: url.searchParams.has('previewToken') }];
+        });
+        await vi.waitFor(() => expect(loads()).toContainEqual({ origin: 'relay', path: '/a', admitted: true }));
+        expect(boundaries.invoke.mock.calls.filter(([command]) => command === 'iroh_start_machine_tunnel')).toHaveLength(1);
+        const { createLocalServicePreviewPortPolicyRefusal } = await import('@happier-dev/peer-mediation/localServices/preview/httpAdapter');
+        const { BrowserFrameUnavailable } = await import('@/components/browser/frame/BrowserFrameUnavailable');
+        const fetchDefault = boundaries.fetch.getMockImplementation()!;
+        boundaries.fetch.mockImplementation((url, init) => isServerAccessCall(init)
+            ? Promise.resolve(Response.json(createLocalServicePreviewPortPolicyRefusal(5173), { status: 403 }))
+            : fetchDefault(url, init));
+        await screen.update(React.createElement(BrowserViewHost, { ...props,
+            view: { ...view, currentUrl: 'http://127.0.0.1:42123/a' },
+            navigationEffect: { kind: 'clientLocalNavigation' as const, viewId: view.viewId,
+                command: { commandId: 'policy-reload', kind: 'reload' as const,
+                    browserSessionId: view.browserSessionId, viewId: view.viewId } },
+        }));
+        await vi.waitFor(() => expect(screen.findByType(BrowserFrameUnavailable).props).toMatchObject({
+            reasonCode: 'destination_port_not_allowed', port: 5173,
+        }));
+        expect(screen.tree.findAllHostsByTestId('native-preview-try-again')).toHaveLength(0);
+        boundaries.fetch.mockImplementation(fetchDefault);
         const nativeDefault = boundaries.invoke.getMockImplementation()!;
         let nextLease = 1;
         boundaries.invoke.mockImplementation((command, args) => {
@@ -597,10 +696,12 @@ describe('native preview viewer access', () => {
         await flushHookEffects({ cycles: 40 });
         expect(boundaries.invoke.mock.calls.filter(([command]) => command === 'iroh_stop_machine_tunnel')
             .map(([, args]) => args?.leaseId)).toContain('lease-2');
+        await vi.waitFor(() => expect(boundaries.invoke.mock.calls.find(([command, args]) => command === 'desktop_browser_open_view'
+            && JSON.stringify(args).includes('preview-view-2'))).toBeDefined());
         const nextOpened = boundaries.invoke.mock.calls.find(([command, args]) => command === 'desktop_browser_open_view'
             && JSON.stringify(args).includes('preview-view-2'));
         expect(JSON.stringify(nextOpened?.[1])).toContain('http://127.0.0.1:42125/start');
-        const proofs = boundaries.fetch.mock.calls.filter(([url]) => url.includes('/access')).map(([, init]) => JSON.parse(String(init?.body)).ephemeralPublicKeyBase64Url);
+        const proofs = boundaries.fetch.mock.calls.filter(([url, init]) => url.includes('/access') && !isServerAccessCall(init)).map(([, init]) => JSON.parse(String(init?.body)).ephemeralPublicKeyBase64Url);
         expect(proofs).toHaveLength(3);
         expect(new Set(proofs).size).toBe(3);
         await screen.unmount();

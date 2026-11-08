@@ -264,6 +264,7 @@ describe('apiSocket reachability supervision', () => {
             runtimeFetch: runtimeFetchMock,
             resetRuntimeFetch: () => {},
             setRuntimeFetch: () => {},
+            get runtimeFetchManualResponse() { return this.runtimeFetch; },
         }));
 
         const { apiSocket } = await import('./apiSocket');
@@ -349,6 +350,7 @@ describe('apiSocket reachability supervision', () => {
             runtimeFetch: runtimeFetchMock,
             resetRuntimeFetch: () => {},
             setRuntimeFetch: () => {},
+            get runtimeFetchManualResponse() { return this.runtimeFetch; },
         }));
 
         const { apiSocket } = await import('./apiSocket');

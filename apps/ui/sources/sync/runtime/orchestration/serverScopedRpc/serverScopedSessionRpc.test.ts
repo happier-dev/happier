@@ -1,6 +1,6 @@
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol';
+import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storage';
@@ -21,6 +21,8 @@ import { sessionRpcWithPreferredSessionScope } from './sessionRpcWithPreferredSe
 
 const TOKEN_A = `hdr.${btoa(JSON.stringify({ sub: 'account-a' }))}.sig`;
 const TOKEN_B = `hdr.${btoa(JSON.stringify({ sub: 'account-b' }))}.sig`;
+
+const scopedAccount = vi.hoisted(() => ({ mode: 'plain' as 'plain' | 'e2ee' }));
 
 const sessionListByIdFixture = {
   id: 'session-1',
@@ -97,7 +99,22 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
 
 vi.mock('@/utils/system/runtimeFetch', async () => {
   const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+  const {
+    createLegacyAccountEncryptionCurrentnessFixture,
+    createPlainAccountEncryptionCurrentnessFixture,
+  } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
   return { runtimeFetch: createSessionReadBatchFetchBoundary((input: RequestInfo | URL, init?: RequestInit) => {
+    // Account admission precedes Session reads. Mirror its independent HTTP
+    // resource rather than returning a Session row to the strict mode parser.
+    const path = new URL(String(input)).pathname;
+    if (path === '/v1/account/encryption/currentness') {
+      return Promise.resolve(Response.json(scopedAccount.mode === 'e2ee'
+        ? createLegacyAccountEncryptionCurrentnessFixture({ secret: scopedAccountSecret })
+        : createPlainAccountEncryptionCurrentnessFixture()));
+    }
+    if (path === '/v1/account/encryption') {
+      return Promise.resolve(Response.json({ mode: scopedAccount.mode, updatedAt: 0 }));
+    }
     if (String(input).endsWith('/v1/auth/ping')) {
       return Promise.resolve(new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -105,7 +122,9 @@ vi.mock('@/utils/system/runtimeFetch', async () => {
       }));
     }
     return globalThis.fetch(input, init);
-  }) };
+  }) ,
+      get runtimeFetchManualResponse() { return this.runtimeFetch; },
+  };
 });
 
 vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation((...args) => getCredentialsSpy(...args));
@@ -120,13 +139,14 @@ const scopedSessionDataKey = new Uint8Array(32).fill(9);
  * data-key envelope sealed to that Account plus a daemon-side codec holding the same DEK.
  */
 async function useRealScopedEncryption() {
+  scopedAccount.mode = 'e2ee';
   const actual = await vi.importActual<typeof import('@/auth/encryption/createEncryptionFromAuthCredentials')>(
     '@/auth/encryption/createEncryptionFromAuthCredentials',
   );
   createEncryptionSpy.mockImplementation(actual.createEncryptionFromAuthCredentials);
   const { Encryption } = await import('@/sync/encryption/encryption');
   const { encodeBase64 } = await import('@/encryption/base64');
-  const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+  const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
   const account = await Encryption.create(scopedAccountSecret);
   const envelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
     dataKey: scopedSessionDataKey,
@@ -144,6 +164,7 @@ async function useRealScopedEncryption() {
 
 describe('sessionRpcWithServerScope', () => {
   afterEach(() => {
+    scopedAccount.mode = 'plain';
     publishAppliedActiveServerRuntimeAvailability(false);
     storage.setState(initialStorageState, true);
     vi.useRealTimers();
@@ -306,7 +327,7 @@ describe('sessionRpcWithServerScope', () => {
     listServerProfilesSpy.mockReturnValue([
       { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
     ]);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: 'secret-b' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),
       initializeSessions: vi.fn(async () => {}),
@@ -408,7 +429,7 @@ describe('sessionRpcWithServerScope', () => {
       { id: 'server-a', serverUrl: 'https://server-a.example.test', name: 'Server A' },
       { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
     ]);
-    getCredentialsSpy.mockResolvedValue({ token: transition === 'home-switch' ? TOKEN_A : TOKEN_B, secret: 'secret' });
+    getCredentialsSpy.mockResolvedValue({ token: transition === 'home-switch' ? TOKEN_A : TOKEN_B });
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),
       initializeSessions: vi.fn(async () => {}),
@@ -433,7 +454,10 @@ describe('sessionRpcWithServerScope', () => {
     sessionRpcSpy.mockResolvedValue({ ok: true });
     finishCapture();
     if (transition === 'account-replacement') {
-      await expect(pending).rejects.toThrow(/account.*match/i);
+      await Promise.all([
+        expect(pending).rejects.toThrow(/account.*match/i),
+        expect(recoveryStopped).rejects.toMatchObject({ rpcErrorCode: 'action_account_scope_changed' }),
+      ]);
       expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
     } else {
       await pending;
@@ -448,7 +472,6 @@ describe('sessionRpcWithServerScope', () => {
       expect(emitWithAck.mock.calls.map((call) => call[1].params)).toContainEqual({ runId: 'run-a-duplicate' });
       expect(createEphemeralSocketSpy.mock.calls.every(([options]) => options.serverUrl === 'https://server-a.example.test')).toBe(true);
     }
-    await recoveryStopped;
     expect(sessionRpcSpy).not.toHaveBeenCalled();
     expect(storage.getState().sessions['session-1'].metadata).toEqual(nextMetadata);
     expect(handles.get('session-1')).toBe(nextHandle);
@@ -462,7 +485,7 @@ describe('sessionRpcWithServerScope', () => {
       generation: 1,
     });
     sessionRpcSpy.mockRejectedValueOnce(new Error('Session encryption not found for session-1'));
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_A, secret: 'secret-a' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_A });
 
     const initializeSessions = vi.fn(async () => {});
     const getSessionEncryption = vi.fn(() => null);
@@ -555,7 +578,7 @@ describe('sessionRpcWithServerScope', () => {
     listServerProfilesSpy.mockReturnValue([
       { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
     ]);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: 'secret-b' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),
       initializeSessions: vi.fn(async () => {}),
@@ -588,7 +611,7 @@ describe('sessionRpcWithServerScope', () => {
     const methodUnavailableError = new Error('RPC method not available');
     Object.assign(methodUnavailableError, { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
     sessionRpcSpy.mockRejectedValueOnce(methodUnavailableError);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_A, secret: 'secret-a' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_A });
 
     const initializeSessions = vi.fn(async () => {});
     const getSessionEncryption = vi.fn(() => null);
@@ -785,7 +808,7 @@ describe('sessionRpcWithServerScope', () => {
     getCredentialsSpy.mockResolvedValue(credentials);
     const { Encryption } = await import('@/sync/encryption/encryption');
     const { encodeBase64 } = await import('@/encryption/base64');
-    const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+    const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
     const account = await Encryption.create(scopedAccountSecret);
     // This is a valid envelope for the right recipient, but contains the wrong
     // Session DEK. Opening the envelope alone cannot establish its freshness.
@@ -886,7 +909,7 @@ describe('sessionRpcWithServerScope', () => {
       generation: 1,
     });
     listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: 'secret-b' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
 
     const initializeSessions = vi.fn(async () => {});
     const getSessionEncryption = vi.fn(() => null);
@@ -998,7 +1021,7 @@ describe('sessionRpcWithServerScope', () => {
       generation: 1,
     });
     listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: 'secret-b' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
 
     const initializeSessions = vi.fn(async () => {});
     const getSessionEncryption = vi.fn(() => null);
@@ -1063,7 +1086,7 @@ describe('sessionRpcWithServerScope', () => {
     listServerProfilesSpy.mockReturnValue([
       { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
     ]);
-    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: 'secret-b' });
+    getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
     createEncryptionSpy.mockResolvedValue({
       decryptEncryptionKey: vi.fn(async () => null),
       initializeSessions: vi.fn(async () => {}),

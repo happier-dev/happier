@@ -7,6 +7,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 installTokenStorageWebPlatformMocks();

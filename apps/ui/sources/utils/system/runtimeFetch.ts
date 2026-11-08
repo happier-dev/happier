@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 export type RuntimeFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -67,9 +66,7 @@ export function resetRuntimeFetch(): void {
 }
 
 export function runtimeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    return init?.redirect === 'manual'
-        ? fetchWithCredentialRedirectRefusal(input, init, activeRuntimeFetch)
-        : activeRuntimeFetch(input, init);
+    return activeRuntimeFetch(input, init);
 }
 
 /** Browsers follow opaque hops; native responses use the shared HTTP redirect owner. */

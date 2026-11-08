@@ -8,7 +8,9 @@ import { createArtifactViaApi, createArtifactWithHeaderViaApi, fetchArtifactWith
 
 // HTTP is the only substituted boundary; API, mode, compatibility, and crypto stay real.
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 
 function json(value: unknown, status = 200): Response {
     return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });

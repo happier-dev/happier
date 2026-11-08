@@ -1,4 +1,5 @@
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { MAX_VOICE_TIMER_DELAY_MS } from '@/voice/runtime/input/TurnEndpointDetector';
 
 function isAbortError(error: unknown): boolean {
@@ -31,10 +32,10 @@ export async function fetchWithTimeout(
     }
   }
   try {
-    return await runtimeFetch(input, {
+    return await fetchWithCredentialRedirectRefusal(input, {
       ...(init ?? {}),
       signal: controller.signal,
-    });
+    }, runtimeFetchManualResponse);
   } catch (error) {
     // A caller-driven abort is a cancellation, not a timeout: surface it distinctly
     // so the caller can treat it as "aborted" rather than a network/timeout failure.

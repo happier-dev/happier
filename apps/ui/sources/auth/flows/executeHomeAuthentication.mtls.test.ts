@@ -20,7 +20,9 @@ vi.mock('react-native', async () => {
         Linking: { openURL: boundary.openUrl },
     });
 });
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.request }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.request ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('expo-constants', async (importOriginal) => {

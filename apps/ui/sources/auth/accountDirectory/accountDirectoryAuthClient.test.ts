@@ -1,6 +1,8 @@
 import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
 import { parseAuthenticatedAccountEntryRoute } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NativeAbortController, NativeAbortSignal } from '@/dev/testkit/fixtures/reactNativeFetchPrimitives';
+import { installAbortSignalThrowIfAborted } from '@/boot/installAbortSignalThrowIfAborted';
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
 import {
@@ -36,6 +38,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
         const url = new URL(input instanceof Request ? input.url : String(input));
         return routeRequest(url.origin, `${url.pathname}${url.search}`, init);
     },
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority } from './accountDirectoryAuthClient';
@@ -43,6 +46,12 @@ import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority } fro
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { 'Content-Type': 'application/json' },
 });
+
+function installNativeAbortSignals() {
+    vi.stubGlobal('AbortController', NativeAbortController);
+    vi.stubGlobal('AbortSignal', NativeAbortSignal);
+    installAbortSignalThrowIfAborted();
+}
 
 /** The `/v1/features` payload an Account Service answers with. */
 function accountServiceFeatures(serverIdentityId = 'srv_directory_1') {
@@ -134,6 +143,7 @@ describe('accountDirectoryAuthClient', () => {
     afterEach(() => {
         restoreLocks();
         storage.restore();
+        delete (NativeAbortSignal.prototype as Partial<AbortSignal>).throwIfAborted;
         vi.unstubAllGlobals();
     });
 
@@ -552,9 +562,12 @@ describe('accountDirectoryAuthClient', () => {
         network.routes.set('/v1/auth/account-directory', () => json({ token: 'restricted-directory-token' }));
     }
 
-    it('logs in by key through the restricted endpoint routes and stores only Directory credentials', async () => {
+    it.each(['standard', 'native'] as const)('logs in by key with a %s signal and stores only Directory credentials', async (signalKind) => {
         const { service } = directory;
         serveDirectoryKeyChallenge();
+        // React Native's installed AbortSignal predates throwIfAborted and reason.
+        if (signalKind === 'native') installNativeAbortSignals();
+        const controller = new AbortController();
 
         await expect(accountDirectoryAuthClient.loginWithKey({
             endpointUrl: `${service.endpointUrl}/`,
@@ -562,6 +575,7 @@ describe('accountDirectoryAuthClient', () => {
             canonicalServerUrl: `${service.canonicalServerUrl}/`,
             secret: new Uint8Array(32).fill(11),
             verifiedServerFeaturesSnapshot: service.snapshot,
+            signal: controller.signal,
         })).resolves.toEqual({ token: 'restricted-directory-token' });
 
         // The verified discovery snapshot is reused: only the restricted Directory key routes are called.
@@ -573,6 +587,51 @@ describe('accountDirectoryAuthClient', () => {
         await expect(TokenStorage.accountDirectoryAuthCredentials.get(target))
             .resolves.toEqual({ token: 'restricted-directory-token' });
         await expect(TokenStorage.getPendingAccountDirectoryAuth(target)).resolves.toBeNull();
+    });
+
+    it('logs in by password with a native signal and stores only Directory credentials', async () => {
+        installNativeAbortSignals();
+        const controller = new AbortController();
+        const { service } = directory;
+        network.routes.set('/v1/auth/email/prelogin', () => json({ v: 1, kind: 'plain_password' }));
+        network.routes.set('/v1/auth/email/login', (_endpoint, _path, init) => {
+            expect(JSON.parse(String(init?.body))).toEqual({
+                v: 1, email: 'person@example.test', password: 'exact native password', credentialTarget: 'account_directory',
+            });
+            return json({ token: 'password-directory-token' });
+        });
+
+        await expect(accountDirectoryAuthClient.loginWithPassword({
+            endpointUrl: service.endpointUrl,
+            endpointServerIdentityId: service.serverIdentityId,
+            canonicalServerUrl: service.canonicalServerUrl,
+            email: 'person@example.test', password: 'exact native password',
+            verifiedServerFeaturesSnapshot: service.snapshot,
+            signal: controller.signal,
+        })).resolves.toEqual({ credentials: { token: 'password-directory-token' }, keyAuthSecret: null });
+        await expect(TokenStorage.accountDirectoryAuthCredentials.get({
+            endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId,
+        })).resolves.toEqual({ token: 'password-directory-token' });
+    });
+
+    it.each(['key', 'password'] as const)('refuses %s login before network or storage when a native signal is aborted', async (method) => {
+        installNativeAbortSignals();
+        const controller = new AbortController();
+        controller.abort();
+        const { service } = directory;
+        const input = {
+            endpointUrl: service.endpointUrl,
+            endpointServerIdentityId: service.serverIdentityId,
+            canonicalServerUrl: service.canonicalServerUrl,
+            verifiedServerFeaturesSnapshot: service.snapshot,
+            signal: controller.signal,
+        };
+        const pending = method === 'key'
+            ? accountDirectoryAuthClient.loginWithKey({ ...input, secret: new Uint8Array(32).fill(11) })
+            : accountDirectoryAuthClient.loginWithPassword({ ...input, email: 'person@example.test', password: 'exact native password' });
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        expect(network.calls).toEqual([]);
+        expect(storedDirectoryKeys()).toEqual([]);
     });
 
     it('fails key login when restricted credential persistence fails', async () => {

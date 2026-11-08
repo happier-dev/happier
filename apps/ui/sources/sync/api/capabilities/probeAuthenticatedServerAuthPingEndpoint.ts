@@ -1,13 +1,14 @@
 import { buildRetryLaterProbeResultFromResponse, type ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 export type AuthenticatedServerAuthPingProbeResult =
     | Extract<ReadinessProbeResult, { status: 'ready' }>
     | Readonly<{ status: 'auth_failed'; statusCode: 401 | 403; errorMessage: string }>
     | Extract<ReadinessProbeResult, { status: 'retry_later' }>
-    | Readonly<{ status: 'server_unreachable'; errorMessage: string }>;
+    | Extract<ReadinessProbeResult, { status: 'server_unreachable' }>;
 
 export function normalizeBaseUrl(raw: string): string | null {
     const value = String(raw ?? '').trim();
@@ -65,9 +66,8 @@ export async function probeAuthenticatedServerAuthPingEndpoint(params: Readonly<
                 Authorization: `Bearer ${params.token}`,
             },
         };
-        const authResponse = params.homeCarrier
-            ? await params.homeCarrier.request(probeUrl, probeInit)
-            : await runtimeFetch(probeUrl, probeInit);
+        const authResponse = await fetchWithCredentialRedirectRefusal(probeUrl, probeInit,
+            params.homeCarrier ? (url, init) => params.homeCarrier!.request(String(url), init ?? {}) : runtimeFetchManualResponse);
 
         if (authResponse.status === 401 || authResponse.status === 403) {
             return {
@@ -101,6 +101,10 @@ export async function probeAuthenticatedServerAuthPingEndpoint(params: Readonly<
 
         return { status: 'ready' };
     } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) return {
+            status: 'server_unreachable', errorMessage: error.message,
+            failure: { code: error.code, retryable: false, status: error.status },
+        };
         return {
             status: 'server_unreachable',
             errorMessage: error instanceof Error ? error.message : String(error),

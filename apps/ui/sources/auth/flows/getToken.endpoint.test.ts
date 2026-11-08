@@ -7,7 +7,7 @@ import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/stora
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { adoptHomeProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { HappyError } from '@/utils/errors/errors';
-import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { HOME_IDENTITY_MISMATCH_AUTH_CODE } from './authenticationFailure';
 import type { AuthGetTokenAtEndpointParams } from './getToken';
 import { Modal } from '@/modal';
@@ -18,6 +18,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 // The address-trust decision asks the person; their answer is the boundary.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);

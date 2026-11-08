@@ -1624,27 +1624,6 @@ describe('account Voice operation service', () => {
     }
   });
 
-  it('retains a bounded response failure diagnostic for a followed redirect', async () => {
-    const response = new Response('{}', {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-    Object.defineProperty(response, 'redirected', { value: true });
-    const service = createAccountVoiceOperationService({
-      providerId: 'happier.voice.openai/realtime-openai',
-      recipientContract,
-      signal: new AbortController().signal,
-      isCurrent: () => true,
-      fetch: async () => response,
-      materializeSecret: async () => 'account-secret',
-    });
-
-    await expect(requestClientAuth(service)).rejects.toMatchObject({
-      code: 'provider_response_invalid',
-      responseFailure: { kind: 'redirect', status: 200, statusClass: '2xx' },
-    });
-  });
-
   it('uses the selected own secret without a Voice recipient approval record', async () => {
     accountFixture.state = {
       ...accountFixture.state,

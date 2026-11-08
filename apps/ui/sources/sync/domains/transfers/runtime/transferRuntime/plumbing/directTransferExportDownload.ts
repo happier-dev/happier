@@ -1,7 +1,9 @@
 import { isSafeDirectTransferEndpointCandidate, normalizeDirectPeerTransferEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
 import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema, type TransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/transferStream';
 import type { RegistryDownloadRequestV1 } from '@happier-dev/protocol/registries';
+import type { DaemonPluginUiArtifactBytesReadRequest } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 import { FilesystemDownloadOutputSchema, type FilesystemDownloadOutput } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { randomUUID } from '@/platform/randomUUID';
 import { callFilesystemTransferAction } from './filesystemTransferActionClient';
@@ -9,7 +11,8 @@ import { callFilesystemTransferAction } from './filesystemTransferActionClient';
 import { type ChunkDownloadProgress, downloadInChunks } from './chunkTransferClient';
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 import { readBoundedResponseBody } from '@/utils/system/readBoundedResponseBody';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { cleanupBulkTransferDestination } from './cleanupBulkTransferDestination';
@@ -18,6 +21,7 @@ import type { BulkTransferFileDestination } from './bulkTransferFileDestination'
 import { createTransferManifestHasher } from './transferManifestHasher';
 import {
     createDirectTransferRequestAbortSignal,
+    resolveMachineCarrierRequestTimeoutMs,
     resolveDirectTransferRequestTimeoutMs,
 } from './directTransferRequestDeadline';
 import {
@@ -35,6 +39,10 @@ import {
 } from './machineCarrierHttpLease';
 
 type DirectTransferExportPrepareRequest =
+    | Readonly<{
+        t: 'plugin_ui_artifact_download_v1';
+        request: DaemonPluginUiArtifactBytesReadRequest;
+    }>
     | Readonly<{
         t: 'prompt_asset_download_v1';
         path: string;
@@ -56,7 +64,7 @@ type DirectTransferExportPrepareRequest =
     | Readonly<{
         t: 'composer_media_stage_inspect_v1';
         sessionId?: string;
-        handle: import('@happier-dev/protocol').ComposerContentHandleV1;
+        handle: import('@happier-dev/protocol/runtime/input/composerContentV1').ComposerContentHandleV1;
         offset: number;
         maxBytes: number;
     }>;
@@ -168,7 +176,10 @@ function toDirectTransferExportPrepareFailure(error: unknown): Readonly<{
     return {
         ok: false,
         error: error instanceof Error ? error.message : 'Direct export unavailable',
-        ...(error && typeof error === 'object'
+        ...(error instanceof CredentialRequestRedirectError ? { errorCode: error.code }
+            : isMachineRpcTimeoutError(error)
+            ? { errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE }
+            : error && typeof error === 'object'
             && (error as { errorCode?: unknown }).errorCode === MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE
             ? { errorCode: MACHINE_CARRIER_TRANSPORT_FAILED_ERROR_CODE }
             : {}),
@@ -192,7 +203,7 @@ async function releasePreparedDirectTransferExport(params: Readonly<{
         await callGuardedMachineRpcWithPolicy({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
-            timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs),
+            ...(params.timeoutMs == null ? {} : { timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs) }),
             method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE,
             payload: { transferId: params.transferId },
         });
@@ -315,6 +326,7 @@ type DirectTransferCarrierRouteResult =
         ok: true;
         endpointCandidates: readonly TransferEndpointCandidate[];
         request?: MachineCarrierHttpRequester;
+        carrierKind?: MachineCarrierHttpLease['kind'];
         releaseCarrier?: (() => Promise<void> | void) | null;
     }>
     | Readonly<{ ok: false; error: string; errorCode?: string }>;
@@ -360,6 +372,7 @@ async function acquirePreparedDirectTransferRoute(params: Readonly<{
             ok: true,
             endpointCandidates,
             ...(carrier && carrier.kind !== 'native_http' ? { request: carrier.request } : {}),
+            ...(carrier ? { carrierKind: carrier.kind } : {}),
             ...(carrier ? { releaseCarrier: carrier.release } : {}),
         };
     } catch (error) {
@@ -403,7 +416,7 @@ async function runtimeFetchJsonWithDirectTransferTimeout(
     url: string,
     init: RequestInit,
     params: Readonly<{
-        timeoutMs: number;
+        timeoutMs: number | null;
         maxBodyBytes: number;
         signal?: AbortSignal | null;
         request?: MachineCarrierHttpRequester;
@@ -411,10 +424,10 @@ async function runtimeFetchJsonWithDirectTransferTimeout(
 ): Promise<unknown> {
     const requestSignal = createDirectTransferRequestAbortSignal(params);
     try {
-        const response = await (params.request ?? runtimeFetch)(url, {
+        const response = await fetchWithCredentialRedirectRefusal(url, {
             ...init,
             signal: requestSignal.signal,
-        });
+        }, params.request ?? runtimeFetchManualResponse);
         if (!response.ok) {
             await response.body?.cancel().catch(() => undefined);
             throw new DirectTransferHttpStatusError(response.status);
@@ -451,7 +464,6 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     preparedExport?: Extract<FilesystemDownloadOutput, { success: true; status: 'accepted' }>['prepared'];
     /** A one-file caller owns this publication; tree copies retain their enclosing custody. */
     releasePreparedExport?: boolean;
-    request: DirectTransferExportPrepareRequest;
     destination: BulkTransferFileDestination;
     cleanupOnFailure?: boolean;
     onInit?: ((init: Readonly<{ name: string; sizeBytes: number; manifestHash?: string }>) => Promise<void | DirectTransferFailureResponse>) | null;
@@ -463,7 +475,16 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     acquirePreparedCarrier?: ((prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>) | null;
     /** Original Account custody, independent of the cancelled byte lease. */
     acquireCleanupCarrier?: ((prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>) | null;
-}>): Promise<DirectTransferFileDownloadResponse> {
+}> & (
+    Readonly<{ request: DirectTransferExportPrepareRequest; acceptedReceipt?: never }>
+    | Readonly<{
+        /** Already admitted by the containing Action; never prepare or dispatch it again. */
+        acceptedReceipt: Extract<FilesystemDownloadOutput, { success: true; status: 'accepted' }>;
+        request?: never;
+        preparedExport?: never;
+        releasePreparedExport?: never;
+    }>
+)): Promise<DirectTransferFileDownloadResponse> {
     async function cleanupFailedDestination(originalError?: unknown): Promise<void> {
         if (params.cleanupOnFailure === false) {
             return;
@@ -476,13 +497,16 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         return { ok: false, error: 'Download canceled' };
     }
 
-    if (params.signal?.aborted) {
+    if (params.signal?.aborted && !params.acceptedReceipt) {
         if (params.preparedExport && params.releasePreparedExport) await releasePreparedDirectTransferExport({
             machineId: params.machineId, serverId: params.serverId, transferId: params.preparedExport.transferId, timeoutMs: params.timeoutMs });
         return await returnCanceled();
     }
 
-    const prepared: DirectTransferPrepareResult = params.preparedExport
+    const prepared: DirectTransferPrepareResult = params.acceptedReceipt
+        ? { ok: true, prepare: { success: true, ...params.acceptedReceipt.prepared }, releaseExport: async () => {},
+            filesystemDestinationId: params.acceptedReceipt.destinationId }
+        : params.preparedExport
         ? { ok: true, prepare: { success: true, ...params.preparedExport }, releaseExport: async () => {} }
         : await prepareDirectTransferExport(params);
     if (!prepared.ok) {
@@ -537,7 +561,6 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     }
 
     const recipientKeyPair = createTransferRecipientKeyPair();
-    const requestTimeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
     const acquiredRoute = await acquirePreparedDirectTransferRoute({
         prepare,
         ...(params.httpOriginOverride === undefined ? {} : { httpOriginOverride: params.httpOriginOverride }),
@@ -553,6 +576,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         };
     }
     carrierRoute = acquiredRoute;
+    const requestTimeoutMs = resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, carrierRoute.carrierKind);
     const carrierRequest = carrierRoute.request;
 
     let completed: Extract<DirectTransferFileDownloadResponse, { ok: true }> | null = null;
@@ -680,7 +704,8 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
             const cause = carrierRoute.releaseCarrier && !params.signal?.aborted && transportFailure
                 ? createMachineCarrierTransportFailure(error) : error;
             failure = { error: cause instanceof Error ? cause.message : 'Direct export download unavailable',
-                ...(cause instanceof Error && 'errorCode' in cause && typeof cause.errorCode === 'string'
+                ...(cause instanceof CredentialRequestRedirectError ? { errorCode: cause.code }
+                    : cause instanceof Error && 'errorCode' in cause && typeof cause.errorCode === 'string'
                     ? { errorCode: cause.errorCode } : {}) };
             if (params.signal?.aborted) {
                 return await returnCanceled();
@@ -741,18 +766,20 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
                         try {
                             const candidate = cleanupRoute.endpointCandidates[0];
                             completionAcknowledged = candidate ? await acknowledgeFilesystemExport(candidate, cleanupRoute, outcome,
-                                resolveDirectTransferRequestTimeoutMs(params.timeoutMs)) : false;
+                                params.timeoutMs) : false;
                         } finally { await cleanupRoute.releaseCarrier?.(); }
                     }
                 } catch { completionAcknowledged = false; }
             } else {
                 completionAcknowledged = await acknowledgeFilesystemExport(completionCandidate, carrierRoute, outcome,
-                    resolveDirectTransferRequestTimeoutMs(params.timeoutMs)).catch(() => false);
+                    params.timeoutMs).catch(() => false);
             }
         }
         // A closed destination has taken actual bytes. An uncertain acknowledgement
         // cannot turn that effect into a cancellation or delete it.
-        if (!completionAcknowledged && !destinationClosed) await prepared.releaseExport();
+        // Generic exports have no filesystem settlement endpoint. Their byte
+        // recipient releases the publication after either success or failure.
+        if (!prepared.filesystemDestinationId || (!completionAcknowledged && !destinationClosed)) await prepared.releaseExport();
         await Promise.resolve(carrierRoute?.releaseCarrier?.()).catch(() => undefined);
     }
 }
@@ -763,13 +790,14 @@ async function acknowledgeFilesystemExport(
     outcome: Readonly<{ destinationId: string }> & (
         Readonly<{ success: true; sizeBytes: number; manifestHash: string }>
         | Readonly<{ success: false; error: string; errorCode?: string }>),
-    timeoutMs: number,
+    timeoutMs: number | null | undefined,
 ): Promise<boolean> {
     const { requestUrl, authorizationHeader } = extractDirectPeerRequestAuth(candidate, true);
     const response = await runtimeFetchJsonWithDirectTransferTimeout(buildDirectExportEndpoint(requestUrl, 'complete'), {
         method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json',
             ...(authorizationHeader ? { authorization: authorizationHeader } : {}) }, body: JSON.stringify(outcome),
-    }, { timeoutMs, maxBodyBytes: DIRECT_TRANSFER_OPEN_RESPONSE_MAX_BYTES, request: route.request });
+    }, { timeoutMs: resolveMachineCarrierRequestTimeoutMs(timeoutMs, route.carrierKind),
+        maxBodyBytes: DIRECT_TRANSFER_OPEN_RESPONSE_MAX_BYTES, request: route.request });
     return isObject(response) && response.success === true;
 }
 
@@ -787,7 +815,7 @@ export async function completePreparedFilesystemExport(params: Readonly<{
         return candidate ? await acknowledgeFilesystemExport(candidate, route, params.failure
             ? { success: false, destinationId: params.destinationId, ...params.failure }
             : { success: true, destinationId: params.destinationId, sizeBytes: params.prepared.sizeBytes, manifestHash: params.prepared.manifestHash },
-            resolveDirectTransferRequestTimeoutMs(undefined)) : false;
+            undefined) : false;
     } finally { await Promise.resolve(route.releaseCarrier?.()).catch(() => undefined); }
 }
 
@@ -816,7 +844,6 @@ export async function downloadBulkJsonPayloadViaDirectExport<TPayload>(params: R
 
     const jsonMaxBytes = resolveBulkTransferJsonMaxBytes(null);
     const recipientKeyPair = createTransferRecipientKeyPair();
-    const requestTimeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
     const acquiredRoute = await acquirePreparedDirectTransferRoute({
         prepare,
         ...(params.httpOriginOverride === undefined ? {} : { httpOriginOverride: params.httpOriginOverride }),
@@ -830,6 +857,7 @@ export async function downloadBulkJsonPayloadViaDirectExport<TPayload>(params: R
         };
     }
     carrierRoute = acquiredRoute;
+    const requestTimeoutMs = resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, carrierRoute.carrierKind);
 
     let failure: Readonly<{ error: string; errorCode?: string }> = { error: 'Direct export download unavailable' };
     for (const [index, candidate] of carrierRoute.endpointCandidates.entries()) {
@@ -950,7 +978,8 @@ export async function downloadBulkJsonPayloadViaDirectExport<TPayload>(params: R
             const cause = carrierRoute.releaseCarrier && !params.signal?.aborted && transportFailure
                 ? createMachineCarrierTransportFailure(error) : error;
             failure = { error: cause instanceof Error ? cause.message : 'Direct export download unavailable',
-                ...(cause instanceof Error && 'errorCode' in cause && typeof cause.errorCode === 'string'
+                ...(cause instanceof CredentialRequestRedirectError ? { errorCode: cause.code }
+                    : cause instanceof Error && 'errorCode' in cause && typeof cause.errorCode === 'string'
                     ? { errorCode: cause.errorCode } : {}) };
             if (params.signal?.aborted || !hasMoreCandidates || !transportFailure) {
                 break;

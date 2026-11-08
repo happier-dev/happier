@@ -16,6 +16,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
             if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
             return await runtimeFetchMock({ url: input, init });
         },
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
     };
 });
 
@@ -30,7 +31,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveHomeGovernanceViewState } from '@/components/settings/home/governance/homeGovernanceViewState';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     getHomeGovernanceSnapshot,
@@ -162,6 +163,30 @@ describe('homeGovernanceEngine', () => {
         expect(governanceCallCount('https://home-b.example')).toBe(callsToBBeforeWake);
         releaseA();
         releaseB();
+    });
+
+    it.each(['success', 'failure'] as const)('serializes remount behind an abandoned direct %s publication', async outcome => {
+        const home = await addHome('Abandoned Home', 'https://abandoned-home.example');
+        await setActiveServerId(home, { scope: 'device' });
+        const scope = createServerAccountScope(home, 'account')!;
+        let finish!: () => void;
+        const oldResponse = new Promise<Response>(resolve => {
+            finish = () => resolve(outcome === 'success' ? jsonResponse(projection(1)) : jsonResponse({ error: 'unavailable' }, 503));
+        });
+        runtimeFetchMock.mockImplementationOnce(() => oldResponse).mockImplementation(async () => jsonResponse(projection(2)));
+        const first = observeHomeGovernance(scope);
+        let next = () => {};
+        try {
+            await vi.waitFor(() => expect(governanceCallCount('https://abandoned-home.example')).toBe(1));
+            first();
+            next = observeHomeGovernance(scope);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(governanceCallCount('https://abandoned-home.example')).toBe(1);
+            finish();
+            await vi.waitFor(() => expect(getHomeGovernanceSnapshot(scope)).toMatchObject({ status: 'ready', stale: false,
+                data: { activeOwnerCount: 2 } }));
+            expect(governanceCallCount('https://abandoned-home.example')).toBe(2);
+        } finally { finish(); first(); next(); }
     });
 
     it('refetches administration when the focused viewer Account role or status changes', async () => {

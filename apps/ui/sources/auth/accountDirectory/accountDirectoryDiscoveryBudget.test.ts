@@ -8,6 +8,7 @@ const boundary = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: boundary.request,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 import { accountDirectoryAuthClient } from './accountDirectoryAuthClient';

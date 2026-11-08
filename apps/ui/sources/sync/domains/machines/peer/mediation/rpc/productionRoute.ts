@@ -1,3 +1,5 @@
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
@@ -143,10 +145,10 @@ async function fetchJson(params: Readonly<{
         }
     }
     try {
-        const pending = fetch(params.url, {
+        const pending = fetchWithCredentialRedirectRefusal(params.url, {
             ...params.init,
             ...(controller ? { signal: controller.signal } : {}),
-        });
+        }, runtimeFetchManualResponse);
         params.onDispatched?.();
         const response = await pending;
         params.onResponse?.();
@@ -231,7 +233,8 @@ async function requestMachineRpcRouteGrantV2(input: Readonly<{
         return parsed.success
             ? { ok: true, value: parsed.data }
             : { ok: false, reasonCode: 'grant_invalid' };
-    } catch {
+    } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { ok: false, reasonCode: 'grant_missing' };
     }
 }
@@ -353,6 +356,7 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         await fetchJson({ url: resolveDirectRpcUrl(endpoint.url), init: { method: 'OPTIONS' },
             timeoutMs: readinessTimeoutMs, signal: input.signal });
     } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         if (input.signal?.aborted) throw error;
         recordMachineRequestFailed(routeScope);
         return fallback('topology_unavailable');
@@ -402,7 +406,8 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
                         },
                     } } : {}),
             };
-        } catch {
+        } catch (error) {
+            if (error instanceof CredentialRequestRedirectError) throw error;
             return fallback('grant_invalid');
         } finally {
             proofHandle.dispose();
@@ -443,6 +448,7 @@ export async function postProductionMachineRpcDirect(input: Readonly<{
         if (!parsed.success) throw createDirectResponseError(response, parsed.error.issues);
         return parsed.data;
     } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         // HTTP loss/status/decoding failure is not a daemon refusal. Once fetch
         // was issued, synthesizing one would authorize a second effect on relay.
         if (dispatched) throw markRpcRequestDisposition(error, 'outcomeUnknown');

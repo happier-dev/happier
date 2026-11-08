@@ -10,7 +10,7 @@ import {
 import { resetSessionByIdHttpReadsForTests } from '@/sync/engine/sessions/sessionByIdHttp';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { createCapturedServerReadTransport } from './capturedServerReadTransport';
 import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
@@ -41,6 +41,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 function isReachabilityProbe(input: unknown): boolean {

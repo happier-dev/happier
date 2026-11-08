@@ -13,7 +13,9 @@ const browserStorage = await vi.hoisted(async () => {
     return { ...installLocalStorageMock(), backend: globalThis.localStorage };
 });
 const boundary = vi.hoisted(() => ({ request: vi.fn<RuntimeFetch>() }));
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.request }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.request ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 

@@ -16,6 +16,7 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
   runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+  get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 const validSessionById = {
@@ -76,7 +77,7 @@ describe('resolveScopedSessionDataKey', () => {
     async (initialEnvelope) => {
       const { Encryption } = await import('@/sync/encryption/encryption');
       const { encodeBase64 } = await import('@/encryption/base64');
-      const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+      const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
       const encryption = await Encryption.create(new Uint8Array(32).fill(7));
       const otherRecipient = await Encryption.create(new Uint8Array(32).fill(8));
       const sessionKey = new Uint8Array(32).fill(9);

@@ -48,7 +48,6 @@ export type VoiceAccountOperationAttemptService =
   }>;
 
 type AccountVoiceResponseFailureKind =
-  | 'redirect'
   | 'http_status'
   | 'content_type'
   | 'body_too_large'
@@ -618,7 +617,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
           signal: operationSignal.signal,
         }, fetchImpl, new Set(Object.keys(credentialHeaders).map(name => name.toLowerCase())));
         const httpFailure = classifyVoiceProviderHttpFailure(response.status);
-        if (mutationDispatched && !response.redirected && httpFailure) {
+        if (mutationDispatched && httpFailure) {
           rejectedMutation = operationError(httpFailure, responseFailure(response, 'http_status'));
         }
         if (operationSignal.signal.aborted || !isAuthorityCurrent(operationAuthority)) {
@@ -626,13 +625,6 @@ export function createAccountVoiceOperationService(input: Readonly<{
           throw rejectedMutation ?? operationError('voice_account_operation_cancelled');
         }
         const responseContentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
-        if (response.redirected) {
-          await response.body?.cancel().catch(() => undefined);
-          throw operationError(
-            'provider_response_invalid',
-            responseFailure(response, 'redirect'),
-          );
-        }
         if (httpFailure) {
           let validation: readonly ProviderValidationIssue[] = [];
           if (response.status === 422 && operation.response.contentTypes.includes(responseContentType)) {

@@ -3,10 +3,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
 
-import { renderHook } from '@/dev/testkit';
+import { createDeferred, installTimerCensus, renderHook } from '@/dev/testkit';
+import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { resolveAccountStoredContentCompatibilityHeaders } from '@/sync/http/accountStoredContentCompatibility';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { abortServerFetches } from '@/sync/http/client';
-import { resetServerProfilesRuntimeForTests, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, getServerProfileById, resetServerProfilesRuntimeForTests, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
@@ -19,8 +21,11 @@ import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
+    refreshAuthenticatedServerFeaturesSnapshot,
     subscribeServerFeaturesSnapshot,
     getServerFeaturesSnapshotRetryDelayMs,
+    probeServerFeaturesAtUrl,
+    primeServerFeaturesSnapshot,
 } from './serverFeaturesClient';
 
 vi.mock('react-native', async () => {
@@ -32,6 +37,7 @@ const boundary = vi.hoisted(() => ({ fetch: vi.fn<(url: unknown, init?: RequestI
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: boundary.fetch,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 // Load the real Settings/Services graph after network installation, outside a timed hook body.
@@ -44,6 +50,50 @@ afterEach(async () => {
     resetServerProfilesRuntimeForTests();
     await resetServerReachabilitySupervisors();
     boundary.fetch.mockReset();
+});
+
+it.each(['public', 'authenticated fallback'] as const)('uses the admitted address for explicit saved Home %s readiness', async (projection) => {
+    await upsertAndActivateServer({ serverUrl: 'http://offline-active-home.example.test' });
+    const serverIdentityId = `srv_explicit_entered_${projection === 'public' ? 'public' : 'fallback'}`;
+    const canonicalServerUrl = `http://canonical-unreachable-${projection === 'public' ? 'public' : 'fallback'}.localhost:3035`;
+    const enteredUrl = projection === 'public' ? 'http://192.0.2.55:3035' : 'http://192.0.2.56:3035';
+    const home = await adoptHomeProfile({
+        source: 'manual',
+        descriptor: { serverUrl: canonicalServerUrl, canonicalServerUrl, homeServerIdentityId: serverIdentityId },
+        addressSelection: { serverIdentityId, enteredUrl, canonicalServerUrl, useCanonical: false },
+    });
+    const caller = new AbortController();
+    const firstRequest = createDeferred<string>();
+    const requestUrls: string[] = [];
+    boundary.fetch.mockImplementation(async (input, init) => {
+        const url = String(input);
+        requestUrls.push(url);
+        firstRequest.resolve(url);
+        // A native device cannot route the announced canonical hostname. Keep
+        // that OS/network boundary pending until the observer cancels it.
+        if (new URL(url).origin !== enteredUrl) {
+            return await new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+            });
+        }
+        if (url.endsWith('/v1/features/authenticated')) return new Response(null, { status: 404 });
+        return Response.json(url.endsWith('/v1/features')
+            ? createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } } })
+            : { ok: true });
+    });
+    const observation = projection === 'public'
+        ? getServerFeaturesSnapshot({ serverId: home.id, signal: caller.signal })
+        : refreshAuthenticatedServerFeaturesSnapshot({ serverId: home.id, credentials: { token: 'synthetic-home-token' }, signal: caller.signal });
+    try {
+        expect(new URL(await firstRequest.promise).origin).toBe(enteredUrl);
+        await expect(observation).resolves.toMatchObject({ status: 'ready', serverIdentityId });
+        expect(requestUrls.map(url => new URL(url).origin)).toEqual(requestUrls.map(() => enteredUrl));
+        expect(requestUrls).toContain(`${enteredUrl}/v1/features`);
+        if (projection === 'authenticated fallback') expect(requestUrls).toContain(`${enteredUrl}/v1/features/authenticated`);
+    } finally {
+        caller.abort();
+        await observation;
+    }
 });
 
 it('settles feature selection when persisting the observed Home identity fails', async () => {
@@ -69,6 +119,101 @@ it('settles feature selection when persisting the observed Home identity fails',
         });
     } finally {
         await hook.unmount();
+    }
+});
+
+it.each((['runtime', 'explicit', 'selection'] as const).flatMap(scope =>
+    (['permission', 'identity'] as const).map(reason => [scope, reason] as const),
+))('does no settled %s retry work for a conclusive %s refusal and consumes a published recovery', async (scope, reason) => {
+    const serverUrl = `https://feature-refused-${scope}-${reason}.example.test`;
+    if (reason === 'identity') {
+        await adoptHomeProfile({ source: 'manual', descriptor: {
+            serverUrl, canonicalServerUrl: serverUrl, homeServerIdentityId: `srv_pinned_${scope}`,
+        } });
+    }
+    const home = await upsertAndActivateServer({ serverUrl });
+    boundary.fetch.mockImplementation(async url => String(url).endsWith('/v1/features')
+        ? reason === 'permission' ? new Response(null, { status: 403 })
+            : Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+                serverIdentity: { serverIdentityId: `srv_different_${scope}` },
+            } }))
+        : Response.json({ ok: true }));
+    vi.useFakeTimers();
+    const census = installTimerCensus();
+    const selectedIds = [home.id];
+    const hook = await renderHook(() => scope === 'runtime'
+        ? useServerFeaturesRuntimeSnapshot()
+        : scope === 'explicit'
+            ? useServerFeaturesSnapshotForServerId(home.id)
+            : useServerFeaturesMainSelectionSnapshot(selectedIds), { flushOptions: { cycles: 1, turns: 0 } });
+    const snapshot = () => {
+        const current = hook.getCurrent();
+        return 'snapshotsByServerId' in current ? current.snapshotsByServerId[home.id] : current;
+    };
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(snapshot()).toMatchObject(reason === 'permission'
+            ? { status: 'error', reason: 'response_status', httpStatus: 403 }
+            : { status: 'error', reason: 'identity_conflict' });
+        boundary.fetch.mockClear();
+        await act(async () => { await vi.advanceTimersByTimeAsync(180_000); });
+        expect(census.readFires()).toEqual({ timeout: 0, interval: 0 });
+        expect(boundary.fetch).not.toHaveBeenCalled();
+        // No pending callback remains after the settled window either.
+        expect(census.read()).toEqual([]);
+        expect(vi.getTimerCount()).toBe(0);
+
+        // Explicit recovery demand completes through the real network/cache owner;
+        // its publication, not another hook poll, updates every consumer.
+        boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features')
+            ? createRootLayoutFeaturesResponse(reason === 'identity' ? { capabilities: {
+                serverIdentity: { serverIdentityId: `srv_pinned_${scope}` },
+            } } : undefined)
+            : { ok: true }));
+        await act(async () => {
+            await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+        });
+        expect(snapshot()).toMatchObject({ status: 'ready' });
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'))).toHaveLength(1);
+    } finally {
+        await hook.unmount();
+        census.stop();
+    }
+});
+
+it.each(['runtime', 'explicit', 'selection'] as const)('does no settled %s retry work after the owner publishes recovery', async (scope) => {
+    const home = await upsertAndActivateServer({ serverUrl: `https://feature-published-recovery-${scope}.example.test` });
+    boundary.fetch.mockImplementation(async url => String(url).endsWith('/v1/features')
+        ? new Response(null, { status: 503 })
+        : Response.json({ ok: true }));
+    vi.useFakeTimers();
+    const census = installTimerCensus();
+    const selectedIds = [home.id];
+    const hook = await renderHook(() => scope === 'runtime'
+        ? useServerFeaturesRuntimeSnapshot()
+        : scope === 'explicit'
+            ? useServerFeaturesSnapshotForServerId(home.id)
+            : useServerFeaturesMainSelectionSnapshot(selectedIds), { flushOptions: { cycles: 1, turns: 0 } });
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(vi.getTimerCount()).toBe(1);
+        boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features')
+            ? createRootLayoutFeaturesResponse() : { ok: true }));
+        await act(async () => {
+            await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+        });
+        const current = hook.getCurrent();
+        expect('snapshotsByServerId' in current ? current.snapshotsByServerId[home.id] : current)
+            .toMatchObject({ status: 'ready' });
+        boundary.fetch.mockClear();
+        await act(async () => { await vi.advanceTimersByTimeAsync(180_000); });
+        expect(census.readFires()).toEqual({ timeout: 0, interval: 0 });
+        expect(boundary.fetch).not.toHaveBeenCalled();
+        expect(census.read()).toEqual([]);
+        expect(vi.getTimerCount()).toBe(0);
+    } finally {
+        await hook.unmount();
+        census.stop();
     }
 });
 
@@ -149,6 +294,140 @@ it('keeps the main-selection snapshot and render count stable across an identica
     } finally {
         await hook.unmount();
     }
+});
+
+it.each(['focused', 'endpoint'] as const)('keeps accepted stored-content requirements during a %s refresh, then applies conclusive incompatibility', async (projection) => {
+    const home = await upsertAndActivateServer({ serverUrl: `https://requirements-${projection}.example.test` });
+    const payload = (currentProtocolVersion: number) => createRootLayoutFeaturesResponse({ capabilities: {
+        accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion,
+            declarationTransport: 'http-header-and-socket-auth-v1' },
+    } });
+    const observe = (signal?: AbortSignal) => projection === 'focused'
+        ? getServerFeaturesSnapshot({ serverId: home.id, force: true, signal })
+        : probeServerFeaturesAtUrl(home.serverUrl, { force: true, signal });
+    const compatibility = () => resolveAccountStoredContentCompatibilityHeaders(undefined, {
+        serverUrl: home.serverUrl, declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    });
+    boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features') ? payload(3) : { ok: true }));
+    expect((await observe()).status).toBe('ready');
+    expect(compatibility().status).toBe('available');
+
+    const refreshReceived = createDeferred<void>();
+    const response = createDeferred<Response>();
+    boundary.fetch.mockImplementation(async url => {
+        if (!String(url).endsWith('/v1/features')) return Response.json({ ok: true });
+        refreshReceived.resolve();
+        return await response.promise;
+    });
+    const refreshing = observe();
+    try {
+        await refreshReceived.promise;
+        expect(compatibility().status).toBe('available');
+    } finally {
+        response.resolve(new Response(null, { status: 503 }));
+        await refreshing;
+    }
+    expect(compatibility().status).toBe('available');
+
+    const cancellationReceived = createDeferred<void>();
+    boundary.fetch.mockImplementation(async (url, init) => {
+        if (!String(url).endsWith('/v1/features')) return Response.json({ ok: true });
+        cancellationReceived.resolve();
+        return await new Promise<Response>((_resolve, reject) => {
+            const abort = () => reject(new DOMException('Cancelled', 'AbortError'));
+            init?.signal?.addEventListener('abort', abort, { once: true });
+            if (init?.signal?.aborted) abort();
+        });
+    });
+    const caller = new AbortController();
+    const cancelled = observe(caller.signal);
+    try {
+        await cancellationReceived.promise;
+    } finally {
+        caller.abort();
+        await cancelled;
+    }
+    expect(compatibility().status).toBe('available');
+
+    boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features') ? payload(2) : { ok: true }));
+    expect((await observe()).status).toBe('ready');
+    expect(compatibility()).toEqual({ status: 'unavailable', reason: 'server-protocol-too-old' });
+    boundary.fetch.mockImplementation(async url => String(url).endsWith('/v1/features')
+        ? new Response(null, { status: 404 }) : Response.json({ ok: true }));
+    expect((await observe()).status).toBe('unsupported');
+    expect(compatibility()).toEqual({ status: 'unavailable', reason: 'server-requirements-unavailable' });
+    expect(resolveAccountStoredContentCompatibilityHeaders(undefined, {
+        serverUrl: 'https://unobserved-requirements.example.test',
+        declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    })).toEqual({ status: 'unavailable', reason: 'server-requirements-unavailable' });
+});
+
+it.each(['incompatible', 'unsupported'] as const)('keeps a conclusive %s observation bound to its request URL across profile adoption', async (completion) => {
+    await upsertAndActivateServer({ serverUrl: 'https://requirements-focused-home.example.test' });
+    const observedUrl = `https://requirements-observed-${completion}.example.test`;
+    const adoptedUrl = `https://requirements-adopted-${completion}.example.test`;
+    const identity = `srv_requirements_${completion}`;
+    const profile = await adoptHomeProfile({ source: 'manual', descriptor: {
+        serverUrl: observedUrl, canonicalServerUrl: observedUrl, homeServerIdentityId: identity,
+    } });
+    const payload = (currentProtocolVersion: number) => createRootLayoutFeaturesResponse({ capabilities: {
+        serverIdentity: { serverIdentityId: null },
+        accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion,
+            declarationTransport: 'http-header-and-socket-auth-v1' },
+    } });
+    const compatibility = (serverUrl: string) => resolveAccountStoredContentCompatibilityHeaders(undefined, {
+        serverUrl, declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    });
+    boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features') ? payload(3) : { ok: true }));
+    expect((await getServerFeaturesSnapshot({ serverId: profile.id, force: true })).status).toBe('ready');
+    expect((await probeServerFeaturesAtUrl(adoptedUrl)).status).toBe('ready');
+    expect(compatibility(observedUrl).status).toBe('available');
+    expect(compatibility(adoptedUrl).status).toBe('available');
+
+    const received = createDeferred<void>();
+    const response = createDeferred<Response>();
+    boundary.fetch.mockImplementation(async url => {
+        if (String(url) !== `${observedUrl}/v1/features`) return Response.json({ ok: true });
+        received.resolve();
+        return await response.promise;
+    });
+    const observation = getServerFeaturesSnapshot({ serverId: profile.id, force: true });
+    try {
+        await received.promise;
+        const adopted = await adoptHomeProfile({ source: 'manual', descriptor: {
+            serverUrl: adoptedUrl, canonicalServerUrl: adoptedUrl, homeServerIdentityId: identity,
+        } });
+        expect(adopted.id).toBe(profile.id);
+        expect(getServerProfileById(profile.id)?.serverUrl).toBe(adoptedUrl);
+    } finally {
+        response.resolve(completion === 'incompatible' ? Response.json(payload(2)) : new Response(null, { status: 404 }));
+        await observation;
+    }
+    expect.soft(compatibility(observedUrl)).toEqual({ status: 'unavailable', reason: completion === 'incompatible'
+        ? 'server-protocol-too-old' : 'server-requirements-unavailable' });
+    expect.soft(compatibility(adoptedUrl).status).toBe('available');
+});
+
+it.each([{ captured: 3, live: 2 }, { captured: 2, live: 3 }])('does not replace live stored-content requirements when priming an older feature snapshot: %j', async ({ captured, live }) => {
+    const home = await upsertAndActivateServer({ serverUrl: `https://requirements-prime-${live}.example.test` });
+    let protocolVersion = captured;
+    boundary.fetch.mockImplementation(async url => Response.json(String(url).endsWith('/v1/features')
+        ? createRootLayoutFeaturesResponse({ capabilities: {
+            accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion: protocolVersion,
+                declarationTransport: 'http-header-and-socket-auth-v1' },
+        } }) : { ok: true }));
+    const earlier = await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+    expect(earlier.status).toBe('ready');
+    protocolVersion = live;
+    expect((await getServerFeaturesSnapshot({ serverId: home.id, force: true })).status).toBe('ready');
+    primeServerFeaturesSnapshot({ serverId: home.id, snapshot: earlier });
+    // Demo/embedding presentation restoration is not a fresh server observation.
+    // It cannot replace the later operation's actual protocol evidence.
+    const compatibility = resolveAccountStoredContentCompatibilityHeaders(undefined, {
+        serverUrl: home.serverUrl, declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    });
+    if (live === 3) expect(compatibility.status).toBe('available');
+    else expect(compatibility).toEqual({ status: 'unavailable', reason: 'server-protocol-too-old' });
 });
 
 it.each(['ready', 'unsupported', 'error'] as const)('retains an identical %s feature observation through a real refresh without notifying subscribers', async (status) => {

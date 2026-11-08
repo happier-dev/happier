@@ -6,7 +6,9 @@ import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 afterEach(() => { runtimeFetch.mockReset(); resetSessionByIdHttpReadsForTests(); });
 const unusedRequest = async (): Promise<Response> => { throw new Error('Captured transport must own the physical read'); };
 

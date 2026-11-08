@@ -8,12 +8,14 @@ import { DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER, isSafeDirectTransferEndpoint
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 
 import { readBoundedResponseBody } from '@/utils/system/readBoundedResponseBody';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 import { resolveBulkTransferJsonMaxBytes } from './resolveBulkTransferJsonMaxBytes';
 import {
     createDirectTransferRequestAbortSignal,
     resolveDirectTransferRequestTimeoutMs,
+    resolveMachineCarrierRequestTimeoutMs,
 } from './directTransferRequestDeadline';
 import {
     DirectTransferHttpStatusError,
@@ -126,6 +128,7 @@ export type PreparedDirectImportSession = Readonly<{
     expiresAt: number;
     baseUrls: readonly string[];
     request?: MachineCarrierHttpRequester;
+    carrierKind?: MachineCarrierHttpLease['kind'];
     releaseCarrier?: (() => Promise<void> | void) | null;
     filesystemRootPath?: string;
 }>;
@@ -147,6 +150,7 @@ export function resolveDirectImportCarrierRequest(input: Readonly<{
 }>): Readonly<{
     url: string;
     request?: MachineCarrierHttpRequester;
+    carrierKind?: MachineCarrierHttpLease['kind'];
     /** True when a carrier or explicit origin owns this request path. */
     carrierBound: boolean;
 }> {
@@ -157,6 +161,7 @@ export function resolveDirectImportCarrierRequest(input: Readonly<{
     return {
         url: localOrigin ? rebaseMachineCarrierHttpEndpoint(input.endpointUrl, localOrigin) : input.endpointUrl,
         ...(request ? { request } : {}),
+        ...(input.carrier ? { carrierKind: input.carrier.kind } : {}),
         carrierBound: localOrigin !== null || request !== undefined,
     };
 }
@@ -273,7 +278,7 @@ async function readJsonResponse(response: Response, maxBytes: number, signal: Ab
     }
 }
 
-async function readFinalizeRecoveryRequiredResponse(
+async function readFinalizeFailureResponse(
     response: Response,
     signal: AbortSignal,
 ): Promise<Extract<DirectTransferImportFinalizeResponse, { success: false }> | null> {
@@ -290,9 +295,13 @@ async function readFinalizeRecoveryRequiredResponse(
         });
         const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
         const decoded = JSON.parse(text) as unknown;
-        if (!isDirectTransferImportFinalizeRecoveryRequiredResponse(decoded)) {
+        if (!isDirectTransferImportFinalizeResponse(decoded) || decoded.success !== false) {
             return null;
         }
+        if (response.status !== DIRECT_IMPORT_FINALIZE_RECOVERY_REQUIRED_STATUS) {
+            return { ...decoded, error: 'Failed to finalize upload' };
+        }
+        if (!isDirectTransferImportFinalizeRecoveryRequiredResponse(decoded)) return null;
         const expiresAtRaw = response.headers.get(DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER);
         const expiresAt = expiresAtRaw === null ? Number.NaN : Number(expiresAtRaw);
         return Number.isSafeInteger(expiresAt) && expiresAt > 0
@@ -318,7 +327,7 @@ export async function abortPreparedDirectImportSessionViaMachineRpc(params: Read
     filesystemRootPath?: string;
     signal?: AbortSignal | null;
 }>): Promise<Readonly<{ aborted: boolean | null }>> {
-    const timeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
+    const timeoutMs = resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, 'server_rpc');
     const cleanupRequestSignal = createDirectTransferRequestAbortSignal({ timeoutMs, signal: params.signal });
     try {
         if (params.filesystemRootPath) {
@@ -326,7 +335,7 @@ export async function abortPreparedDirectImportSessionViaMachineRpc(params: Read
                 actionId: 'daemon.filesystem.transfer.cancel', machineId: params.machineId, serverId: params.serverId,
                 accountId: params.accountId,
                 input: { rootPath: params.filesystemRootPath, direction: 'upload', transferId: params.uploadId },
-                timeoutMs, signal: cleanupRequestSignal.signal,
+                ...(timeoutMs === null ? {} : { timeoutMs }), signal: cleanupRequestSignal.signal,
             }));
             if (!response.success) throw new Error(response.error);
             return { aborted: response.aborted };
@@ -339,7 +348,7 @@ export async function abortPreparedDirectImportSessionViaMachineRpc(params: Read
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
             method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
             payload: { uploadId: params.uploadId },
-            timeoutMs,
+            ...(timeoutMs === null ? {} : { timeoutMs }),
             signal: cleanupRequestSignal.signal,
         });
         if (!isObject(response) || response.success !== true) {
@@ -365,7 +374,7 @@ function createDirectImportCleanupFailure(error: unknown): DirectImportPrepareFa
     return {
         success: false,
         error: `Direct import cleanup failed: ${error instanceof Error ? error.message : 'abort request failed'}`,
-        errorCode: DIRECT_IMPORT_CLEANUP_FAILED_ERROR_CODE,
+        errorCode: error instanceof CredentialRequestRedirectError ? error.code : DIRECT_IMPORT_CLEANUP_FAILED_ERROR_CODE,
     };
 }
 
@@ -376,7 +385,7 @@ export async function abortOwnedDirectImportSession(params: Readonly<{
     uploadId: string;
     timeoutMs?: number | null;
     filesystemRootPath?: string;
-    preparedSession?: Pick<PreparedDirectImportSession, 'baseUrls' | 'request'>;
+    preparedSession?: Pick<PreparedDirectImportSession, 'baseUrls' | 'request' | 'carrierKind'>;
     signal?: AbortSignal | null;
 }>): Promise<DirectImportPrepareFailure | null> {
     try {
@@ -387,11 +396,11 @@ export async function abortOwnedDirectImportSession(params: Readonly<{
             if (path.at(-1) !== params.uploadId || !path.join('/').includes('/machine-transfers/direct/imports/')) {
                 return createDirectImportCleanupFailure(new Error('Prepared import capability does not match the owned transfer'));
             }
-            const deadline = createDirectTransferRequestAbortSignal({ timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs), signal: params.signal });
+            const deadline = createDirectTransferRequestAbortSignal({ timeoutMs: resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, params.preparedSession?.carrierKind), signal: params.signal });
             try {
-                const response = await (params.preparedSession?.request ?? runtimeFetch)(buildDirectImportEndpoint(baseUrl, 'abort'), {
+                const response = await fetchWithCredentialRedirectRefusal(buildDirectImportEndpoint(baseUrl, 'abort'), {
                     method: 'POST', credentials: 'same-origin', signal: deadline.signal,
-                });
+                }, params.preparedSession?.request ?? runtimeFetchManualResponse);
                 const result = await readJsonResponse(response, DIRECT_IMPORT_CHUNK_RESPONSE_MAX_BYTES, deadline.signal);
                 if (!isObject(result) || result.success !== true) throw new Error('Prepared import abort was not confirmed');
                 return null;
@@ -453,7 +462,7 @@ export async function prepareDirectImportSession(params: Readonly<{
         ...(typeof params.preferScoped === 'boolean' ? { preferScoped: params.preferScoped } : {}),
         method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
         payload: params.request,
-        timeoutMs,
+        ...(params.timeoutMs == null ? {} : { timeoutMs }),
         ...(params.signal ? { signal: params.signal } : {}),
     });
     }
@@ -489,7 +498,7 @@ export async function prepareDirectImportSession(params: Readonly<{
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
             ...(params.accountId ? { accountId: params.accountId } : {}),
             uploadId,
-            timeoutMs,
+            timeoutMs: params.timeoutMs,
             ...(params.request.t === 'session_file_upload_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
         }) ?? failure;
     };
@@ -582,6 +591,7 @@ export async function prepareDirectImportSession(params: Readonly<{
             baseUrls,
             ...(params.request.t === 'session_file_upload_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
             ...(preparedCarrier && preparedCarrier.kind !== 'native_http' ? { request: preparedCarrier.request } : {}),
+            ...(preparedCarrier ? { carrierKind: preparedCarrier.kind } : {}),
             ...(preparedCarrier ? { releaseCarrier: preparedCarrier.release } : {}),
         },
     };
@@ -590,13 +600,13 @@ export async function prepareDirectImportSession(params: Readonly<{
 async function putJson(url: string, input: Readonly<{
     body: unknown;
     maxResponseBytes: number;
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal?: AbortSignal | null;
     request?: MachineCarrierHttpRequester;
 }>): Promise<unknown> {
     const requestSignal = createDirectTransferRequestAbortSignal(input);
     try {
-        const response = await (input.request ?? runtimeFetch)(url, {
+        const response = await fetchWithCredentialRedirectRefusal(url, {
             method: 'PUT',
             headers: {
                 'content-type': 'application/json',
@@ -604,7 +614,7 @@ async function putJson(url: string, input: Readonly<{
             body: JSON.stringify(input.body),
             credentials: 'same-origin',
             signal: requestSignal.signal,
-        });
+        }, input.request ?? runtimeFetchManualResponse);
         return await readJsonResponse(response, input.maxResponseBytes, requestSignal.signal);
     } catch (error) {
         if (!input.signal?.aborted && requestSignal.signal.aborted) {
@@ -624,6 +634,7 @@ export async function sendDirectImportChunk(params: Readonly<{
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
     request?: MachineCarrierHttpRequester;
+    carrierKind?: MachineCarrierHttpLease['kind'];
 }>): Promise<DirectTransferImportChunkResponse> {
     const response = await putJson(
         buildDirectImportEndpoint(params.baseUrl, 'chunks', params.index),
@@ -633,7 +644,7 @@ export async function sendDirectImportChunk(params: Readonly<{
                 encryptedDataKeyEnvelopeBase64: params.encryptedDataKeyEnvelopeBase64,
             },
             maxResponseBytes: DIRECT_IMPORT_CHUNK_RESPONSE_MAX_BYTES,
-            timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs),
+            timeoutMs: resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, params.carrierKind),
             signal: params.signal ?? null,
             request: params.request,
         },
@@ -675,9 +686,10 @@ export async function finalizeDirectImportSession(params: Readonly<{
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
     request?: MachineCarrierHttpRequester;
+    carrierKind?: MachineCarrierHttpLease['kind'];
 }>): Promise<DirectTransferImportFinalizeResponse> {
     const requestSignal = createDirectTransferRequestAbortSignal({
-        timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs),
+        timeoutMs: resolveMachineCarrierRequestTimeoutMs(params.timeoutMs, params.carrierKind),
         signal: params.signal ?? null,
     });
     let finalizeRequestIssued = false;
@@ -689,23 +701,24 @@ export async function finalizeDirectImportSession(params: Readonly<{
         }
         const finalizeUrl = buildDirectImportEndpoint(params.baseUrl, 'finalize');
         finalizeRequestIssued = true;
-        const response = await (params.request ?? runtimeFetch)(finalizeUrl, {
+        const response = await fetchWithCredentialRedirectRefusal(finalizeUrl, {
             method: 'POST',
             credentials: 'same-origin',
             signal: requestSignal.signal,
-        });
+        }, params.request ?? runtimeFetchManualResponse);
         // The pinned direct-import handler awaits target finalization. 400/404/409
         // authoritatively precede commit, while 200 means finalization committed.
         // The additive retained-session recovery response is handled separately below.
         authoritativePreCommitResponseObserved = isAuthoritativePreCommitFinalizeStatus(response.status);
         remoteFinalizeCommittedByServerContract = response.status === 200;
         if (authoritativePreCommitResponseObserved) {
-            await cancelResponseBody(response);
+            const failure = await readFinalizeFailureResponse(response, requestSignal.signal);
+            if (failure) return failure;
             throw new Error(`Direct import request failed with status ${response.status}`);
         }
         if (!remoteFinalizeCommittedByServerContract) {
             if (response.status === DIRECT_IMPORT_FINALIZE_RECOVERY_REQUIRED_STATUS) {
-                const recoveryRequired = await readFinalizeRecoveryRequiredResponse(
+                const recoveryRequired = await readFinalizeFailureResponse(
                     response,
                     requestSignal.signal,
                 );
@@ -733,6 +746,7 @@ export async function finalizeDirectImportSession(params: Readonly<{
         }
         return decoded;
     } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         if (remoteFinalizeCommittedByServerContract) {
             return createRemoteCommittedResultUnusableFailure();
         }

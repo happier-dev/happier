@@ -4,14 +4,18 @@ import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
     createPlainSessionOwnerMetadataEnvelopeV1,
-    projectSessionAccessCapabilitiesV1,
     projectSessionSharedMetadataV1,
-    sealSessionOwnerMetadataEnvelopeV1,
     SessionOwnerMetadataV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    projectSessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+    sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 import { readPendingNavigationDetails } from './sessionPendingNavigationDetails';
@@ -47,7 +51,9 @@ vi.mock('@/utils/system/runtimeFetch', async () => {
         return batch.handle({ home: new URL(url).origin, url: new URL(url), path: '/v2/sessions/read-batch',
             method: init?.method ?? 'GET', headers: new Headers(init?.headers), accountId: 'account-b',
             body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined, signal: init?.signal });
-    } };
+    } ,
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
 });
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
@@ -183,10 +189,13 @@ describe('exact-Home pending navigation details', () => {
         expect(selected.kind).toBe('target');
         if (selected.kind !== 'target') return;
         expect(boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/messages'))).toHaveLength(0);
+        const snapshotsBeforeNavigation = boundary.fetch.mock.calls.filter(([url]) => String(url).includes(`/v2/sessions/${address.sessionId}`)).length;
         const routes: string[] = [];
         expect(await navigateToPendingRequest({ target: selected, details: selected.details, source, nowMs: 1_000,
             openRoute: route => routes.push(route) })).toEqual({ status: 'opened' });
         expect(routes).toEqual(['/session/never-opened?serverId=home-b']);
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).includes(`/v2/sessions/${address.sessionId}`)))
+            .toHaveLength(snapshotsBeforeNavigation);
         expect(boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/messages'))).toHaveLength(0);
     });
     it('hydrates a never-opened session and finds the oldest transcript-only request beyond the first page', async () => {
@@ -233,6 +242,8 @@ describe('exact-Home pending navigation details', () => {
     it('decrypts never-opened E2EE request identities through the real scoped encryption owner', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const secret = new Uint8Array(32).fill(7);
+        const cryptoSnapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+            material: { type: 'legacy', secret } });
         const encryption = await Encryption.create(secret);
         await encryption.initializeSessions(new Map([[address.sessionId, null]]));
         const sessionEncryption = encryption.getSessionEncryption(address.sessionId)!;
@@ -247,6 +258,10 @@ describe('exact-Home pending navigation details', () => {
             expect(url.startsWith('https://home-b.example.test/')).toBe(true);
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials().token}`);
             if (url.endsWith('/v1/auth/ping')) return Response.json({ ok: true });
+            if (url.includes('/v1/account/encryption/currentness')) return Response.json({ mode: 'e2ee', version: 1,
+                signingKeyFingerprint: null,
+                contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(cryptoSnapshot.contentPublicKeyFingerprint),
+                updatedAt: 1 });
             if (url.includes('/v2/sessions/')) return Response.json(encryptedBody);
             if (url.includes('/messages')) return Response.json({ messages: [encryptedRow], hasMore: false, nextBeforeSeq: null });
             throw new Error(`Unexpected HTTP path ${new URL(url).pathname}`);
@@ -360,7 +375,7 @@ describe('exact-Home pending navigation details', () => {
         });
         expect(storage.getState().sessions[address.sessionId]).toBeUndefined();
     });
-    it('revalidates a completed request on its original Home and opens the settled session', async () => {
+    it('keeps the admitted selection when the request is answered before routing', async () => {
         const { nextPendingRequest } = await import('@/activity/source/nextPendingRequest');
         const { navigateToPendingRequest } = await import('@/activity/source/navigateToPendingRequest');
         installSecondSession();
@@ -368,6 +383,7 @@ describe('exact-Home pending navigation details', () => {
         const result = await nextPendingRequest({ source, nowMs: 1_000 });
         expect(result.kind).toBe('target');
         if (result.kind !== 'target') return;
+        const snapshotsBeforeLanding = boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/v2/sessions/')).length;
         const pagesBeforeLanding = boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/messages')).length;
         installNetwork({ agentState: { requests: {}, completedRequests: {
             'old-question': { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 100, completedAt: 200, status: 'approved' },
@@ -376,13 +392,14 @@ describe('exact-Home pending navigation details', () => {
         expect(await navigateToPendingRequest({ target: result, source, nowMs: 1_000,
             details: result.details, openRoute: route => routes.push(route) })).toEqual({ status: 'opened' });
         expect(routes).toEqual(['/session/never-opened?serverId=home-b']);
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/v2/sessions/'))).toHaveLength(snapshotsBeforeLanding);
         expect(boundary.fetch.mock.calls.filter(([url]) => String(url).includes('/messages'))).toHaveLength(pagesBeforeLanding);
         expect(result.address).toEqual(address);
         const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
         const { usePendingNavigationLanding, clearPendingNavigationState } = await import('@/activity/source/pendingNavigationRuntime');
         const landing = await renderHook(() => usePendingNavigationLanding(address));
         try {
-            expect(landing.getCurrent()).toMatchObject({ address, requestId: 'old-question', state: 'settled' });
+            expect(landing.getCurrent()).toMatchObject({ address, requestId: 'old-question', state: 'pending' });
         } finally {
             await landing.unmount();
             clearPendingNavigationState();

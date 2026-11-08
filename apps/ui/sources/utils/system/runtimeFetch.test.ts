@@ -23,6 +23,46 @@ afterEach(() => {
 });
 
 describe('runtimeFetch', () => {
+    it('leaves manual hops to one credential-aware redirect follower', async () => {
+        const hops: Array<{ path: string; credential: string | string[] | undefined }> = [];
+        const server = createServer((request, response) => {
+            hops.push({ path: request.url ?? '', credential: request.headers['x-private-key'] });
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing listener port');
+            if (request.url === '/start') {
+                response.writeHead(302, { Location: `http://localhost:${address.port}/target` });
+            } else {
+                response.writeHead(200);
+            }
+            response.end();
+        });
+        server.listen(0);
+        await once(server, 'listening');
+        try {
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing listener port');
+            const { runtimeFetch } = await import('./runtimeFetch');
+            const { fetchWithCredentialRedirectRefusal } = await import('@happier-dev/cli-common/homeTarget');
+            const url = `http://127.0.0.1:${address.port}/start`;
+            const init = { redirect: 'manual', headers: { 'x-private-key': 'synthetic-key' } } satisfies RequestInit;
+            const raw = await runtimeFetch(url, init);
+            await raw.body?.cancel();
+            expect(raw.status).toBe(302);
+            expect(hops).toEqual([{ path: '/start', credential: 'synthetic-key' }]);
+            hops.length = 0;
+            const followed = await fetchWithCredentialRedirectRefusal(url, init, runtimeFetch, new Set(['x-private-key']));
+            await followed.body?.cancel();
+            expect(followed.status).toBe(200);
+            expect(hops).toEqual([
+                { path: '/start', credential: 'synthetic-key' },
+                { path: '/target', credential: undefined },
+            ]);
+        } finally {
+            server.closeAllConnections();
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it.each(['ios', 'android', 'tauri'] as const)('keeps native redirect credentials with the shared HTTP owner on %s', async (platformOS) => {
         vi.resetModules();
         vi.doMock('react-native', async () => {
@@ -156,13 +196,14 @@ describe('runtimeFetch', () => {
             if (!address || typeof address === 'string') throw new Error('Missing listener port');
             const { runtimeFetch } = await import('./runtimeFetch');
             const { createBackoff } = await import('@/utils/timing/time');
+            const { fetchWithCredentialRedirectRefusal } = await import('@happier-dev/cli-common/homeTarget');
             const base = `http://127.0.0.1:${address.port}`;
-            const operation = createBackoff()(() => runtimeFetch(`${base}/redirect`, {
+            const operation = createBackoff()(() => fetchWithCredentialRedirectRefusal(`${base}/redirect`, {
                 method: 'POST',
                 headers: { Authorization: 'Bearer synthetic-request-credential' },
                 body: 'synthetic-approval-body',
                 redirect: 'manual',
-            }));
+            }, runtimeFetch));
             if (status === 302) expect((await operation).status).toBe(200);
             else await expect(operation).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
             expect(initialHopRequests).toBe(1);
@@ -181,20 +222,20 @@ describe('runtimeFetch', () => {
         }
     });
 
-    it('converts a manual credential request to the desktop native redirect control', async () => {
+    it('returns a manual desktop response with native redirect control', async () => {
         const tauriFetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null,
             { status: 307, headers: { location: 'https://other.example.test/auth' } }));
         vi.doMock('@tauri-apps/plugin-http', () => ({ fetch: tauriFetchMock }));
         setTauriInternals({ invoke: () => null });
         const { runtimeFetch, readRuntimeFetchHost } = await import('./runtimeFetch');
         expect(await readRuntimeFetchHost('https://api.example.test/v1/auth')).toBe('native');
-        await expect(runtimeFetch('https://api.example.test/v1/auth', {
+        expect((await runtimeFetch('https://api.example.test/v1/auth', {
             method: 'POST', body: 'synthetic-approval-body', redirect: 'manual',
-        })).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false });
+        })).status).toBe(307);
         expect(tauriFetchMock.mock.calls[0]?.[1]).toMatchObject({ maxRedirections: 0 });
     });
 
-    it.each(['ios', 'android'] as const)('uses the redirect-aware native transport for %s credential requests', async (platformOS) => {
+    it.each(['ios', 'android'] as const)('returns manual native responses on %s', async (platformOS) => {
         vi.doMock('react-native', async () => {
             const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
             return await createReactNativeNativeMock({ platformOS });
@@ -206,9 +247,9 @@ describe('runtimeFetch', () => {
         vi.stubGlobal('fetch', globalFetch);
         const { runtimeFetch, readRuntimeFetchHost } = await import('./runtimeFetch');
         expect(await readRuntimeFetchHost('https://api.example.test/v1/auth')).toBe('native');
-        await expect(runtimeFetch('https://api.example.test/v1/auth', {
+        expect((await runtimeFetch('https://api.example.test/v1/auth', {
             method: 'POST', body: 'synthetic-approval-body', redirect: 'manual',
-        })).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false });
+        })).status).toBe(307);
         expect(nativeFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
         expect(globalFetch).not.toHaveBeenCalled();
     });

@@ -4,6 +4,7 @@ const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -141,6 +142,33 @@ describe('apiAccountEncryptionMode retry modes', () => {
             .rejects.toMatchObject({ status: 403, code: 'forbidden' });
         await vi.runAllTimersAsync();
         await assertion;
+        expect(modeRequests).toBe(1);
+    });
+
+    it.each(['schema', 'json'] as const)('settles a malformed HTTP 200 mode %s response as a typed refusal without retrying', async (failure) => {
+        vi.useFakeTimers();
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://invalid-mode.example.test', scope: 'tab' });
+        let modeRequests = 0;
+        runtimeFetchSpy.mockImplementation(async (url: unknown) => {
+            const href = String(url ?? '');
+            if (href.endsWith('/health') || href.includes('/v1/auth/ping')) return Response.json({});
+            if (href.endsWith('/v1/account/encryption')) {
+                modeRequests += 1;
+                // A subsequent terminal denial bounds the old retry loop. The
+                // expected refusal must originate from the first invalid 200.
+                if (modeRequests > 1) return Response.json({ error: 'denied' }, { status: 403 });
+                return failure === 'json' ? new Response('invalid-json', { status: 200 })
+                    : Response.json({ mode: 'plain' });
+            }
+            throw new Error(`Unexpected runtimeFetch URL: ${href}`);
+        });
+        const result = accountEncryptionMode.fetchAccountEncryptionMode({ token: buildTokenWithSub('invalid-mode') })
+            .then(value => ({ value }), (error: unknown) => ({ error }));
+        await vi.runAllTimersAsync();
+        expect(await result).toMatchObject({ error: {
+            status: 200, code: 'account-encryption-mode-unavailable', canTryAgain: false,
+        } });
         expect(modeRequests).toBe(1);
     });
 });

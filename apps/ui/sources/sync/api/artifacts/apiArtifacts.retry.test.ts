@@ -4,6 +4,7 @@ const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -184,7 +185,7 @@ describe('apiArtifacts retry modes', () => {
         { encryptionMode: 'e2ee', dataEncryptionKey: 'plain' },
     ])('rejects owner Account-mode $encryptionMode content-marker disagreement before opening content', async ({ encryptionMode, dataEncryptionKey }) => {
         const { fetchArtifact } = await import('./apiArtifacts');
-        const { ARTIFACT_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol');
+        const { ARTIFACT_PLAIN_DATA_KEY_MARKER} = await import('@happier-dev/protocol/storage/artifactStoredContent');
         const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
         const request = createServerFetchAtEndpoint({ endpointUrl: 'https://captured.example.test', credentials: { token: 'captured-token' } });
         runtimeFetchSpy.mockImplementation(async () => Response.json({ id: 'document', ownerAccountId: 'owner', access: 'owner',

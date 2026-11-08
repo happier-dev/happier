@@ -69,6 +69,7 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
         }
         throw new Error(`Unexpected runtimeFetch call: ${url}`);
     }),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 describe('workspaceFileTransferRpcCaller direct import', () => {

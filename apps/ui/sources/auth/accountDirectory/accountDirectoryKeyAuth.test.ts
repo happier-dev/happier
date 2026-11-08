@@ -20,6 +20,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
         const url = new URL(input instanceof Request ? input.url : String(input));
         return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
     },
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 import { digestAccountDirectoryCredentialToken, TokenStorage } from '@/auth/storage/tokenStorage';

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
-    ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createDeferred } from '@/dev/testkit';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
@@ -10,18 +12,24 @@ import { encodeBase64 } from '@/encryption/base64';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { readArtifactProvenance } from '@/components/artifacts/artifactBrowserModel';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, openEncryptedDataKeyEnvelopeV1,
-    type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol';
+import { signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { computeContentPublicKeyFingerprint} from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
+    type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeBase64 } from '@/encryption/base64';
 import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { createStore } from 'zustand/vanilla';
 import { createArtifactsDomain, type ArtifactsDomain } from '@/sync/store/domains/artifacts';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { artifactInventorySelectionOptions, type ArtifactInventorySelection } from '@/sync/domains/artifacts/artifactInventory';
+import { selectArtifactInventoryRows } from '@/sync/store/domains/artifactInventoryIndex';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -74,7 +82,8 @@ describe('fetchAndApplyArtifactsList', () => {
         };
         const read = (selection: ArtifactInventorySelection) => {
             const baseline = store.getState().artifacts;
-            const demand = { ...artifactInventorySelectionOptions(selection), getCurrentArtifacts: () => store.getState().artifacts };
+            const demand = { ...artifactInventorySelectionOptions(selection), getCurrentArtifacts: () => store.getState().artifacts,
+                inventorySelectionReadStartedWith: selectArtifactInventoryRows(store.getState(), selection) };
             return fetchAndApplyArtifactsList({ ...demand, credentials: { token: 'pending-absence' }, encryption: null,
                 artifactDataKeys: new Map(), request, inventoryReadStartedWith: baseline,
                 applyArtifacts: (rows, source) => store.getState().applyArtifacts(rows, baseline, selection, source) });

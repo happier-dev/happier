@@ -1,5 +1,6 @@
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { normalizeRequestBodyHeaders } from '@/sync/http/requestBodyHeaders';
 import { isIdempotentServerRead, withServerReadLifetime, type ServerFetchOptions } from '@/sync/http/client';
 import {
@@ -166,7 +167,7 @@ async function performReachableFetch<T>(params: ReachableFetchParams, consumeRes
         params.onIssued?.();
         let response: Response;
         try {
-            response = await runtimeFetch(params.url, { ...params.init, headers, signal });
+            response = await fetchWithCredentialRedirectRefusal(params.url, { ...params.init, headers, signal }, runtimeFetchManualResponse);
         } catch (error) {
             if (!signal?.aborted) reportServerUnreachable(params.serverUrl, error, effectiveToken);
             throw error;

@@ -1,4 +1,5 @@
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
+import type { MachineCarrierHttpLease } from './machineCarrierHttpLease';
 
 const DEFAULT_DIRECT_TRANSFER_REQUEST_TIMEOUT_MS = 5_000;
 
@@ -25,8 +26,17 @@ export function resolveDirectTransferRequestTimeoutMs(timeoutMs: number | null |
     );
 }
 
+/** Home phases already have the Machine RPC budget; HTTP must not shorten it. */
+export function resolveMachineCarrierRequestTimeoutMs(
+    timeoutMs: number | null | undefined,
+    carrierKind?: MachineCarrierHttpLease['kind'],
+): number | null {
+    return carrierKind === 'server_rpc' && timeoutMs == null
+        ? null : resolveDirectTransferRequestTimeoutMs(timeoutMs);
+}
+
 export function createDirectTransferRequestAbortSignal(params: Readonly<{
-    timeoutMs: number;
+    timeoutMs: number | null;
     signal?: AbortSignal | null;
 }>): Readonly<{
     signal: AbortSignal;
@@ -45,7 +55,7 @@ export function createDirectTransferRequestAbortSignal(params: Readonly<{
         }
     }
 
-    const timeoutId = setTimeout(() => {
+    const timeoutId = params.timeoutMs === null ? null : setTimeout(() => {
         // The Machine did not answer in time: the same typed timeout every Machine request carries, so a caller words it
         // as "isn't answering" instead of the transport's own text.
         controller.abort(Object.assign(new Error('Direct transfer request timed out'),
@@ -55,7 +65,7 @@ export function createDirectTransferRequestAbortSignal(params: Readonly<{
     return {
         signal: controller.signal,
         cleanup: () => {
-            clearTimeout(timeoutId);
+            if (timeoutId !== null) clearTimeout(timeoutId);
             params.signal?.removeEventListener('abort', abortFromParent);
         },
     };

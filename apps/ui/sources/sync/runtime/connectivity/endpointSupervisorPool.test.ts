@@ -21,6 +21,7 @@ const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({

@@ -2,13 +2,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { ServerAccountRequestAuthority } from './createServerRequestWithServerScope';
-import { readSessionBatchForAuthority, resetSessionPartsReadsForTests } from './readSessionBatchForAuthority';
+import { readSessionBatchForAuthority, resetSessionPartsReadsForTests, SessionPartsInvalidResponseError } from './readSessionBatchForAuthority';
 import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
 import { createCapturedServerReadTransport } from './capturedServerReadTransport';
+import * as sessionPartsRead from './readSessionBatchForAuthority';
+import { countReadBorrowers, countTransportRequests } from '@/dev/testkit';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
-afterEach(() => { runtimeFetch.mockReset(); resetSessionPartsReadsForTests(); });
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
+afterEach(() => { vi.restoreAllMocks(); runtimeFetch.mockReset(); resetSessionPartsReadsForTests(); });
 
 function fixtureAuthority(request: ServerAccountRequestAuthority['request']): ServerAccountRequestAuthority {
     runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
@@ -30,6 +34,29 @@ function responseFor(init?: RequestInit) {
         ...(input.includeSnapshot && input.includeTurns !== false ? { turns: { status: 200, body: { v: 1, sessionId, updatedAt: 1, turns: [] } } } : {}),
     })) });
 }
+
+it.each(['detail', 'turns'] as const)('rejects a successful %s part naming another Session before disclosing the batch', async part => {
+    let mismatched = true;
+    const request = vi.fn(async (_path: string, init?: RequestInit) => {
+        const body = SessionReadBatchResponseV1Schema.parse(await responseFor(init).json());
+        return Response.json({ results: body.results.map(row => !mismatched ? row : {
+            ...row,
+            ...(part === 'detail' ? { detail: { status: 200, body: { session:
+                createPlainSessionCurrentProjectionRecordFixture({ id: 'other-session' }) } } }
+                : { turns: { status: 200, body: { v: 1, sessionId: 'other-session', updatedAt: 1, turns: [] } } }),
+        }) });
+    });
+    const authority = fixtureAuthority(request);
+    const onResult = vi.fn();
+    const read = () => readSessionBatchForAuthority({ authority, sessionIds: ['requested-session'],
+        includeSnapshot: true, includeMessages: false, onResult, assertCurrent: () => {} });
+    await expect(read()).rejects.toBeInstanceOf(SessionPartsInvalidResponseError);
+    expect(onResult).not.toHaveBeenCalled();
+    mismatched = false;
+    expect((await read()).get('requested-session')?.detail).toMatchObject({ status: 200,
+        body: { session: { id: 'requested-session' } } });
+    expect(request).toHaveBeenCalledTimes(2);
+});
 
 it.each([404, 403] as const)('classifies a whole batch %s without issuing scalar reads', async status => {
     const request = vi.fn(async () => Response.json({ error: 'not_found' }, { status }));
@@ -55,6 +82,57 @@ it('gathers overlapping authoritative Session demands in one HTTP batch and rere
     expect(SessionReadBatchRequestV1Schema.parse(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).sessionIds).toEqual(['a', 'b', 'c']);
     await read(['b']);
     expect(request).toHaveBeenCalledTimes(2);
+});
+
+it('keeps exact managed-subtree proof separate by root and rereads after a target is detached', async () => {
+    let attached = true;
+    const request = vi.fn(async (_path: string, init?: RequestInit) => {
+        const input = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        return attached && input.underSessionId === 'lead' ? responseFor(init)
+            : Response.json({ results: input.sessionIds.map(sessionId => ({ sessionId,
+                detail: { status: 404, body: { error: 'not_found' } } })) });
+    });
+    const authority = fixtureAuthority(request);
+    const read = (underSessionId: string) => readSessionBatchForAuthority({ authority, sessionIds: ['child'],
+        underSessionId, includeSnapshot: true, includeTurns: false, includeMessages: false, assertCurrent: () => {} });
+    const [owner, other] = await Promise.all([read('lead'), read('other')]);
+    expect(owner.get('child')?.detail?.status).toBe(200);
+    expect(other.get('child')?.detail?.status).toBe(404);
+    attached = false;
+    expect((await read('lead')).get('child')?.detail?.status).toBe(404);
+    expect(request).toHaveBeenCalledTimes(3);
+});
+
+it('attributes real exact and collection admission before the queue and separates repeated demand from physical requests', async () => {
+    const physical = countTransportRequests(async (_path: string, init?: RequestInit) => responseFor(init), path => path);
+    const authority = fixtureAuthority(physical.request);
+    const exactBorrowers = countReadBorrowers(sessionPartsRead.readSessionParts, params => params.sessionIds);
+    const collectionBorrowers = countReadBorrowers(sessionPartsRead.readSessionBatchForAuthority, params => params.sessionIds);
+    // Observe the real public entrypoints without replacing their domain logic.
+    vi.spyOn(sessionPartsRead, 'readSessionParts').mockImplementation(exactBorrowers.request);
+    vi.spyOn(sessionPartsRead, 'readSessionBatchForAuthority').mockImplementation(collectionBorrowers.request);
+    const exact = () => readSessionByIdHttp({ sessionId: 'private-exact', serverId: 'home', token: 'token',
+        request: authority.request, readTransport: authority.readTransport, accessProjectionVersion: 1 });
+    const exactReads = [exact(), exact()] as const;
+    const collection = sessionPartsRead.readSessionBatchForAuthority({ authority, sessionIds: ['private-exact', 'private-other'],
+        includeSnapshot: true, includeTurns: false, includeMessages: false, accessProjectionVersion: 1, assertCurrent: () => {} });
+    // Logical provenance exists synchronously; dispatch has not run yet.
+    expect(physical.read()).toEqual({});
+    expect(exactBorrowers.read().reduce((count, borrower) => count + borrower.calls, 0)).toBe(2);
+    expect(collectionBorrowers.read().reduce((count, borrower) => count + borrower.idCount, 0)).toBe(2);
+    const [first, second, rows] = await Promise.all([...exactReads, collection] as const);
+    expect(first).toMatchObject({ ok: true, body: { session: { id: 'private-exact' } } });
+    expect(second).toEqual(first);
+    expect([...rows.keys()]).toEqual(['private-exact', 'private-other']);
+    expect(physical.read()).toEqual({ '/v2/sessions/read-batch': 1 });
+    await expect(exact()).resolves.toMatchObject({ ok: true });
+    expect(physical.read()).toEqual({ '/v2/sessions/read-batch': 2 });
+    const attribution = exactBorrowers.read();
+    expect(attribution.reduce((count, borrower) => count + borrower.calls, 0)).toBe(3);
+    expect(attribution.reduce((count, borrower) => count + borrower.idCount, 0)).toBe(3);
+    expect(attribution.every(borrower => borrower.provenance[0]?.source === 'apps/ui/sources/sync/engine/sessions/sessionByIdHttp.ts'
+        && borrower.provenance[0].method?.endsWith('readSessionByIdHttp'))).toBe(true);
+    expect(JSON.stringify([...attribution, ...collectionBorrowers.read()])).not.toMatch(/private-exact|private-other/);
 });
 
 it('merges exact detail entrypoints and context collections at the same neutral Session parts owner', async () => {

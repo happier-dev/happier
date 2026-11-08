@@ -1,5 +1,5 @@
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DEFAULT_MACHINE_TUNNEL_CAPABILITIES, MachineTunnelCapabilitiesSchema, type MachineTunnelCapabilities } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -171,7 +171,7 @@ async function fetchJson(params: Readonly<{
     const response = await fetchWithCredentialRedirectRefusal(params.url, {
       ...params.init,
       ...(signal ? { signal } : {}),
-    }, runtimeFetch);
+    }, runtimeFetchManualResponse);
     return {
       ok: response.ok,
       status: response.status,

@@ -1,7 +1,9 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import type { FileDownloadResultV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { RegistrySkillFilesPayloadV1Schema } from '@happier-dev/protocol/registries';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { createBufferedTransferDestination } from '../carriers/createBufferedTransferDestination';
@@ -37,16 +39,17 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => 
     },
 }));
 
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (url: string, init?: RequestInit) => {
+beforeEach(() => {
+    setRuntimeFetch((input, init) => {
+        const url = String(input);
         if (url.includes('/complete') && Array.from(convertedWorkspaceFixtures).some(id => url.includes(id))) {
             const id = Array.from(convertedWorkspaceFixtures).find(id => url.includes(id))!;
             workspaceCompletionRequests.set(id, JSON.parse(String(init?.body)));
             return Promise.resolve(new Response(JSON.stringify({ success: true }), { headers: { 'content-type': 'application/json' } }));
         }
         return runtimeFetchMock(url, init);
-    },
-}));
+    });
+});
 
 async function createManifestHash(payloadBytes: Uint8Array): Promise<string> {
     const digestSource = new Uint8Array(new ArrayBuffer(payloadBytes.byteLength));
@@ -56,6 +59,55 @@ async function createManifestHash(payloadBytes: Uint8Array): Promise<string> {
 }
 
 describe('directTransferExportDownload', () => {
+    it.each(['completed', 'integrity', 'cancelled', 'unknown'] as const)(
+        'consumes an accepted contributed download receipt with destination settlement: %s', async outcome => {
+            const bytes = new Uint8Array([0, 255, 128, 10]);
+            const manifestHash = await createManifestHash(bytes);
+            const expiresAt = Date.now() + 60_000;
+            const cancellation = new AbortController();
+            const events: string[] = [];
+            const written: number[] = [];
+            let encrypted: Awaited<ReturnType<typeof createEncryptedTransferChunkEnvelope>>;
+            const receipt = { success: true, status: 'accepted', operationId: 'provider-operation', destinationId: 'held-destination',
+                prepared: { transferId: 'provider-export', name: 'logs.zip', sizeBytes: bytes.length, manifestHash, expiresAt,
+                    endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/provider-export',
+                        authorizationToken: 'held-token', expiresAt }] } } satisfies Extract<FileDownloadResultV1, { status: 'accepted' }>;
+            const acquire = async () => ({ kind: 'browser_stream' as const, release: async () => { events.push('release'); },
+                request: async (input: RequestInfo | URL, init?: RequestInit) => {
+                    const url = new URL(String(input));
+                    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer held-token');
+                    if (url.pathname.endsWith('/complete')) {
+                        const settlement: unknown = JSON.parse(String(init?.body));
+                        expect(settlement).toMatchObject({ destinationId: receipt.destinationId, success: outcome === 'completed' || outcome === 'unknown' });
+                        events.push('ack');
+                        if (outcome === 'unknown') throw new Error('ACK lost');
+                        return Response.json({ success: true });
+                    }
+                    if (url.pathname.endsWith('/open')) {
+                        encrypted = await createEncryptedTransferChunkEnvelope({ transferId: receipt.prepared.transferId, sequence: 0,
+                            payload: bytes, recipientPublicKeyBase64: new Headers(init?.headers).get('x-happier-transfer-recipient-public-key')! });
+                        return Response.json({ transferId: receipt.prepared.transferId, totalChunks: 1, sizeBytes: bytes.length,
+                            manifestHash: outcome === 'integrity' ? `sha256:${'0'.repeat(64)}` : manifestHash });
+                    }
+                    return Response.json({ transferId: receipt.prepared.transferId, kind: 'chunk', sequence: 0, ...encrypted! });
+                } });
+            if (outcome === 'cancelled') cancellation.abort();
+            const result = await downloadAdmittedBytes({ machineId: 'exact-machine', acceptedReceipt: receipt,
+                destination: { writeBytes: async chunk => { written.push(...chunk); }, close: async () => { events.push('close'); },
+                    cleanup: async () => { events.push('cleanup'); written.length = 0; } },
+                acquirePreparedCarrier: acquire, acquireCleanupCarrier: acquire, signal: cancellation.signal });
+            expect(callGuardedMachineRpcWithPolicyMock).not.toHaveBeenCalled();
+            if (outcome === 'completed' || outcome === 'unknown') {
+                expect(written).toEqual(Array.from(bytes));
+                expect(events).toEqual(['close', 'ack', 'release']);
+                expect(result).toMatchObject(outcome === 'completed' ? { ok: true, name: 'logs.zip', sizeBytes: bytes.length }
+                    : { ok: false, errorCode: 'indeterminate' });
+            } else {
+                expect(result).toMatchObject({ ok: false });
+                expect(written).toEqual([]);
+                expect(events).toEqual(['cleanup', 'ack', 'release']);
+            }
+        });
     it('releases a caller-owned revision export when its download was cancelled before it starts', async () => {
         const cancellation = new AbortController(); cancellation.abort();
         callGuardedMachineRpcWithPolicyMock.mockResolvedValue({ success: true });
@@ -221,6 +273,7 @@ describe('directTransferExportDownload', () => {
         expect(callGuardedMachineRpcWithPolicyMock.mock.calls.some(([call]) => call.method === 'daemon.filesystem.transfer.cancel')).toBe(false);
     });
     afterEach(() => {
+        resetRuntimeFetch();
         callGuardedMachineRpcWithPolicyMock.mockReset();
         runtimeFetchMock.mockReset();
         convertedWorkspaceFixtures.clear();
@@ -395,6 +448,62 @@ describe('directTransferExportDownload', () => {
             payload: { transferId: 'browser-transfer-1' },
         }));
     });
+
+    it.each(['file', 'json', 'direct', 'caller-cancel'] as const)(
+        'keeps Home RPC export lifetime with its owner, not the direct HTTP timer: %s', async mode => {
+            const payload = { hostedHelper: true };
+            const bytes = new TextEncoder().encode(JSON.stringify(payload));
+            const manifestHash = await createManifestHash(bytes);
+            const transferId = 'home-rpc-deadline';
+            callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({ success: true, transferId,
+                name: 'helper.json', sizeBytes: bytes.length, expiresAt: Date.now() + 60_000,
+                endpointCandidates: [{ kind: 'http', url: `http://127.0.0.1:46001/machine-transfers/direct/${transferId}`,
+                    expiresAt: Date.now() + 60_000 }] });
+            const caller = new AbortController();
+            let releaseOpen!: () => void;
+            const open = new Promise<void>(resolve => { releaseOpen = resolve; });
+            let phaseSignal: AbortSignal | null | undefined;
+            const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input).includes('/open')) {
+                    phaseSignal = init?.signal;
+                    await Promise.race([open, new Promise<never>((_resolve, reject) => {
+                        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+                    })]);
+                    return Response.json({ transferId, manifestHash, totalChunks: 1, sizeBytes: bytes.length });
+                }
+                const encrypted = await createEncryptedTransferChunkEnvelope({ transferId, sequence: 0, payload: bytes,
+                    recipientPublicKeyBase64: new Headers(init?.headers).get('x-happier-transfer-recipient-public-key') ?? '' });
+                return Response.json({ transferId, kind: 'chunk', sequence: 0, payloadBase64: encrypted.payloadBase64,
+                    encryptedDataKeyEnvelopeBase64: encrypted.encryptedDataKeyEnvelopeBase64 });
+            });
+            const release = vi.fn(async () => {});
+            const common = { machineId: 'machine-1', serverId: 'server-a', signal: caller.signal,
+                request: { t: 'prompt_asset_download_v1' as const, path: '/owned/helper' },
+                acquirePreparedCarrier: async () => ({ kind: mode === 'direct' ? 'browser_stream' as const : 'server_rpc' as const,
+                    request, release }) };
+            const destination = createBufferedTransferDestination(bytes.length);
+            vi.useFakeTimers();
+            const result = mode === 'json' ? downloadBulkJsonPayloadViaDirectExport({ ...common,
+                parsePayload: value => value as typeof payload }) : downloadBulkPayloadViaDirectExportToDestination({ ...common,
+                destination: destination.destination });
+            try {
+                await vi.waitFor(() => expect(phaseSignal).toBeDefined());
+                if (mode === 'caller-cancel') caller.abort(new Error('Owned surface retired'));
+                else await vi.advanceTimersByTimeAsync(5_001);
+                expect(phaseSignal?.aborted).toBe(mode === 'direct' || mode === 'caller-cancel');
+                releaseOpen();
+                vi.useRealTimers();
+                if (mode === 'json') await expect(result).resolves.toEqual({ ok: true, payload });
+                else if (mode === 'file') await expect(result).resolves.toMatchObject({ ok: true, sizeBytes: bytes.length });
+                else await expect(result).resolves.toMatchObject({ ok: false });
+                expect(release).toHaveBeenCalledTimes(1);
+            } finally {
+                releaseOpen();
+                vi.useRealTimers();
+                await result;
+            }
+        },
+    );
 
     it('owns the terminal selected-Iroh result after a browser export request fails', async () => {
         callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({

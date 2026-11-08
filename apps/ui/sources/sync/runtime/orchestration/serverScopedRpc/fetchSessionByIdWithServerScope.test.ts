@@ -1,9 +1,11 @@
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    computeAccountEncryptionMigrateKeyFingerprintV1,
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
     createAccountScopedCryptoMaterialSnapshotV1,
     deriveAccountMachineKeyFromRecoverySecret,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/accountScopedCipher';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -45,6 +47,18 @@ const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 const fetchAccountEncryptionCurrentnessSpy = vi.hoisted(() => vi.fn());
 const getCachedServerFeaturesSnapshotSpy = vi.hoisted(() => vi.fn());
 
+// Counts each full Account proof; the real derivation still runs beneath it.
+const accountProofs = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@happier-dev/protocol/crypto/accountScopedCipher', async importOriginal => {
+    const actual = await importOriginal<typeof import('@happier-dev/protocol/crypto/accountScopedCipher')>();
+    return { ...actual, createAccountScopedCryptoMaterialSnapshotV1: (
+        ...args: Parameters<typeof actual.createAccountScopedCryptoMaterialSnapshotV1>
+    ) => {
+        accountProofs.count += 1;
+        return actual.createAccountScopedCryptoMaterialSnapshotV1(...args);
+    } };
+});
+
 vi.mock('./resolveServerAccountRequestContext', () => ({
     resolveServerAccountRequestContext: (params: unknown) => resolveContextSpy(params),
 }));
@@ -55,11 +69,14 @@ vi.mock('@/sync/engine/sessions/sessionById', () => ({
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', async importOriginal => ({
     ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
     fetchAccountEncryptionCurrentness: (...args: unknown[]) =>
+        fetchAccountEncryptionCurrentnessSpy(...args),
+    fetchOperationAccountEncryptionIdentity: (...args: unknown[]) =>
         fetchAccountEncryptionCurrentnessSpy(...args),
     subscribeAccountEncryptionModeCacheInvalidation: () => () => {},
 }));
@@ -371,6 +388,43 @@ describe('fetchSessionByIdWithServerScope', () => {
             includeTurnsProjection: false,
         }));
         expect(fetchAccountEncryptionCurrentnessSpy).not.toHaveBeenCalled();
+    });
+
+    it('proves Account material once for one mutation snapshot read and its writer', async () => {
+        resolveContextSpy.mockResolvedValue({ scope: 'active', timeoutMs: 5000 });
+        fetchAndApplySessionByIdSpy.mockResolvedValue({
+            ok: true,
+            session: { id: 'session-1', encryptionMode: 'e2ee' },
+            metadataTupleMutationSnapshot: {
+                mode: 'owner', metadataLayoutVersion: 1, metadataVersion: 3,
+                sharedMetadataCiphertext: 'shared-current',
+                ownerMetadataEnvelope: { t: 'encrypted', c: 'owner-current' },
+                agentStateVersion: 4, agentStateCiphertext: null,
+                displayProjectionV1: { v: 1, shared: { t: 'plain', v: {} }, owner: { t: 'plain', v: {} } },
+                value: { metadata: {}, sharedMetadata: { v: 1 }, ownerMetadata: { v: 1 }, agentState: null },
+            },
+        });
+        accountProofs.count = 0;
+        const result = await fetchMutationSnapshotForTest({
+            sessionId: 'session-1',
+            activeCredentials: { token: 'active-token', secret: Buffer.from(ACCOUNT_SECRET).toString('base64url') },
+            activeEncryption: { getSessionEncryption: vi.fn(() => ({
+                encryptRaw: vi.fn(async () => 'encrypted-payload'),
+                decryptAgentState: vi.fn(async () => null),
+                decryptMetadata: vi.fn(async () => null),
+            })) } as any,
+            sessionDataKeys: new Map(),
+            activeRequest: vi.fn(),
+            applySessions: vi.fn(),
+            log: { log: vi.fn() },
+        });
+
+        expect(result.metadataTupleWriterContext?.ownerMigrationCurrentness).toEqual({
+            expectedAccountEncryptionMode: 'e2ee',
+            expectedAccountContentPublicKeyFingerprint: ACCOUNT_CONTENT_PUBLIC_KEY_FINGERPRINT,
+        });
+        expect(result.metadataTupleWriterContext?.encodeOwnerMetadata({ v: 1 }).t).toBe('encrypted');
+        expect(accountProofs.count).toBe(1);
     });
 
     it('returns an ephemeral tuple writer context only for an explicit mutation snapshot read', async () => {

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { createSessionFixture } from '@/dev/testkit';
+import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { Encryption } from '@/sync/encryption/encryption';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -9,6 +11,8 @@ import { ServerReachabilityWaitTimeoutError } from '@/sync/runtime/connectivity/
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -123,6 +127,15 @@ vi.mock('@/sync/api/session/apiSocket', async (importOriginal) => {
 // Session reads travel the batch wire; runtimeFetchMock keeps answering the per-Session facts beneath it.
 const sessionReadRuntimeFetch = vi.hoisted(() => ({ fetch: null as null | ((input: RequestInfo | URL, init?: RequestInit) => Promise<unknown>) }));
 async function runtimeFetchThroughSessionReadBatch(input: RequestInfo | URL, init?: RequestInit) {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    if (url.pathname === '/v1/account/encryption/currentness') {
+        // The Home reports the persisted identity of exactly the material its caller's stored
+        // credentials hold; a token it has no stored credentials for belongs to a plain Account.
+        const token = new Headers(init?.headers).get('Authorization')?.replace(/^Bearer /, '') ?? '';
+        const stored = await getCredentialsForServerUrlMock(url.origin) as AuthCredentials | null | undefined;
+        return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(
+            stored?.token === token ? stored : { token }));
+    }
     if (!sessionReadRuntimeFetch.fetch) {
         const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
         sessionReadRuntimeFetch.fetch = createSessionReadBatchFetchBoundary(async (url, requestInit) => await runtimeFetchMock(url, requestInit));
@@ -131,6 +144,7 @@ async function runtimeFetchThroughSessionReadBatch(input: RequestInfo | URL, ini
 }
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchThroughSessionReadBatch,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: (params: Readonly<{
@@ -203,18 +217,26 @@ import { settingsDefaults } from './domains/settings/settings';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import type { Machine, Session } from './domains/state/storageTypes';
+import type { InvalidateSync } from '@/utils/sessions/sync';
+import type { PauseController } from '@/utils/timing/pauseController';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import type { SessionListRenderableSession } from './domains/session/listing/sessionListRenderable';
 import type { NormalizedMessage, RawRecord } from "@happier-dev/session-core/raw";
 import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 import {
-    computeAccountEncryptionMigrateKeyFingerprintV1,
-    makeExternalSessionHistoricalImportLocalId,
+    computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
+    makeExternalSessionHistoricalImportLocalId} from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import {
     projectSessionSharedMetadataV1,
-    SessionOwnerMetadataV1Schema,
-    sealSessionOwnerMetadataEnvelopeV1,
-    type AccountEncryptionCurrentnessResponse,
+    SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
+    type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
+import {
     type ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createVoiceHistoryConsumer } from '@/voice/history/voiceHistoryConsumer';
 import type { ServerAccountRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { socketTranscriptStreamSegmentAssembler } from './engine/socket/socketTranscriptStreamSegmentAssembler';
@@ -236,16 +258,29 @@ function currentPendingInputFeaturesResponse(protocolVersion = 1): Response {
     });
 }
 
-const plainAccountEncryptionCurrentness = {
-    mode: 'plain',
-    version: 1,
-    signingKeyFingerprint: null,
-    contentKeyFingerprint: null,
-    updatedAt: 1,
-} satisfies AccountEncryptionCurrentnessResponse;
-
 function currentPlainAccountEncryptionCurrentnessResponse(): Response {
-    return Response.json(plainAccountEncryptionCurrentness);
+    return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+}
+
+/** A real legacy Account recovery secret, so the Home's currentness can name its content key. */
+function legacyAccountSecret(fill: number): string {
+    return encodeBase64(new Uint8Array(32).fill(fill), 'base64url');
+}
+
+/**
+ * The owner Home's stored credentials are the legacy Account (`testEncryption`'s secret) that
+ * sealed this Session, so its scoped Account encryption holds the Session key the content needs.
+ * Each case gets its own Account token: the scoped owner is retained per Home and credentials.
+ */
+function installOwnerAccountSealingSession(sessionId: string): string {
+    const token = buildTokenWithSub(`owner-account-${sessionId}`);
+    getCredentialsForServerUrlMock.mockResolvedValue({ token, secret: legacyAccountSecret(9) });
+    createEncryptionFromAuthCredentialsMock.mockImplementation(async () => {
+        const ownerEncryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await ownerEncryption.initializeSessions(new Map([[sessionId, null]]));
+        return ownerEncryption;
+    });
+    return token;
 }
 
 function currentE2eeAccountEncryptionCurrentnessResponse(
@@ -833,7 +868,6 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             invalidateSessions: vi.fn(),
             invalidateArtifacts: vi.fn(),
             invalidateFriends: vi.fn(),
-            invalidateFriendRequests: vi.fn(),
             invalidateFeed: vi.fn(),
             invalidateAutomations: vi.fn(),
             invalidateTodos: vi.fn(),
@@ -942,7 +976,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             activeAt: now,
             metadataVersion: 0,
             agentStateVersion: 0,
-            metadata: null,
+            metadata: { path: '/repo', bot: { kind: 'bot' } },
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
@@ -963,6 +997,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 },
             },
             sessionListRowsByServerId: {
+                [activeServer.id]: { [activeSession.id]: activeSession },
+                [sideServer.id]: { [sideSession.id]: sideSession },
+            },
+            sessionListBotRowsByServerId: {
                 [activeServer.id]: { [activeSession.id]: activeSession },
                 [sideServer.id]: { [sideSession.id]: sideSession },
             },
@@ -1005,6 +1043,9 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             },
         });
         expect(storage.getState().sessionListRowsByServerId).toEqual({
+            [sideServer.id]: { [sideSession.id]: sideSession },
+        });
+        expect(storage.getState().sessionListBotRowsByServerId).toEqual({
             [sideServer.id]: { [sideSession.id]: sideSession },
         });
         expect(storage.getState().ordinarySessionListMembershipByServerId).toEqual({
@@ -1955,6 +1996,114 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         )).toBe(false);
         expect(requestMock).toHaveBeenCalledTimes(2);
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('applies known Machine heartbeats immediately without a timer or row read through the real ingress', async () => {
+        vi.useFakeTimers();
+        const { sync } = await import('./sync');
+        const engine = sync as unknown as {
+            handleEphemeralUpdate(update: unknown, context: { serverId: string }): void;
+        };
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected the installed Home Account');
+        const now = Date.now();
+        const machine = { ...createMachine('heartbeat-only'), activeAt: now };
+        storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
+        const before = storage.getState();
+        requestMock.mockClear();
+        runtimeFetchMock.mockClear();
+        const timers = vi.getTimerCount();
+        for (let index = 1; index <= 20; index++) {
+            engine.handleEphemeralUpdate({ type: 'machine-activity', id: machine.id, active: true, activeAt: now + index }, scope);
+            expect(readMachineActivity(storage.getState().machines[machine.id]!).activeAt).toBe(now + index);
+        }
+        expect(storage.getState()).toBe(before);
+        expect(vi.getTimerCount()).toBe(timers);
+        expect(requestMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['initial', 'visible catch-up', 'offscreen catch-up', 'network-shaped Agent failure'] as const)(
+        'waits without timed RPC retries after agent_unavailable and resumes on Machine availability: %s', async (mode) => {
+        vi.useFakeTimers();
+        const sessionId = `external-agent-wait-${mode}`;
+        const machine = createMachine('machine-1');
+        storage.getState().applyMachines([machine], false);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        const { sync } = await import('./sync');
+        const engine = sync as unknown as {
+            isForeground: boolean;
+            activeServerSessionIds: Set<string>;
+            hasFetchedSessionsSnapshotForActiveServer: boolean;
+            pauseController: PauseController;
+            messagesSync: Map<string, InvalidateSync>;
+            fetchMessages(id: string): Promise<void>;
+            getOrCreateMessagesSync(id: string): InvalidateSync;
+            flushMachineActivityUpdates(updates: Map<string, { id: string; active: boolean; activeAt: number }>,
+                options?: { onApplied?: () => void }): void;
+        };
+        const wasForeground = engine.isForeground;
+        engine.isForeground = true;
+        engine.activeServerSessionIds = new Set([sessionId]);
+        engine.hasFetchedSessionsSnapshotForActiveServer = true;
+        engine.pauseController.resume();
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected the installed Home Account');
+        observeMachinePresenceForTest(scope, [machine.id]);
+        if (mode !== 'offscreen catch-up') markSessionSurfaceVisible(sessionId);
+        machineExternalSessionTranscriptPageMock.mockResolvedValue({
+            ok: true, items: [{ id: 'retained-row', createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'last known transcript' } } }],
+            nextCursor: null, tailCursor: 'happier_external_cursor_v1:YzE', hasMore: false,
+        });
+        if (mode !== 'initial') await engine.fetchMessages(sessionId);
+        const retained = storage.getState().sessionMessages[sessionId];
+        const failedRpc = mode === 'initial'
+            ? machineExternalSessionTranscriptPageMock : machineExternalSessionTranscriptReadAfterMock;
+        failedRpc.mockReset();
+        failedRpc.mockResolvedValue({ ok: false, errorCode: 'agent_unavailable',
+            error: mode === 'network-shaped Agent failure' ? 'Failed to fetch' : 'Agent unavailable' });
+        const queue = engine.getOrCreateMessagesSync(sessionId);
+        try {
+            queue.invalidate();
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(failedRpc).toHaveBeenCalledTimes(1);
+            await expect(queue.awaitQueue()).resolves.toEqual({ status: 'completed' });
+            expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+                kind: 'read_failed', errorCode: 'agent_unavailable',
+            });
+            expect(storage.getState().sessionMessages[sessionId]).toBe(retained);
+
+            // Hold availability-driven work while the document is backgrounded.
+            engine.isForeground = false;
+            engine.pauseController.pause();
+            engine.flushMachineActivityUpdates(new Map([[machine.id, {
+                id: machine.id, active: false, activeAt: Date.now(),
+            }]]));
+            failedRpc.mockResolvedValue({ ok: true, items: [], nextCursor: 'happier_external_cursor_v1:YzE',
+                tailCursor: 'happier_external_cursor_v1:YzE', hasMore: false, truncated: false });
+            engine.flushMachineActivityUpdates(new Map([[machine.id, {
+                id: machine.id, active: true, activeAt: Date.now(),
+            }]]), { onApplied: () => observeMachinePresenceForTest(scope, [machine.id]) });
+            await vi.advanceTimersByTimeAsync(120_000);
+            expect(failedRpc).toHaveBeenCalledTimes(1);
+            // Presence expires during the long hidden window. Observe a fresh
+            // recovery heartbeat rather than bypassing the admission predicate.
+            engine.flushMachineActivityUpdates(new Map([[machine.id, {
+                id: machine.id, active: true, activeAt: Date.now(),
+            }]]), { onApplied: () => observeMachinePresenceForTest(scope, [machine.id]) });
+            engine.isForeground = true;
+            engine.pauseController.resume();
+            await vi.advanceTimersByTimeAsync(0);
+            await queue.awaitQueue();
+            expect(failedRpc).toHaveBeenCalledTimes(2);
+            expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
+        } finally {
+            queue.stop();
+            engine.messagesSync.delete(sessionId);
+            engine.isForeground = wasForeground;
+            engine.pauseController.resume();
+        }
     });
 
     it('distinguishes unavailable and failed external transcript reads from an authoritative empty transcript', async () => {
@@ -3085,9 +3234,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         storage.getState().applySessions([createSession(sessionId)]);
 
-        const ownerToken = buildTokenWithSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
+        const ownerToken = installOwnerAccountSealingSession(sessionId);
         runtimeFetchMock.mockResolvedValue(
             new Response(
                 JSON.stringify({
@@ -3146,9 +3293,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         storage.getState().applySessions([createSession(sessionId)]);
 
-        const ownerToken = buildTokenWithSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
+        const ownerToken = installOwnerAccountSealingSession(sessionId);
         runtimeFetchMock
             .mockResolvedValueOnce(
                 new Response(
@@ -3299,7 +3444,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         } as Session]);
 
         const ownerToken = buildTokenWithSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: legacyAccountSecret(11) });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         runtimeFetchMock.mockImplementation(async (input) =>
             String(input).endsWith('/v1/features')
@@ -3439,7 +3584,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         storage.getState().applySessions([activeSession]);
         const mountedScope = createServerAccountScope(mountedServer.id, 'account-b')!;
         const mountedToken = buildTokenWithSub('account-b');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: mountedToken, secret: 'home-b-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: mountedToken, secret: legacyAccountSecret(12) });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
 
         let current = true;
@@ -3630,7 +3775,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         storage.getState().upsertPendingMessage(sessionId, original);
         getCredentialsForServerUrlMock.mockResolvedValue({
             token: buildTokenWithSub('account-b'),
-            secret: 'home-b-secret',
+            secret: legacyAccountSecret(12),
         });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         let current = true;
@@ -3698,12 +3843,11 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
 
         const mountedToken = buildTokenWithSub('account-b');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: mountedToken, secret: 'home-b-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: mountedToken, secret: legacyAccountSecret(12) });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.endsWith('/v1/features')) return currentPendingInputFeaturesResponse();
-            if (url.endsWith('/v1/account/encryption/currentness')) return currentPlainAccountEncryptionCurrentnessResponse();
             if (url.includes(`/v2/sessions/${sessionId}`) && !url.endsWith('/action')) {
                 return Response.json({ session: {
                     id: sessionId,
@@ -3782,7 +3926,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const appliedToken = buildTokenWithSub('applied-account');
         getCredentialsForServerUrlMock.mockResolvedValue({
             token: appliedToken,
-            secret: 'applied-secret',
+            secret: legacyAccountSecret(13),
         });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -3899,7 +4043,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             secret: encodeBase64(accountSecret, 'base64url'),
         });
         const { Encryption } = await import('@/sync/encryption/encryption');
-        const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol');
+        const { sealEncryptedDataKeyEnvelopeV1} = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
         const daemonAccount = await Encryption.create(accountSecret);
         const envelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
             dataKey: sessionDataKey,
@@ -4065,7 +4209,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             rawRecord: { role: 'user', content: { type: 'text', text: 'before update' }, meta: {} },
         });
         const ownerToken = buildTokenWithSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: legacyAccountSecret(11) });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         runtimeFetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
@@ -4305,7 +4449,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const { sessionStopWithServerScope } = await import('./ops/sessions');
         const caller = { kind: 'session', sessionId: scenario === 'self' ? sessionId : 'managing-session',
             starterDepth: 0, turnDepth: 1 } as const;
-        const result = await sessionStopWithServerScope(sessionId, { serverId: scope.serverId, scope, isCurrent: lifetime.isCurrent,
+        const result = await sessionStopWithServerScope(sessionId, { stopIntent: 'explicit_stop', serverId: scope.serverId, scope, isCurrent: lifetime.isCurrent,
             ...(scenario === 'automatic' ? { actionContext: { surface: 'ui', authority: 'account_automation' } } : {}),
             ...(scenario === 'manager' || scenario === 'self' ? { actionContext: {
                 surface: 'agent', authority: 'account_automation', actionCaller: caller,
@@ -4411,19 +4555,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = {
-            token: 'active-token',
-            encryption: {
-                publicKey: encodeBase64(
-                    new Uint8Array(32).fill(24),
-                    'base64',
-                ),
-                machineKey: encodeBase64(
-                    new Uint8Array(32).fill(23),
-                    'base64',
-                ),
-            },
-        };
+        (sync as any).credentials = { token: 'active-token' };
         (sync as any).encryption = testEncryption;
 
         await expect(
@@ -4755,6 +4887,122 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
     });
 
+    it('publishes already-demanded actual checkout branches through the real owner tuple writer only on change', async () => {
+        const { ScmWorkingSnapshotSchema } = await import('@happier-dev/protocol/scm');
+        const { EMPTY_SCM_CAPABILITIES } = await import('@/scm/core/snapshotMappers');
+        const machineTransport = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        const { ScmRepositoryService } = await import('@/scm/scmRepositoryService');
+        const sessionId = 'observed_checkout_branch';
+        const machineId = 'observed_checkout_machine';
+        const initialMetadata = { path: '/repo/packages/app', machineId, host: 'owner', branch: 'before' };
+        // The SCM repository root differs from the actual Session cwd. Publication must use the
+        // transport's exact checkout target, not mistake the repository root for the cwd.
+        const concurrentMetadata = { ...initialMetadata, summary: { text: 'Concurrent rename', updatedAt: 2 } };
+        let row = createPlainV2SessionRecordFixture({ id: sessionId, metadata: concurrentMetadata });
+        storage.getState().applyMachines([createMachine(machineId)]);
+        storage.getState().applySessions([{
+            ...createSession(sessionId), encryptionMode: 'plain', metadataLayoutVersion: 1,
+            metadataVersion: row.metadataVersion, metadata: initialMetadata,
+            ownerMetadataView: initialMetadata,
+        }]);
+        let metadataReads = 0;
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return currentPlainAccountEncryptionCurrentnessResponse();
+            expect(path).toBe(`/v2/sessions/${sessionId}`);
+            metadataReads += 1;
+            return Response.json({ session: row });
+        });
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async (input: { patch: unknown }) => {
+            const patch = SessionMetadataTuplePatchV1Schema.parse(input.patch);
+            if (patch.mode !== 'owner') throw new Error('Expected a private owner tuple patch');
+            const agentStateVersion = row.agentStateVersion;
+            if (agentStateVersion === undefined) throw new Error('Expected the owner tuple fixture to include its Agent state version');
+            row = { ...row, metadataVersion: row.metadataVersion + 1, agentStateVersion: agentStateVersion + 1,
+                metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+                agentState: patch.agentState.ciphertext };
+            return { result: 'success', metadataLayoutVersion: 1, version: row.metadataVersion, agentStateVersion: row.agentStateVersion };
+        });
+        let head: string | null = 'feature/actual';
+        let detached = false;
+        const statusRpc = vi.spyOn(machineTransport, 'machineRpcWithServerScope').mockImplementation(async () => ({
+            success: true,
+            snapshot: ScmWorkingSnapshotSchema.parse({
+                projectKey: 'repository', fetchedAt: 1, repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
+                capabilities: EMPTY_SCM_CAPABILITIES,
+                branch: { head, upstream: null, ahead: 0, behind: 0, detached },
+                stashCount: 0, hasConflicts: false, entries: [],
+                totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+            }),
+        }));
+        onTestFinished(() => statusRpc.mockRestore());
+        const { sync } = await import('./sync');
+        const credentials = { token: buildTokenWithSub('scope-test-account') };
+        Reflect.set(sync, 'credentials', credentials);
+        getCredentialsForServerUrlMock.mockResolvedValue(credentials);
+        runtimeFetchMock.mockImplementation((url: string, init?: RequestInit) => requestMock(new URL(url).pathname, init));
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(getActiveServerSnapshot().serverId);
+        const repository = new ScmRepositoryService();
+        await Promise.all([repository.fetchSnapshotForSession(sessionId), repository.fetchSnapshotForSession(sessionId)]);
+        expect(storage.getState().sessions[sessionId]?.ownerMetadataView).toMatchObject({
+            branch: 'feature/actual', summary: concurrentMetadata.summary,
+        });
+        expect(row.ownerMetadata).toMatchObject({ t: 'plain', v: { workspace: { branch: 'feature/actual' } } });
+        expect(JSON.parse(row.metadata!)).not.toHaveProperty('branch');
+        expect(statusRpc).toHaveBeenCalledTimes(1);
+        expect(metadataReads).toBe(1);
+        await repository.fetchSnapshotForSession(sessionId);
+        expect(statusRpc).toHaveBeenCalledTimes(2);
+        expect(metadataReads).toBe(1);
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledTimes(1);
+        head = null;
+        detached = true;
+        await repository.fetchSnapshotForSession(sessionId);
+        expect(storage.getState().sessions[sessionId]?.ownerMetadataView?.branch).toBeNull();
+        expect(metadataReads).toBe(2);
+    });
+
+    it('preserves a requester admission transport through the real metadata tuple read and write', async () => {
+        const sessionId = 'requester_admitted_metadata';
+        const home = await upsertServerProfile({ serverUrl: 'https://requester-metadata.example', name: 'Requester metadata' });
+        await setActiveServerId(home.id, { scope: 'device' });
+        const { sync } = await import('./sync');
+        installAppliedAccountScope(sync);
+        const credentials = { token: buildTokenWithSub('scope-test-account') };
+        getCredentialsForServerUrlMock.mockResolvedValue(credentials);
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain', metadataVersion: 2,
+            metadata: { path: '/tmp/repo', host: 'test-host' } } as Session]);
+        const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+        const boundary = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+        requestMock.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (new Headers(init?.headers).get('x-requester-admission') !== 'admitted-root') {
+                return Response.json({ error: 'Forbidden' }, { status: 403 });
+            }
+            if (path === '/v1/account/encryption/currentness') return currentPlainAccountEncryptionCurrentnessResponse();
+            const response = boundary.handle(`${home.serverUrl}${path}`, init);
+            if (!response) throw new Error(`Unexpected metadata path ${path}`);
+            return response;
+        });
+        runtimeFetchMock.mockImplementation((url: string, init?: RequestInit) => requestMock(new URL(url).pathname, init));
+        // Exercise the tuple writer beneath its HTTP boundary, including real patch parsing and ACK admission.
+        const actual = await vi.importActual<typeof import('@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope')>(
+            '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope');
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(actual.emitSessionMetadataUpdateWithServerScope);
+        Reflect.set(sync, 'credentials', credentials);
+        Reflect.set(sync, 'encryption', testEncryption);
+        const preparedPaths: string[] = [];
+        const options = { serverId: home.id, prepareRequest: async (path: string, init: RequestInit | undefined) => {
+            preparedPaths.push(path);
+            const headers = new Headers(init?.headers);
+            headers.set('x-requester-admission', 'admitted-root');
+            return { ...init, headers };
+        } };
+        await sync.patchSessionMetadataWithRetry(sessionId, metadata => ({ ...metadata,
+            summary: { text: 'Admitted metadata', updatedAt: 123 } }), options);
+        expect(boundary.writes).toContain(sessionId);
+        expect(preparedPaths).toContain('/v2/sessions/read-batch');
+        expect(storage.getState().sessions[sessionId]?.ownerMetadataView?.summary?.text).toBe('Admitted metadata');
+    });
+
     it('supports overriding the server scope used by patchSessionMetadataWithRetry', async () => {
         const sessionId = 'plain_metadata_session_override';
         const activeServer = await upsertServerProfile({
@@ -4887,7 +5135,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         getCredentialsForServerUrlMock.mockResolvedValue({
             token: buildTokenWithSub('account-b'),
-            secret: 'home-b-secret',
+            secret: legacyAccountSecret(12),
         });
         createEncryptionFromAuthCredentialsMock.mockImplementation(createUnusedScopedEncryption);
         let current = true;
@@ -4922,9 +5170,6 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     share: null,
                 } });
             }
-            if (url.endsWith('/v1/account/encryption/currentness')) {
-                return currentPlainAccountEncryptionCurrentnessResponse();
-            }
             return new Response(null, { status: 404 });
         });
 
@@ -4949,6 +5194,92 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             metadataVersion: 4,
         });
         expect(requestMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['sendMessage', 'submitMessage'] as const)(
+        'preserves a failed cold-session hydration before %s',
+        async (entryPoint) => {
+            const sessionId = 'message_hydration_failure';
+            requestMock.mockImplementation((path: string) => {
+                if (path === '/v1/account/encryption/currentness') {
+                    return currentPlainAccountEncryptionCurrentnessResponse();
+                }
+                return Promise.reject(new TypeError('Network request failed'));
+            });
+            const { sync } = await import('./sync');
+            const syncForHydration = sync as unknown as {
+                credentials: AuthCredentials | null;
+                encryption: Encryption;
+            };
+            syncForHydration.credentials = { token: 'active-token' };
+            syncForHydration.encryption = testEncryption;
+
+            await expect(sync[entryPoint](sessionId, 'Must not be sent')).rejects.toThrow('network_error');
+            expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        },
+    );
+
+    it.each((['sendMessage', 'submitMessage'] as const).flatMap((entryPoint) => (
+        [404, 401].map((status) => ({ entryPoint, status }))
+    )))('preserves a terminal $status hydration before $entryPoint', async ({ entryPoint, status }) => {
+        const sessionId = 'message_terminal_hydration_failure';
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentPlainAccountEncryptionCurrentnessResponse();
+            }
+            return Response.json({ error: 'Session not found' }, { status });
+        });
+        const { sync } = await import('./sync');
+        const syncForHydration = sync as unknown as {
+            credentials: AuthCredentials | null;
+            encryption: Encryption;
+        };
+        syncForHydration.credentials = { token: 'active-token' };
+        syncForHydration.encryption = testEncryption;
+
+        const send = sync[entryPoint](sessionId, 'Must not be sent');
+        if (status === 401) {
+            await expect(send).rejects.toMatchObject({ kind: 'auth', code: 'not_authenticated' });
+        } else {
+            await expect(send).rejects.toThrow('not_found');
+        }
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    });
+
+    it.each([
+        {
+            failure: 'transport failure',
+            request: () => Promise.reject(new TypeError('Network request failed')),
+            errorCode: 'network_error',
+        },
+        {
+            failure: 'server rejection',
+            request: () => Promise.resolve(Response.json({ error: 'unavailable' }, { status: 503 })),
+            errorCode: 'http_error',
+        },
+    ])('preserves the hydration failure before patching metadata after a $failure', async ({ request, errorCode }) => {
+        const sessionId = 'metadata_hydration_failure';
+        requestMock.mockImplementation((path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentPlainAccountEncryptionCurrentnessResponse();
+            }
+            return request();
+        });
+        const { sync } = await import('./sync');
+        const syncForMetadataPatch = sync as unknown as {
+            credentials: AuthCredentials | null;
+            encryption: Encryption;
+        };
+        syncForMetadataPatch.credentials = { token: 'active-token' };
+        syncForMetadataPatch.encryption = testEncryption;
+
+        await expect(sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
+            ...metadata,
+            summary: { text: 'Must not be applied', updatedAt: 123 },
+        }))).rejects.toThrow(errorCode);
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(emitSessionMetadataUpdateWithServerScopeMock).not.toHaveBeenCalled();
     });
 
     it('hydrates lightweight session rows before patching metadata', async () => {
@@ -4998,10 +5329,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = {
-            token: 'active-token',
-            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
-        };
+        (sync as any).credentials = { token: 'active-token' };
         (sync as any).encryption = testEncryption;
 
         await expect(
@@ -5087,10 +5415,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = {
-            token: 'active-token',
-            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
-        };
+        (sync as any).credentials = { token: 'active-token' };
         (sync as any).encryption = testEncryption;
 
         await expect(sync.migrateSessionMetadataOwnerLayout(sessionId)).resolves.toBeUndefined();
@@ -7109,7 +7434,6 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = new URL(String(input));
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
-            if (url.pathname === '/v1/account/encryption/currentness') return currentPlainAccountEncryptionCurrentnessResponse();
             // The scoped Machine socket waits for the Home's reachability probe to answer.
             if (url.pathname === '/health') return new Response(null, { status: 200 });
             if (url.pathname === '/v1/auth/ping') return Response.json({});

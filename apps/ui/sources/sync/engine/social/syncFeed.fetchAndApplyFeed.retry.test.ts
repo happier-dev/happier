@@ -4,6 +4,7 @@ const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 vi.mock('@/log', () => ({

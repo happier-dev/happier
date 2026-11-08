@@ -153,6 +153,7 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     // Let the canonical Account connection harness configure this HTTP boundary.
     setRuntimeFetch: (request: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>) => runtimeFetch.mockImplementation(request),
     resetRuntimeFetch: () => runtimeFetch.mockReset(),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 // The machine RPC is the network boundary; projection parsing and cache ownership stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));

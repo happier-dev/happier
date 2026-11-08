@@ -8,7 +8,7 @@ import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { classifyEndpointResponse } from '@/sync/runtime/connectivity/classifyEndpointResponse';
 import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
@@ -758,7 +758,7 @@ async function requestAtEndpoint<T>(
                 const request = { ...init, headers, signal: requestController.signal };
                 try {
                     response = await fetchWithCredentialRedirectRefusal(requestUrl, request,
-                        homeCarrier ? (url, init) => homeCarrier.request(String(url), init ?? {}) : runtimeFetch);
+                        homeCarrier ? (url, init) => homeCarrier.request(String(url), init ?? {}) : runtimeFetchManualResponse);
                 } catch (error) {
                     if (probeReportScope && !requestController.signal.aborted
                         && !(error instanceof CredentialRequestRedirectError)

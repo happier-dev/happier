@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
-import { createEndpointReadinessProbe } from './createEndpointReadinessProbe';
+import { createEndpointReadinessProbe, readEndpointReadinessResultFromState } from './createEndpointReadinessProbe';
 import {
     acquireServerReachabilitySupervisor,
     peekServerReachabilityState,
@@ -14,6 +14,7 @@ const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchMock,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 vi.mock('react-native', async () => {
@@ -31,6 +32,14 @@ vi.mock('react-native', async () => {
 });
 
 describe('createEndpointReadinessProbe', () => {
+    it('preserves a closed refusal in the endpoint readiness projection', () => {
+        const failure = { code: 'credential_request_redirect_refused', retryable: false, status: 307 } as const;
+        expect(readEndpointReadinessResultFromState({
+            phase: 'offline', reason: 'server_unreachable', attempt: 1, nextRetryAt: null,
+            lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: 'Request redirect refused', failure,
+        })).toMatchObject({ status: 'server_unreachable', failure });
+    });
+
     afterEach(async () => {
         await resetServerReachabilitySupervisors();
         runtimeFetchMock.mockReset();

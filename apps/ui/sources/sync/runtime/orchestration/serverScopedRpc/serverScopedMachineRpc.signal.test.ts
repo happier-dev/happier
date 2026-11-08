@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -34,6 +34,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => ioSpy(...args) }));
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 describe('machineRpcWithServerScope signal', () => {

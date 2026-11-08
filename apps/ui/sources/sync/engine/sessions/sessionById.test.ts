@@ -1,20 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ExternalSessionOperationSharedPresentationV1Schema,
+  ExternalSessionOperationSharedPresentationV1Schema} from '@happier-dev/protocol/sessions/external/operationV1';
+import {
   createPlainSessionOwnerMetadataEnvelopeV1,
-  projectLegacySessionAccessCapabilitiesV1,
   projectSessionSharedMetadataV1,
-  sealSessionOwnerMetadataEnvelopeV1,
-  SessionOwnerMetadataV1Schema,
-  sealEncryptedDataKeyEnvelopeV1,
+  SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+  projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
+  sealSessionOwnerMetadataEnvelopeV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
+  sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
   type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionMode';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { createEmbedEncryption } from '@/embed/encryption/createEmbedEncryption';
 import { Encryption } from '@/sync/encryption/encryption';
 import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
+import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -28,7 +34,9 @@ import {
 } from './sessionById';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
+}));
 
 function capturedSessionHttp(request: (path: string, init: RequestInit) => Promise<Response>) {
   runtimeFetch.mockReset();
@@ -197,6 +205,14 @@ describe('fetchAndApplySessionById', () => {
       const payload = { draft: 'recovered without opening the Session' };
       const ciphertext = await author.getSessionEncryption('draft-session')!.encryptRaw(payload);
       const envelope = encodeBase64(await author.encryptEncryptionKey(key), 'base64');
+      const worker = createFakeCryptoWorker();
+      const keyOpenings: Array<{ workClass: string; count: number }> = [];
+      encryption.configureNativeCryptoWorker({ worker: { ...worker,
+        decryptDataKeyEnvelopeV1: async request => {
+          keyOpenings.push({ workClass: request.workClass ?? 'bulk', count: request.items.length });
+          return worker.decryptDataKeyEnvelopeV1(request);
+        },
+      }, routing: { mode: 'auto', minPayloadBytes: 0 } });
       const metadata = vi.spyOn(SessionEncryption.prototype, 'decryptMetadata');
       const metadataPayload = vi.spyOn(SessionEncryption.prototype, 'decryptMetadataPayload');
       const agentState = vi.spyOn(SessionEncryption.prototype, 'decryptAgentState');
@@ -220,6 +236,7 @@ describe('fetchAndApplySessionById', () => {
         expect(result).toMatchObject({ ok: true, encryptionMode: 'e2ee', session: null });
         expect(sessionDataKeys.get('draft-session')).toEqual(key);
         expect(sessionDataKeyEnvelopes.get('draft-session')).toBe(envelope);
+        expect(keyOpenings).toEqual([{ workClass: 'interactive', count: 1 }]);
         await expect(encryption.getSessionEncryption('draft-session')!.decryptRaw(ciphertext)).resolves.toEqual(payload);
         expect(metadata).not.toHaveBeenCalled();
         expect(metadataPayload).not.toHaveBeenCalled();
@@ -245,6 +262,27 @@ describe('fetchAndApplySessionById', () => {
       };
       await expect(fetchAndApplySessionById(params)).resolves.toMatchObject({ ok: true, encryptionMode: 'plain', session: null });
       expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('refuses a Home-reported plain Session this device admitted as E2EE, or whose row carries an E2EE envelope', async () => {
+      // Persisted Session mode never transitions, so neither case may select plaintext writes.
+      const read = (row: Readonly<{ dataEncryptionKey: string | null }>, existing?: Session) => fetchAndApplySessionById({
+        sessionId: 'flipped', contentDemand: 'encryption-context', credentials: { token: 't' },
+        accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+        encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(),
+        ...(existing ? { getExistingSession: () => existing } : {}),
+        request: async () => Response.json({ session: {
+          id: 'flipped', createdAt: 1, updatedAt: 1, seq: 0, active: false, activeAt: 0,
+          encryptionMode: 'plain', dataEncryptionKey: row.dataEncryptionKey, metadataLayoutVersion: 0,
+          metadataVersion: 1, metadata: 'not-json', agentStateVersion: 1, agentState: 'not-json', share: null,
+        } }),
+        applySessions: vi.fn(), log: { log: () => {} },
+      });
+      await expect(read({ dataEncryptionKey: 'c2Vzc2lvbi1lbnZlbG9wZQ==' })).resolves.toMatchObject({
+        ok: false, session: null, errorCode: 'account_mode_downgrade_unverified' });
+      await expect(read({ dataEncryptionKey: null }, createSessionFixture({ id: 'flipped', encryptionMode: 'e2ee' }))).resolves.toMatchObject({
+        ok: false, session: null, errorCode: 'account_mode_downgrade_unverified' });
+      await expect(read({ dataEncryptionKey: null })).resolves.toMatchObject({ ok: true, encryptionMode: 'plain' });
     });
 
     it.each(['missing', 'invalid'] as const)('refuses a %s Session key without publishing a locked shell', async kind => {
@@ -1511,6 +1549,30 @@ describe('fetchAndApplySessionById', () => {
     ]);
   });
 
+  it.each([
+    [403, 'team_authentication_required'],
+    [503, 'team_authentication_unavailable'],
+  ] as const)('returns a per-Session Team authentication refusal (%s) instead of Account sign-out', async (status, error) => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => Response.json({ error }, { status }));
+
+    await expect(fetchAndApplySessionById({
+      sessionId: 's_team_auth',
+      credentials: { token: 't', secret: 's' },
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    })).resolves.toMatchObject({ ok: false, session: null, errorCode: error, httpStatus: status });
+
+    expect(applySessions).not.toHaveBeenCalled();
+  });
+
   it('keeps an exact Session refusal scoped to that Session', async () => {
     const request = vi.fn(async () => Response.json({ error: 'forbidden' }, { status: 403 }));
     const applySessions = vi.fn();
@@ -1866,7 +1928,7 @@ describe('fetchAndApplySessionById', () => {
       log: { log: () => {} },
     });
 
-    expect(decryptEncryptionKey).toHaveBeenCalledWith('dek');
+    expect(decryptEncryptionKey).toHaveBeenCalledWith('dek', { workClass: 'interactive' });
     expect(initializeSessions).toHaveBeenCalledWith(
       new Map([['s1', sessionDataKey()]]),
       { shouldContinue: expect.any(Function) },
