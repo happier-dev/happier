@@ -178,6 +178,13 @@ uncertain; the expiry classification adds no retry or input redelivery.
 Neither result automatically resends the prompt. A rolled-back first admission
 does not itself make the Session's empty hosted transcript unreadable.
 
+In 0.3 development, changing a retained Pending message's requested action
+(including Retry) preserves the transaction owner's typed storage failure as
+HTTP 503 `transaction-unavailable`, using the existing `Retry-After` response.
+The failed action change leaves the retained message available for another
+explicit attempt. Unclassified failures remain internal errors with their
+originating cause recorded by the Pending service.
+
 For a first turn already presented in the Session, `createPresentedFirstTurnSettlement`
 also reads the canonical Action operation's typed spawn result. A succeeded Action
 can contain a definite spawn refusal: it settles `pendingLaunch.state` as `failed`,

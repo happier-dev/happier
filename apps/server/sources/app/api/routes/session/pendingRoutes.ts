@@ -533,6 +533,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
                 if (res.error === "action-conflict" || res.error === "already-sent") return reply.code(409).send({ error: res.error });
                 if (res.error === "reset-start-unsupported") return reply.code(409).send({ error: res.error });
+                if (res.error === "transaction-unavailable") return sendTransactionUnavailable(reply, res);
                 return reply.code(500).send({ error: res.error });
             }
 

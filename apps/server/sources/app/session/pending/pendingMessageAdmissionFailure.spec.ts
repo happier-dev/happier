@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import type { SessionAccessProjectionRow } from '@/app/session/access/sessionAccess';
 import { createRouteTestBuilder } from '@/app/api/testkit/routeTestBuilder';
+import { TransactionDeadlineExceededError } from '@/storage/inTx';
 
 const database = vi.hoisted(() => ({ transaction: vi.fn() }));
 const logging = vi.hoisted(() => ({ warn: vi.fn() }));
@@ -19,7 +20,12 @@ const ownerSession = {
 // Admission, transaction retry classification and result projection stay real.
 vi.mock('@/storage/db', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/storage/db')>(),
-    db: { $transaction: database.transaction, session: { findUnique: async () => ownerSession } },
+    db: { $transaction: database.transaction, session: { findUnique: async () => ownerSession },
+        sessionPendingMessage: { findUnique: async () => ({ status: 'queued', deliveryState: 'blocked',
+            deliveryBlockedReason: 'runtime_config_blocked', providerAction: null,
+            requestedAction: { v: 1, kind: 'enqueue' }, inputAdmissionReceipt: null,
+            updatedAt: new Date(0), messageRole: 'user', authorAccountId: 'account' }) },
+    },
 }));
 
 import { enqueuePendingMessage, enqueuePendingMessageByAuthenticatedMachine, resolveAcceptedPendingDelivery, restorePendingMessage } from './pendingMessageService';
@@ -28,6 +34,56 @@ import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
 
 describe('Machine input admission transaction failures', () => {
     afterEach(() => { vi.unstubAllEnvs(); database.transaction.mockReset(); logging.warn.mockClear(); });
+
+    it.each([
+        { failure: new TransactionDeadlineExceededError(null, 'pending-action'), status: 503, runId: undefined },
+        { failure: Object.assign(new Error('Transaction rolled back'), { code: 'P2034' }), status: 503, runId: undefined },
+        { failure: new TransactionDeadlineExceededError(null, 'pending-action'), status: 503, runId: 'run_delivery_retry' },
+        { failure: new Error('Private driver query and input'), status: 500, runId: undefined },
+    ])('preserves the pending-action retry cause ($status, $runId)', async ({ failure, status, runId }) => {
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+        vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
+        database.transaction.mockRejectedValue(failure);
+        const route = createRouteTestBuilder({
+            method: 'PATCH', path: runId
+                ? '/v2/sessions/:sessionId/execution-runs/:runId/pending/:localId/action'
+                : '/v2/sessions/:sessionId/pending/:localId/action',
+            registerRoutes(app) {
+                sessionPendingRoutes(app as unknown as Parameters<typeof sessionPendingRoutes>[0]);
+            },
+        });
+        const { reply, response } = await route.invoke({ userId: 'account', authAuthority: 'present_user',
+            params: { sessionId: 'session', localId: 'retained-input', ...(runId ? { runId } : {}) },
+            body: { requestedAction: { v: 1, kind: 'enqueue' } },
+        });
+        expect(reply.statusCode).toBe(status);
+        expect(response).toEqual(status === 503
+            ? { error: 'transaction-unavailable', retryAfterMs: 1_000 } : { error: 'internal' });
+        if (status === 503) expect(reply.headers['Retry-After'] ?? reply.headers['retry-after']).toBe('1');
+        expect(logging.warn.mock.calls[0]?.[0]).toMatchObject({
+            operation: 'requested-action', err: { errorClass: status === 503
+                ? (failure instanceof TransactionDeadlineExceededError ? 'TransactionDeadlineExceededError' : 'TransactionConflictExhaustedError')
+                : 'Error', errorCode: status === 503
+                ? (failure instanceof TransactionDeadlineExceededError ? 'database_transaction_timeout' : 'database_transaction_conflict_exhausted')
+                : null },
+        });
+        expect(JSON.stringify(logging.warn.mock.calls)).not.toContain('Private driver query and input');
+    });
+
+    it('preserves a storage deadline across enqueue, provider acceptance and restore envelopes', async () => {
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+        const timeout = new TransactionDeadlineExceededError(null, 'pending-timeout');
+        database.transaction.mockRejectedValue(timeout);
+        const authentication = { env: process.env, authority: 'present_user' as const, authenticationEvidence: undefined };
+        await expect(enqueuePendingMessage({ actorUserId: 'account', sessionId: 'session', localId: 'timed-out-input',
+            content: { t: 'encrypted', c: 'opaque-input' }, requestedAction: { v: 1, kind: 'enqueue' }, authentication,
+        })).resolves.toMatchObject({ ok: false, error: 'transaction-unavailable', retryAfterMs: 1_000 });
+        await expect(resolveAcceptedPendingDelivery({ actorUserId: 'account', sessionId: 'session', localId: 'timed-out-input',
+            publisherAuthority: { accountId: 'account', machineId: 'machine', sessionId: 'session', committedFence: new Date(0) },
+        })).resolves.toMatchObject({ ok: false, error: 'transaction-unavailable', retryAfterMs: 1_000 });
+        await expect(restorePendingMessage({ actorUserId: 'account', sessionId: 'session', localId: 'timed-out-input', authentication,
+        })).resolves.toEqual({ ok: false, error: 'transaction-unavailable', retryAfterMs: 1_000 });
+    });
 
     it.each([
         { code: 'P2034', message: 'Transaction failed due to a write conflict or a deadlock.' },

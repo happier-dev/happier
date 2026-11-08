@@ -89,6 +89,7 @@ import {
 } from "@/app/session/sessionWriteService";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { log, warn } from "@/utils/logging/log";
 import {
     armPendingActivationAuthorizationInTx,
@@ -262,7 +263,7 @@ export async function listPendingResetStartsForSource(params: Readonly<{
 }
 
 type PendingOperationErrorContext = Readonly<{
-    operation: "enqueue" | "provider-acceptance";
+    operation: "enqueue" | "provider-acceptance" | "requested-action";
     sessionId: string;
     localId: string;
     diagnosticCorrelationId?: string;
@@ -279,7 +280,9 @@ function reportPendingOperationError(context: PendingOperationErrorContext, mess
             localId: context.localId,
             correlationId: context.diagnosticCorrelationId ?? null,
             ...(context.prismaCode ? { prismaCode: context.prismaCode } : {}),
-            err: isTransactionConflictExhaustedError(context.error)
+            err: context.operation === "requested-action"
+                ? readUnexpectedActionErrorDiagnosticV1(context.error)
+                : isTransactionConflictExhaustedError(context.error)
                 ? { name: context.error.name, code: context.error.code }
                 : context.error,
         },
@@ -2750,7 +2753,8 @@ export type UpdatePendingRequestedActionResult =
         recipientCursors: RecipientCursor[];
         activationTarget?: PendingActivationTarget;
       }
-    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "already-sent" | "action-conflict" | "reset-start-unsupported" | "internal" };
+    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "already-sent" | "action-conflict" | "reset-start-unsupported" | "internal" }
+    | { ok: false; error: "transaction-unavailable"; retryAfterMs: number };
 
 export async function updatePendingRequestedAction(params: Readonly<{
     actorUserId: string;
@@ -2996,7 +3000,11 @@ export async function updatePendingRequestedAction(params: Readonly<{
                 ...(activationTarget ? { activationTarget } : {}),
             } as const;
         }));
-    } catch {
+    } catch (error) {
+        reportPendingOperationError({ operation: "requested-action", sessionId, localId, error }, "pending requested action failed");
+        if (isTransactionStorageError(error)) {
+            return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+        }
         return { ok: false, error: "internal" };
     }
 }
