@@ -377,7 +377,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             if (finalPrepared.domains.length) {
                 phase = 'domains';
-                const link = created.targetLinks.find(item => item.targetLink.id === targetLinkId)!.targetLink;
+                // Successful deploy settlement advances the runtime Link revision.
+                const domainEnvironment = input.deploy
+                    ? await host.readEnvironment({ environmentId: created.environment.id, context }) : created;
+                const link = domainEnvironment.targetLinks.find(item => item.targetLink.id === targetLinkId)!.targetLink;
                 for (const domain of finalPrepared.domains) {
                     const domainContent: DeploymentDomainContentV1 = { hostname: domain.hostname,
                         target: { service: domain.service, containerPort: domain.containerPort,

@@ -133,6 +133,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         let sourceReads = 0;
         let sourceCanManage = true;
         let deployAttempts = 0;
+        const domainTargetLinkRevisions: number[] = [];
         let domain: DeploymentDomainHeaderV1 | undefined;
         let nativeEffects = 0;
         const nativeCaptures: DeploymentDomainObservationBodyV1['capture'][] = [];
@@ -186,9 +187,12 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             if (request.url?.endsWith('/deploy')) {
                 writes.push('deployments.deploy'); environment.environment.revision++;
                 deployAttempts++;
+                const settledState = outcome === 'deployRetry' && deployAttempts === 1 ? 'failed' : 'succeeded';
+                // Home's successful receipt transition advances this same runtime Link.
+                if (settledState === 'succeeded') link.revision++;
                 return { status: 200, data: { ok: true, environmentId: environment.environment.id, deploymentId: 'receipt',
                     revision: environment.environment.revision, deploymentRevision: 2,
-                    state: outcome === 'deployRetry' && deployAttempts === 1 ? 'failed' : 'succeeded' } };
+                    state: settledState } };
             }
             if (request.url?.endsWith('/template')) {
                 const body = DeploymentEnvironmentTemplateSetInputV1Schema.parse(request.data);
@@ -238,6 +242,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             if (actionId === 'deployments.domains.add') {
                 const input = DeploymentActionInputSchemasV1[actionId].parse(raw);
                 if (!('contentArtifactId' in input)) throw new Error('Expected a prepared Domain operand');
+                domainTargetLinkRevisions.push(input.expectedTargetLinkRevision);
                 expect(input).toMatchObject({ environmentId: environment.environment.id, targetLinkId: link.id,
                     expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision });
                 expect(DeploymentDomainContentV1Schema.parse(contents.get(input.contentArtifactId))).toEqual({
@@ -266,7 +271,8 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         const templates = createDeploymentTemplateInstantiationForHost({ credentials, serverId: 'srv_template_home', machineId: 'target',
             readInstallation: async () => identity.installationId,
             serverHttpBaseUrl: fixture.origin, savedSecretOperationContext: operation, assertCurrent: async () => {},
-            headers: async () => ({}), storage, readEnvironment: async () => environment,
+            // Home reads are wire snapshots, not aliases of its mutable rows.
+            headers: async () => ({}), storage, readEnvironment: async () => structuredClone(environment),
             readCreationDefaultInputs: request => readDeploymentCreationDefaultInputsForHost(request, { serverId: 'srv_template_home',
                 serverHttpBaseUrl: fixture.origin, accountId, expectedScopeKey: resolveAccountSettingsScopeKey(credentials),
                 assertCurrent: async () => {}, headers: async () => ({}),
@@ -421,6 +427,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         expect(sourceReads).toBe(outcome === 'newProject' ? 0 : 1);
         sourceCanManage = false;
         const result = await prepared.invocation.run();
+        if (outcome === 'firstInstall') expect(domainTargetLinkRevisions).toEqual([link.revision]);
         if (outcome === 'deployRetry') {
             expect(result).toMatchObject({ ok: false, errorCode: 'deployment_failed', details: { kind: 'partial', phase: 'deploy',
                 environmentId: environment.environment.id, targetLinkId: link.id,
