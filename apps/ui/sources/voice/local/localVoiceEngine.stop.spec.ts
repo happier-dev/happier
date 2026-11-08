@@ -30,6 +30,61 @@ afterAll(() => restoreHarnessModuleLoader());
 describe('local voice engine stop', () => {
   registerLocalVoiceEngineHarnessHooks();
 
+  it('refuses a second public commit while Thinking and Cancel reply keeps the conversation connected', async () => {
+    const storage = await getStorage();
+    const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...storage.getState().settings.voice, providerId: 'local_conversation',
+      providers: { ...storage.getState().settings.voice.providers,
+        local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'direct_session',
+          tts: { ...local.tts, autoSpeakReplies: false },
+        } },
+      },
+    } } });
+    localVoiceSpeechTranscription.mockResolvedValueOnce('Read the project instructions.');
+    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+    const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+    const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+    const { localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
+    registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
+    const lifecycle = createVoiceSessionLifecycleController();
+    setVoiceSessionLifecycleController(lifecycle);
+    const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
+    lifecycle.setConfiguredProviderId('local_conversation');
+    const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+    try {
+      await lifecycle.toggle(target);
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+      const expectedAttempt = getVoiceSessionPresentedAttemptId();
+      const submitted = executeVoiceConversationAction('ui.voice_global.turn_control', {
+        expectedAttempt, control: 'commit_input',
+      }, { navigate() {} });
+      await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.mode === 'thinking');
+      const refused = await executeVoiceConversationAction('ui.voice_global.turn_control', {
+        expectedAttempt, control: 'commit_input',
+      }, { navigate() {} });
+      expect(refused).toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable', voice: { mode: 'thinking', canCommitInput: false } });
+      const { resolveVoiceCompactLine } = await import('@/components/voice/presence/resolveVoicePresenceCaption');
+      const { t } = await import('@/text');
+      const thinking = refused.voice;
+      expect(resolveVoiceCompactLine({
+        live: thinking.status === 'connected', muted: thinking.muted,
+        surfaceState: thinking.mode, canCommitInput: thinking.canCommitInput, captionLabel: '',
+      }, 'Earlier reply.')).toEqual({ kind: 'caption', text: t('voicePresence.captions.thinkingInputUnavailable') });
+      expect(await executeVoiceConversationAction('ui.voice_global.turn_control', {
+        expectedAttempt, control: 'cancel',
+      }, { navigate() {} })).toMatchObject({ status: 'completed' });
+      await submitted;
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+    } finally {
+      await lifecycle.stop(target.sessionId);
+      unsubscribe();
+    }
+  });
+
   it.each(['terminal_run', 'inactive_terminal_carrier', 'inactive_carrier', 'unreachable', 'running',
     'terminal_with_duplicate', 'terminal_inventory_unreachable', 'sweep_terminal_member', 'unreachable_with_duplicate'] as const)('completes public End locally after target_unavailable and admits Start (%s)', async (targetState) => {
     const storage = await getStorage();
@@ -146,8 +201,10 @@ describe('local voice engine stop', () => {
         expect(metadata).toBeNull();
       }
       if (targetState === 'terminal_inventory_unreachable') {
+        // Route recovery (49aa37cf8d) reports unavailable carrier content after
+        // the refused inventory RPC; the primary Stop remains authoritative.
         expect(warnings).toHaveBeenCalledWith(expect.stringContaining('[voiceRunRecovery]'),
-          expect.objectContaining({ errorCode: expect.stringMatching(/^(target_unavailable|admission_unavailable)$/) }));
+          expect.objectContaining({ errorCode: 'content_unavailable' }));
         // Ending preserves the earlier genuine turn failure; optional cleanup
         // must not replace it with a new unconfirmed-Stop failure.
         expect(lifecycle.getSnapshot().errorCode).toBe(failureBeforeEnd.errorCode);
@@ -764,60 +821,5 @@ describe('local voice engine stop', () => {
     }
   });
 
-
-  it('refuses a second public commit while Thinking and Cancel reply keeps the conversation connected', async () => {
-    const storage = await getStorage();
-    const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
-    storage.__setState({ settings: { ...storage.getState().settings, voice: {
-      ...storage.getState().settings.voice, providerId: 'local_conversation',
-      providers: { ...storage.getState().settings.voice.providers,
-        local_conversation: { schemaVersion: 1, config: { ...local, conversationMode: 'direct_session',
-          tts: { ...local.tts, autoSpeakReplies: false },
-        } },
-      },
-    } } });
-    localVoiceSpeechTranscription.mockResolvedValueOnce('Read the project instructions.');
-    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
-    const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
-    const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
-    const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
-    const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
-    const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
-    const { localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
-    registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
-    const lifecycle = createVoiceSessionLifecycleController();
-    setVoiceSessionLifecycleController(lifecycle);
-    const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
-    lifecycle.setConfiguredProviderId('local_conversation');
-    const target = { serverId: localVoiceHomeId, sessionId: 's1' };
-    try {
-      await lifecycle.toggle(target);
-      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
-      const expectedAttempt = getVoiceSessionPresentedAttemptId();
-      const submitted = executeVoiceConversationAction('ui.voice_global.turn_control', {
-        expectedAttempt, control: 'commit_input',
-      }, { navigate() {} });
-      await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.mode === 'thinking');
-      const refused = await executeVoiceConversationAction('ui.voice_global.turn_control', {
-        expectedAttempt, control: 'commit_input',
-      }, { navigate() {} });
-      expect(refused).toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable', voice: { mode: 'thinking', canCommitInput: false } });
-      const { resolveVoiceCompactLine } = await import('@/components/voice/presence/resolveVoicePresenceCaption');
-      const { t } = await import('@/text');
-      const thinking = refused.voice;
-      expect(resolveVoiceCompactLine({
-        live: thinking.status === 'connected', muted: thinking.muted,
-        surfaceState: thinking.mode, canCommitInput: thinking.canCommitInput, captionLabel: '',
-      }, 'Earlier reply.')).toEqual({ kind: 'caption', text: t('voicePresence.captions.thinkingInputUnavailable') });
-      expect(await executeVoiceConversationAction('ui.voice_global.turn_control', {
-        expectedAttempt, control: 'cancel',
-      }, { navigate() {} })).toMatchObject({ status: 'completed' });
-      await submitted;
-      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
-    } finally {
-      await lifecycle.stop(target.sessionId);
-      unsubscribe();
-    }
-  });
 
 });

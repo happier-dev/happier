@@ -249,7 +249,7 @@ await import('@/sync/syncEngine');
 await import('./defaultActionExecutor');
 
 describe('createDefaultActionExecutor approvals', () => {
-    it.each(['approve', 'approve_then_close', 'reject', 'cancel', 'stop', 'dismiss'] as const)('presents the retained Voice carrier directory approval and settles %s', async outcome => {
+    it.each(['approve', 'approve_then_close', 'reject', 'cancel', 'stop', 'dismiss'] as const)('presents the Voice carrier native confirmation and settles %s', async outcome => {
         const { executeWithInPlaceApprovalReview } = await import('@/components/approvals/executeWithInPlaceApprovalReview');
         const { executeSessionSpawnNewAction } = await import('./sessionSpawnNewAction');
         const { SessionCreationKeyV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1');
@@ -263,8 +263,16 @@ describe('createDefaultActionExecutor approvals', () => {
             access: machine.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } });
         rpcResult = { ok: true, directory: '/voice-root', directoryKind: 'path', directoryCreationRequired: true, checkout: null };
         const cancellation = new AbortController();
-        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
-        vi.mocked(Modal.show).mockImplementation(config => { shown.resolve(config); return 'voice-review'; });
+        const { Modal: nativeModal } = await import('@/modal/ModalManager');
+        const shown = createDeferred<string>();
+        // Delegate the canonical testkit's presentation boundary to the real
+        // Modal owner; only its mounted host is replaced for this journey.
+        vi.mocked(Modal.confirm).mockImplementation(nativeModal.confirm);
+        const unregister = nativeModal.registerProvider({
+            showModal: config => { shown.resolve(config.type); return 'voice-confirmation'; },
+            hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
+        });
+        const originalArtifacts = homes.artifacts(homeId).list().map(row => row.id);
         const dismissed = vi.fn();
         const input = { creationKey: SessionCreationKeyV1Schema.parse('voice-pending-approval'),
             executionTarget: { serverId: homeId, machineId: 'machine-exact' },
@@ -275,53 +283,54 @@ describe('createDefaultActionExecutor approvals', () => {
                 { ...context(), authority: 'present_user', actionCaller: { kind: 'host' },
                     actionRequestId: 'voice-pending-approval', signal }, retained) });
         retainedInvocations.push({ abort: cancellation, settled: pending.catch(() => null) });
-        const review = await Promise.race([shown.promise, pending.then(() => { throw new Error('Carrier settled before presenting approval'); })]);
-        const reviewProps = review.props as Readonly<{ artifactId: string; serverId: string;
-            onDecisionRecorded(decision: 'approve' | 'reject' | 'cancel'): void }>;
-        const request = persistedApproval(reviewProps.artifactId);
-        expect(request).toMatchObject({ actionId: 'session.spawn_new', status: 'open',
-            approval: { flow: 'blocking', result: 'required' },
-            executionOriginV1: { authority: 'present_user', surface: 'ui' },
-            sessionCreationDirectoryApproval: { directory: '/voice-root' } });
-        expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
-        if (outcome === 'approve' || outcome === 'approve_then_close') {
-            const receipt = { type: 'success', disposition: 'created', sessionId: 'voice-carrier',
-                executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
-            const spawnAcknowledgement = createDeferred<unknown>();
-            rpcResponder = call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW)
-                ? outcome === 'approve_then_close' ? spawnAcknowledgement.promise : receipt : rpcResult;
-            await expect(executor.execute('approval.request.decide', { artifactId: reviewProps.artifactId, decision: 'approve' }, context()))
-                .resolves.toMatchObject({ ok: true });
-            if (outcome === 'approve_then_close') {
-                reviewProps.onDecisionRecorded('approve');
-                review.onRequestClose?.();
+        try {
+            expect(await Promise.race([shown.promise, pending.then(() => {
+                throw new Error('Carrier settled before presenting native confirmation');
+            })])).toBe('confirm');
+            // 02102e614e separates a person's product confirmation from agent approvals.
+            expect(homes.artifacts(homeId).list().map(row => row.id)).toEqual(originalArtifacts);
+            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+            if (outcome === 'approve' || outcome === 'approve_then_close') {
+                const receipt = { type: 'success', disposition: 'created', sessionId: 'voice-carrier',
+                    executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+                const spawnAcknowledgement = createDeferred<unknown>();
+                const spawning = createDeferred<void>();
+                rpcResponder = call => {
+                    if (!call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW)) return rpcResult;
+                    spawning.resolve();
+                    return outcome === 'approve_then_close' ? spawnAcknowledgement.promise : receipt;
+                };
+                nativeModal.resolveConfirm('voice-confirmation', true);
+                if (outcome === 'approve_then_close') {
+                    await spawning.promise;
+                    nativeModal.resolveConfirm('voice-confirmation', false);
+                    expect(dismissed).not.toHaveBeenCalled();
+                    spawnAcknowledgement.resolve(receipt);
+                }
+                const settled = await pending;
+                expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'voice-carrier' } });
+                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toHaveLength(1);
+            } else if (outcome === 'stop') {
+                cancellation.abort();
+                await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
                 expect(dismissed).not.toHaveBeenCalled();
-                spawnAcknowledgement.resolve(receipt);
+                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+            } else {
+                const refused = pending.then(result => {
+                    // The runtime must stop before its spawn adapter observes the refusal.
+                    expect(dismissed).toHaveBeenCalledOnce();
+                    return result;
+                });
+                nativeModal.resolveConfirm('voice-confirmation', false);
+                expect(await refused).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
             }
-            const settled = await pending;
-            expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'voice-carrier' } });
-            expect(persistedApproval(reviewProps.artifactId).status).toBe('executed');
-            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toHaveLength(1);
-        } else if (outcome === 'reject' || outcome === 'cancel') {
-            const refused = pending.then(result => {
-                // The runtime must stop before its spawn adapter observes the refusal.
-                expect(dismissed).toHaveBeenCalledOnce();
-                return result;
-            });
-            await expect(executor.execute('approval.request.decide', { artifactId: reviewProps.artifactId, decision: outcome }, context()))
-                .resolves.toMatchObject({ ok: true });
-            expect(await refused).toMatchObject({ ok: false, errorCode: outcome === 'reject' ? 'approval_rejected' : 'approval_canceled' });
-            expect(persistedApproval(reviewProps.artifactId).status).toBe(outcome === 'reject' ? 'rejected' : 'canceled');
-            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
-        } else {
-            if (outcome === 'dismiss') review.onRequestClose?.();
-            else cancellation.abort();
-            await expect(pending).resolves.toMatchObject({ ok: false });
-            expect(persistedApproval(reviewProps.artifactId).status).toBe('canceled');
-            expect(dismissed).toHaveBeenCalledTimes(outcome === 'dismiss' ? 1 : 0);
-            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+            expect(homes.artifacts(homeId).list().map(row => row.id)).toEqual(originalArtifacts);
+        } finally {
+            cancellation.abort();
+            nativeModal.resolveConfirm('voice-confirmation', false);
+            unregister();
         }
-        expect(Modal.hide).toHaveBeenCalledWith('voice-review');
     });
 
     it('executes a stored Account approval in the approving app regardless of plugin origin', async () => {

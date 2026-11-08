@@ -284,7 +284,7 @@ describe('local voice engine local conversation binding', () => {
         await lifecycle.dispose();
     }, 60_000);
 
-    it('starts Home Voice in a managed directory without requesting approval to create the old Voice home path', async () => {
+    it('starts Home Voice in a managed directory after its native UI confirmation without an approval Artifact', async () => {
         await configureAgentMode();
         const storage = await getStorage();
         storage.__setState({ settings: { ...storage.getState().settings,
@@ -309,10 +309,24 @@ describe('local voice engine local conversation binding', () => {
                 : result;
         });
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+        const { Modal } = await import('@/modal');
+        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
+        const unregister = Modal.registerProvider({
+            showModal: config => { shown.resolve(config as Parameters<typeof Modal.show>[0]); return 'home-carrier-confirmation'; },
+            hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
+        });
         const lifecycle = createVoiceSessionLifecycleController();
         lifecycle.setConfiguredProviderId('local_conversation');
         try {
-            await lifecycle.toggle(null);
+            const starting = lifecycle.toggle(null);
+            const confirmation = await Promise.race([shown.promise, starting.then(() => {
+                throw new Error('Start settled without its native UI confirmation');
+            })]);
+            expect(confirmation.type).toBe('confirm');
+            expect(artifacts.list()).toEqual([]);
+            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+            Modal.resolveConfirm('home-carrier-confirmation', true);
+            await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({
                 status: 'connected', mode: 'listening', canStop: true,
             });
@@ -324,10 +338,11 @@ describe('local voice engine local conversation binding', () => {
                 })]]);
         } finally {
             await lifecycle.dispose();
+            unregister();
         }
     }, 60_000);
 
-    it('keeps a required carrier approval visible during Start and stops preparation when its review is dismissed', async () => {
+    it('keeps the carrier native confirmation visible during Start and stops preparation when declined', async () => {
         await configureAgentMode();
         const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
@@ -357,14 +372,16 @@ describe('local voice engine local conversation binding', () => {
         setVoiceSessionLifecycleController(lifecycle);
         const starting = lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 'session-1' });
         try {
-            const review = await Promise.race([shown.promise, starting.then(() => {
-                throw new Error('Start settled without showing its required approval');
+            const confirmation = await Promise.race([shown.promise, starting.then(() => {
+                throw new Error('Start settled without showing its native UI confirmation');
             })]);
+            expect(confirmation.type).toBe('confirm');
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true });
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
-            expect(artifacts.list()).toHaveLength(1);
+            // 02102e614e: present-user product confirmation has no agent approval Artifact.
+            expect(artifacts.list()).toEqual([]);
             expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
-            review.onRequestClose?.();
+            Modal.resolveConfirm('carrier-review', false);
             await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
