@@ -67,6 +67,7 @@ export type HomeHubLayoutActionInputById = {
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
+                                allowCustomValue?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
@@ -228,6 +229,7 @@ export type HomeHubLayoutActionInputById = {
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
+                                        allowCustomValue?: boolean | undefined;
                                         listSeparator?: 'comma' | 'newline' | undefined;
                                         maxSelections?: number | undefined;
                                         defaultValue?: unknown;
@@ -500,6 +502,7 @@ export type HomeHubLayoutActionInputById = {
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
+                                allowCustomValue?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
@@ -671,6 +674,7 @@ export type HomeHubLayoutActionInputById = {
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
+                                allowCustomValue?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
@@ -846,6 +850,7 @@ export type HomeHubLayoutActionResultById = {
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
+                                        allowCustomValue?: boolean | undefined;
                                         listSeparator?: 'comma' | 'newline' | undefined;
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
@@ -1012,6 +1017,7 @@ export type HomeHubLayoutActionResultById = {
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
+                                    allowCustomValue?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
@@ -1181,6 +1187,7 @@ export type HomeHubLayoutActionResultById = {
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
+                                        allowCustomValue?: boolean | undefined;
                                         listSeparator?: 'comma' | 'newline' | undefined;
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
@@ -1351,6 +1358,7 @@ export type HomeHubLayoutActionResultById = {
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
+                                    allowCustomValue?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
@@ -1503,6 +1511,7 @@ export type HomeHubLayoutActionResultById = {
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
+                                allowCustomValue?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
                                 maxSelections?: number | undefined;
                                 defaultValue?: JsonValue | undefined;
@@ -1663,6 +1672,7 @@ export type HomeHubLayoutActionResultById = {
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
+                                        allowCustomValue?: boolean | undefined;
                                         listSeparator?: 'comma' | 'newline' | undefined;
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
@@ -1829,6 +1839,7 @@ export type HomeHubLayoutActionResultById = {
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
+                                    allowCustomValue?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
@@ -1998,6 +2009,7 @@ export type HomeHubLayoutActionResultById = {
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
+                                        allowCustomValue?: boolean | undefined;
                                         listSeparator?: 'comma' | 'newline' | undefined;
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
@@ -2168,6 +2180,7 @@ export type HomeHubLayoutActionResultById = {
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
+                                    allowCustomValue?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;
                                     maxSelections?: number | undefined;
                                     defaultValue?: JsonValue | undefined;
@@ -2320,6 +2333,7 @@ export type HomeHubLayoutActionResultById = {
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
+                                allowCustomValue?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
                                 maxSelections?: number | undefined;
                                 defaultValue?: JsonValue | undefined;

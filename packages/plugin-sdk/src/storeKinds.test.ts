@@ -11,7 +11,7 @@ import { createExternalStoreKind } from '../examples/public-authoring/storeKinds
 it('creates a listing URL preserving the qualified kind and item selection', () => {
     const createHref = Reflect.get(sdk, 'createPluginStoreItemHref');
     expect(createHref).toBeTypeOf('function');
-    const selection = { type: 'storeKind', kind: 'com.example.store/extension', sourceId: 'source',
+    const selection = { type: 'storeKind' as const, kind: 'com.example.store/extension', sourceId: 'source',
         itemId: 'publisher/item', version: '1.2.3' };
     const url = new URL(createHref(selection), 'https://happier.example');
     expect(url.pathname).toBe('/plugins/listing');
@@ -30,7 +30,7 @@ it('runs the public Store fixture parser, preparation, acquisition and installed
     });
     // The author may expose the same Store Actions to CLI callers, as in the loaded R5 recipe.
     const admission = parsePluginManifest({ ...plugin.manifest, contributes: { ...plugin.manifest.contributes,
-        actions: plugin.manifest.contributes.actions.map(action => ({ ...action, surfaces: [...action.surfaces, 'cli'] })),
+        actions: plugin.manifest.contributes.actions!.map(action => ({ ...action, surfaces: [...action.surfaces, 'cli'] })),
     } });
     expect(admission.ok, JSON.stringify(admission.ok ? [] : admission.diagnostics)).toBe(true);
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
@@ -59,7 +59,7 @@ it('reports missing write confirmation through the canonical public author manif
     const plugin = createExternalStoreKind({ read: async () => null, write: async () => {}, remove: async () => {} });
     for (const id of ['acquire', 'manage']) {
         const result = parsePluginManifest({ ...plugin.manifest, contributes: { ...plugin.manifest.contributes,
-            actions: plugin.manifest.contributes.actions.map(action => {
+            actions: plugin.manifest.contributes.actions!.map(action => {
                 if (action.id !== id) return action;
                 const { confirmation, ...withoutConfirmation } = action;
                 return { ...withoutConfirmation, surfaces: [...action.surfaces, 'cli'] };

@@ -67,19 +67,19 @@ export type BrowserRecordingActionResultById = {
     readonly "browser.recording.start": {
         status: 'started';
         recording: {
-            v: 1;
-            recordingId: string;
             browserSessionId: string;
             viewId: string;
             profileId: string;
             targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
             adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
             renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+            navigationGenerationStart: number;
+            v: 1;
+            recordingId: string;
+            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             startedAtMs: number;
             status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            navigationGenerationStart: number;
             durationMs: number;
             byteSize: number;
             frameCount: number;
@@ -119,9 +119,9 @@ export type BrowserRecordingActionResultById = {
                 mimeType: string;
                 sizeBytes: number;
             })[];
+            navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
             outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            navigationGenerationEnd?: number | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -141,19 +141,19 @@ export type BrowserRecordingActionResultById = {
     readonly "browser.recording.stop": {
         status: 'failed';
         recording: {
-            v: 1;
-            recordingId: string;
             browserSessionId: string;
             viewId: string;
             profileId: string;
             targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
             adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
             renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+            navigationGenerationStart: number;
+            v: 1;
+            recordingId: string;
+            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             startedAtMs: number;
             status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            navigationGenerationStart: number;
             durationMs: number;
             byteSize: number;
             frameCount: number;
@@ -193,9 +193,9 @@ export type BrowserRecordingActionResultById = {
                 mimeType: string;
                 sizeBytes: number;
             })[];
+            navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
             outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            navigationGenerationEnd?: number | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -209,19 +209,19 @@ export type BrowserRecordingActionResultById = {
     } | {
         status: 'finalized';
         recording: {
-            v: 1;
-            recordingId: string;
             browserSessionId: string;
             viewId: string;
             profileId: string;
             targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
             adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
             renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+            navigationGenerationStart: number;
+            v: 1;
+            recordingId: string;
+            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             startedAtMs: number;
             status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            navigationGenerationStart: number;
             durationMs: number;
             byteSize: number;
             frameCount: number;
@@ -261,9 +261,9 @@ export type BrowserRecordingActionResultById = {
                 mimeType: string;
                 sizeBytes: number;
             })[];
+            navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
             outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            navigationGenerationEnd?: number | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -283,19 +283,19 @@ export type BrowserRecordingActionResultById = {
     readonly "browser.recording.cancel": {
         status: 'canceled' | 'discarded' | 'failed';
         recording: {
-            v: 1;
-            recordingId: string;
             browserSessionId: string;
             viewId: string;
             profileId: string;
             targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
             adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
             renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+            navigationGenerationStart: number;
+            v: 1;
+            recordingId: string;
+            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             startedAtMs: number;
             status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            navigationGenerationStart: number;
             durationMs: number;
             byteSize: number;
             frameCount: number;
@@ -335,9 +335,9 @@ export type BrowserRecordingActionResultById = {
                 mimeType: string;
                 sizeBytes: number;
             })[];
+            navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
             outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            navigationGenerationEnd?: number | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -355,19 +355,19 @@ export type BrowserRecordingActionResultById = {
         };
     };
     readonly "browser.recording.status": null | {
-        v: 1;
-        recordingId: string;
         browserSessionId: string;
         viewId: string;
         profileId: string;
         targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
         adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
         fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        navigationGenerationStart: number;
+        v: 1;
+        recordingId: string;
+        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
         startedAtMs: number;
         status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-        navigationGenerationStart: number;
         durationMs: number;
         byteSize: number;
         frameCount: number;
@@ -407,9 +407,9 @@ export type BrowserRecordingActionResultById = {
             mimeType: string;
             sizeBytes: number;
         })[];
+        navigationGenerationEnd?: number | undefined;
         stoppedAtMs?: number | undefined;
         outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-        navigationGenerationEnd?: number | undefined;
         expiresAtMs?: number | undefined;
         mediaRef?: undefined | {
             refKind: 'sessionMedia';
@@ -420,19 +420,19 @@ export type BrowserRecordingActionResultById = {
         };
     };
     readonly "browser.recording.listForView": {
-        v: 1;
-        recordingId: string;
         browserSessionId: string;
         viewId: string;
         profileId: string;
         targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
         adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
         fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        navigationGenerationStart: number;
+        v: 1;
+        recordingId: string;
+        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
         startedAtMs: number;
         status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-        navigationGenerationStart: number;
         durationMs: number;
         byteSize: number;
         frameCount: number;
@@ -472,9 +472,9 @@ export type BrowserRecordingActionResultById = {
             mimeType: string;
             sizeBytes: number;
         })[];
+        navigationGenerationEnd?: number | undefined;
         stoppedAtMs?: number | undefined;
         outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-        navigationGenerationEnd?: number | undefined;
         expiresAtMs?: number | undefined;
         mediaRef?: undefined | {
             refKind: 'sessionMedia';
@@ -487,19 +487,19 @@ export type BrowserRecordingActionResultById = {
     readonly "browser.recording.discard": {
         status: 'canceled' | 'discarded' | 'failed';
         recording: {
-            v: 1;
-            recordingId: string;
             browserSessionId: string;
             viewId: string;
             profileId: string;
             targetKind: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser';
             adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
             renderEngineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe';
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+            navigationGenerationStart: number;
+            v: 1;
+            recordingId: string;
+            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
             startedAtMs: number;
             status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            navigationGenerationStart: number;
             durationMs: number;
             byteSize: number;
             frameCount: number;
@@ -539,9 +539,9 @@ export type BrowserRecordingActionResultById = {
                 mimeType: string;
                 sizeBytes: number;
             })[];
+            navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
             outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            navigationGenerationEnd?: number | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';

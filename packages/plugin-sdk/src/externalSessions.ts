@@ -1,5 +1,4 @@
 /** @moduleRealm daemon */
-import type { ManagedServiceResponse } from './managed-services/contract.js';
 import { AgentExternalSessionTranscriptRawRecordSchema as canonicalAgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
 import { HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 as canonicalHappierBaseSystemPromptAttachmentsV1, HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 as canonicalHappierBaseSystemPromptLinkedWorkspaceFilesV1, HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 as canonicalHappierBaseSystemPromptOptionsV1, HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 as canonicalHappierBaseSystemPromptSessionTitleInitialV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
 import {
@@ -16,7 +15,7 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1: string =
 export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1: string =
     canonicalHappierBaseSystemPromptSessionTitleInitialV1;
 
-import type { ManagedServiceSpec } from './managed-services/contract.js';
+import type { ManagedServiceResponse, ManagedServiceSpec } from './managed-services/contract.js';
 import type { ExecService } from './exec.js';
 import type { LoggerService } from './services/core.js';
 import type { JsonValue } from './identity.js';
@@ -33,10 +32,14 @@ export type AgentExternalSessionTranscriptRawRecord =
     | Readonly<{
         role: 'user';
         content: Readonly<{ type: 'text'; text: string }>;
+        /** Transient standard ACP image blocks consumed by Session media import, never persisted inline. */
+        media?: readonly { type: 'image'; mimeType: string; data: string }[];
     }>
     | Readonly<{
         role: 'agent';
         content: JsonValue;
+        /** Transient standard ACP image blocks consumed by Session media import, never persisted inline. */
+        media?: readonly { type: 'image'; mimeType: string; data: string }[];
     }>;
 
 /** Portable JSON fact retained by one External Session source link. */
@@ -459,6 +462,9 @@ export type AgentExternalSessionsPageTranscriptRequest = AgentExternalSessionsIn
     projection?: 'terminal';
     source: AgentExternalSessionSource;
     remoteSessionId: string;
+    /** Optional selected preview item. Readers may ignore it; available-only
+     * history must remain explicitly truncated and cannot establish a tail. */
+    sourceItemId?: string;
     direction: 'older' | 'newer';
     cursor?: string;
     maxItems: number;

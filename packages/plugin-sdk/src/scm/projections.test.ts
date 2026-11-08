@@ -4,6 +4,7 @@ import { build } from 'vite';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
 import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
+import { createWorkspacePackageSourcesPlugin } from '../../../../scripts/testing/vitestWorkspacePackageResolution';
 import type { ScmHostingProviderContribution as ProtocolScmHostingProviderContribution } from '@happier-dev/protocol';
 
 import {
@@ -102,6 +103,9 @@ const ROOT_RUNTIME_EXPORTS = [
     'ScmComparisonSourceSchema',
     'ScmFileAtRevisionRequestSchema',
     'ScmFileAtRevisionResponseSchema',
+    'ScmFileViewedReadResultV1Schema',
+    'ScmFileViewedSetResultV1Schema',
+    'ScmFileViewedStateV1Schema',
     'ScmHistoryEntriesInputV1Schema',
     'ScmHistoryEntriesResponseSchema',
     'ScmHostingProviderKindProtocolSchema',
@@ -144,6 +148,9 @@ const ROOT_TYPE_EXPORTS = [
     'PluginScmRegistrationApi',
     'ScmComparison',
     'ScmComparisonSource',
+    'ScmFileViewedStateV1',
+    'ScmFileViewedReadResultV1',
+    'ScmFileViewedSetResultV1',
     'ScmBlameCommit',
     'ScmBlameFileRequest',
     'ScmBlameFileResponse',
@@ -335,18 +342,16 @@ const PORTABLE_VALUE_PROJECTIONS = [
 
 async function bundlePortableValues(input: (typeof PORTABLE_VALUE_PROJECTIONS)[number]): Promise<readonly string[]> {
     const source = fileURLToPath(new URL(input.source, import.meta.url));
-    const protocolScmSource = fileURLToPath(
-        new URL('../../../protocol/src/scm/index.ts', import.meta.url),
-    );
     const moduleIds = new Set<string>();
     await build({
         configFile: false,
         logLevel: 'silent',
-        plugins: [{
+        plugins: [createWorkspacePackageSourcesPlugin([{ packageName: '@happier-dev/protocol',
+            packageSourceRoot: fileURLToPath(new URL('../../../protocol/src', import.meta.url)),
+        }]), {
             name: 'scm-portable-value-projection',
             enforce: 'pre',
             resolveId(id) {
-                if (id === '@happier-dev/protocol/scm') return protocolScmSource;
                 return id === 'virtual:scm-portable-value-projection' ? `\0${id}` : null;
             },
             load(id) {
@@ -599,6 +604,9 @@ describe('SCM package-local projections', () => {
         expect(request.parse({ source })).toEqual({ source });
         expect(request.safeParse({ source: { ...source, locator: { ...source.locator, extraAuthority: true } } }).success).toBe(false);
         expect(rootScm.ScmComparisonSourceSchema).toBe(protocolScm.ScmComparisonSourceProtocolSchema);
+        expect(rootScm.ScmFileViewedStateV1Schema).toBe(protocolScm.ScmFileViewedStateV1Schema);
+        expect(rootScm.ScmFileViewedReadResultV1Schema).toBe(protocolScm.ScmFileViewedReadResultV1Schema);
+        expect(rootScm.ScmFileViewedSetResultV1Schema).toBe(protocolScm.ScmFileViewedSetResultV1Schema);
         expect(request.jsonSchema).toMatchObject({ additionalProperties: false });
         const range = { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(64) } as const;
         expect(request.parse({ source: range })).toEqual({ source: range });
@@ -626,6 +634,8 @@ describe('SCM package-local projections', () => {
         expect(moduleExportNames(program, 'src/scm/projections.ts')).toEqual(ROOT_EXPORTS);
         expect(moduleExportNames(program, 'src/scm/index.ts')).toEqual([...ROOT_EXPORTS,
             'GitFileLineage', 'parseGitComparisonOutput',
+            'IDLE_SCM_FILE_VIEWED', 'UNKNOWN_SCM_FILE_VIEWED', 'ScmFileViewedFile',
+            'ScmFileViewedRequest', 'ScmFileViewedSnapshot', 'ScmFileViewedSource',
         ].sort());
     }, 120_000);
 
@@ -746,7 +756,9 @@ describe('SCM package-local projections', () => {
         expectTypeOf<scmProjection.ScmRepositoryCloneInput>()
             .toEqualTypeOf<protocolScm.ScmRepositoryCloneInput>();
         expectTypeOf<scmProjection.ScmRepositoryCloneOutput>()
-            .toEqualTypeOf<protocolScm.ScmRepositoryCloneOutput>();
+            .toExtend<protocolScm.ScmRepositoryCloneOutput>();
+        expectTypeOf<protocolScm.ScmRepositoryCloneOutput>()
+            .toExtend<scmProjection.ScmRepositoryCloneOutput>();
         expectTypeOf<scmProjection.ScmHostingRepositoryVisibility>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryVisibility>();
         expectTypeOf<ScmRefreshPolicy>().toEqualTypeOf<ProviderRefreshPolicy>();

@@ -12,7 +12,18 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
+        mode?: 'people' | 'public' | 'secret_link' | undefined;
+        audience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.status": {
@@ -23,7 +34,18 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
+        mode?: 'people' | 'public' | 'secret_link' | undefined;
+        audience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.revoke": {
@@ -34,7 +56,18 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
+        mode?: 'people' | 'public' | 'secret_link' | undefined;
+        audience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.copyUrl": {
@@ -45,7 +78,18 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
+        mode?: 'people' | 'public' | 'secret_link' | undefined;
+        audience?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         ttlMs?: number | undefined;
     } & {
         clientId?: string | undefined;
@@ -58,7 +102,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             exposureId: string;
             previewId: string;
             machineId: string;
-            mode: 'authenticated' | 'public' | 'secret_link';
+            mode: 'people' | 'public' | 'secret_link';
             state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
             publicUrl: string;
             issuedAt: number;
@@ -96,6 +140,17 @@ export type LocalServicesPublicPreviewActionResultById = {
                 };
                 workspaceId?: string | undefined;
             };
+            audience?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             revokedAt?: number | undefined;
             policyDiagnostics?: Record<string, unknown> | undefined;
         };
@@ -106,7 +161,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             refreshState: 'error' | 'idle' | 'refreshing';
             policy: {
                 enabled: boolean;
-                allowedModes: ('authenticated' | 'public' | 'secret_link')[];
+                allowedModes: ('people' | 'public' | 'secret_link')[];
                 dnsTlsRequired: boolean;
                 auditRequired: boolean;
                 rateLimitProfileIds: string[];
@@ -117,7 +172,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                 exposureId: string;
                 previewId: string;
                 machineId: string;
-                mode: 'authenticated' | 'public' | 'secret_link';
+                mode: 'people' | 'public' | 'secret_link';
                 state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
                 publicUrl: string;
                 issuedAt: number;
@@ -155,6 +210,17 @@ export type LocalServicesPublicPreviewActionResultById = {
                     };
                     workspaceId?: string | undefined;
                 };
+                audience?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
                 revokedAt?: number | undefined;
                 policyDiagnostics?: Record<string, unknown> | undefined;
             }[];
@@ -179,7 +245,7 @@ export type LocalServicesPublicPreviewActionResultById = {
         refreshState: 'error' | 'idle' | 'refreshing';
         policy: {
             enabled: boolean;
-            allowedModes: ('authenticated' | 'public' | 'secret_link')[];
+            allowedModes: ('people' | 'public' | 'secret_link')[];
             dnsTlsRequired: boolean;
             auditRequired: boolean;
             rateLimitProfileIds: string[];
@@ -190,7 +256,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             exposureId: string;
             previewId: string;
             machineId: string;
-            mode: 'authenticated' | 'public' | 'secret_link';
+            mode: 'people' | 'public' | 'secret_link';
             state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
             publicUrl: string;
             issuedAt: number;
@@ -228,6 +294,17 @@ export type LocalServicesPublicPreviewActionResultById = {
                 };
                 workspaceId?: string | undefined;
             };
+            audience?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             revokedAt?: number | undefined;
             policyDiagnostics?: Record<string, unknown> | undefined;
         }[];
@@ -255,7 +332,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             refreshState: 'error' | 'idle' | 'refreshing';
             policy: {
                 enabled: boolean;
-                allowedModes: ('authenticated' | 'public' | 'secret_link')[];
+                allowedModes: ('people' | 'public' | 'secret_link')[];
                 dnsTlsRequired: boolean;
                 auditRequired: boolean;
                 rateLimitProfileIds: string[];
@@ -266,7 +343,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                 exposureId: string;
                 previewId: string;
                 machineId: string;
-                mode: 'authenticated' | 'public' | 'secret_link';
+                mode: 'people' | 'public' | 'secret_link';
                 state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
                 publicUrl: string;
                 issuedAt: number;
@@ -304,6 +381,17 @@ export type LocalServicesPublicPreviewActionResultById = {
                     };
                     workspaceId?: string | undefined;
                 };
+                audience?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
                 revokedAt?: number | undefined;
                 policyDiagnostics?: Record<string, unknown> | undefined;
             }[];

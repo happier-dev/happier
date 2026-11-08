@@ -314,6 +314,21 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
+            identity?: undefined | {
+                kind: 'adopted';
+                machineId: string;
+                serviceId: string;
+                watchId: string;
+                watchRevision: string;
+            } | {
+                kind: 'deployment';
+                machineId: string;
+                environmentId: string;
+                environmentInstanceId: string;
+                composeService: string;
+                serviceId: string;
+            };
+            nameResolution?: 'unresolved_environment' | undefined;
             unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';
@@ -386,6 +401,21 @@ export type LocalDaemonServicesActionResultById = {
                 endpoint: null | string;
                 displayName?: string | undefined;
             };
+            identity?: undefined | {
+                kind: 'adopted';
+                machineId: string;
+                serviceId: string;
+                watchId: string;
+                watchRevision: string;
+            } | {
+                kind: 'deployment';
+                machineId: string;
+                environmentId: string;
+                environmentInstanceId: string;
+                composeService: string;
+                serviceId: string;
+            };
+            nameResolution?: 'unresolved_environment' | undefined;
         }[];
         failures: {
             adapter: {
@@ -414,6 +444,21 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
+            identity?: undefined | {
+                kind: 'adopted';
+                machineId: string;
+                serviceId: string;
+                watchId: string;
+                watchRevision: string;
+            } | {
+                kind: 'deployment';
+                machineId: string;
+                environmentId: string;
+                environmentInstanceId: string;
+                composeService: string;
+                serviceId: string;
+            };
+            nameResolution?: 'unresolved_environment' | undefined;
             unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
             native?: undefined | {
                 phase: 'running' | 'stopped' | 'unknown';

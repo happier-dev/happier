@@ -4,14 +4,12 @@ import { assertDefinePluginCatalogFamilyPolicyClosure, DEFINE_PLUGIN_FAMILY_POLI
 import { definePlugin } from './index.js';
 import { parsePluginManifest } from './manifest.js';
 import * as publicAuthoring from './index.public.js';
-import { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+import { DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { HEALTH_CHECK_KINDS_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
-it('publishes the canonical deployment transition and finite health kinds without a second schema owner', () => {
-    expect(Reflect.get(publicAuthoring, 'DeploymentTargetFailureTransitionV1ProtocolSchema'))
-        .toBe(DeploymentTargetFailureTransitionV1ProtocolSchema);
+it('publishes the canonical finite health kinds without a second schema owner', () => {
     expect(Reflect.get(publicAuthoring, 'HEALTH_CHECK_KINDS_V1')).toBe(HEALTH_CHECK_KINDS_V1);
 });
 
@@ -49,8 +47,7 @@ it('preserves an external author runtime target through SDK projection and canon
     const write = { ...read, title: 'Deploy', dangerLevel: 'writesLocal', readOnly: false } as const;
     const definition = { role: 'runtime', title: 'External runtime', targetKind: 'external', icon: 'server-outline',
         targetSchema: closed, linkSchema: closed,
-        actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' },
-        failureTransitionEvent: 'deployment-transition' } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
+        actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.runtime-target', version: '1.0.0', displayName: 'External runtime',
         actions: {
@@ -59,8 +56,6 @@ it('preserves an external author runtime target through SDK projection and canon
             deploy: { ...write, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
             observe: { ...read, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema },
         },
-        events: { 'deployment-transition': { declaration: { kind: 'event', title: 'Deployment transition',
-            payloadSchema: publicAuthoring.DeploymentTargetFailureTransitionV1ProtocolSchema.jsonSchema } } },
         deploymentTargets: { runtime: definition },
     });
     const parsed = parsePluginManifest(plugin.manifest);

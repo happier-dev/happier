@@ -96,7 +96,7 @@ describe('plugin activation contract', () => {
             Extract<PluginConnectedAccountAuthenticationAttempt, { kind: 'reconnect' }>['account']
         >().toHaveProperty('accountId');
         expectTypeOf<PluginConnectedAccountAuthCompletionResult['status']>()
-            .toEqualTypeOf<'connected' | 'rejected' | 'unavailable' | 'outcomeUnknown'>();
+            .toEqualTypeOf<'connected' | 'rejected' | 'unavailable' | 'outcomeUnknown' | 'configurationRequired'>();
         expectTypeOf<PluginConnectedAccountConnectedResult['accountId']>()
             .toEqualTypeOf<string | undefined>();
         expectTypeOf<NonNullable<PluginConnectedAccountConnectedResult['providerIdentity']>>()

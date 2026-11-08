@@ -627,6 +627,7 @@ export type ProvidersActionInputById = {
                     definitionRevision: 1;
                 };
             };
+            sourceOwnerDisplayName?: null | string | undefined;
             deliveryPolicy?: undefined | {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
             };
@@ -983,6 +984,7 @@ export type ProvidersActionInputById = {
                     definitionRevision: 1;
                 };
             };
+            sourceOwnerDisplayName?: null | string | undefined;
             deliveryPolicy?: undefined | {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
             };
@@ -1922,6 +1924,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -2303,6 +2306,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -2541,6 +2545,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -2779,6 +2784,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -3017,6 +3023,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -3255,6 +3262,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -3493,6 +3501,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -3731,6 +3740,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -3969,6 +3979,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -4207,6 +4218,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -4445,6 +4457,7 @@ export type ProvidersActionResultById = {
                     observedAt: null | number;
                     errorCode: null | string;
                     retryAt: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                 }[];
                 gateway?: undefined | {
                     status: 'idle' | 'not_checked' | 'running';
@@ -5043,6 +5056,7 @@ export type ProvidersActionResultById = {
             modelLoadPreflightPolicy?: 'advisory' | 'required' | null | undefined;
         }[];
         teamCredentialResources?: undefined | {
+            sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
             displayName: string;
@@ -5876,6 +5890,7 @@ export type ProvidersActionResultById = {
             modelLoadPreflightPolicy?: 'advisory' | 'required' | null | undefined;
         }[];
         teamCredentialResources?: undefined | {
+            sourceOwnerDisplayName: null | string;
             id: string;
             teamId: string;
             displayName: string;

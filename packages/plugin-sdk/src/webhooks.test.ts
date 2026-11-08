@@ -6,8 +6,8 @@ import {
   isValidPluginJsonSchemaValue,
 } from '@happier-dev/protocol/plugins/manifest';
 import {
-  PluginWebhookActionInputV1Schema,
-  PluginWebhookActionResultV1Schema,
+  PluginWebhookActionInputV1DeclarationSchema,
+  PluginWebhookActionResultV1DeclarationSchema,
 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 import {
   PluginWebhookEndpointIdV1Schema as canonicalPluginWebhookEndpointIdV1Schema,
@@ -72,6 +72,7 @@ describe('webhook authoring surface', () => {
     ) as Readonly<{ exports: Readonly<Record<string, unknown>> }>;
 
     expect(packageJson.exports['./webhooks']).toEqual({
+      'happier-source': './src/webhooks/index.ts',
       types: './dist/webhooks/index.d.ts',
       default: './dist/webhooks/index.js',
     });
@@ -86,19 +87,19 @@ describe('webhook authoring surface', () => {
       webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAB',
     })).toThrow();
 
-    expectTypeOf<PluginWebhookContribution>().toMatchTypeOf<Readonly<{
-      id: string;
-      verifier: Readonly<{
-        kind: 'github_hmac_sha256_v1';
-        routing: 'accountEndpoint' | 'providerInstallation';
-      }>;
-      handlerAction: Readonly<{ localId: string }>;
-    }>>();
+    expectTypeOf<PluginWebhookContribution['verifier']['kind']>()
+      .toEqualTypeOf<'github_hmac_sha256_v1' | 'sentry_hmac_sha256_v1' | 'capabilityUrl_v1'>();
   });
 
   it('projects the webhook action boundary schemas and raw-body decoder without exposing a general codec', () => {
-    expect(PluginWebhookActionInputSchema).toBe(PluginWebhookActionInputV1Schema);
-    expect(PluginWebhookActionResultSchema).toBe(PluginWebhookActionResultV1Schema);
+    expect(PluginWebhookActionInputSchema).toBe(PluginWebhookActionInputV1DeclarationSchema);
+    expect(PluginWebhookActionResultSchema).toBe(PluginWebhookActionResultV1DeclarationSchema);
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(PluginWebhookActionInputSchema.jsonSchema), fixture.input)).toBe(true);
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(PluginWebhookActionResultSchema.jsonSchema), fixture.result)).toBe(true);
+    // JSON cannot express body byte/base64 correspondence; dispatch keeps its native refinement.
+    expect(PluginWebhookActionInputSchema.safeParse({
+      ...fixture.input, request: { ...fixture.input.request, rawBodyBytes: 3 },
+    }).success).toBe(false);
     expect(new TextDecoder().decode(decodePluginWebhookActionRawBody(fixture.input))).toBe('{}');
     expect(PluginWebhookEndpointIdV1JsonSchema)
       .toBe(canonicalPluginWebhookEndpointIdV1JsonSchema);

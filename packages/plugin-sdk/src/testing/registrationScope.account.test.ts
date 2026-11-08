@@ -8,7 +8,7 @@ import { activate as activateAuthentication, portableAuthentication } from '../.
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { createPluginHttpFixture } from './http.js';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountPortableReadContext } from '../connectedAccounts.js';
+import type { ConnectedAccountPortableAuthenticationContext, ConnectedAccountPortableReadContext } from '../connectedAccounts.js';
 import { createConnectedAccountEstablishedRuntimeDispatcher } from '@happier-dev/cli-common/connectedAccounts';
 
 describe('Account action registration through the shared activation ABI', () => {
@@ -69,7 +69,7 @@ describe('Account action registration through the shared activation ABI', () => 
                 async delete(key: string) { credentials.delete(key); },
             },
             services: { http: createPluginHttpFixture({ async request() { throw new Error('Manual staging needs no HTTP'); } }) },
-        } satisfies ConnectedAccountAuthenticationContext;
+        } satisfies ConnectedAccountPortableAuthenticationContext;
         expect(await mode.complete({ fields: { token: 'fixture-credential' } }, context)).toEqual({
             status: 'connected', accountId: 'example-account', displayName: 'Example account', scopes: [],
         });
@@ -78,7 +78,7 @@ describe('Account action registration through the shared activation ABI', () => 
         const readContext = {
             plugin: context.plugin, contribution: context.contribution, surface: 'ui',
             invokedAtMs: context.invokedAtMs, signal: context.signal, services: context.services,
-            account, configuration: { ...context.configuration, target: { kind: 'account', account } },
+            account, configuration: { ...context.configuration, target: { kind: 'account', account, modeId: 'manual' } },
             credentials: context.attemptCredentials,
         } satisfies ConnectedAccountPortableReadContext;
         const invocation = {

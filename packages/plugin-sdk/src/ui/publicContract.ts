@@ -1,19 +1,18 @@
-import type { PluginUiOpenAutomationEventRequestV1 as ProtocolPluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { InboxItemAttentionTypeV1 as DtoInboxItemAttentionTypeV1, PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as DtoPluginUiAttachmentToneV1, PluginUiIconTokenV1 as DtoPluginUiIconTokenV1 } from '../actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../sessions/authoring.js';
+export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { ProjectKeyV1, SessionServerStartSpawnDraftV1, SessionSpawnNewInputV2 } from '../sessions/authoring.js';
 import type { JsonValue } from '../identity.js';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import type {
     StoredImageRefV1 as ProtocolStoredImageRefV1,
     PluginUiReadStoredImageResultV1 as ProtocolPluginUiReadStoredImageResultV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type { PluginAvailabilityDescriptor } from '../availability.js';
-import type {
-    PluginDeclarativeNodeV2 as PluginManifestDeclarativeNodeV2,
-    PluginLocalizedStringV2,
-} from '../actions/dtos/pluginActionDtoSupport.generated.js';
+import type { PluginLocalizedStringV2 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
+import type { PluginDeclarativeNodeV2 as PluginManifestDeclarativeNodeV2 } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import type { PluginDeclarativeToneV2 as PluginManifestDeclarativeToneV2 } from '../actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type {
     CurrentUiCommandDeclarationV1 as ProtocolCurrentUiCommandDeclarationV1,
@@ -47,6 +46,7 @@ import type {
     PluginUiTargetedContributionV1 as ProtocolPluginUiTargetedContributionV1,
     PluginUiTargetedContributionsV1 as ProtocolPluginUiTargetedContributionsV1,
     PluginUiHostMethodV1 as ProtocolPluginUiHostMethodV1,
+    PluginUiOpenAutomationEventRequestV1 as ProtocolPluginUiOpenAutomationEventRequestV1,
     PluginUiSessionStateV1 as ProtocolPluginUiSessionStateV1,
     PluginUiSessionPendingPermissionV1 as ProtocolPluginUiSessionPendingPermissionV1,
     PluginUiSessionPermissionAnswerV1 as ProtocolPluginUiSessionPermissionAnswerV1,
@@ -63,20 +63,40 @@ import type {
     PluginUiAppPageColumnV1 as ProtocolPluginUiAppPageColumnV1,
     PluginRightSidebarDefaultPlacement as ProtocolPluginRightSidebarDefaultPlacement,
     PluginRightSidebarCountV1 as ProtocolPluginRightSidebarCountV1,
+    PluginUiCountsBindingV1 as ProtocolPluginUiCountsBindingV1,
     PluginDefaultPlacement as ProtocolPluginDefaultPlacement,
     PluginUiWidgetAreaDeclarationV1 as ProtocolPluginUiWidgetAreaDeclarationV1,
     PluginUiDestinationPlacementV1 as ProtocolPluginUiDestinationPlacementV1,
     PluginUiViewInlineBindingInputV2 as ProtocolPluginUiViewInlineBindingInputV2,
+    PluginUiViewDestinationBindingInputV2 as ProtocolPluginUiViewDestinationBindingInputV2,
+    PluginUiViewV2Input as ProtocolPluginUiViewV2Input,
+    PluginUiViewV2 as ProtocolPluginUiViewV2,
+    PluginCollectionListExtensionV1 as ProtocolPluginCollectionListExtensionV1,
     PluginUiContainerV1 as ProtocolPluginUiContainerV1,
     PluginUiDestinationContainerV1 as ProtocolPluginUiDestinationContainerV1,
+    PluginSurfaceTargetV1 as ProtocolPluginSurfaceTargetV1,
 } from '@happier-dev/protocol/plugins/contributions/ui';
 
 /** Type-only public projection; Host API payloads remain ordinary JSON values. */
+export type {
+    PluginUiActionControlEventV1,
+    PluginUiActionControlRequestV1,
+    PluginUiActionControlExecutionV1,
+    PluginUiActionControlPreparationV1,
+    PluginUiActionControlPresentationV1,
+} from '@happier-dev/protocol/plugins/ui/client';
+
 type DeepReadonly<T> = T extends readonly (infer TItem)[]
     ? readonly DeepReadonly<TItem>[]
     : T extends object
         ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
         : T;
+
+/** Canonical data-only manifest constituent, accepting readonly author declarations. */
+export type PluginCollectionListExtensionV1 = DeepReadonly<ProtocolPluginCollectionListExtensionV1>;
+
+/** Canonical Protocol projection; no independent author wire shape. */
+export type PluginUiOpenAutomationEventRequestV1 = DeepReadonly<ProtocolPluginUiOpenAutomationEventRequestV1>;
 
 export type {
     ComposerContentHandleV1,
@@ -119,6 +139,7 @@ export type PluginUiSchema<T> = Readonly<{
 }>;
 export type PluginRightSidebarDefaultPlacement = ProtocolPluginRightSidebarDefaultPlacement;
 export type PluginRightSidebarCountV1 = ProtocolPluginRightSidebarCountV1;
+export type PluginUiCountsBindingV1 = DeepReadonly<ProtocolPluginUiCountsBindingV1>;
 export type PluginDefaultPlacement = ProtocolPluginDefaultPlacement;
 
 export type PluginUiJsonValueV1 = JsonValue;
@@ -183,6 +204,8 @@ export type PluginUiMountContextV1 =
         kind: 'destination';
         destination: PluginUiContributionIdentityV1;
         container: PluginUiDestinationContainerV1;
+        /** Retained opaque destination identity; launch input can be absent after restoration. */
+        instanceKey?: string;
     }>
     | Readonly<{
         kind: 'embedded';
@@ -230,6 +253,10 @@ export type PluginUiHostApiSurfaceThemeV1 = {
         onAccent: string;
         /** The one accent data marks are drawn in (series, meters); older snapshots omit it. */
         dataAccent?: string;
+        /** The host's blue, for a colour a person picks for a mark (a label's dot); older snapshots omit it. */
+        blue?: string;
+        /** The host's purple, for the same picked marks; older snapshots omit it. */
+        purple?: string;
         success: string;
         warning: string;
         attention: string;
@@ -337,7 +364,7 @@ export type PluginUiHostApiSurfaceContextV1 = {
     theme: PluginUiHostApiSurfaceThemeV1;
     translations: Record<string, string>;
     /** Absent for Account-visible presentation without an executable occurrence. */
-    targetedContributions?: PluginUiTargetedContributionsV1;
+    targetedContributions?: ProtocolPluginUiHostApiSurfaceContextV1['targetedContributions'];
 };
 
 export type PluginUiResourceSubscriptionEventV1 =
@@ -408,41 +435,26 @@ export type PluginUiSelectActionInputHostRequestV1 = ProtocolPluginUiSelectActio
  * "seeded empty" — a caller carrying only a prompt does not clear a directory
  * the reader already chose.
  */
-export type PluginUiNewSessionSeedV1 = {
+export type PluginUiNewSessionSeedV1 = DeepReadonly<{
+    sessionName?: string;
+    initialSessionFacts?: SessionServerStartSpawnDraftV1['identity'];
+    promptStack?: SessionServerStartSpawnDraftV1['promptStack'];
     prompt?: string;
+    currentUiContext?: CurrentUiContextSnapshotV1;
     profileId?: string;
-    /**
-     * The resolved checkout question. It carries no worktree identity: the
-     * host's New Session screen still owns the actual worktree selection and
-     * any persisted checkout draft.
-     */
+    agentTarget?: SessionServerStartSpawnDraftV1['agentTarget'];
+    origin?: SessionSpawnNewInputV2['authoringOrigin'];
     checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?:
         | { kind: 'exactTarget'; serverId: string; machineId: string; directory?: string }
         | { kind: 'currentTarget'; directory: string };
-    /**
-     * Exact placement candidates in the same grammar as the existing
-     * `serverStartDraft` projection. This is deliberately not a singular
-     * placement: callers with an ambiguous repository join cannot turn the
-     * first candidate into an unattended launch.
-     *
-     * Readonly by contract: a seed is a caller-authored request, so a plugin
-     * hands over its own frozen candidate answers and keeps array ownership.
-     */
+    directoryIntent?: SessionServerStartSpawnDraftV1['directory'];
     candidates?: readonly PluginUiSessionPlacementCandidateV1[];
-    /**
-     * Composer attachments, as the AUTHOR half only — the same
-     * `{ attachmentLocalId, value }` a live `attachment.add` carries. The host
-     * qualifies the identity, resolves the type label and mints the instance id
-     * when its New Session composer mounts, so a seed never holds an attachment
-     * record and never becomes a second attachment owner.
-     *
-     * Readonly by contract: callers build these from their own readonly
-     * delivery plans and must not need a defensive array copy to seed the
-     * host's New Session screen.
-     */
-    attachments?: readonly { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
-};
+    attachments?: readonly {
+        attachmentLocalId: string;
+        value: ComposerAttachmentAuthorValueV1;
+    }[];
+}>;
 
 /** Input for the dedicated, navigation-owning `openNewSession` Host method. */
 export type PluginUiOpenNewSessionRequestV1 = PluginUiNewSessionSeedV1;
@@ -705,24 +717,8 @@ export type PluginUiRendererV2 =
         documentSource?: { kind: 'resource'; resourceId: string };
     };
 
-export type PluginUiViewTargetV2 =
-    | { kind: 'app' }
-    | { kind: 'session'; sessionIdPath?: string }
-    | {
-        kind: 'project';
-        workspaceRefIdPath?: string;
-        serverIdPath?: string;
-        machineIdPath?: string;
-        rootPathPath?: string;
-        projectIdPath?: string;
-    }
-    | {
-        kind: 'browser';
-        browserViewIdPath: string;
-        sessionIdPath?: string;
-        profileIdPath?: string;
-    }
-    | { kind: 'services'; sessionIdPath?: string; serverIdPath?: string; machineIdPath?: string };
+export type PluginUiViewTargetV2 = DeepReadonly<ProtocolPluginSurfaceTargetV1>;
+export type { PluginSurfaceTargetV1 as ProtocolPluginSurfaceTargetV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 
 export type PluginUiDestinationPlacementV1 = ProtocolPluginUiDestinationPlacementV1;
 export type PluginUiAppPageColumnV1 = ProtocolPluginUiAppPageColumnV1;
@@ -735,58 +731,7 @@ export type PluginUiAppPageColumnV1 = ProtocolPluginUiAppPageColumnV1;
  * shape here let an editor accept `headerActions` on a pane and `multiple` on
  * a right-sidebar tab, both of which the host refuses at install time.
  */
-export type PluginUiViewDestinationBindingInputV2 =
-    | {
-        container: 'appPage';
-        target: { kind: 'app' };
-        /** Page purpose available to the host before the executable surface loads. */
-        description?: PluginLocalizedStringV2;
-        /**
-         * What the page draws as its own header once loaded: `'page'` (default) a page header, `'toolbar'` a
-         * Collection toolbar that leads with the page's name. The host says the loading identity the same way.
-         */
-        headerStyle?: 'page' | 'toolbar';
-        instancePolicy?: 'singleton';
-        headerActions?: PluginUiPageHeaderActionV1[];
-        placement?: PluginUiDestinationPlacementV1;
-        column?: PluginUiAppPageColumnV1;
-        widgetAreas?: PluginUiWidgetAreaDeclarationV1[];
-    }
-    | {
-        container: 'rightSidebarTab';
-        target: { kind: 'app' };
-        defaultPlacement?: PluginRightSidebarDefaultPlacement;
-        countResourceId?: string;
-        instancePolicy?: 'singleton';
-        headerActions?: [];
-        placement?: PluginUiDestinationPlacementV1;
-    }
-    | {
-        container: 'rightSidebarTab';
-        target: { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' };
-        defaultPlacement?: PluginRightSidebarDefaultPlacement;
-        countResourceId?: string;
-        instancePolicy?: 'singleton';
-        headerActions?: [];
-    }
-    | {
-        container: 'rightPane' | 'detailsTab' | 'detailsPane' | 'bottomPane';
-        target: { kind: 'session'; sessionIdPath?: string } | PluginUiViewTargetV2 & { kind: 'project' };
-        instancePolicy?: 'singleton' | 'multiple';
-        headerActions?: [];
-    }
-    | {
-        container: 'browserPanel';
-        target: PluginUiViewTargetV2 & { kind: 'browser' };
-        instancePolicy?: 'singleton';
-        headerActions?: [];
-    }
-    | {
-        container: 'servicesPanel';
-        target: PluginUiViewTargetV2 & { kind: 'services' };
-        instancePolicy?: 'singleton';
-        headerActions?: [];
-    };
+export type PluginUiViewDestinationBindingInputV2 = ProtocolPluginUiViewDestinationBindingInputV2;
 
 export type PluginUiWidgetAreaDeclarationV1 = ProtocolPluginUiWidgetAreaDeclarationV1;
 
@@ -807,29 +752,13 @@ export type PluginUiPageHeaderActionV1 = {
     command: string | PluginUiSemanticCommandV1;
 };
 
-export type PluginUiViewV2Input = {
-    id: string;
-    renderer: string;
-    fallbackRenderers?: string[];
-    title?: PluginLocalizedStringV2;
-    icon?: PluginUiIconTokenV1;
-} & (
-    | (PluginUiViewDestinationBindingInputV2 & {
-        badge?: { label: PluginLocalizedStringV2; tone?: PluginUiToneV1 };
-        rankHint?: number;
-    })
-    | PluginUiViewInlineBindingInputV2
-);
+export type PluginUiViewV2Input = ProtocolPluginUiViewV2Input;
 
 /**
  * The parsed view: the host resolves `instancePolicy` and `headerActions`
  * defaults, so both are present — still on their own correlated arm.
  */
-export type PluginUiViewV2 = PluginUiViewV2Input extends infer TInput
-    ? TInput extends PluginUiViewDestinationBindingInputV2
-        ? TInput & Required<Pick<TInput, 'instancePolicy' | 'headerActions'>>
-        : TInput
-    : never;
+export type PluginUiViewV2 = ProtocolPluginUiViewV2;
 
 export type PluginUiTranslationBundleV2 = {
     locale: string;
@@ -886,15 +815,3 @@ export type PublicToolchainCompatibilityV1 = {
 export type PluginLiveStreamReferenceV1 =
     | Readonly<{ kind: 'plugin'; source: Readonly<{ pluginId: string; localId: string }> }>
     | Readonly<{ kind: 'host'; sourceId: string }>;
-
-/** Canonical Protocol projection; no independent author wire shape. */
-export type PluginUiOpenAutomationEventRequestV1 = DeepReadonly<ProtocolPluginUiOpenAutomationEventRequestV1>;
-
-/** Type-only public projection; Host API payloads remain ordinary JSON values. */
-export type {
-    PluginUiActionControlEventV1,
-    PluginUiActionControlRequestV1,
-    PluginUiActionControlExecutionV1,
-    PluginUiActionControlPreparationV1,
-    PluginUiActionControlPresentationV1,
-} from '@happier-dev/protocol/plugins/ui/client';

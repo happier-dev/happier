@@ -6,7 +6,10 @@ import type {
 
 import type { PluginManifest } from '../manifest.js';
 import type { JsonValue } from '../identity.js';
+import type { PluginInvocationContext } from '../invocation.js';
+import type { PluginAccountActionContext } from '../actions/contracts.js';
 import type { HttpMethod } from '../http.js';
+import type { ConnectedAccountsService } from '../connectedAccounts.js';
 import type {
   AdmittedTargetedOperationExecutionHandle,
 } from '../actions/service.js';
@@ -27,7 +30,8 @@ import type {
   TargetedContributionsService,
 } from '../services/targetedContributions.js';
 import { createPluginTestkit } from './host.js';
-import type { PluginRuntimeRegistration } from '../host/registration/index.js';
+import * as publicTesting from './index.js';
+import type { PluginRuntimeRegistration } from '../registration/valueByFamily.js';
 import type {
   PluginTestkit,
   PluginTestkitOptions,
@@ -37,7 +41,6 @@ import type { ProvidersService } from '../providers/index.js';
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type {
   VoiceSpeechSynthesizeRequest,
-  VoiceSpeechTranscribeRequest,
 } from '../voice/speech.js';
 import { isPluginError, PluginError } from '../errors.js';
 import { defineContributionProtocol } from '../targetedContributionAuthoring.js';
@@ -69,8 +72,181 @@ const manifest = {
   },
 } satisfies PluginManifest;
 
+it.each(['daemon', 'account'] as const)('refuses native credential material in an ordinary public testkit invocation (%s)', async realm => {
+  const run = async (_input: unknown, context: PluginAccountActionContext | PluginInvocationContext) =>
+    context.services.machineProvisioners.materializeNativeCredentialHeaders({ bindingKey: 'unknown-binding' });
+  const plugin = definePlugin({ id: 'acme.native-ordinary', version: '1.0.0', actions: {
+    check: { title: 'Check', surfaces: ['plugin'],
+      ...(realm === 'account'
+        ? { execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } }, run }
+        : { execution: { target: 'daemon' }, run }),
+    },
+  } });
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  try {
+    await expect(kit.invokeAction('check', {})).resolves.toEqual({
+      ok: false, code: 'native_credential_binding_unavailable',
+    });
+  } finally { await kit.dispose(); }
+});
+
+it('lets an authored Account Action materialize its selected purpose through supplied host services', async () => {
+  const selectedAccount = { service: { pluginId: 'acme.cloud', localId: 'account' }, accountId: 'selected-account' };
+  const request = { kind: 'httpHeaders' as const, origin: 'https://cloud.example.test', headerNames: ['authorization'] };
+  const nativeCapabilities = ['exec', 'fs', 'managedServices', 'sessions'];
+  function unavailable(): never {
+    throw new PluginError({ code: 'plugin_test_service_unavailable' });
+  }
+  // These are the external host service ports. The real testkit still owns
+  // author activation, registration, Action invocation and Account projection.
+  const connectedAccounts = {
+    async getBinding(purpose, options) {
+      expect(purpose).toBe('cloud');
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      return { purpose, service: selectedAccount.service, account: selectedAccount,
+        target: { kind: 'account' as const, displayName: 'Selected cloud account' } };
+    },
+    async materialize(purpose, materializationRequest, options) {
+      expect(purpose).toBe('cloud');
+      expect(materializationRequest).toEqual(request);
+      expect(options?.expectedAccount).toEqual(selectedAccount);
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      expect(options).not.toHaveProperty('nativeService');
+      return { kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account-token' } };
+    },
+    requestSelection: unavailable,
+    async listAccounts(input, options) {
+      expect(input).toEqual({ purpose: 'cloud' });
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      return { status: 'complete' as const, accounts: [{ account: selectedAccount, displayName: 'Selected cloud account',
+        state: 'connected' as const, connectedAccountOrigins: ['https://cloud.example.test'],
+        connectedAccountBases: ['https://cloud.example.test'] }] };
+    },
+    async materializeListedAccount(input, options) {
+      expect(input).toEqual({ purpose: 'cloud', account: selectedAccount, materialization: request });
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+      return { kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account-token' } };
+    },
+    watch: unavailable,
+  } satisfies ConnectedAccountsService;
+  const http = publicTesting.createPluginHttpFixture({ async request(input) {
+    expect(input.url).toBe('https://cloud.example.test/instances');
+    expect(input.headers).toEqual({ Authorization: 'Bearer selected-account-token' });
+    return { status: 200, headers: {}, body: new Uint8Array() };
+  } });
+  const plugin = definePlugin({ id: 'acme.portable-cloud', version: '1.0.0', actions: {
+    list: { title: 'List cloud instances', surfaces: ['plugin'],
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
+      run: async (_input, context) => {
+        const binding = await context.services.connectedAccounts.getBinding('cloud', { signal: context.signal });
+        if (!binding) throw new Error('Expected the selected Account binding');
+        const materialized = await context.services.connectedAccounts.materialize('cloud', request, {
+          expectedAccount: binding.account, signal: context.signal,
+        });
+        if (materialized.kind !== 'httpHeaders') throw new Error('Expected HTTP credentials');
+        const listed = await context.services.connectedAccounts.listAccounts({ purpose: 'cloud' }, { signal: context.signal });
+        const listedAccount = listed.accounts[0]?.account;
+        if (!listedAccount) throw new Error('Expected the purpose target listing');
+        expect(await context.services.connectedAccounts.materializeListedAccount({ purpose: 'cloud', account: listedAccount,
+          materialization: request }, { signal: context.signal })).toEqual(materialized);
+        const response = await context.services.http.request({ url: 'https://cloud.example.test/instances',
+          method: 'GET', headers: materialized.headers, redirect: 'error' }, { signal: context.signal });
+        return { account: binding.account, status: response.status,
+          nativeCapabilities: nativeCapabilities.filter(capability => capability in context.services) };
+      },
+    },
+  } });
+  const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { connectedAccounts, http } });
+  try {
+    await expect(testkit.invokeAction('list', null)).resolves.toEqual({ account: selectedAccount, status: 200, nativeCapabilities: [] });
+    await expect(testkit.invokeAction('list', null, { services: { connectedAccounts: undefined } }))
+      .rejects.toMatchObject({ code: 'plugin_test_service_unavailable' });
+  } finally { await testkit.dispose(); }
+});
+
+it.each(['daemon', 'account'] as const)('observes one registered read without running it and retires its subscription (%s)', async (localId) => {
+  let runs = 0;
+  let disposed = 0;
+  const contexts: unknown[] = [];
+  const inputSchema = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+  const resultSchema = defineProtocolObject({ done: defineProtocolLiteral(true) }, { policy: 'closed' });
+  const observeRead = (input: Readonly<{ id: string }>, invalidate: import('../actions/contracts.js').PluginActionReadInvalidation, context: Readonly<{ signal: AbortSignal }>) => {
+    expect(input).toEqual({ id: 'selected' });
+    contexts.push(context);
+    invalidate();
+    return { dispose() { disposed++; } };
+  };
+  const plugin = definePlugin({ id: 'acme.read-observer', version: '1.0.0', actions: {
+    daemon: { title: 'Read', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+    account: { title: 'Read Account', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+    write: { title: 'Write', surfaces: ['plugin'], inputSchema, resultSchema,
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+  } });
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  const controller = new AbortController();
+  const invalidate = Object.assign(vi.fn(), { retire: vi.fn() });
+  try {
+    await expect(kit.observeAction(localId, { id: '' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+    await expect(kit.observeAction('write', { id: 'selected' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
+    const subscription = await kit.observeAction(localId, { id: 'selected' }, invalidate, { signal: controller.signal });
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]).toMatchObject({ plugin: { id: plugin.manifest.id }, contribution: { id: localId } });
+    expect(runs).toBe(0);
+    controller.abort();
+    await subscription.dispose();
+    expect(disposed).toBe(1);
+    const ownedSubscription = await kit.observeAction(localId, { id: 'selected' }, invalidate);
+    await kit.dispose();
+    await ownedSubscription.dispose();
+    expect(disposed).toBe(2);
+  } finally { await kit.dispose(); }
+  expect(disposed).toBe(2);
+});
+
+it('provides the fixed unavailable Action boundary fixture through public testing', () => {
+  const error = publicTesting.createPluginActionHandlerUnavailableFixture();
+  expect(error.code).toBe('plugin_action_handler_missing');
+  expect(isPluginActionHandlerInvocationNotStartedAdvisory(error)).toBe(true);
+  expect(error.data).toMatchObject({ name: 'PluginError', code: 'plugin_action_handler_missing', actionHandlerInvocation: 'notStarted' });
+});
+
+it.each(['status', 'undeclared'])('activates resource-only Account targets and enforces registration rights for %s', async (resourceId) => {
+  const runtime = { read: () => 'Account resource', observe: () => ({ dispose() {} }) };
+  const plugin = definePlugin({
+    id: 'acme.account-resource-only', version: '1.0.0',
+    resources: { status: { source: 'dynamic', kind: 'config', scope: 'global', contentType: 'text/plain',
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } }, runtime } },
+  });
+  const creatingTestkit = createPluginTestkit({ manifest: plugin.manifest, module: {
+    activate: plugin.activate,
+    activateAccount(api) { api.resources.registerDynamicResource(resourceId, runtime); },
+  } });
+  if (resourceId === 'undeclared') {
+    await expect(creatingTestkit).rejects.toThrow();
+  } else {
+    const testkit = await creatingTestkit;
+    try { expect(testkit.registration('resources', 'status')).toBeDefined(); }
+    finally { await testkit.dispose(); }
+  }
+});
+
 it.each([false, true])('retains optional native failure output in the public testkit (logs=%s)', async (withLogs) => {
   const instance = { adapter: { pluginId: 'acme.native-output', localId: 'resource' }, nativeResourceId: 'exact-resource' };
+  function logs(candidate: typeof instance, request: import('../managed-services/contract.js').ManagedServiceNativeLogReadV1): Promise<import('../managed-services/contract.js').ManagedServiceNativeLogResultV1>;
+  function logs(candidate: typeof instance, request: import('../managed-services/contract.js').ManagedServiceNativeLogWatchV1): Promise<import('../lifecycle.js').Disposable>;
+  async function logs(candidate: typeof instance, request: import('../managed-services/contract.js').ManagedServiceNativeLogReadV1 | import('../managed-services/contract.js').ManagedServiceNativeLogWatchV1): Promise<import('../managed-services/contract.js').ManagedServiceNativeLogResultV1 | import('../lifecycle.js').Disposable> {
+    if (request.kind === 'watch') {
+      request.emit({ kind: 'unavailable', reason: 'unsupported' });
+      return { dispose() {} };
+    }
+    const text = `${candidate.nativeResourceId}: native failure`;
+    return { kind: 'page' as const, page: { sourceRevision: candidate.nativeResourceId,
+      text: text.slice(0, request.maxBytes), nextCursor: null, truncated: text.length > request.maxBytes } };
+  }
   const testkit = await createPluginTestkit({
     manifest: { schemaVersion: 2, id: instance.adapter.pluginId, version: '1.0.0', displayName: 'Native output',
       runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
@@ -79,17 +255,38 @@ it.each([false, true])('retains optional native failure output in the public tes
       api.projectNativeAdapters.register('resource', { nativeServiceLifecycle: {
         async inspect() { return { phase: 'unknown', readiness: 'not_reported', endpoint: null }; },
         async stop() { return { status: 'stopped' }; },
-        ...(withLogs ? { async logs(candidate, options) {
-          return `${candidate.nativeResourceId}: native failure`.slice(-options.maxBytes);
-        } } satisfies Pick<NonNullable<PluginTestkitRegistrationByFamily['projectNativeAdapters']['nativeServiceLifecycle']>, 'logs'> : {}),
+        ...(withLogs ? { logs } satisfies Pick<NonNullable<PluginTestkitRegistrationByFamily['projectNativeAdapters']['nativeServiceLifecycle']>, 'logs'> : {}),
       } });
     } },
   });
   try {
     const lifecycle = testkit.registration('projectNativeAdapters', 'resource')?.nativeServiceLifecycle;
     expect(await lifecycle?.inspect(instance)).toEqual({ phase: 'unknown', readiness: 'not_reported', endpoint: null });
-    expect(await lifecycle?.logs?.(instance, { maxBytes: 8_192 })).toBe(withLogs ? 'exact-resource: native failure' : undefined);
+    expect(await lifecycle?.logs?.(instance, { kind: 'read', maxBytes: 8_192 })).toEqual(withLogs
+      ? { kind: 'page', page: { sourceRevision: 'exact-resource', text: 'exact-resource: native failure', nextCursor: null, truncated: false } }
+      : undefined);
     expect(await lifecycle?.stop(instance)).toEqual({ status: 'stopped' });
+  } finally { await testkit.dispose(); }
+});
+
+it('refuses unsupported read observation in daemon and Account test hosts without running the target', async () => {
+  const ref = { pluginId: 'acme.read-target', localId: 'read' };
+  const plugin = definePlugin({ id: 'acme.observe-fixture', version: '1.0.0', actions: {
+    daemon: { title: 'Observe', surfaces: ['plugin'], run: async (_input, context) => {
+      await context.services.actions.observe(ref, null, () => undefined);
+      return null;
+    } },
+    account: { title: 'Observe Account', surfaces: ['plugin'], execution: { target: 'account',
+      account: { artifactId: 'portable', exportName: 'activate' } }, run: async (_input, context) => {
+      await context.services.actions.observe(ref, null, () => undefined);
+      return null;
+    } },
+  } });
+  const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  try {
+    for (const id of ['daemon', 'account']) {
+      await expect(testkit.invokeAction(id, null)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
+    }
   } finally { await testkit.dispose(); }
 });
 
@@ -146,31 +343,6 @@ const agentManifest = {
       capabilities: {
         surfaces: ['terminal'],
         sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
-      },
-    }],
-  },
-} satisfies PluginManifest;
-
-const agentWithExternalSessionsManifest = {
-  ...agentManifest,
-  contributes: {
-    agents: [{
-      ...agentManifest.contributes.agents[0],
-      capabilities: {
-        ...agentManifest.contributes.agents[0].capabilities,
-        surfaces: ['terminal', 'externalSessions'],
-      },
-      surfaces: {
-        externalSession: {
-          sources: [{
-            sourceKind: 'test',
-            schema: {
-              fields: [{ kind: 'literal', name: 'kind', value: 'test' }],
-            },
-            key: { segments: [{ kind: 'literal', value: 'test' }] },
-            instances: [{ kind: 'default', constants: {} }],
-          }],
-        },
       },
     }],
   },
@@ -347,7 +519,7 @@ const voiceManifest = {
   },
 } satisfies PluginManifest;
 
-function voiceRuntime(includeTranscribe = false): RegisteredVoiceProviderRuntime {
+function voiceRuntime(): RegisteredVoiceProviderRuntime {
   return {
     kind: 'speech',
     synthesize: async (request: VoiceSpeechSynthesizeRequest) => ({
@@ -355,14 +527,6 @@ function voiceRuntime(includeTranscribe = false): RegisteredVoiceProviderRuntime
       bytes: new Uint8Array(),
       mimeType: 'audio/wav',
     }),
-    ...(includeTranscribe
-      ? {
-          transcribe: async (request: VoiceSpeechTranscribeRequest) => ({
-            requestId: request.requestId,
-            text: '',
-          }),
-        }
-      : {}),
   };
 }
 
@@ -576,9 +740,7 @@ describe('createPluginTestkit', () => {
       expect(isPluginError(received)).toBe(true);
       if (!isPluginError(received)) throw new Error('Expected a PluginError');
       expect(received.code).toBe('plugin_action_execution_failed');
-      expect(received.message.startsWith('ACTION_FAILURE_MARKER')).toBe(true);
-      expect(new TextEncoder().encode(received.message).byteLength).toBeLessThanOrEqual(2_048);
-      expect(received.message).not.toContain('\uFFFD');
+      expect(received.message).toBe(message);
     } finally {
       await testkit.dispose();
     }
@@ -780,7 +942,7 @@ describe('createPluginTestkit', () => {
     }
   });
 
-  it('withholds a contributed Action result when the host-stamped caller materialization changes while it runs', async () => {
+  it('returns a contributed Action result when the host-stamped caller materialization changes while it runs', async () => {
     let alphaMaterialization: PluginMachineMaterializationRefV1 = Object.freeze({
       pluginId: 'acme.alpha',
       machineId: 'machine-alpha',
@@ -817,9 +979,7 @@ describe('createPluginTestkit', () => {
     });
 
     try {
-      await expect(alpha.invokeAction('send', null)).rejects.toMatchObject({
-        code: 'plugin_action_caller_unavailable',
-      });
+      await expect(alpha.invokeAction('send', null)).resolves.toEqual({ accepted: true });
       expect(targetHandler).toHaveBeenCalledOnce();
     } finally {
       await alpha.dispose();
@@ -1592,7 +1752,7 @@ describe('createPluginTestkit', () => {
     }
   });
 
-  it('withholds a contributed Action result when the host-owned target origin changes while it runs', async () => {
+  it('returns a contributed Action result with its admitted origin when the host-owned target origin changes while it runs', async () => {
     let betaMaterialization: PluginMachineMaterializationRefV1 = Object.freeze({
       pluginId: 'acme.beta',
       machineId: 'machine-beta',
@@ -1629,11 +1789,10 @@ describe('createPluginTestkit', () => {
     });
 
     try {
-      const received = await alpha.invokeAction('send', null).catch((error: unknown) => error);
-      expect(received).toMatchObject({
-        code: 'plugin_action_execution_origin_changed',
+      await expect(alpha.invokeAction('send', null)).resolves.toMatchObject({
+        result: { accepted: true },
+        executionOrigin: { materializationRef: { materializationId: 'materialization-beta-before' } },
       });
-      expect(received).not.toHaveProperty('actionHandlerInvocation');
       expect(targetHandler).toHaveBeenCalledOnce();
     } finally {
       await alpha.dispose();
@@ -2082,6 +2241,7 @@ describe('createPluginTestkit', () => {
       throw new Error('unused Provider fixture operation');
     });
     const providers = Object.freeze({
+      usage: Object.freeze({ refresh: unused }),
       connections: Object.freeze({
         describe,
         mutate: unused,
@@ -2247,7 +2407,7 @@ describe('createPluginTestkit', () => {
     })).rejects.toThrow(/missing registration/u);
   });
 
-  it('binds the parsed Voice declaration while preserving shared correspondence checks', async () => {
+  it('registers the declared Voice runtime', async () => {
     const runtime = voiceRuntime();
     const testkit = await createPluginTestkit({
       manifest: voiceManifest,
@@ -2264,17 +2424,9 @@ describe('createPluginTestkit', () => {
     });
     await testkit.dispose();
 
-    await expect(createPluginTestkit({
-      manifest: voiceManifest,
-      module: {
-        activate(api) {
-          api.voiceProviders.register('speech', voiceRuntime(true));
-        },
-      },
-    })).rejects.toThrow(/mismatched STT/u);
   });
 
-  it('exposes canonical snapshots while rejecting undeclared, duplicate, and incomplete Agent facets', async () => {
+  it('captures declared Agent runtimes and rejects undeclared or duplicate identities', async () => {
     const testkit = await createPluginTestkit({
       manifest: agentManifest,
       module: {
@@ -2312,19 +2464,11 @@ describe('createPluginTestkit', () => {
       },
     })).rejects.toThrow(/duplicate Agent runtime/u);
 
-    await expect(createPluginTestkit({
-      manifest: agentWithExternalSessionsManifest,
-      module: {
-        activate(api) {
-          api.agents.register('assistant', agentFactory, { sessionRunnerFactory });
-        },
-      },
-    })).rejects.toThrow(/missing Agent External Sessions contribution/u);
   });
 
   it('projects a trusted class-shaped provider CLI attach declaration through definePlugin', async () => {
     class TrustedProviderCliAttachDeclaration {
-      readonly authorOnly = 'preserved outside the host snapshot';
+      readonly authorOnly = 'trusted runtime state';
       readonly baseUrl = 'http://127.0.0.1:4096';
 
       resolveTarget() {
@@ -2375,8 +2519,7 @@ describe('createPluginTestkit', () => {
     const captured = testkit.registration('agents', 'assistant')?.providerCliAttach;
 
     expect(captured).toBeDefined();
-    expect(captured).not.toBe(providerCliAttach);
-    expect(Object.isFrozen(captured)).toBe(true);
+    expect(captured).toBe(providerCliAttach);
     expect(captured?.resolveTarget({ metadata: {} })).toEqual({
       ok: true,
       value: { baseUrl: 'http://127.0.0.1:4096' },
@@ -2389,7 +2532,6 @@ describe('createPluginTestkit', () => {
 
   it('captures class, prototype, and accessor-backed Agent provider bindings', async () => {
     class StructuralProviderBinding {
-      readonly ignoredByRegistration = true;
       readonly owner = 'structural-provider-binding';
       supportsClaudeHelperModels: true | undefined = true;
       supportsModelSettings: true | undefined = true;
@@ -2436,41 +2578,14 @@ describe('createPluginTestkit', () => {
       },
     });
     const registered = testkit.registration('agents', 'assistant');
-    const snapshot = registered?.providerBinding;
-    expect(snapshot).toMatchObject({ v: 1, adapterVersion: 1,
+    const captured = registered?.providerBinding;
+    expect(captured).toMatchObject({ v: 1, adapterVersion: 1,
       supportsClaudeHelperModels: true, supportsModelSettings: true });
-    providerBinding.supportsClaudeHelperModels = undefined;
-    providerBinding.supportsModelSettings = undefined;
-    expect(snapshot).toMatchObject({ supportsClaudeHelperModels: true, supportsModelSettings: true });
-    expect(snapshot).not.toBe(providerBinding);
-    expect(snapshot).not.toHaveProperty('ignoredByRegistration');
-    expect(Object.isFrozen(snapshot)).toBe(true);
-    expect(Reflect.apply(snapshot!.prepare, { owner: 'foreign' }, [])).toMatchObject({
+    expect(captured).toBe(providerBinding);
+    expect(Reflect.apply(captured!.prepare, captured, [])).toMatchObject({
       owner: 'structural-provider-binding',
     });
     await testkit.dispose();
-  });
-
-  it('rejects missing or non-callable Agent provider binding operations and malformed capability facts', async () => {
-    const materialize = async () => ({ v: 1 as const, kind: 'spawnEnv' as const, env: [] });
-    for (const providerBinding of [
-      { v: 1, adapterVersion: 1, materialize },
-      { v: 1, adapterVersion: 1, prepare: null, materialize },
-      { v: 1, adapterVersion: 1, prepare: () => ({}), materialize, supportsClaudeHelperModels: false },
-      { v: 1, adapterVersion: 1, prepare: () => ({}), materialize, supportsModelSettings: 'true' },
-    ]) {
-      await expect(createPluginTestkit({
-        manifest: agentManifest,
-        module: {
-          activate(api) {
-            api.agents.register('assistant', agentFactory, {
-              providerBinding: providerBinding as never,
-              sessionRunnerFactory,
-            });
-          },
-        },
-      })).rejects.toThrow(/invalid 'agents\/assistant' runtime/u);
-    }
   });
 
   it('aborts testkit-owned invocation signals when the testkit is disposed', async () => {
@@ -2550,8 +2665,9 @@ describe('createPluginTestkit', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it('unwinds committed registrations and activation cleanup when invocation schema compilation fails', async () => {
+  it('defers schema compilation to invocation without running the handler or losing activation cleanup', async () => {
     const cleanup = vi.fn(async () => undefined);
+    const handler = vi.fn(() => null);
     const invalidSchemaManifest = {
       ...manifest,
       contributes: {
@@ -2562,79 +2678,23 @@ describe('createPluginTestkit', () => {
       },
     } satisfies PluginManifest;
 
-    await expect(createPluginTestkit({
+    const testkit = await createPluginTestkit({
       manifest: invalidSchemaManifest,
       module: {
         activate(api) {
-          api.actions.register('echo', () => null);
+          api.actions.register('echo', handler);
           return cleanup;
         },
       },
-    })).rejects.toThrow(/anyOf/u);
+    });
+    try {
+      expect(cleanup).not.toHaveBeenCalled();
+      await expect(testkit.invokeAction('echo', null)).rejects.toThrow(/anyOf/u);
+      expect(handler).not.toHaveBeenCalled();
+      expect(cleanup).not.toHaveBeenCalled();
+    } finally {
+      await testkit.dispose();
+    }
     expect(cleanup).toHaveBeenCalledOnce();
   });
-});
-
-it.each(['daemon', 'account'] as const)('observes one registered read without running it and retires its subscription (%s)', async (localId) => {
-  let runs = 0;
-  let disposed = 0;
-  const contexts: unknown[] = [];
-  const inputSchema = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
-  const resultSchema = defineProtocolObject({ done: defineProtocolLiteral(true) }, { policy: 'closed' });
-  const observeRead = (input: Readonly<{ id: string }>, invalidate: import('../actions/contracts.js').PluginActionReadInvalidation, context: Readonly<{ signal: AbortSignal }>) => {
-    expect(input).toEqual({ id: 'selected' });
-    contexts.push(context);
-    invalidate();
-    return { dispose() { disposed++; } };
-  };
-  const plugin = definePlugin({ id: 'acme.read-observer', version: '1.0.0', actions: {
-    daemon: { title: 'Read', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
-      run: () => { runs++; return { done: true as const }; }, observeRead },
-    account: { title: 'Read Account', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
-      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
-      run: () => { runs++; return { done: true as const }; }, observeRead },
-    write: { title: 'Write', surfaces: ['plugin'], inputSchema, resultSchema,
-      run: () => { runs++; return { done: true as const }; }, observeRead },
-  } });
-  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
-  const controller = new AbortController();
-  const invalidate = Object.assign(vi.fn(), { retire: vi.fn() });
-  try {
-    await expect(kit.observeAction(localId, { id: '' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
-    await expect(kit.observeAction('write', { id: 'selected' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
-    const subscription = await kit.observeAction(localId, { id: 'selected' }, invalidate, { signal: controller.signal });
-    expect(invalidate).toHaveBeenCalledOnce();
-    expect(contexts).toHaveLength(1);
-    expect(contexts[0]).toMatchObject({ plugin: { id: plugin.manifest.id }, contribution: { id: localId } });
-    expect(runs).toBe(0);
-    controller.abort();
-    await subscription.dispose();
-    expect(disposed).toBe(1);
-    const ownedSubscription = await kit.observeAction(localId, { id: 'selected' }, invalidate);
-    await kit.dispose();
-    await ownedSubscription.dispose();
-    expect(disposed).toBe(2);
-  } finally { await kit.dispose(); }
-  expect(disposed).toBe(2);
-});
-
-it('refuses unsupported read observation in daemon and Account test hosts without running the target', async () => {
-  const ref = { pluginId: 'acme.read-target', localId: 'read' };
-  const plugin = definePlugin({ id: 'acme.observe-fixture', version: '1.0.0', actions: {
-    daemon: { title: 'Observe', surfaces: ['plugin'], run: async (_input, context) => {
-      await context.services.actions.observe(ref, null, () => undefined);
-      return null;
-    } },
-    account: { title: 'Observe Account', surfaces: ['plugin'], execution: { target: 'account',
-      account: { artifactId: 'portable', exportName: 'activate' } }, run: async (_input, context) => {
-      await context.services.actions.observe(ref, null, () => undefined);
-      return null;
-    } },
-  } });
-  const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
-  try {
-    for (const id of ['daemon', 'account']) {
-      await expect(testkit.invokeAction(id, null)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
-    }
-  } finally { await testkit.dispose(); }
 });

@@ -52,7 +52,6 @@ import type {
 import * as accountUsage from './accountUsage.js';
 import * as auth from './cloud/auth.js';
 import * as publicConnectedAccounts from './connected-accounts/index.js';
-import * as firstPartyConnectedAccounts from './first-party/connected-accounts/index.js';
 import * as requestAuth from './connected-accounts/requestAuth.js';
 import * as providerLimitEvidence from './cloud/providerLimitEvidence.js';
 import * as connectedAccounts from './connectedAccounts.js';
@@ -215,6 +214,7 @@ const EXPECTED_EXPORTS = [
     'ConnectedAccountAuthFailureRequestV1Schema',
     'ConnectedAccountAuthenticationContext',
     'ConnectedAccountAuthenticationModeRuntime',
+    'ConnectedAccountAuthenticationRuntime',
     'ConnectedAccountBindingEvent',
     'ConnectedAccountBindingSummary',
     'ConnectedAccountCredentialStore',
@@ -229,6 +229,9 @@ const EXPECTED_EXPORTS = [
     'ConnectedAccountMaterializationOptions',
     'ConnectedAccountMaterializationRequest',
     'ConnectedAccountMetadataList',
+    'ConnectedAccountPortableAuthenticationContext',
+    'ConnectedAccountPortableReadContext',
+    'ConnectedAccountPortableRuntime',
     'ConnectedAccountPurposeDeclaration',
     'ConnectedAccountPurposeDeclarationsV1Schema',
     'ConnectedAccountPurposeId',
@@ -439,6 +442,10 @@ describe('Connected Accounts final package-local projection', () => {
             .toBe(auth.ConnectedServiceQuotaFetchError);
         expect(connectedAccounts.PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1)
             .toBe(providerLimitEvidence.PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1);
+        expect(publicConnectedAccounts.PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1)
+            .toBe(providerLimitEvidence.PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1);
+        expect(publicConnectedAccounts.classifyProviderLimitEvidence)
+            .toBe(providerLimitEvidence.classifyProviderLimitEvidence);
         expect(connectedAccounts.unsupportedAccountUsage)
             .toBe(accountUsage.unsupportedAccountUsage);
         expect(connectedAccounts.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV)
@@ -467,24 +474,6 @@ describe('Connected Accounts final package-local projection', () => {
                 fallback: 'Upstream account',
             },
         }]);
-    });
-
-    it('projects exact reusable Claude and Codex facts from the focused first-party entrypoint', () => {
-        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
-            .toBe(protocol.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
-        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
-            .toBe(protocol.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
-        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE)
-            .toEqual({
-                authorizeUrl: protocol.CLAUDE_OAUTH_AUTHORIZE_URL,
-                callbackUrl: protocol.CLAUDE_OAUTH_CALLBACK_URL,
-                clientId: protocol.CLAUDE_OAUTH_CLIENT_ID,
-                tokenUrl: protocol.CLAUDE_OAUTH_TOKEN_URL,
-            });
-        expect(firstPartyConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.clientId)
-            .toBe(protocol.OPENAI_CODEX_CLIENT_ID);
-        expect(firstPartyConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.device.verificationUrl)
-            .toBe(protocol.OPENAI_CODEX_DEVICE_VERIFICATION_URL);
     });
 
     it('directly projects canonical materialization, qualified-account, quota, and descriptor identities', () => {
@@ -527,13 +516,6 @@ describe('Connected Accounts final package-local projection', () => {
         )).toEqual([]);
         expect(namedTypeImportBindings(source, '@happier-dev/protocol')).toEqual([]);
         expect(namedValueImportBindings(source, '@happier-dev/protocol')).toEqual([]);
-        expect(namedValueImportBindings(
-            source,
-            '@happier-dev/protocol/connect/claude-subscription-materialization',
-        )).toEqual([
-            'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
-            'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
-        ]);
         expect(namedExportBindings(
             source,
             '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2',
@@ -919,14 +901,8 @@ describe('Connected Accounts final package-local projection', () => {
     });
 
     it('projects the canonical account reference JSON schema through the normal subpath', () => {
-        const sourceText = readFileSync(
-            new URL('./connected-accounts/index.ts', import.meta.url),
-            'utf8',
-        );
-
-        expect(sourceText).toContain(
-            "export { QualifiedConnectedAccountRefJsonSchema } from '../connectedAccounts.js';",
-        );
+        expect(publicConnectedAccounts.QualifiedConnectedAccountRefJsonSchema)
+            .toBe(connectedAccounts.QualifiedConnectedAccountRefJsonSchema);
     });
 
     it('leaves connected-service adapter and metadata custody with the Agents owner', () => {

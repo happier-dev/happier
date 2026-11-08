@@ -376,6 +376,7 @@ describe('CORE.T1/T5 public contract', () => {
         expectTypeOf<PluginServiceId>().toEqualTypeOf<
             | 'logger'
             | 'backgroundServices'
+            | 'healthChecks'
             | 'storage'
             | 'settings'
             | 'secrets'
@@ -386,6 +387,8 @@ describe('CORE.T1/T5 public contract', () => {
             | 'providers'
             | 'managedServices'
             | 'machineProvisioners'
+            | 'machineConnectorSecrets'
+            | 'deploymentSource'
             | 'sessions'
             | 'resources'
             | 'mcp'

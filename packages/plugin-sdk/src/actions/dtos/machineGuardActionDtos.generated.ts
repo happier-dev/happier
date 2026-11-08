@@ -217,6 +217,8 @@ export type MachineGuardActionResultById = {
             failure?: undefined | {
                 reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
                 errno?: string | undefined;
+                nativeErrno?: number | undefined;
+                cwd?: string | undefined;
             };
             nextStep?: 'close_idle_terminals' | 'review_processes' | undefined;
             undoneAt?: number | undefined;
@@ -316,6 +318,8 @@ export type MachineGuardActionResultById = {
             failure?: undefined | {
                 reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
                 errno?: string | undefined;
+                nativeErrno?: number | undefined;
+                cwd?: string | undefined;
             };
             nextStep?: 'close_idle_terminals' | 'review_processes' | undefined;
             undoneAt?: number | undefined;

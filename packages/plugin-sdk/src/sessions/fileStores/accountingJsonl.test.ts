@@ -21,6 +21,8 @@ async function setup(failProjection?: () => boolean) {
       exec: {
         agentCli: { checkReadiness: unavailableService },
         systemTools: { resolve: unavailableService },
+        prepareNativeSocketDirectory: unavailableService,
+        withSpawnAdmission: unavailableService,
         run: unavailableService,
         spawn: unavailableService,
         clients: { spawn: unavailableService, connectJsonRpc: unavailableService },

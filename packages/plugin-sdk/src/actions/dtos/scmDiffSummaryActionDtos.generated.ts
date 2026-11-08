@@ -100,6 +100,7 @@ export type ScmDiffSummaryActionInputById = {
         projection?: undefined | {
             kind: 'index';
             cursor?: number | undefined;
+            limit?: number | undefined;
             path?: string | undefined;
         };
         backendPreference?: undefined | {

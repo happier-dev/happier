@@ -111,7 +111,7 @@ import type {
 
 describe('Voice author source contract', () => {
   it('publishes native Mini Voice composition from the actual /voice package entry', () => {
-    const voiceBarrel = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const voiceBarrel = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
 
     expect(voiceBarrel).not.toMatch(/@(?:preview|experimental|stable|incubating)\b/u);
     expect(voiceBarrel).not.toContain('@happier-dev/plugin-sdk/protocol');
@@ -184,7 +184,7 @@ describe('Voice author source contract', () => {
     );
     const clientSource = readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
     const projectionsSource = readFileSync(new URL('./projections.ts', import.meta.url), 'utf8');
-    const voiceSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const voiceSource = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
     expect(activationSource).not.toMatch(/\bexport type PluginVoiceRealtimeConnection\b/u);
     expect(activationSource).not.toMatch(/\bPluginVoice[A-Z]\w*/u);
     expect(clientSource).not.toContain("from '../activation.js'");
@@ -283,7 +283,7 @@ describe('Voice author source contract', () => {
   });
 
   it('projects the definePlugin voice declaration type through /voice', () => {
-    const voiceSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const voiceSource = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
 
     expect(voiceSource).toContain(
       "export type { PluginVoiceProviderDefinition } from '../definePlugin.js';",
@@ -577,7 +577,8 @@ describe('Voice author source contract', () => {
         connection: VoiceRealtimeConnection;
         enqueueOutput(base64Pcm16Le: string): boolean;
         clearOutput(): void;
-        waitForOutputDrain(signal: AbortSignal): Promise<void>;
+        waitForOutputDrain(signal: AbortSignal): Promise<import('./client.js').VoiceOutputDrainResult | void>;
+        captureOutputPlayback?(): import('./client.js').VoiceOutputPlayback;
       }>>();
     expectTypeOf<Parameters<ConnectionInput['media']['createPcmConnection']>[0]['output']>()
       .not.toHaveProperty('retainedOutputMaxMs');

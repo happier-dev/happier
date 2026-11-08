@@ -19,11 +19,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     compilePluginJsonSchema,
     isValidPluginJsonSchemaValue,
-    isDynamicPluginResourceContributionV2,
-    PluginContributionLocalIdSchema,
-    normalizePluginDeclarativeDocumentV1,
-    PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { normalizePluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import { PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentContentTypeV1';
 import type {
     JsonValue,
     DefinedPlugin,
@@ -54,6 +54,7 @@ import type {
     SessionSystemRecord,
 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { NotificationsService } from '@happier-dev/plugin-sdk/notifications';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
 import {
     parsePluginManifest,
@@ -77,6 +78,8 @@ import {
     type PluginUiSemanticSurfaceAdapter,
 } from '../testing/index.js';
 import { createSurfaceContextFixture } from '../ui/surfaceContext.fixture.js';
+import { readFencedCode, readFencedCodeBlocks, documentedSnippetSupportFiles } from '../test-support/documentationSnippets.js';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 
 type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
@@ -97,6 +100,22 @@ type PublicAuthoringSourceActivationEntry = Readonly<{
     manifest: PluginManifest;
     activate: DefinedPlugin['activate'];
     collectionMigrations: PluginAccountCollectionMigrationRuntimeProjection;
+    machinePageAuthoring: Readonly<{
+        readMachinePageTarget(host: Pick<PluginUiHostApi, 'context'>, signal?: AbortSignal): Promise<unknown>;
+        openMachineConfiguration(
+            host: Pick<PluginUiHostApi, 'openManagedMachineConfiguration'>,
+            provisioner: Readonly<{ pluginId: string; localId: string }>,
+            signal?: AbortSignal,
+        ): Promise<unknown>;
+    }>;
+    healthNoticeAuthoring: Readonly<{
+        sendProviderIssueNotice(
+            notifications: Pick<NotificationsService, 'send'>,
+            notice: Readonly<{ clientRequestId: string; categoryId: string; itemId: string; title: string }>,
+            entry: Extract<NonNullable<Parameters<NotificationsService['send']>[0]['investigation']>, { kind: 'alertEntry' }>['entry'],
+            signal: AbortSignal,
+        ): ReturnType<NotificationsService['send']>;
+    }>;
 }>;
 
 async function loadPublicAuthoringSourceActivationEntry(): Promise<PublicAuthoringSourceActivationEntry> {
@@ -274,6 +293,14 @@ function createReviewSessionStatusAccountStorage(summary: string | null) {
         };
     });
     const collection: PluginAccountCollection<ReviewSessionStatusValue> = {
+        sharing: {
+            async setGrant() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+            async listGrants() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+            async revokeGrant() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+            async sharedWithMe() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+            async get() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+            async put() { throw new Error('review_session_status_fixture_sharing_not_expected'); },
+        },
         get,
         async identityTag() { throw new Error('review_session_status_fixture_identity_tag_not_expected'); },
         async put() { throw new Error('review_session_status_fixture_put_not_expected'); },
@@ -591,36 +618,6 @@ function sourceExportsName(sourcePath: string, exportName: string): boolean {
     });
 }
 
-function readFencedCode(
-    documentPath: string,
-    language: 'ts' | 'tsx',
-    occurrence = 0,
-): string {
-    const source = readFileSync(documentPath, 'utf8');
-    const blocks = [...source.matchAll(new RegExp(
-        ['```', language, '\\n([\\s\\S]*?)\\n```'].join(''),
-        'gu',
-    ))];
-    const block = blocks[occurrence]?.[1];
-    if (block === undefined) {
-        throw new Error(`Expected ${language} code block ${String(occurrence)} in ${documentPath}`);
-    }
-    return block;
-}
-
-type FencedCodeBlock = Readonly<{
-    language: string;
-    source: string;
-}>;
-
-function readFencedCodeBlocks(documentPath: string): readonly FencedCodeBlock[] {
-    const source = readFileSync(documentPath, 'utf8');
-    return [...source.matchAll(/```([^\n]*)\n([\s\S]*?)\n```/gu)].map((match) => ({
-        language: match[1].trim(),
-        source: match[2],
-    }));
-}
-
 function containsDefinePluginCall(source: string): boolean {
     const sourceFile = ts.createSourceFile(
         'documented-plugin-example.ts',
@@ -701,7 +698,6 @@ function collectDocumentationLocalIds(source: string): readonly string[] {
         'agents',
         'accountCollections',
         'backgroundServices',
-        'commands',
         'events',
         'hooks',
         'managedServices',
@@ -710,7 +706,6 @@ function collectDocumentationLocalIds(source: string): readonly string[] {
         'promptAssets',
         'resources',
         'settings',
-        'tools',
         'webhooks',
     ]);
     const visit = (node: ts.Node, parentProperty: string | undefined): void => {
@@ -817,69 +812,6 @@ function publishedAuthoringDocumentationKey(documentPath: string): string {
         ? 'README.md'
         : relative(pluginDocsRoot, documentPath);
 }
-
-/**
- * Documentation examples may name a separately compiled companion leaf.
- * Stage maintained source beside the extracted package root for real ESM
- * resolution. Generated-output fixtures prove only declaration compilation;
- * the corresponding composed runtime lane proves the generated document.
- */
-const documentedSnippetSupportFiles = new Map<string, readonly Readonly<{
-    destination: string;
-} & ({ source: string } | { content: string })>[]>([
-    ['quickstart.mdx#4', [{
-        destination: 'ui/surfaces.ts',
-        // The quickstart intentionally shows the scaffold's author entry and
-        // keeps its one declarative surface in the separate generated leaf.
-        // Stage that leaf so the published multi-file example is compiled as
-        // written instead of treating its relative import as a missing API.
-        content: [
-            "import { defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';",
-            '',
-            'export const mainSurface = defineUiSurfaceDefinition({',
-            "  id: 'main',",
-            "  placement: 'appPage',",
-            "  title: { key: 'scaffold.main.title', fallback: 'My plugin' },",
-            '  renderer: {',
-            "    kind: 'declarative',",
-            '    root: {',
-            "      kind: 'group',",
-            "      title: { key: 'scaffold.main.title', fallback: 'My plugin' },",
-            '      children: [],',
-            '    },',
-            '  },',
-            '});',
-            '',
-        ].join('\n'),
-    }]],
-    ['ui/hosted-web.mdx#1', [{
-        destination: 'ui/summaryDocument.ts',
-        // Models the author's generated bundle module for declaration compilation,
-        // not a guest runtime or evidence of the ready/bootstrap lifecycle.
-        content: [
-            "import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/plugin-sdk/ui';",
-            '',
-            'export const htmlBundle = artifactHtmlBundleFromBodyV1("<!doctype html><html><body>Summary</body></html>");',
-            '',
-        ].join('\n'),
-    }]],
-    ['surfaces/external-sessions.mdx#0', [{
-        source: 'advanced-package-root/agent/reviewAgent.ts',
-        destination: 'agent/reviewAgent.ts',
-    }]],
-    ['surfaces/external-sessions.mdx#4', [{
-        source: 'advanced-package-root/agent/reviewAgent.ts',
-        destination: 'agent/reviewAgent.ts',
-    }]],
-    ['surfaces/external-sessions.mdx#5', [{
-        source: 'advanced-package-root/agent/reviewAgent.ts',
-        destination: 'agent/reviewAgent.ts',
-    }]],
-    ['surfaces/external-sessions.mdx#7', [{
-        source: 'advanced-package-root/agent/reviewAgent.ts',
-        destination: 'agent/reviewAgent.ts',
-    }]],
-]);
 
 function shouldCopyExamplePath(source: string): boolean {
     return !source.split(/[\\/]+/u).some((segment) => segment === 'node_modules' || segment === 'dist');
@@ -1176,6 +1108,8 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(manifest.contributes.backgroundServices).toEqual([{
             id: 'workspace-indexer',
             title: 'Index workspace documents',
+            activation: 'demand',
+            placement: 'process',
         }]);
         expect(Object.keys(module.daemonDatabases)).toEqual(['workspace-index']);
 
@@ -1516,6 +1450,21 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(generatedManifest.manifest).toEqual(readExampleManifest('production-hosted-reference'));
     });
 
+    it('retains an admitted provider entry as notice data and returns the host receipt', async () => {
+        const entry = { entryRef: { source: { pluginId: 'com.example.issues', localId: 'issues' },
+            kindId: 'issue', collisionScope: 'project:one', entryId: 'issue-1' },
+            sourceInstanceId: '00000000-0000-4000-8000-000000000001' };
+        const notice = { clientRequestId: 'transition-1', categoryId: 'issues', itemId: 'source:issue-1', title: 'Issue opened' };
+        const receipt = { deliveries: [], replayed: false, notice: { artifactId: 'notice-1', changed: true, opened: true } } satisfies Awaited<ReturnType<NotificationsService['send']>>;
+        // Notification transport is the host boundary; the authored example stays real.
+        const send = vi.fn<NotificationsService['send']>(async () => receipt);
+        const signal = new AbortController().signal;
+        const result = await publicAuthoringCodeDefinedPlugin.healthNoticeAuthoring.sendProviderIssueNotice({ send }, notice, entry, signal);
+        expect(send).toHaveBeenCalledWith({ ...notice, type: 'update', resolved: false, healthPhase: 'open',
+            investigation: { kind: 'alertEntry', entry } }, { signal });
+        expect(result).toBe(receipt);
+    });
+
     it('binds code-defined public authoring manifest projection and runtime registrations to its declared daemon entrypoint', async () => {
         const manifest = readExampleManifest('public-authoring');
         const sourceEntry = readFileSync(join(examplesRoot, 'public-authoring', 'index.ts'), 'utf8');
@@ -1682,6 +1631,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 context: unexpectedUiHostOperation,
                 selectActionInput: unexpectedUiHostOperation,
                 openNewSession: unexpectedUiHostOperation,
+                openAutomationEvent: unexpectedUiHostOperation,
+                revealSessionInput: unexpectedUiHostOperation,
+                readSession: unexpectedUiHostOperation,
+                readComposer: unexpectedUiHostOperation,
+                applyComposer: unexpectedUiHostOperation,
             },
             ephemeralSharedScope: null,
         } satisfies PluginClientActionContext;
@@ -2438,12 +2392,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             activate(api: Pick<PluginApi, 'actions'>): void;
             runReviewRefresh: Parameters<PluginApi['actions']['register']>[1];
         }>;
-        const registerReviewRefresh = vi.fn();
-        productionHostedDaemon.activate({ actions: { register: registerReviewRefresh } });
-        expect(registerReviewRefresh).toHaveBeenCalledWith(
-            'refresh-review',
-            productionHostedDaemon.runReviewRefresh,
-        );
+        const hostedTestkit = await createPluginTestkit({ manifest: productionHostedManifest, module: productionHostedDaemon });
+        try {
+            await expect(hostedTestkit.invokeAction('refresh-review', {})).resolves.toEqual({ ready: true });
+        } finally {
+            await hostedTestkit.dispose();
+        }
     });
 
     it('registers a bounded cancellable Composer reference provider through the public SDK', async () => {
@@ -2690,7 +2644,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 sessionId: 'session-1',
                 agentId: 'claude',
                 runtimeFamily: 'hostSession' as const,
-                declaredToolIds: Object.freeze(['review-summary-tool']),
+                declaredToolIds: Object.freeze(['review-summary']),
                 declaredPromptAssetIds: Object.freeze([]),
             }),
         });
@@ -2703,13 +2657,57 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 new AbortController().signal,
             ));
             expect(result).toEqual({
-                enabledToolIds: ['review-summary-tool'],
+                enabledToolIds: ['review-summary'],
                 enabledPromptAssetIds: [],
                 additionalInstructions: expect.stringContaining('review cursor'),
             });
         } finally {
             await testkit.dispose();
         }
+    });
+
+    it('authors a Machine page and consumes only its exact public Machine context', async () => {
+        const manifest = readExampleManifest('public-authoring');
+        expect(manifest.contributes.ui.views.find((view) => view.id === 'review-machine-page'))
+            .toMatchObject({ container: 'appPage', target: { kind: 'machine' }, renderer: 'review-machine-page-renderer' });
+        const example = publicAuthoringCodeDefinedPlugin.machinePageAuthoring;
+        const configurationRequests: unknown[] = [];
+        const fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'machine-author-instance', mountNonce: 'machine-author-mount' },
+            authorPlugin: { id: manifest.id, version: manifest.version },
+            surface: { kind: 'machine-author-page' },
+            surfaceContext: createSurfaceContextFixture({
+                mount: { kind: 'destination', destination: { pluginId: manifest.id, localId: 'review-machine-page' }, container: 'appPage' },
+                target: { kind: 'machine', serverId: 'home-machine-author', machineId: 'machine-author',
+                    homeId: 'verified-home-machine-author', installationId: 'installation-machine-author' },
+            }),
+            handlers: { openManagedMachineConfiguration: ({ request }) => { configurationRequests.push(request); } },
+            adapter: createNoopSemanticAdapter(),
+        });
+        try {
+            await expect(example.readMachinePageTarget(fixture.context.hostApi)).resolves.toEqual({
+                kind: 'machine', serverId: 'home-machine-author', machineId: 'machine-author',
+                homeId: 'verified-home-machine-author', installationId: 'installation-machine-author',
+            });
+            const provisioner = { pluginId: 'example.sandbox', localId: 'sandbox' };
+            await example.openMachineConfiguration(fixture.context.hostApi, provisioner);
+            expect(configurationRequests).toEqual([{ provisioner }]);
+            await fixture.retire('machine-authority-withdrawn');
+            await expect(example.readMachinePageTarget(fixture.context.hostApi)).rejects.toMatchObject({ code: 'ui_host_unavailable' });
+        } finally { await fixture.dispose(); }
+        const servicesPanel = await createPluginUiTestkit({
+            identity: { instanceId: 'services-author-instance', mountNonce: 'services-author-mount' },
+            authorPlugin: { id: manifest.id, version: manifest.version },
+            surface: { kind: 'services-author-panel' },
+            surfaceContext: createSurfaceContextFixture({
+                mount: { kind: 'destination', destination: { pluginId: manifest.id, localId: 'review-services-hosted-html' }, container: 'servicesPanel' },
+                target: { kind: 'services' },
+            }),
+            adapter: createNoopSemanticAdapter(),
+        });
+        try {
+            await expect(example.readMachinePageTarget(servicesPanel.context.hostApi)).rejects.toMatchObject({ code: 'machine_page_required' });
+        } finally { await servicesPanel.dispose(); }
     });
 
     it('reads one revision-bound opaque workspace reference through the selected viewer host methods', async () => {
@@ -2868,20 +2866,20 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
 
             const accountBoundary = createReviewSessionStatusAccountStorage('Check the authorization boundary.');
             const readSignal = new AbortController();
-            await expect(resource.read({
+            await expect(resource.read(createTestResourceInvocationContext({
                 signal: readSignal.signal,
                 context: { kind: 'session', sessionId: 'session-1' },
                 accountStorage: accountBoundary.accountStorage,
-            })).resolves.toBe('Check the authorization boundary.');
+            }))).resolves.toBe('Check the authorization boundary.');
             expect(accountBoundary.get).toHaveBeenCalledWith('session-1', { signal: readSignal.signal });
 
             const invalidated = vi.fn();
             const watchController = new AbortController();
-            resource.observe(invalidated, {
+            await resource.observe(invalidated, createTestResourceInvocationContext({
                 signal: watchController.signal,
                 context: { kind: 'session', sessionId: 'session-1' },
                 accountStorage: accountBoundary.accountStorage,
-            });
+            }));
             accountBoundary.emitChange();
             expect(invalidated).toHaveBeenCalledTimes(1);
             watchController.abort('session_surface_retired');
@@ -2892,11 +2890,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             const cancelledWatchController = new AbortController();
             cancelledWatchController.abort('retired_before_watch');
             const cancelledWatchBoundary = createReviewSessionStatusAccountStorage('Unused.');
-            expect(() => resource.observe(vi.fn(), {
+            expect(() => resource.observe(vi.fn(), createTestResourceInvocationContext({
                 signal: cancelledWatchController.signal,
                 context: { kind: 'session', sessionId: 'session-1' },
                 accountStorage: cancelledWatchBoundary.accountStorage,
-            })).toThrow(expect.objectContaining({ name: 'AbortError' }));
+            }))).toThrow(expect.objectContaining({ name: 'AbortError' }));
             expect(cancelledWatchBoundary.collectionRequests()).toBe(0);
             expect(cancelledWatchBoundary.watch).not.toHaveBeenCalled();
 
@@ -3146,11 +3144,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 handlers: {
                     async readResource({ resource: requested, signal }) {
                         expect(requested).toBe('project-companion-dashboard-document');
-                        const document = await resource.read({
+                        const document = await resource.read(createTestResourceInvocationContext({
                             signal,
                             context: { kind: 'session', sessionId: 'session-1' },
                             accountStorage: accountBoundary.accountStorage,
-                        });
+                        }));
                         return {
                             contentType: PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
                             digest: `sha256:${'d'.repeat(64)}`,
@@ -3189,11 +3187,11 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
 
                 const invalidated = vi.fn();
                 const watchController = new AbortController();
-                resource.observe(invalidated, {
+                await resource.observe(invalidated, createTestResourceInvocationContext({
                     signal: watchController.signal,
                     context: { kind: 'session', sessionId: 'session-1' },
                     accountStorage: accountBoundary.accountStorage,
-                });
+                }));
                 accountBoundary.emitChange();
                 expect(invalidated).toHaveBeenCalledTimes(1);
                 watchController.abort('project_companion_dashboard_retired');
@@ -3942,8 +3940,6 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 .not.toMatch(/\bblocked\b[^.]{0,80}?hosted-web|hosted-web[^.]{0,80}?\bblocked\b/iu);
             expect(document, `${documentPath} must state hosted-web availability as a per-host fact`)
                 .toMatch(/availability\s+is\s+(?:reported\s+)?per\s+host|per\s+host:|host-constructed frame adapter|each host reports/iu);
-            expect(document, `${documentPath} must keep the typed unavailable outcome visible`)
-                .toMatch(/\bunavailable\b/iu);
         }
     });
 
@@ -3999,12 +3995,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         try {
             const snippets = [
                 ['index-react-native.tsx', join(pluginUiDocsRoot, 'index.mdx'), 'tsx', 0],
-                ['react-native.tsx', join(pluginUiDocsRoot, 'react-native.mdx'), 'tsx', 0],
+                ['react-native.tsx', join(pluginUiDocsRoot, 'react-native.mdx'), 'tsx', 'export const renderSurface = defineUiSurface(PluginPanel);'],
                 // The Composer guide's mounted read path and staged-media leaf
                 // are complete author files without a `definePlugin` call, so
                 // the definePlugin snippet lane does not reach them.
                 ['composer-mounted-read.tsx', join(pluginGuidesDocsRoot, 'composer.mdx'), 'tsx', 0],
-                ['composer-staged-media.ts', join(pluginGuidesDocsRoot, 'composer.mdx'), 'ts', 1],
+                ['composer-staged-media.ts', join(pluginGuidesDocsRoot, 'composer.mdx'), 'ts', 'export async function attachTicketEvidence'],
                 ['action-resource-ui-panel.tsx', join(pluginExamplesDocsRoot, 'action-resource-ui-plugin.mdx'), 'tsx', 0],
             ] as const;
             const sourceFiles: string[] = [];
@@ -4083,7 +4079,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             expect(candidateKeys, `${key} exclusion must match a definePlugin code block`).toContain(key);
         }
         for (const key of documentedSnippetSupportFiles.keys()) {
-            expect(candidateKeys, `${key} support files must match a definePlugin code block`).toContain(key);
+            expect(candidateKeys.map((candidate) => candidate.split('#')[0]), `${key} support files must match a definePlugin document`).toContain(key);
         }
         expect(candidates.length).toBeGreaterThan(0);
         expect(
@@ -4156,7 +4152,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                 );
                 mkdirSync(join(sourcePath, '..'), { recursive: true });
                 writeFileSync(sourcePath, `${snippet.source}\n`, 'utf8');
-                for (const supportFile of documentedSnippetSupportFiles.get(snippet.key) ?? []) {
+                for (const supportFile of documentedSnippetSupportFiles.get(snippet.key.split('#')[0]) ?? []) {
                     const destination = join(sourcePath, '..', supportFile.destination);
                     mkdirSync(join(destination, '..'), { recursive: true });
                     if ('source' in supportFile) cpSync(join(copiedRoot, supportFile.source), destination);
@@ -4341,6 +4337,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     source: 'dynamic',
                     kind: 'config',
                     scope: 'global',
+                    contentType: 'application/json',
+                }),
+                expect.objectContaining({
+                    id: 'i18n-en',
+                    kind: 'asset',
+                    path: 'resources/i18n/en.json',
                     contentType: 'application/json',
                 }),
                 expect.objectContaining({

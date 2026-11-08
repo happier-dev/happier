@@ -64,11 +64,11 @@ export type MachinePresetsActionInputById = {
             installationId: string;
         };
         retention?: undefined | {
-            kind: 'until-delete';
-        } | {
-            kind: 'unused';
             afterMs: number;
+            kind: 'unused';
             effect: 'delete' | 'stop';
+        } | {
+            kind: 'until-delete';
         };
         setup?: unknown;
         wakeOnAcceptedMessage?: boolean | undefined;
@@ -116,11 +116,11 @@ export type MachinePresetsActionInputById = {
             controllerDisplayName?: null | string | undefined;
             setup?: unknown;
             retention?: null | undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | null | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -240,11 +240,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -675,6 +675,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
@@ -851,11 +852,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -1286,6 +1287,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
@@ -1467,11 +1469,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -1902,6 +1904,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
@@ -2080,11 +2083,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -2515,6 +2518,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
@@ -2693,11 +2697,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -3128,6 +3132,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
@@ -3306,11 +3311,11 @@ export type MachinePresetsActionResultById = {
                 };
             }> | undefined;
             retention?: undefined | {
-                kind: 'until-delete';
-            } | {
-                kind: 'unused';
                 afterMs: number;
+                kind: 'unused';
                 effect: 'delete' | 'stop';
+            } | {
+                kind: 'until-delete';
             };
             wakeOnAcceptedMessage?: boolean | undefined;
             teamAcquireDelegated?: boolean | undefined;
@@ -3741,6 +3746,7 @@ export type MachinePresetsActionResultById = {
                                 params?: Record<string, number | string> | undefined;
                             };
                             afterMs: number;
+                            idleAfterMs?: number | undefined;
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };

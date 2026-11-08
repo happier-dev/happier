@@ -13,7 +13,6 @@ import {
 import { selectCurrentTargetedContribution as sourceSelectCurrentTargetedContribution } from './services/targetedContributions.js';
 import * as rootSdk from './index.js';
 import * as browserRootSdk from './index.browser.js';
-import * as hostRegistrationSdk from './host/registration/index.js';
 import * as manifestSdk from './manifest.js';
 import type {
     ComposerAttachmentAuthorDeclaration as SourceComposerAttachmentAuthorDeclaration,
@@ -252,7 +251,7 @@ describe('root composer runtime projection', () => {
             .toBe(protocolUiClient.ComposerInputLockRequestV1Schema);
     });
 
-    it('keeps host ingestion projections out of root entry points and on host registration', () => {
+    it('keeps host ingestion projections out of public root entry points', () => {
         const hostOnlyProjections = [
             [
                 'normalizePluginAccountCollectionMigrationRuntimeProjection',
@@ -267,13 +266,9 @@ describe('root composer runtime projection', () => {
                 sourceProjectPluginAccountCollectionDeclaration,
             ],
         ] as const;
-        const hostRegistrationExports = hostRegistrationSdk as Record<string, unknown>;
-
-        for (const [symbol, implementation] of hostOnlyProjections) {
+        for (const [symbol] of hostOnlyProjections) {
             expect(rootSdk).not.toHaveProperty(symbol);
             expect(browserRootSdk).not.toHaveProperty(symbol);
-            expect(hostRegistrationSdk).toHaveProperty(symbol);
-            expect(hostRegistrationExports[symbol]).toBe(implementation);
         }
     });
 });

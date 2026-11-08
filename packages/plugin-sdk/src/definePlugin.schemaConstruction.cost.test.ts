@@ -52,7 +52,7 @@ it('retains contribution point identities without projecting their unused schema
         const parsed = parsePluginManifest(structuredClone(plugin.manifest));
         if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
         expect(parsed.manifest.contributes.pluginContributionPoints).toHaveLength(2);
-        expect(parsed.manifest.contributes.pluginContributionPoints?.[0]?.protocols[0]?.operations.read?.action.dangerLevel).toBe('safe');
+        expect(one.operations.read.declaration.dangerLevel).toBe('safe');
         const afterRead = clones.mock.calls.length;
         expect(plugin.manifest).toBe(plugin.manifest);
         expect(clones.mock.calls).toHaveLength(afterRead);

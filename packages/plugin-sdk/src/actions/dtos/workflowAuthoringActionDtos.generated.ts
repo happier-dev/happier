@@ -817,6 +817,25 @@ export type WorkflowAuthoringActionInputById = {
                     workspaceRefId?: string | undefined;
                 };
                 inputs: Record<string, unknown>;
+                roleOverrides?: undefined | {
+                    roleId: string;
+                    engine?: undefined | {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    };
+                    runsAs?: undefined | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
+                    };
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'encouraged' | 'off' | undefined;
+                    canDelegateToOtherRoles?: boolean | undefined;
+                }[];
+                visibleTeamId?: null | string | undefined;
             };
         };
     } & {
@@ -1099,6 +1118,25 @@ export type WorkflowAuthoringActionResultById = {
                         workspaceRefId?: string | undefined;
                     };
                     inputs: Record<string, JsonValue>;
+                    roleOverrides?: undefined | {
+                        roleId: string;
+                        engine?: undefined | {
+                            agentTargetKey: string;
+                            modelId?: string | undefined;
+                            effort?: string | undefined;
+                        };
+                        runsAs?: undefined | {
+                            kind: 'background_run';
+                            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                        } | {
+                            kind: 'session';
+                        };
+                        profileId?: string | undefined;
+                        workspaceWrites?: 'allow' | 'deny' | undefined;
+                        secondOpinion?: 'encouraged' | 'off' | undefined;
+                        canDelegateToOtherRoles?: boolean | undefined;
+                    }[];
+                    visibleTeamId?: null | string | undefined;
                 };
             };
             validationIssues: {

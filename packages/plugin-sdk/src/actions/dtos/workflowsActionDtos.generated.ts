@@ -13031,6 +13031,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -13719,6 +13727,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -14409,6 +14425,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -15103,6 +15127,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -15955,6 +15987,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -16655,6 +16695,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -17345,6 +17393,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
@@ -18035,6 +18091,14 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 triggerDefinitionEnvelope: string;
+                subject?: undefined | {
+                    kind: 'environment';
+                    environmentId: string;
+                } | {
+                    kind: 'machineService';
+                    machineId: string;
+                    serviceId: string;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {

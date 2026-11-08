@@ -39,6 +39,7 @@ import type { PluginUiHostMethodV1 as CanonicalPluginUiHostMethodV1 } from '@hap
 import type {
     PluginUiViewDestinationBindingInputV2 as CanonicalPluginUiViewDestinationBindingInputV2,
     PluginUiViewInlineBindingInputV2 as CanonicalPluginUiViewInlineBindingInputV2,
+    PluginUiViewV2Input as CanonicalPluginUiViewV2Input,
 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type {
     PluginUiViewDestinationBindingInputV2 as SdkPluginUiViewDestinationBindingInputV2,
@@ -367,10 +368,10 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<ViewArmCapabilities<CanonicalPluginUiViewDestinationBindingInputV2>>();
         expectTypeOf<SdkPluginUiViewInlineBindingInputV2>()
             .toEqualTypeOf<CanonicalPluginUiViewInlineBindingInputV2>();
-        // The admitted arm carries the SDK's own projected action row, not the
-        // Protocol declaration site an external author cannot resolve.
+        // Author input retains the canonical optional/defaulted command fields;
+        // the parsed public header row below describes the admitted command.
         expectTypeOf<Extract<PluginUiViewV2Input, { container: 'appPage' }>['headerActions']>()
-            .toEqualTypeOf<PluginUiPageHeaderActionV1[] | undefined>();
+            .toEqualTypeOf<Extract<CanonicalPluginUiViewV2Input, { container: 'appPage' }>['headerActions']>();
         // A header action names the same semantic command grammar the canonical
         // parser admits, not `unknown`.
         expectTypeOf<PluginUiPageHeaderActionV1['command']>()

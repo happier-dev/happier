@@ -615,6 +615,10 @@ export type BrowserControlActionResultById = {
             };
             restartRequired: boolean;
         }[];
+        profiles?: undefined | {
+            profileId: string;
+            displayName?: string | undefined;
+        }[];
     } | {
         status: 'unavailable';
         code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
@@ -1746,7 +1750,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -2304,7 +2308,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -3533,7 +3537,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -4093,7 +4097,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -4652,7 +4656,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -5211,7 +5215,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -5773,7 +5777,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -6327,7 +6331,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -6881,7 +6885,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -7435,7 +7439,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -7989,7 +7993,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -8543,7 +8547,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -9097,7 +9101,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -9651,7 +9655,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -10205,7 +10209,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -10759,7 +10763,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
@@ -11313,7 +11317,7 @@ export type BrowserControlActionResultById = {
         commandId: string;
         status: 'failed';
         error: {
-            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'profile_policy_denied' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };

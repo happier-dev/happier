@@ -1172,6 +1172,12 @@ export type MachineStorageActionResultById = {
             happierBytes: number;
             pileBytes: number;
             trashBytes: number;
+            cleanup?: undefined | {
+                kind: 'available';
+            } | {
+                kind: 'unavailable';
+                reason: 'permission_denied' | 'read_only' | 'system_partition';
+            };
             pileFreesBytes?: number | undefined;
             trashFreesBytes?: number | undefined;
             availableIncludingPurgeableBytes?: number | undefined;
@@ -1279,6 +1285,16 @@ export type MachineStorageActionResultById = {
                 previousScanAt?: number | undefined;
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
+        };
+        measurement?: undefined | {
+            status: 'failed';
+            hasMeasured: boolean;
+            error: string;
+        } | {
+            status: 'measuring';
+            hasMeasured: boolean;
+        } | {
+            status: 'ready';
         };
         docker?: undefined | {
             kind: 'ready';
@@ -1461,6 +1477,12 @@ export type MachineStorageActionResultById = {
             happierBytes: number;
             pileBytes: number;
             trashBytes: number;
+            cleanup?: undefined | {
+                kind: 'available';
+            } | {
+                kind: 'unavailable';
+                reason: 'permission_denied' | 'read_only' | 'system_partition';
+            };
             pileFreesBytes?: number | undefined;
             trashFreesBytes?: number | undefined;
             availableIncludingPurgeableBytes?: number | undefined;
@@ -1568,6 +1590,16 @@ export type MachineStorageActionResultById = {
                 previousScanAt?: number | undefined;
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
+        };
+        measurement?: undefined | {
+            status: 'failed';
+            hasMeasured: boolean;
+            error: string;
+        } | {
+            status: 'measuring';
+            hasMeasured: boolean;
+        } | {
+            status: 'ready';
         };
         docker?: undefined | {
             kind: 'ready';

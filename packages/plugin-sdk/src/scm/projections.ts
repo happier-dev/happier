@@ -1002,6 +1002,33 @@ export type ScmHostingRepositoryDescribePublishTargetsRequest = {
     providerKind?: ScmHostingProviderKind;
 };
 
+/** Structural author projection of Protocol’s shared provisioning refusal. */
+type ScmRepositoryProvisioningFailureResponse = {
+    [key: string]: unknown;
+    success: false;
+    outcome?: ScmOperationOutcome;
+    error: string;
+    errorCode?: ScmOperationErrorCode;
+    failureCause?: ActionFailureCauseV1;
+    retryNotBeforeMs?: number;
+    remediation?: {
+        [key: string]: unknown;
+        kind:
+            | 'commit_required'
+            | 'set_url_required'
+            | 'auth_required'
+            | 'install_required'
+            | 'unsupported_provider'
+            | 'confirmation_required'
+            | 'retry';
+        label?: string;
+        action?: string;
+        url?: string;
+    };
+    stdout?: string;
+    stderr?: string;
+};
+
 export type ScmHostingRepositoryDescribePublishTargetsResponse =
     | ({
         [key: string]: unknown;
@@ -1011,30 +1038,7 @@ export type ScmHostingRepositoryDescribePublishTargetsResponse =
         targets: ScmHostingRepositoryPublishTarget[];
         diagnostics?: string[];
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-        retryNotBeforeMs?: number;
-        remediation?: {
-            [key: string]: unknown;
-            kind:
-                | 'commit_required'
-                | 'set_url_required'
-                | 'auth_required'
-                | 'install_required'
-                | 'unsupported_provider'
-                | 'confirmation_required'
-                | 'retry';
-            label?: string;
-            action?: string;
-            url?: string;
-        };
-        stdout?: string;
-        stderr?: string;
-    });
+    | ScmRepositoryProvisioningFailureResponse;
 
 export type ScmHostingRepositoryPublishRequest = {
     [key: string]: unknown;
@@ -1067,30 +1071,7 @@ export type ScmHostingRepositoryPublishResponse =
         stdout?: string;
         stderr?: string;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-        retryNotBeforeMs?: number;
-        remediation?: {
-            [key: string]: unknown;
-            kind:
-                | 'commit_required'
-                | 'set_url_required'
-                | 'auth_required'
-                | 'install_required'
-                | 'unsupported_provider'
-                | 'confirmation_required'
-                | 'retry';
-            label?: string;
-            action?: string;
-            url?: string;
-        };
-        stdout?: string;
-        stderr?: string;
-    });
+    | ScmRepositoryProvisioningFailureResponse;
 
 export type ScmRepositoryInitRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1107,29 +1088,7 @@ export type ScmRepositoryInitResponse =
         stdout?: string;
         stderr?: string;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-        remediation?: {
-            [key: string]: unknown;
-            kind:
-                | 'commit_required'
-                | 'set_url_required'
-                | 'auth_required'
-                | 'install_required'
-                | 'unsupported_provider'
-                | 'confirmation_required'
-                | 'retry';
-            label?: string;
-            action?: string;
-            url?: string;
-        };
-        stdout?: string;
-        stderr?: string;
-    });
+    | ScmRepositoryProvisioningFailureResponse;
 
 export type ScmRepositoryRemoveIndexLockRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     confirmed: true;
@@ -1148,29 +1107,7 @@ export type ScmRepositoryRemoveIndexLockResponse =
         stdout?: string;
         stderr?: string;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-        remediation?: {
-            [key: string]: unknown;
-            kind:
-                | 'commit_required'
-                | 'set_url_required'
-                | 'auth_required'
-                | 'install_required'
-                | 'unsupported_provider'
-                | 'confirmation_required'
-                | 'retry';
-            label?: string;
-            action?: string;
-            url?: string;
-        };
-        stdout?: string;
-        stderr?: string;
-    });
+    | ScmRepositoryProvisioningFailureResponse;
 
 export type ScmRepositoryCloneInput = {
     provider: ScmHostingProviderRef;
@@ -1186,7 +1123,7 @@ export type ScmRepositoryCloneInput = {
     destinationParentPath: string;
     destinationDirectoryName: string;
     protocol: ScmCloneProtocol;
-    initialCheckout?: { branch: 'main'; commit: string };
+    initialCheckout?: { branch: 'main' | null; commit: string };
     confirmed: true;
     authorizationToken: 'clone-repository';
 };
@@ -1208,7 +1145,6 @@ export type ScmRepositoryCloneOutput =
     | ({
         [key: string]: unknown;
         success: true;
-        outcome?: ScmOperationOutcome;
         destinationPath: string;
         cloneProtocol: 'ssh' | 'https';
         cloneUrl: string;
@@ -1217,32 +1153,7 @@ export type ScmRepositoryCloneOutput =
         stdout?: string;
         stderr?: string;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        destinationPath?: string;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-        failureCause?: ActionFailureCauseV1;
-        retryNotBeforeMs?: number;
-        remediation?: {
-            [key: string]: unknown;
-            kind:
-                | 'commit_required'
-                | 'set_url_required'
-                | 'auth_required'
-                | 'install_required'
-                | 'unsupported_provider'
-                | 'confirmation_required'
-                | 'retry';
-            label?: string;
-            action?: string;
-            url?: string;
-        };
-        stdout?: string;
-        stderr?: string;
-    });
+    | (ScmRepositoryProvisioningFailureResponse & { destinationPath?: string });
 
 /** Parse with the Protocol owner; no plugin-owned failure validator. */
 export const ScmRepositoryProvisioningFailureResponseSchema: {

@@ -748,6 +748,11 @@ export type LocalServicesActionsActionResultById = {
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
                     };
                 } | {
+                    kind: 'managedService';
+                    step: 'install' | 'restart' | 'start';
+                    exitStatus: number;
+                    stderrTail: string;
+                } | {
                     kind: 'no_worker_can_accept';
                     unavailable: 'ask' | 'fail' | 'primary';
                     reason: 'draining' | 'empty' | 'forbidden' | 'memory_insufficient' | 'no_available_machine' | 'not_accepting' | 'unsupported' | 'worker_copy_missing' | 'workspace_unavailable';
@@ -1321,6 +1326,7 @@ export type LocalServicesActionsActionResultById = {
                             issues: {
                                 code: string;
                                 path: (number | string)[];
+                                message?: string | undefined;
                                 expected?: string | undefined;
                                 acceptedValues?: (boolean | null | number | string)[] | undefined;
                                 constraint?: undefined | {
@@ -1355,6 +1361,7 @@ export type LocalServicesActionsActionResultById = {
                             issues: {
                                 code: string;
                                 path: (number | string)[];
+                                message?: string | undefined;
                                 expected?: string | undefined;
                                 acceptedValues?: (boolean | null | number | string)[] | undefined;
                                 constraint?: undefined | {
@@ -1440,6 +1447,17 @@ export type LocalServicesActionsActionResultById = {
                     revision: number;
                 };
                 managedId?: string | undefined;
+                steps?: undefined | {
+                    planIndex: number;
+                    stepId: string;
+                    label: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
+                    failureCause?: string | undefined;
+                }[];
                 setupTask?: undefined | {
                     id: string;
                     taskKind: 'machine.setup.apply.v1' | 'machine.setup.plan.v1' | 'machine.setup.remove.v1';
@@ -1457,6 +1475,11 @@ export type LocalServicesActionsActionResultById = {
             } | {
                 kind: 'managedMachine';
                 id: string;
+                agentUpdate?: undefined | {
+                    agentId: string;
+                    status: 'failed' | 'pending';
+                    requestId?: string | undefined;
+                };
                 controller?: undefined | {
                     machineId: string;
                     installationId: string;

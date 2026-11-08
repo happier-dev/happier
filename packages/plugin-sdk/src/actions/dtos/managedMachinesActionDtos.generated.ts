@@ -2252,6 +2252,7 @@ export type ManagedMachinesActionInputById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -4418,6 +4419,7 @@ export type ManagedMachinesActionInputById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -9856,6 +9858,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -9997,6 +10000,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -10138,6 +10142,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -10279,6 +10284,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -10420,6 +10426,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -10591,6 +10598,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -10994,6 +11002,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -11663,6 +11672,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -12363,6 +12373,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -13083,6 +13094,7 @@ export type ManagedMachinesActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         afterMs: number;
+                        idleAfterMs?: number | undefined;
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
@@ -13775,6 +13787,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -21602,6 +21615,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -22343,6 +22357,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
@@ -23011,6 +23026,7 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     afterMs: number;
+                    idleAfterMs?: number | undefined;
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };

@@ -3254,6 +3254,12 @@ export type SessionLifecycleActionResultById = {
                     specifierBasename: string;
                 };
             };
+            spawnFailure?: undefined | {
+                reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                errno?: string | undefined;
+                nativeErrno?: number | undefined;
+                cwd?: string | undefined;
+            };
             failureCause?: undefined | {
                 phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
                 failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';

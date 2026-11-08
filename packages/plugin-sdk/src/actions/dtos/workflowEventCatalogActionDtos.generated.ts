@@ -122,6 +122,7 @@ export type WorkflowEventCatalogActionResultById = {
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
+                        allowCustomValue?: boolean | undefined;
                         listSeparator?: 'comma' | 'newline' | undefined;
                         maxSelections?: number | undefined;
                         defaultValue?: JsonValue | undefined;
@@ -195,6 +196,7 @@ export type WorkflowEventCatalogActionResultById = {
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
+                        allowCustomValue?: boolean | undefined;
                         listSeparator?: 'comma' | 'newline' | undefined;
                         maxSelections?: number | undefined;
                         defaultValue?: JsonValue | undefined;

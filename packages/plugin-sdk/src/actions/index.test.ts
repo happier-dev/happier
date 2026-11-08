@@ -60,8 +60,8 @@ import type {
     ExecutionRunStopResponse,
     ExecutionRunWaitResult,
     SessionSpawnNewInputV2,
-    SessionSpawnNewActionResultV1,
 } from '@happier-dev/protocol';
+import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { getActionSpec } from './service.js';
 import { PluginMachineExecutionOriginV1Schema } from './index.js';
@@ -103,6 +103,7 @@ import {
 import type {
     ContributedActionExecutionWithOriginOptions as PublicContributedActionExecutionWithOriginOptions,
     ContributedActionExecutionWithOriginResult as PublicContributedActionExecutionWithOriginResult,
+    ContributedActionReadObservationOptions as PublicContributedActionReadObservationOptions,
 } from './index.js';
 import type { ActionHandler as ActivationActionHandler } from '../activation.js';
 import type { PluginContributionRef } from '../identity.js';
@@ -275,13 +276,16 @@ describe('ActionsService source contract', () => {
         type RefineTarget<T> = {
             [K in keyof T]: K extends 'target' ? RefineInlineDefinition<T[K]> : T[K];
         };
+        // A homomorphic mapping preserves the executable/observation-only
+        // request union instead of combining its mutually exclusive fields.
+        type RefineTriggerInput<T> = {
+            [K in keyof T]: K extends 'patch' ? RefineTarget<T[K]>
+                : K extends 'target' ? RefineInlineDefinition<T[K]> : T[K];
+        };
         type CanonicalAuthorInputs = {
-            [Id in keyof CanonicalPluginActionInputById]: Id extends TriggerActionId ? {
-                [K in keyof CanonicalPluginActionInputById[Id]]: K extends 'patch'
-                    ? RefineTarget<CanonicalPluginActionInputById[Id][K]>
-                    : K extends 'target' ? RefineInlineDefinition<CanonicalPluginActionInputById[Id][K]>
-                        : CanonicalPluginActionInputById[Id][K];
-            } : CanonicalPluginActionInputById[Id];
+            [Id in keyof CanonicalPluginActionInputById]: Id extends TriggerActionId
+                ? RefineTriggerInput<CanonicalPluginActionInputById[Id]>
+                : CanonicalPluginActionInputById[Id];
         };
         type InlineDefinition<T> = Extract<NonNullable<T>, { kind: 'inline' }> extends { definition: infer D } ? D : never;
         type PublicTriggerDefinitions = {
@@ -491,6 +495,11 @@ describe('ActionsService source contract', () => {
         expectTypeOf<ActionsService['execute']>().toBeFunction();
 
         const compileContract = (service: ActionsService) => {
+            expectTypeOf<Parameters<ActionsService['observe']>[0]>().toEqualTypeOf<PluginContributionRef>();
+            expectTypeOf<Parameters<ActionsService['observe']>[3]>()
+                .toEqualTypeOf<PublicContributedActionReadObservationOptions | undefined>();
+            // @ts-expect-error Host Actions have no contributed read observation overload.
+            void service.observe('session.transcript.get', { sessionId: 'session-1' }, () => undefined);
             void service.execute('agents.acp.backends.upsert', {
                 backend: {
                     id: 'configured-review', name: 'configured-review', title: 'Configured review',

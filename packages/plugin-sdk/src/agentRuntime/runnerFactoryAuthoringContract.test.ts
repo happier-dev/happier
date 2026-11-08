@@ -106,6 +106,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       | 'terminalPromptSubmitVerification'
       | 'sessionStartup'
       | 'vendorResumeSupport'
+      | 'accountSettings'
     >();
     expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['sessionRunnerFactory']>>()
       .toEqualTypeOf<AgentSessionRunnerFactoryLocatorV1>();
@@ -172,6 +173,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['preflightSessionControls']>>()
       .toEqualTypeOf<AgentPreflightSessionControlsContributionV1>();
     expectTypeOf<keyof AgentPreflightSessionControlsContributionV1>().toEqualTypeOf<
+      | 'resolveMaxInputUnicodeCharacters'
       | 'resolveProbeVariant'
       | 'models'
       | 'catalogs'
@@ -185,6 +187,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       | 'probeModes'
       | 'probeConfigOptions'
       | 'probePassiveRealtimeSetup'
+      | 'resolveNativeCatalogSettingSources'
     >();
     expectTypeOf<AgentPreflightSessionControlsContributionV1>()
       .not.toHaveProperty('failureCacheStrategy');
@@ -199,7 +202,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expectTypeOf<AgentPreflightSessionControlsCommandV1>()
       .not.toHaveProperty('timeoutMs');
     expectTypeOf<keyof AgentPreflightSessionControlsProbeInputV1>().toEqualTypeOf<
-      'accountSettings' | 'environment' | 'nonblankEnvironment' | 'pluginSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride'
+      'accountSettings' | 'environment' | 'nonblankEnvironment' | 'pluginSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride' | 'configOptionOverrides'
     >();
     expectTypeOf<AgentPreflightSessionControlsProbeContextV1>()
       .not.toHaveProperty('exec');

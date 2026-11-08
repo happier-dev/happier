@@ -411,6 +411,7 @@ export type InventoryActionInputById = {
         workspaceId: string;
         label?: null | string | undefined;
         pinned?: boolean | undefined;
+        projectKey?: string | undefined;
     };
     readonly "projects.workspace.forget": {
         serverId: string;
@@ -421,6 +422,7 @@ export type InventoryActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
         includeHidden?: boolean | undefined;
+        includeUnlisted?: boolean | undefined;
     };
     readonly "projects.open": {
         serverId: string;

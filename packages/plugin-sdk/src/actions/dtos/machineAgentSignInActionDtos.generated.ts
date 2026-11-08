@@ -158,6 +158,8 @@ export type MachineAgentSignInActionResultById = {
         spawnFailure?: undefined | {
             reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
             errno?: string | undefined;
+            nativeErrno?: number | undefined;
+            cwd?: string | undefined;
         };
     } | {
         [x: string]: unknown;

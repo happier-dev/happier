@@ -3977,6 +3977,7 @@ export type DiscoveryActionResultById = {
                     modelLoadPreflightPolicy?: 'advisory' | 'required' | null | undefined;
                 }[];
                 teamCredentialResources?: undefined | {
+                    sourceOwnerDisplayName: null | string;
                     id: string;
                     teamId: string;
                     displayName: string;

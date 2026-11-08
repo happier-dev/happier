@@ -8,7 +8,7 @@ import type {
 } from '../invocation.js';
 import type { PresentationService } from '../interactions.js';
 import type { AdmittedTargetedOperationExecutionHandle } from '../actions/service.js';
-import type { PluginActionReadInvalidation } from '../actions/contracts.js';
+import type { PluginAccountActionContext, PluginActionReadInvalidation } from '../actions/contracts.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginTestkitManifest } from '../manifest.js';
 import type { PluginServices } from '../services/index.js';
@@ -73,49 +73,15 @@ export type PluginTestkitAdmittedTargetedOperation<
  * not the host's raw registration map.
  */
 export type PluginTestkitRegistrationByFamily = Readonly<{
-secretSources: Parameters<PluginApi['secretSources']['register']>[1];
-
     workItems: Parameters<PluginClientApi['workItems']['register']>[1];
     dragSources: Parameters<PluginClientApi['dragSources']['register']>[1];
     dropTargets: Parameters<PluginClientApi['dropTargets']['register']>[1];
     captureSources: Parameters<PluginApi['captureSources']['register']>[1];
+    secretSources: Parameters<PluginApi['secretSources']['register']>[1];
     projectNativeAdapters: Parameters<PluginApi['projectNativeAdapters']['register']>[1];
     actions: Parameters<PluginApi['actions']['register']>[1];
-    agents: Readonly<{
+    agents: Readonly<NonNullable<Parameters<PluginApi['agents']['register']>[2]> & {
         factory?: Parameters<PluginApi['agents']['register']>[1];
-        providerBinding?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['providerBinding']>;
-        sessionRunnerFactory?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['sessionRunnerFactory']>;
-        daemonSpawnHooks?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['daemonSpawnHooks']>;
-        providerCliAttach?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['providerCliAttach']>;
-        cliSessionCommand?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['cliSessionCommand']>;
-        cliAuth?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['cliAuth']>;
-        connectedAccountLaunch?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['connectedAccountLaunch']>;
-        preflightSessionControls?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['preflightSessionControls']>;
-        terminalPromptSubmitVerification?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['terminalPromptSubmitVerification']>;
-        sessionStartup?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['sessionStartup']>;
-        vendorResumeSupport?: NonNullable<NonNullable<
-            Parameters<PluginApi['agents']['register']>[2]
-        >['vendorResumeSupport']>;
         terminal?: Parameters<PluginApi['agents']['registerTerminal']>[1];
         externalSessions?: Parameters<PluginApi['agents']['registerExternalSessions']>[1];
         externalSessionHooks?: Parameters<PluginApi['agents']['registerExternalSessionHooks']>[1];
@@ -131,6 +97,7 @@ secretSources: Parameters<PluginApi['secretSources']['register']>[1];
     notificationChannels: Parameters<PluginApi['notifications']['registerChannel']>[1];
     connectedAccountDescriptors: Parameters<PluginApi['connectedAccounts']['register']>[1];
     providers: Readonly<{
+        requestCostParser?: Parameters<PluginApi['providers']['registerRequestCostParser']>[1];
         usageParsers?: Readonly<Record<string, Parameters<PluginApi['providers']['registerUsageParser']>[2]>>;
         managedRuntime?: Parameters<PluginApi['providers']['register']>[1];
         catalogParsers?: Readonly<Record<
@@ -202,6 +169,9 @@ export type PluginTestkitInvokeActionOptions = Readonly<{
     /** Handler context only; direct invocation does not run production host admission policy. */
     surface?: PluginInvocationSurface;
     sessionId?: string;
+    /** Test-only authenticated host context, never taken from Action input. */
+    accountScope?: PluginAccountActionContext['accountScope'];
+    sessionTargetsV1?: PluginAccountActionContext['sessionTargetsV1'];
     /**
      * Test-only host-stamped context for a whole-message Action invocation.
      * This is not Action input and is not available during `activate()`; it is

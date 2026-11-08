@@ -17,6 +17,9 @@ export type PersonalSavedSecretsActionInputById = {
         };
         secretId?: string | undefined;
     };
+    readonly "secrets.usedBy": {
+        ref: string;
+    };
     readonly "secrets.create": {
         name: string;
         kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
@@ -195,6 +198,17 @@ export type PersonalSavedSecretsActionResultById = {
             name: string;
         }[];
         usedBy?: null | undefined | {
+            owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+            path: string;
+            referrer?: undefined | {
+                kind: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
+                id: string;
+                displayName?: string | undefined;
+            };
+        }[];
+    };
+    readonly "secrets.usedBy": {
+        references: null | {
             owner: 'acp' | 'connectedAccountConfiguration' | 'connectedAccountCredential' | 'mcp' | 'notificationChannel' | 'plugin' | 'profile' | 'provider' | 'registrySource' | 'remoteHost' | 'unknown' | 'voice';
             path: string;
             referrer?: undefined | {

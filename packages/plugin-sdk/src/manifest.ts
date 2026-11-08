@@ -1,27 +1,24 @@
-import type { BackupDestinationContributionV1 } from './backupDestinations.js';
-import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
-import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
-import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
-import type { StoreKindContributionV1 } from './storeKinds.js';
-import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
-import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 // Portable declarative grammar is projected by the single Action DTO producer.
 import type { PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
-import type { PluginDeclarativeNodeV2, PluginLocalizedStringV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
+import type { ActionInputFieldHint, PluginDeclarativeNodeV2, PluginLocalizedStringV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import { compilePluginJsonSchema as canonicalCompilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginAvailabilityDescriptor } from './availability.js';
+import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginActionDeclaration, PluginActionExecutionV2 } from './definePlugin.js';
 export type { PluginAvailabilityDescriptor } from './availability.js';
+export { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { isValidPluginJsonSchemaValue as canonicalIsValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginIdJsonSchema as canonicalPluginIdJsonSchema, PluginIdSchema as canonicalPluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import type {
   ComposerContentMediaKindV1,
   ComposerContentMimeTypeV1,
 } from './composer.js';
-import type { JsonValue, PluginContributionLocalId, PluginJsonSchema, PluginJsonValueV2, PluginReference } from './identity.js';
+import type { JsonValue, PluginContributionIdentity, PluginContributionLocalId, PluginJsonSchema, PluginJsonValueV2, PluginReference } from './identity.js';
+export type { PluginContributionIdentity } from './identity.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 import type {
@@ -30,14 +27,21 @@ import type {
   PluginUiViewV2Input,
 } from './ui/publicContract.js';
 import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDtos.generated.js';
-import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1, PluginRegistrySourceContributionV1 } from '@happier-dev/protocol';
 import type { MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import type { AccessProviderContributionV1 } from './accessProviders.js';
-import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
+import type { BackupDestinationContributionV1 } from './backupDestinations.js';
+import type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
+import type { HealthCheckKindContributionV1 } from './healthCheckKinds.js';
+import type { StoreKindContributionV1 } from './storeKinds.js';
+import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
-export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
+import type { NotificationCategoryContribution } from './notifications.js';
+import type { PluginCollectionListExtensionV1 } from './ui/contributions.js';
+export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1, PluginRegistrySourceContributionV1 } from '@happier-dev/protocol';
 export type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+export type { DeploymentTemplateV1, DeploymentTemplateDataV1, DeploymentTemplateSecretProfileV1 } from '@happier-dev/protocol/registries';
 
 /** Canonical workflow grammar projected by the Protocol-owned Action DTO producer. */
 export type PluginWorkflowContributionV1 = Readonly<{
@@ -48,10 +52,7 @@ export type PluginWorkflowContributionV1 = Readonly<{
 }>;
 
 /** Typed input declarations use the incumbent Resource and UI-view families. */
-export type PluginInputTypeReferenceV1 =
-  | Readonly<{ hostType: 'usageQuery'; field?: 'period' | 'session' }>
-  | Readonly<{ hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant' }>
-  | Readonly<{ pluginId: string; localId: string }>;
+export type PluginInputTypeReferenceV1 = Readonly<NonNullable<ActionInputFieldHint['inputType']>>;
 
 export type PluginInputTypeContributionV1 = Readonly<{
   id: string;
@@ -62,17 +63,6 @@ export type PluginInputTypeContributionV1 = Readonly<{
     resource: string | Readonly<{ pluginId: string; localId: string }>;
   }>;
   picker?: string | Readonly<{ pluginId: string; localId: string }>;
-}>;
-
-/** Data-only registry declaration; credentials are selected by the host. */
-export type PluginRegistrySourceContributionV1 = Readonly<{
-  id: string;
-  title: string;
-  format: 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog';
-  kinds: readonly ('skill' | 'mcpServer' | 'agent' | 'plugin')[];
-  url: string;
-  path?: string;
-  ref?: string;
 }>;
 
 /** Static Machine-side server declaration; Protocol owns strict admission. */
@@ -87,19 +77,27 @@ export type PluginLanguageServerContributionV1 = Readonly<{
     id: PluginReference;
   }>;
   args: readonly string[];
+  projectCheck?: Readonly<{
+    executable: PluginLanguageServerContributionV1['executable'];
+    args: readonly string[];
+    projectFile: string;
+    output: Readonly<{ kind: 'typescript' }>;
+  }>;
   initializationOptions?: JsonValue;
+  initializationOptionsSetting?: Readonly<{ scope: 'account' | 'daemon'; field: string }>;
   settings?: JsonValue;
 }>;
 
 /** Read-only packaged skill; metadata is derived from its SKILL.md. */
-export type PluginBotTemplateContributionV1 = Readonly<{
-  id: PluginContributionLocalId;
-  path: string;
-}>;
-
 export type PluginSkillContributionV1 = Readonly<{
   id: PluginContributionLocalId;
   directory: string;
+}>;
+
+/** Cold packaged BT2 release; the host supplies provenance when reading it. */
+export type PluginBotTemplateContributionV1 = Readonly<{
+  id: PluginContributionLocalId;
+  path: string;
 }>;
 
 /** Data-only author contract; the Protocol manifest owns runtime admission. */
@@ -179,6 +177,16 @@ export type AgentUiExternalSessionsSourceV1 = { [key: string]: unknown; kind: st
 
 export type AgentUiBehaviorDeclarationV1 = {
   descriptorId?: string;
+  connectedServices?: {
+    poolSettings: {
+      id: string;
+      kind: 'boolean';
+      policyKey: 'claudeCodeAutoContinueAtUsageLimit';
+      serviceLocalIds: string[];
+      titleKey: string;
+      subtitleKey: string;
+    }[];
+  };
   attachedSessionTerminal?: { supported?: boolean };
   pendingDelivery?: { custodyLabelKey?: string; interruptAndRun?: boolean };
   guidance?: { includeInSessionGettingStartedCliExamples?: boolean };
@@ -246,7 +254,7 @@ export type AgentUiBehaviorDeclarationV1 = {
       kind: 'static';
       value: Record<string, string | number | boolean | null>;
     };
-    /** A setting-backed session configuration option contributed on create. */
+    /** A configured runtime selection; an output key also contributes a create-time configuration option. */
     sessionExtras?: {
       outputKey?: string;
       values: string[];
@@ -443,12 +451,6 @@ export type PluginAgentUiContribution = Readonly<{
   components?: AgentUiComponentsDeclarationV1;
 }>;
 
-/** A qualified Plugin-local contribution identity. */
-export type PluginContributionIdentity = Readonly<{
-  pluginId: string;
-  localId: string;
-}>;
-
 /** The callable JSON-schema validator contract, without the AJV owner graph. */
 export type PluginJsonSchemaValidator = (value: unknown) => boolean;
 
@@ -573,7 +575,6 @@ export interface PluginManifest {
       | 'settings'
       | 'events'
       | 'executionRunProfiles'
-      | 'notifications'
       | 'notificationChannels'
       | 'scmHostingProviders'
       | 'scmBackends'
@@ -597,10 +598,11 @@ export interface PluginManifest {
       readonly [key: string]: unknown;
     }>[];
   } & {
+    notifications?: readonly NotificationCategoryContribution[];
     machineProvisioners?: readonly MachineProvisionerContributionV1[];
     accessProviders?: readonly AccessProviderContributionV1[];
     backupDestinations?: readonly BackupDestinationContributionV1[];
-deploymentTargets?: readonly DeploymentTargetContributionV1[];
+    deploymentTargets?: readonly DeploymentTargetContributionV1[];
     healthCheckKinds?: readonly HealthCheckKindContributionV1[];
     storeKinds?: readonly StoreKindContributionV1[];
     machineRecipes?: readonly MachineRecipeV1[];
@@ -641,11 +643,11 @@ deploymentTargets?: readonly DeploymentTargetContributionV1[];
     }> & Readonly<{
       inputSchema?: PluginJsonSchema | null;
       resultSchema?: PluginJsonSchema | null;
+      surfaces: readonly string[];
       tool?: PluginActionDeclaration['tool'];
       cli?: PluginActionDeclaration['cli'];
       toolExposure?: PluginActionDeclaration['toolExposure'];
       readOnly?: PluginActionDeclaration['readOnly'];
-      surfaces: readonly string[];
       confirmVerb?: PluginLocalizedStringV2;
       irreversible?: true;
     }>)[];
@@ -655,8 +657,8 @@ deploymentTargets?: readonly DeploymentTargetContributionV1[];
     atmospherePictures?: readonly PluginAtmospherePictureContributionV1[];
     registrySources?: readonly PluginRegistrySourceContributionV1[];
     languageServers?: readonly PluginLanguageServerContributionV1[];
+    skills?: readonly PluginSkillContributionV1[];
     botTemplates?: readonly PluginBotTemplateContributionV1[];
-skills?: readonly PluginSkillContributionV1[];
     dragSources?: readonly PluginDragSourceContributionV1[];
     workItems?: readonly PluginWorkItemsContributionV1[];
     dropTargets?: readonly PluginDropTargetContributionV1[];
@@ -737,6 +739,7 @@ skills?: readonly PluginSkillContributionV1[];
         id: string;
         readonly [key: string]: unknown;
       }> & Readonly<{ renderer: string }>)[];
+      listExtensions?: readonly PluginCollectionListExtensionV1[];
       // I18NRES step 4 removes inline authoring with the last inline producer.
       translations?: readonly (Readonly<{ locale: string; resourceId: string }>
         | Readonly<{ locale: string; messages: Readonly<Record<string, string>> }>)[];
@@ -753,13 +756,12 @@ export type PluginContributes = Readonly<{
   machineProvisioners: readonly MachineProvisionerContributionV1[];
   accessProviders: readonly AccessProviderContributionV1[];
   backupDestinations: readonly BackupDestinationContributionV1[];
-deploymentTargets: readonly DeploymentTargetContributionV1[];
+  deploymentTargets: readonly DeploymentTargetContributionV1[];
   healthCheckKinds: readonly HealthCheckKindContributionV1[];
   storeKinds: readonly StoreKindContributionV1[];
   machineRecipes: readonly MachineRecipeV1[];
   machineSetupPresets: readonly MachineSetupPresetContributionV1[];
   projectNativeAdapters: NonNullable<NonNullable<PluginManifest['contributes']>['projectNativeAdapters']>;
-  secretSources: NonNullable<NonNullable<PluginManifest['contributes']>['secretSources']>;
   agents: NonNullable<NonNullable<PluginManifest['contributes']>['agents']>;
   providers: NonNullable<NonNullable<PluginManifest['contributes']>['providers']>;
   actions: readonly (Readonly<{
@@ -769,17 +771,15 @@ deploymentTargets: readonly DeploymentTargetContributionV1[];
     execution: PluginActionExecutionV2;
     inputSchema?: PluginJsonSchema;
     resultSchema?: PluginJsonSchema;
-    tool?: PluginActionDeclaration['tool'];
-      cli?: PluginActionDeclaration['cli'];
-      toolExposure?: PluginActionDeclaration['toolExposure'];
-      readOnly?: PluginActionDeclaration['readOnly'];
     surfaces: readonly string[];
     dangerLevel: string;
+    tool?: PluginActionDeclaration['tool'];
+    cli?: PluginActionDeclaration['cli'];
+    toolExposure?: PluginActionDeclaration['toolExposure'];
+    readOnly?: PluginActionDeclaration['readOnly'];
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
   }>)[];
-
-
   resources: NonNullable<NonNullable<PluginManifest['contributes']>['resources']>;
   transcriptActivities: NonNullable<NonNullable<PluginManifest['contributes']>['transcriptActivities']>;
   sessionInfoSections: NonNullable<NonNullable<PluginManifest['contributes']>['sessionInfoSections']>;
@@ -793,8 +793,8 @@ deploymentTargets: readonly DeploymentTargetContributionV1[];
   atmospherePictures: NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>;
   registrySources: NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>;
   languageServers: NonNullable<NonNullable<PluginManifest['contributes']>['languageServers']>;
+  skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
   botTemplates: NonNullable<NonNullable<PluginManifest['contributes']>['botTemplates']>;
-skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
   dragSources: NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>;
   workItems: NonNullable<NonNullable<PluginManifest['contributes']>['workItems']>;
   dropTargets: NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>;
@@ -819,6 +819,8 @@ skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
   openableContentViewers: NonNullable<NonNullable<PluginManifest['contributes']>['openableContentViewers']>;
   accountCollections: NonNullable<NonNullable<PluginManifest['contributes']>['accountCollections']>;
   webhooks: NonNullable<NonNullable<PluginManifest['contributes']>['webhooks']>;
+  captureSources: NonNullable<NonNullable<PluginManifest['contributes']>['captureSources']>;
+  secretSources: NonNullable<NonNullable<PluginManifest['contributes']>['secretSources']>;
   requestInterceptors: readonly PluginRequestInterceptorContribution[];
   browserTargets: readonly PluginBrowserTargetContribution[];
   browserActions: readonly PluginBrowserActionContribution[];
@@ -850,7 +852,10 @@ skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;
     surfaces?: unknown;
   }>)[];
   mcp: Required<NonNullable<NonNullable<PluginManifest['contributes']>['mcp']>>;
-  ui: Required<NonNullable<NonNullable<PluginManifest['contributes']>['ui']>>;
+  // Protocol defaults the core UI arrays; list extensions remain optional.
+  ui: Required<Omit<NonNullable<NonNullable<PluginManifest['contributes']>['ui']>, 'listExtensions'>> & Readonly<{
+    listExtensions?: readonly PluginCollectionListExtensionV1[];
+  }>;
 }>;
 
 /** Canonical portable manifest projected through declaration-safe SDK types. */
@@ -858,7 +863,7 @@ export interface ParsedPluginManifest extends Omit<
   PluginManifest,
   'activation' | 'hostAccess' | 'secrets' | 'contributes'
 > {
-  readonly activation?: Readonly<{
+  readonly activation?: Omit<NonNullable<PluginManifest['activation']>, 'events'> & Readonly<{
     events: NonNullable<NonNullable<PluginManifest['activation']>['events']>;
   }>;
   readonly hostAccess: Readonly<{

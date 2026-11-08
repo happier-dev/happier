@@ -7222,6 +7222,7 @@ export type DeploymentsActionResultById = {
             previewRepositoryId?: string | undefined;
             previewPullRequestId?: string | undefined;
             previewTargetLinkId?: string | undefined;
+            name?: string | undefined;
         }[];
         nextCursor: null | string;
         projectSources?: undefined | {
