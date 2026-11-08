@@ -24,7 +24,7 @@ export { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
 export { HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';
-export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
+export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1 } from './healthCheckKinds.js';
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from './healthCheckKinds.js';
 export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';

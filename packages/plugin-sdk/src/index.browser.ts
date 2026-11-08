@@ -74,6 +74,7 @@ export type { EntityDropOutcomeV1 } from './entityDragDrop.js';
 export type { EntityDropPreviewV1 } from './entityDragDrop.js';
 export type { EntityDropReasonV1 } from './entityDragDrop.js';
 export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from './healthCheckKinds.js';
+export { HEALTH_CHECK_EVENT_REFS_V1 } from './healthCheckKinds.js';
 export { HEALTH_CHECK_KINDS_V1 } from './healthCheckKinds.js';
 export { HealthCheckDnsConfigV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';

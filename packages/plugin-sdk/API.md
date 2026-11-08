@@ -100,6 +100,7 @@
 | `.` | `EntityDropPreviewV1` | type | any |
 | `.` | `EntityDropReasonV1` | type | any |
 | `.` | `HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1` | value | any |
+| `.` | `HEALTH_CHECK_EVENT_REFS_V1` | value | any |
 | `.` | `HEALTH_CHECK_KINDS_V1` | value | any |
 | `.` | `HealthCheckDnsConfigV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckHeartbeatConfigV1ProtocolSchema` | value | any |
