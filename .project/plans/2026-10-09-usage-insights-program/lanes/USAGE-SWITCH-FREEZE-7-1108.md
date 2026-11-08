@@ -1,87 +1,77 @@
-> **IMPLEMENTED; client-only production replay shows no admission improvement. The combined production-after measurement is [blocked] on the orchestrator's server reload; the few-second goal remains unmet.**
-> The retained PostgreSQL response is structurally JSON-identical, including all 2,300 Session memberships in the 90D result.
-> Final client-inclusive entry loads pass 7/7; protocol typecheck is green; server touched diagnostics add zero, while whole-package checking is red. UI checking remains pending. Rejected attempts are described below.
+> **MEASURED: limited fold/pricing improvement; the few-second goal remains unmet. Project time did not improve.**
+> Combined production settles at 14.190 / 14.227 s against 14.614 s control. Full retained-PostgreSQL wire response equality passes.
+> Keep client commit `6df82450568b`: RED→GREEN proves removed serialization work, despite no client-only admission win. UI typecheck remains pending; no delta success is claimed.
 
-USAGE-SWITCH-FREEZE-7-1108 — observed 2026-11-08; server commit `fe747e5cbf6b`, client commit `6df82450568b`; evidence root `.project/tmp/usage-switch-freeze-7-1108/`.
+USAGE-SWITCH-FREEZE-7-1108 — 2026-11-08. Server `fe747e5cbf6b`; client `6df82450568b`.
+Evidence root: `.project/tmp/usage-switch-freeze-7-1108/` (paths below are relative to it).
 
-| Gate / measurement | Control / before | Candidate / status |
-| --- | ---: | ---: |
-| Matched client-only production pair, old server: settled | 14.614 s | 14.111 s; server phase variation, no client causal claim |
-| Same production switch: all measured frames visibly ready | 13.507 s | 13.022 s |
-| Pointer → activity request start, timing off | 1.996 s | 2.055 s; no observed admission improvement |
-| Switch requests, 3,623 Sessions | 1 query-batch; zero Session evidence | Same; both pre-switch activity counts zero |
-| Loaded old-server read / fold / price / project | 1.731 / 2.686 / 1.387 / 2.435 s | 1.669 / 2.387 / 1.321 / 2.168 s |
-| Combined server + client production-after | Reload 127 control | Pending orchestrator reload |
-| Retained PostgreSQL full delivered response, real 74,212-event shape | Rich control | Exact structural JSON equality; 2,300 memberships |
-| Missing native-subject schema parses, constructed 74,212 rows | 74,212 (RED) | 0 (GREEN), valid/malformed present values preserved |
-| Missing attribution/provider fallback parses, constructed measured shape | Per absent row (RED) | 0 (GREEN), present/captured-source controls preserved |
-| Tariff calls, initial constructed 2,048-event compact case | 555 (RED) | At most 13 derived rendered pricing units (GREEN) |
-| Same cost contract enlarged to 74,212 events / 3,623 Sessions | Rich control | GREEN; full wire equality and membership preserved |
-| Real compact query, inspector precise coverage | — | 13,260 tariff calls; 137 summary groups + 2,891 calendar groups |
-| Focused server query / projection / row suite | — | 54/54 pass |
-| Additional scoped fold / row checks | — | 35/35 pass |
-| Native route delivery formats / protocol adjacent suite | — | 4/4 and 43/43 pass |
-| Server/protocol entry loads / server touched diagnostic delta / protocol typecheck | — | 7/7 pass / 0 added, 6 removed; package red / protocol green |
+| Production metric | Reload 127 control | Reload 127 client fix | Reload 128 combined | Reload 128 confirmation |
+| --- | ---: | ---: | ---: | ---: |
+| Settled | 14.614 s | 14.111 s | 14.190 s | 14.227 s |
+| All measured frames visibly ready | 13.507 s | 13.022 s | 12.710 s | 12.280 s |
+| Pointer → native activity POST | 1.996 s | 2.055 s | 1.911 s | 1.592 s |
+| Server read | 1.731 s | 1.669 s | 1.845 s | 1.774 s |
+| Server fold | 2.686 s | 2.387 s | 2.412 s | 2.363 s |
+| Server price | 1.387 s | 1.321 s | 0.859 s | 0.816 s |
+| Server project | 2.435 s | 2.168 s | 2.446 s | 2.468 s |
+| Switch activity query-batches / Session evidence | 1 / 0 | 1 / 0 | 1 / 0 | 1 / 0 |
 
-**Observed server cost and fix.** The isolated query reads the retained QA PostgreSQL without writes and profiles its existing capture/fold/price/project owners.
-The original CPU profile identifies metadata schema/error construction, event repricing, and compact summary/calendar construction as material CPU work.
-Requested-output flags already suppress series, insights, leaders, message statistics and model timeline in the canonical projector; no second output filter was added.
-Native subjects and request attribution are optional. Their existing readers now return the same absent result without building schema errors for absent fields.
-Provider fallback parsers run only for present strings when captured attribution has not already selected the source.
-Actual metadata census is 74,212 rows, 39,085 native subjects and 10,766 attributions; boundary validation of present data remains intact.
+**Production basis.** `client/composed-production-pair-metrics.json` points to each raw result/bundle and exact clock formulas.
+Control is the FREEZE-6 production export on reload 127, snapshot `f71bfb26378dd3c7`; initial clean supplemental capture settled 14.616 s.
+Owner attested reload 128 READY, selected=loaded snapshot `99bf40701272235f`, source time `2026-11-08T06:46:15Z`, including both commits.
+Combined captures serve the retained candidate production export; actual script ownership is attested, rather than inferred from current source.
+All four deciding captures have profiling off, Account A / 3,623 Sessions, Coach 90D selected, zero pre-switch activity queries, and exactly one new activity query.
+Demand remains day granularity / activity `both`, zero contribution queries, one Session-membership query; other optional outputs are false.
+Each deciding capture is COMPLETE/CLEANED with zero collection errors. Account A canonical attestation passes; scoped Rhythm charts visually match.
+The first browser exited after SSH forwarding failed. Both reload-127 control and reload-128 replacement were fresh canonical owned browsers; this replacement limits exact browser matching.
+The unavailable-endpoint attempt and directory-route confirmation failure produced no interaction metric. Only the scratch asset-directory handler was corrected before the valid confirmation.
+Owned browser custody cleanup is terminal; this lane never restarted/stopped a stack or recreated reload 127.
 
-The batch route previously retained rich contributions whenever `contributionQueries` existed, including the actual empty list.
-This caused every selected event to enter rich pricing before its compact summary was prepared, although the caller requested no priced detail.
-`projectUsageAnalyticsBatch` now derives priced-detail demand once from the existing request and passes it to the existing projection owner.
-For private unranked compact demand, that owner prepares the existing tariff-linear summary first, then calls the existing compact repricer.
-It retains unpriced admitted rows internally for the existing delivery owner's Session/turn membership projection; no unpriced detail page is delivered.
-Requested contribution pages, ranked/cost-ordered candidates, model timelines and public populations retain their existing rich pricing path.
-No alternate tariff calculation, catalog cache, accounting fold or membership owner was introduced.
+**Server owner and fix.** The isolated query reads retained QA PostgreSQL without writes, profiling existing capture/fold/price/project phases and CPU.
+Original CPU work includes optional-metadata schema/error construction, rich event pricing, and compact summary/calendar construction over 74,212 events.
+Output flags already suppress series, insights, leaders, message statistics and model timeline; no competing output filter was added.
+`readScopedUsageAccountingEvidence` and `readUsageRequestAttribution` now skip schema parsing of absent optional values, preserving validation when present.
+`resolveUsageContributionProviderAttribution` parses fallback strings only when captured attribution has not selected the source.
+Observed census: 39,085 native subjects and 10,766 attributions among 74,212 rows; absent-field schema-error work was disproportionate.
+The batch path treated an existing empty `contributionQueries` array as rich-detail demand, repricing every event before compact preparation.
+`projectUsageAnalyticsBatch` now derives priced-detail demand once; `prepareUsageAnalyticsProjectionSteps` prepares the existing compact summary before its existing repricer for private unranked demand.
+Unpriced admitted rows remain internal for canonical delivery's Session/turn membership; requested detail never receives unpriced rows.
+Requested detail, ranked/cost-ordered outputs, timelines and public populations retain rich pricing. No alternate tariff calculation, catalog cache or accounting owner was added.
 
-**Equality and profiling evidence.** `measure-before.log` / `server-before.cpuprofile` preserve the original isolated control.
-`measure-delivery-control-normalized.log` proves its value still matches the original control after canonical request normalization, then saves the final rich wire control privately in OS temp.
-`measure-compact-normalized.log` proves full serialized-JSON structural equality against that control, including ordered arrays and exact numeric values; only object-key insertion order is immaterial.
-Its safe companion `server-compact-normalized.json` records 818 calendar pricing cells, 91 days, 13 weeks, 606 hours and nine account entries, with no identities or bodies.
-The normalized control uses CPU sampling; the candidate count diagnostic also enables precise coverage. Their wall times are not a speed comparison.
-The optional-metadata-only measurement showed modest savings; source cost reductions do not establish a production latency win.
-`pricing/remaining-profile-costs.json` shows CPU-only pricing plus summary at 2546.6 → 2339.5 ms (about 207 ms); compact calendar population reconstruction still costs 459 ms and pricing 422 ms.
-The admitted accounting sidecar already prevents repeated schema normalization downstream. Attribution validation is first performed per selected runtime contribution/coordinate; moving it earlier alone would save no parses for this private query.
-All retained-QA SQL operations are reads. No retained data, Prisma schema, migration, stack process or server lifecycle was changed by this lane.
+**Equality and count proof.** Canonically normalized control and candidate have full structural serialized-JSON equality: exact numbers and ordered arrays, including all 2,300 selected 90D Session memberships.
+`measure-delivery-control-normalized.log` verifies the rich control against the original; `measure-compact-normalized.log` verifies final delivered equality against that control.
+`server-compact-normalized.json` safely records 818 calendar cells / 2,891 groups, 137 summary groups, nine account entries, 91 days / 13 weeks / 606 hours, without identities or bodies.
+V8 precise coverage records 13,260 tariff calls. Count RED initially observed 555 calls versus at most 13 derived rendered pricing units; GREEN also covers the enlarged 74,212-event / 3,623-Session shape.
+Optional-metadata RED observes 74,212 absent-subject parses on constructed rows; GREEN observes zero. Present malformed data, captured-source precedence and four cost modes remain covered.
+The count diagnostic enables precise coverage while its control uses CPU sampling; their wall times are not a speed comparison.
+CPU-only `pricing/remaining-profile-costs.json` shows pricing plus summary 2546.6 → 2339.5 ms (about 207 ms), with calendar population reconstruction 459 ms and pricing 422 ms remaining.
+Accounting sidecars already prevent downstream re-normalization. Attribution projection performs the first validation per selected contribution/coordinate; moving it earlier alone saves no parses here.
+Initial raw-versus-normalized controls yielded zero memberships and were rejected; the corrected normalized comparison proves all 2,300. Byte-only key-order mismatch was rejected as an equality criterion.
+All SQL operations were reads; no retained data, Prisma schema or migration changed.
 
-**Client and production basis.** `client/before-production-clean/{result,interaction,bundle}.json` and scoped `usage.png` preserve the initial clean 14.616 s before capture.
-It uses the retained FREEZE-6 production export, profiling off, Account A sign-in, and the canonical `capture.mjs` cleanup path.
-Coach 90D is active before the pointer; every pre-pointer accounting query has activity disabled. The switch issues exactly one new activity query.
-The demand has day granularity, activity resolution `both`, zero contribution queries and one Session-membership query; other optional outputs are false.
-Server-Timing is auth 39.216, read 1697.319, fold 2419.760, price 1422.044, project 2412.222 and serialize 34.360 ms.
-The request starts at +1883.6 ms and its controller finishes at +12222.6 ms.
-An earlier 14.403 s timing capture remains supplemental. A subsequent inherited-URL replay preloaded activity and issued no new request, so it was rejected for admission attribution.
-The clean harness now starts from Coach 90D without inherited query overrides and rejects pre-switch activity acquisition.
-The deciding client-only pair is `client/{client-before-production-c,client-after-production-c}/`, using the same owned browser and unchanged reload-127 server: settled 14.614 → 14.111 s, native admission 1.996 → 2.055 s. Both are profiling-off production exports, Coach 90D active, 3,623 Sessions, pre-switch activity zero, exactly one switch query-batch POST and zero Session evidence; cleanup passes without collection errors. Scoped Rhythm output matches visually.
-`client/candidate-owner-attestation.json` proves the served candidate bundle contains the typed phase comparison and zero phase serializations. Reduced server phase times explain much of the settled difference; neither that difference nor a client admission gain is attributed to this fix.
-Mapped-export navigation yielded no admission evidence. Later observed CDP transfers took 103.2 s for the main bundle and 28.4 s for a chunk, outside the interaction; a short health probe was insufficient evidence to retire those attempts. Only owned browsers were affected; failed attempts do not replace the valid captures.
-`client/admission-cpu-exact/admission.json` now proves a 1883.155 ms pointer-to-native-request window on that export, with zero pre-switch activity queries and one new POST; only this window's samples are analyzed.
-Initial progress drain accounts for 420.6 ms inclusive (projection 149.6 ms, encoding 114.8 ms); React ancestry 518.6 ms overlaps that drain, with 150.3 ms React self time. These costs are not additive.
-Retained Session-input reads account for 134.2 ms inclusive and evidence-phase read for 83.5 ms self; that owner reserialized unchanged phase facts per admitted Session. RED witnessed 3,424 serializations for two publications; GREEN has zero serializations across 3,423 inputs and preserves two publications, refusal, completion and coverage transitions (5/5 focused tests).
-The existing `UsageQueryEvidencePhase.publishedPhase` now retains its typed published phase instead of a JSON string, comparing status/refusal facts before allocating source objects. The paired production timing does not demonstrate a client latency win.
-`client/client-cpu-owner-pair-metrics.json` records a separate same-browser clipped CPU pair: phase-module self time 85.98 ms / 80 samples → 0.521 ms / one sample. Diagnostic admission windows vary 3.993 → 2.813 s and do not replace the timing-off latency conclusion; both captures complete and clean up with no collection errors.
-Session-input basis reads remain necessary: admitted Session versions and envelopes can change independently of Home invalidations. The profile did not establish a safe narrower admission rule or justify suppressing initial visible progress.
+**Client attribution and deletion test.** `client/admission-cpu-exact/admission.json` clips samples strictly to pointerdown → native POST start, reproducing 1883.155 ms.
+Progress drain is 420.6 ms inclusive (projection 149.6, encoding 114.8); React ancestry 518.6 overlaps it, with 150.3 ms React self time. These costs cannot be added.
+Session-input reads cost 134.2 ms inclusive; evidence-phase read costs 83.5 ms self. That owner serialized unchanged phase facts per admitted input.
+`UsageQueryEvidencePhase.publishedPhase` now retains the typed phase, comparing status/refusal facts before constructing source objects; this replaces its existing JSON witness.
+`client/phase-red.log`: 3,424 serializations for two publications. `client/phase-green.log`: zero serializations across 3,423 inputs, two publications, with refusal/completion/coverage controls preserved (5/5 tests).
+`client/client-cpu-owner-pair-metrics.json`: separate same-browser clipped phase self time 85.98 ms / 80 samples → 0.521 ms / one sample; both captures complete and clean up without errors.
+Those instrumented windows vary 3.993 → 2.813 s and do not replace timing-off evidence. `client/client-production-pair-metrics.json` shows admission 1.996 → 2.055 s: no demonstrated client admission improvement.
+Deletion-test verdict: **keep** `6df82450568b`; deleting it restores count-proven serialization work and measured phase CPU. It is not credited with a settled-latency win.
+Session version/envelope basis reads remain necessary independently of Home invalidations; no safe narrower admission rule or suppression of visible initial progress was proven.
+Mapped-export navigation yielded no admission evidence; later CDP bundle transfers took 103.2 / 28.4 s outside the interaction, so short health probes did not prove a stalled product. Inherited-activity replay with zero new requests was rejected.
 
-**Validation and ownership.** `fold-red.log`, `fold-green.log`, `pricing/grouped-red.log`, `pricing/grouped-green.log` and `pricing/server-grouped-tests.log` hold deciding RED/GREEN evidence.
-`pricing/route-grouped.log` covers native delivery formats; `pricing/protocol-grouped-tests.log` covers changed readers and adjacent cost/calendar behavior.
-Tests use real internal owners and call-through schema spies / V8 precise coverage, without mocking pricing, reconciliation or projections.
-The real fixture and retained control check the neighbouring cases: present invalid metadata, captured native/provider attribution, four cost modes, mixed currency, unknown models, series, requested detail and richer shared rankings.
-The source owners remain `readScopedUsageAccountingEvidence`, `readUsageRequestAttribution`, `resolveUsageContributionProviderAttribution`, `prepareUsageAnalyticsProjectionSteps` and the existing protocol summary/repricer/delivery owners.
-Scalar/default batch and rich/public demand paths intentionally remain; they serve distinct requested outputs, not competing pricing decisions.
-No wire, storage, push, freshness, cancellation, visibility or interaction contract changed; no canonical documentation change is needed.
+**Validation and ownership.** Server query/projection/row suite 54/54; additional fold/row checks 35/35; native route formats 4/4; protocol adjacent tests 43/43; client focused tests 5/5.
+Logs: `fold-{red,green}.log`, `pricing/{grouped-red,grouped-green,server-grouped-tests,route-grouped,protocol-grouped-tests}.log`, `client/{phase-red,phase-green}.log`.
+Final client-inclusive entry loads pass 7/7 (`client/entryloads-final.log`), as do protocol-edit entry loads; no lane source edits followed these checks.
+Protocol public typecheck passes with zero diagnostics (`protocol-typecheck.log`). Server public check exits 2; touched comparison adds 0/removes 6, with 6,330 unattributed locations for integration (`server-typecheck.log`). Whole-package green is not claimed.
+UI public touched check remains in flight on existing handle 39054 (`client/ui-typecheck-existing-baseline.log`); no delta evidence yet. Initial stale baseline was rejected; retry retains 1,120 recorded resolvable locations, excluding 21 removed-path entries without inventing diagnostics.
+Tests use real internal owners and call-through boundary/count instrumentation. Real retained equality and fixtures cover present invalid metadata, mixed currency, unknown models, richer outputs and memberships.
+The compact/rich paths serve distinct requested outputs under the same owners; scalar/default and public paths remain intentionally. No wire/storage/push/freshness/cancellation/visibility contract changed, so no canonical documentation update is needed.
 
-**Mechanism delta / self-attack.** Files +1/−0 (this requested report); thirteen existing source/test files modified.
-Owner-level checks +8/−1: five presence/source/type guards avoid reproduced absent-field schema work; one batch detail decision and one projector eligibility decision preserve requested pricing; one typed phase comparison replaces the per-input JSON comparison at the evidence-phase owner.
-States, error codes, caches, timers, retries, limits, telemetry and persistence: +0 / −0. No polling, debounce or feature gate was added.
-The rich path cannot be removed because requested detail and cost-ranked selection still require priced event operands; the compact path reuses the existing summary repricer.
-The equality harness's initial raw-versus-normalized query key mismatch produced zero memberships in both controls and was rejected; canonical normalization now proves all 2,300 memberships.
+**Mechanism delta / self-attack.** Files +1/−0 (this requested report); thirteen existing source/test files modified. Owner checks +8/−1: five presence/source/type guards, one detail-demand decision, one compact-eligibility decision, and one typed phase comparison replacing JSON comparison; each removes reproduced work while preserving required output.
+States, error codes, caches, timers, retries, limits, telemetry and persistence +0/−0. Rich pricing remains necessary for detail/ranking; no parallel tariff, membership or admission authority was introduced.
+The server commit names its sole foreign hunk: pre-existing `registerSessionEvidenceRoute` import movement. Client commit contains no foreign hunks; commits used private index / commit-tree / CAS without touching the shared index.
 
-**Residual risk / reload ask.** Orchestrator: reload the retained `agent-qa-usage-insights` server from current source, then return the selected/loaded reload identity so this lane can run the matched production after capture.
-Reload request posted successfully to the canonical board. Owner deferred reload for available-memory/OOM risk; client attribution continues without a server reload.
-This lane never restarts or stops a stack. Until that reload and after capture, the few-second goal and loaded performance/freshness gate remain open.
-`pricing/entryloads-grouped.log` and the final client-inclusive `client/entryloads-final.log` both contain terminal 7/7 passes. Server public typecheck completed exit 2: touched comparison adds 0/removes 6 against `server-1103.locs`, with 6,330 unattributed locations for the integration owner (`server-typecheck.log`); whole-package green is not claimed.
-Protocol public typecheck passed with zero diagnostics (`protocol-typecheck.log`). UI checking first rejected the stale `ui-1104b.locs` baseline, then launched with its 1,120 still-resolvable recorded locations (21 removed-path entries excluded), without adding baseline diagnostics; result pending.
+**Residual risk.** Reload-128 Server-Timing supports lower fold/pricing, not lower projection; 14.190 / 14.227 s settlement still misses the few-second goal. Two after samples do not establish a robust latency distribution or sole-cause attribution on the shared moving stack.
+Client admission remains variable and its matched client-only pair shows no win. Projection/summary/calendar CPU and existing progress/input work remain measured costs; no speculative cache, debounce, cap or telemetry was added.
+UI package delta remains [blocked] on the already-running canonical check's completion; preserve handle 39054 rather than cancel/re-pin it. Server whole-package diagnostics remain an integration-owner concern.
