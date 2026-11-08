@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import { Text } from '@/components/ui/text/Text';
@@ -13,7 +13,7 @@ export function DiscussionDeliveryNotice(props: Readonly<{
     onRetry?: () => Promise<DiscussionPostOutcome>;
     textStyle: StyleProp<TextStyle>;
     errorStyle: StyleProp<TextStyle>;
-    retryStyle: StyleProp<ViewStyle>;
+    retryStyle: React.ComponentProps<typeof HappierPressable>['style'];
     retryTextStyle: StyleProp<TextStyle>;
 }>) {
     const [sending, setSending] = React.useState(false);
