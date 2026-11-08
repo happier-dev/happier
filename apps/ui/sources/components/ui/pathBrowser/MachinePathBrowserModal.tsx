@@ -1087,7 +1087,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 {deepSearchEnabled && nodes.length > 0 ? (
                     deepSearchLoading ? <SurfaceStateCard size="line" kind="loading" title={t('files.searching')} />
                         : deepSearchError ? <SurfaceStateCard testID="path-browser-search-error" size="line" kind="unavailable"
-                            title={deepSearchError} action={{ label: t('common.retry'), onPress: () => invokeBrowserCommand('retrySearch') }} />
+                            title={deepSearchError} action={{ label: t('common.retry'), onPress: async () => { await invokeBrowserCommand('retrySearch'); } }} />
                         : deepSearch.hasMore ? <SurfaceStateCard testID="path-browser-search-incomplete" size="line" kind="warning"
                             title={t('universalSearch.moreResultsAvailable')} /> : null
                 ) : null}
@@ -1097,7 +1097,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
                     rootError={deepSearchEnabled ? deepSearch.error?.errorCode ?? null : rootError}
                     rootErrorReason={deepSearchEnabled ? deepSearchError : undefined}
-                    retryRoot={() => invokeBrowserCommand('retryRoot')}
+                    retryRoot={async () => { await invokeBrowserCommand('retryRoot'); }}
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
                     inlineRetryLabel={t('common.retry')}

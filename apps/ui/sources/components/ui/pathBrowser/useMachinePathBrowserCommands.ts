@@ -44,8 +44,11 @@ export function useMachinePathBrowserCommands(props: Readonly<{
     onRetryDirectory(path: string, context?: ActionExecutorContext): void | Promise<void>;
     onRetrySearch(context?: ActionExecutorContext): void | Promise<void>;
 }>) {
-    const readString = (input: PluginUiJsonValueV1 | undefined, key: string) => input !== null && typeof input === 'object'
-        && !Array.isArray(input) && typeof input[key] === 'string' ? input[key] : null;
+    const readString = (input: PluginUiJsonValueV1 | undefined, key: string) => {
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) return null;
+        const value: unknown = Reflect.get(input, key);
+        return typeof value === 'string' ? value : null;
+    };
     const apply = (key: BrowserCommandKey, input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => {
         const path = readString(input, 'path');
         const node = path === null ? undefined : props.nodes.find(candidate => candidate.path === path);

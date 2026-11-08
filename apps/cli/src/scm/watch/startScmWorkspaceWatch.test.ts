@@ -32,7 +32,7 @@ import { startScmWorkspaceWatch } from './startScmWorkspaceWatch';
 const registration = createGitScmBackendRuntimeRegistration();
 const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
     definition: { id: registration.id }, qualifiedId: 'scm-git/git',
-    executableDefinition: registration.runtime, registration,
+    executableDefinition: registration.runtime!, registration,
 })]);
 
 const git = promisify(execFile);

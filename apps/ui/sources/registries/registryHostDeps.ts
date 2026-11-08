@@ -256,7 +256,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
     const executeAdmitted = async (actionId: RegistryActionIdV1, admitted: RegistryActionInput): Promise<RegistryActionOutput> => {
         if (actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1) {
             const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(admitted);
-            const sources = (await readSources()).filter(source => source.enabled && source.kinds.includes(args.kind)
+            const sources = (await readSources()).filter(source => source.enabled && source.kinds.some(kind => kind === args.kind)
                 && (args.sourceIds === undefined || args.sourceIds.includes(source.id)));
             const results = await Promise.all(sources.map(async source => {
                 // Views and shelves consume the same source page. A failed sibling

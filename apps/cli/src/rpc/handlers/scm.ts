@@ -1,6 +1,4 @@
 import type {
-    ScmSuggestionApplyRequest,
-    ScmSuggestionApplyResponse,
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
     ScmBranchIntegrationRequest,
@@ -80,6 +78,7 @@ import type {
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol';
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
+import type { ScmSuggestionApplyRequest, ScmSuggestionApplyResponse } from '@happier-dev/protocol/scm';
 import type { ScmFileAtRevisionRequest, ScmFileReadResponse } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { ScmLogListRequestSchema, ScmStatusSnapshotRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
