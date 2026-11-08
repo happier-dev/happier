@@ -1888,6 +1888,10 @@ prerequisites without running optional version, login-status or latest-release
 probes. Normal inventory still supplies that metadata; required install
 verification still executes the installed CLI. Matching development CLI/daemon
 readiness senders and signed receivers must reload together for this request.
+An inventory read failure retains its typed Action cause, such as target
+currentness or unavailable inventory; it does not establish that the CLI needs
+setup. Reviewed Session children decode the public Session input through the
+ordinary Action admission projection before binding their exact operands.
 A missing CLI invokes the ordinary `machines.agents.install` Action, retaining
 its Manage admission and review, then observes the existing job's terminal
 result. An optional update is skipped during launch: readiness invokes neither

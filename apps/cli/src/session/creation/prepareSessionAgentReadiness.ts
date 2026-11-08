@@ -1,12 +1,12 @@
 import type { ActionExecutorDeps, SessionSpawnNewResultV1 } from '@happier-dev/protocol';
-import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MachinesAgentsListOutputSchema, resolveMachineAgentAcquireIntentV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { SessionAgentUpdateNoticeV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, type AgentInstallJobConsent } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 type SpawnArgs = Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0];
-type ReadinessResult = Extract<SessionSpawnNewResultV1, { type: 'error' }> | ActionApprovalRequestCreatedResult;
+type ReadinessResult = Extract<SessionSpawnNewResultV1, { type: 'error' }> | ActionApprovalRequestCreatedResult | ActionExecuteFailure;
 
 /** One pre-birth decision; acquisition and its completion remain owned by ordinary Actions. */
 export async function prepareSessionAgentReadiness(input: Readonly<{
@@ -29,7 +29,8 @@ export async function prepareSessionAgentReadiness(input: Readonly<{
     ...(input.definitionId === undefined ? {} : { definitionId: input.definitionId }) };
   const inventory = await input.invoke(children.inventory.action, { ...selection, serverId: input.serverId, refresh: true });
   if (input.signal?.aborted) return cancelled();
-  if (!inventory.ok) return refusal();
+  // Failure to obtain facts is an Action failure, not evidence about the CLI.
+  if (!inventory.ok) return { result: inventory };
   const facts = MachinesAgentsListOutputSchema.safeParse(inventory.result);
   if (!facts.success) return refusal();
   const agent = facts.data.items.find(item => item.agentId === input.agentId && item.definitionId === input.definitionId);

@@ -28,6 +28,8 @@ it.each([
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, metadataProbeForbidden: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, capabilityUnknown: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, inventoryFailure: 'machine_target_not_current' },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, inventoryFailure: 'machine_agent_inventory_unavailable' },
   { role: 'use', installed: false, outdated: false, acquireAllowed: false, refusal: 'agent_cli_missing' },
   { role: 'use', installed: true, outdated: true, acquireAllowed: false, refusal: null },
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: null },
@@ -38,7 +40,7 @@ it.each([
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
   { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
-] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, metadataProbeForbidden=$metadataProbeForbidden, capabilityUnknown=$capabilityUnknown)', async testCase => {
+] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, metadataProbeForbidden=$metadataProbeForbidden, capabilityUnknown=$capabilityUnknown, inventoryFailure=$inventoryFailure)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
   const updateInUse = 'updateInUse' in testCase && testCase.updateInUse;
@@ -47,6 +49,7 @@ it.each([
   const hostPath = 'hostPath' in testCase && testCase.hostPath;
   const metadataProbeForbidden = 'metadataProbeForbidden' in testCase && testCase.metadataProbeForbidden;
   const capabilityUnknown = 'capabilityUnknown' in testCase && testCase.capabilityUnknown;
+  const inventoryFailure = 'inventoryFailure' in testCase ? testCase.inventoryFailure : null;
   let hostExecutablePath: string | undefined;
   let metadataProbeLog: string | undefined;
   if (hostPath) {
@@ -106,6 +109,12 @@ it.each([
       result = { ok: true, directory: '/remote/project', directoryKind: 'path', directoryCreationRequired: false, checkout: null };
     } else if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
       events.push('inventory');
+      if (inventoryFailure === 'machine_target_not_current') {
+        return { ok: false, errorCode: inventoryFailure, error: 'child_not_derived' };
+      }
+      if (inventoryFailure === 'machine_agent_inventory_unavailable') {
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, { protocolVersion: 1 }, decoded.callId) };
+      }
       result = { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
         codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
       } } };
@@ -209,7 +218,11 @@ it.each([
     connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false });
   const result = await executor.execute('session.spawn_new', input, { surface: 'cli', authority: 'present_user',
     actionCaller: { kind: 'host' }, serverId: 'home-a', actionRequestId: requestId, bypassApprovals: true });
-  if (refusal) {
+  if (inventoryFailure) {
+    expect(result).toMatchObject({ ok: false, errorCode: inventoryFailure });
+    expect(events).toEqual(['inventory']);
+    expect(acquisitionRequests).toEqual([]);
+  } else if (refusal) {
     expect(result).toMatchObject({ ok: true, result: { type: 'error', code: refusal, agentId: 'codex', retryable: false } });
     expect(events).toEqual(terminalFailed ? ['inventory', outdated ? 'update' : 'install', 'terminal'] : ['inventory']);
   } else {

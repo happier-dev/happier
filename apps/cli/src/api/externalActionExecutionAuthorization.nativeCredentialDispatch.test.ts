@@ -25,7 +25,6 @@ import { releaseDaemonSessionTeamCredentialNativeBindings } from '@/daemon/provi
 import { createOnChildExited } from '@/daemon/sessions/onChildExited';
 import type { TrackedSession } from '@/daemon/types';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 
 const birthTransport = vi.hoisted(() => ({ fetchSessionByIdCompat: vi.fn() }));
 vi.mock('@/session/transport/http/sessionsHttp', async importOriginal => ({
@@ -66,12 +65,14 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(72) };
   const encryptionBinding = { serverIdentityId: 'srv_home', accountId: 'member', authentication: { kind: 'account' as const, tokenEpoch: 2 },
     actionId: 'session.spawn_new', requestId: 'spawn-request', target };
-  const originalActionEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'spawn-request', target, input: StrictJsonValueSchema.parse(spawnInput) }
-    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, material, input: spawnInput, randomBytes: nacl.randomBytes });
+  const publicSpawnInput = { ...spawnInput, organizationPlacement: { sectionId: 'section', tagIds: [] } };
+  const originalActionEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'spawn-request', target, input: StrictJsonValueSchema.parse(publicSpawnInput) }
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, material, input: publicSpawnInput, randomBytes: nacl.randomBytes });
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'approved-spawn', binding: {
     serverIdentityId: 'srv_home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 2 },
     actionId: 'session.spawn_new', requestId: originalActionEnvelope.requestId,
     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+    ...(originalActionEnvelope.v === 2 ? { machineRuntimeDemand: originalActionEnvelope.machineRuntimeDemand } : {}),
     machineId: 'guest', installationId: 'guest-installation', custodianAccountId: 'member', target,
     accountEncryptionMode: mode,
   } });
@@ -101,7 +102,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
     sourceFacts: row.sourceFacts, sourceRevision: group.sourceRevision, nativeSource: { providerTicket: row.nativeSource.providerTicket },
     availability: 'available' });
   const credentials = mode === 'plain' ? { token, encryption: null } : { token, encryption: {
-    ...material, publicKey: libsodiumPublicKeyFromSecretKey(material.machineKey),
+    ...material, publicKey: nacl.box.keyPair.fromSecretKey(material.machineKey).publicKey,
   } };
   await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
     home: { id: 'home', name: 'Home', serverUrl: 'https://home.example', webappUrl: 'https://home.example',
@@ -158,10 +159,12 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
     }
     mintBody = body;
     const envelope = (body as { envelope: typeof originalActionEnvelope }).envelope;
-    return { status: 200, data: { v: 1, token: 'native-install', binding: { ...root.binding,
+    const { machineRuntimeDemand: _spawnDemand, ...spawnBinding } = root.binding;
+    return { status: 200, data: { v: 1, token: 'native-install', binding: { ...spawnBinding,
       machineId: 'controller', installationId: 'controller-installation', custodianAccountId: 'company',
       target: { kind: 'machine', machineId: 'controller' }, actionId: 'machines.managed.credentials.install', requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
       ...(!releasing ? { nativeCredentialSpawnChild: { requestId: root.binding.requestId, requestEnvelopeDigest: root.binding.requestEnvelopeDigest } } : {}),
       managedAdmission: { actionId: 'machines.managed.credentials.install', input: {
         homeId: machine.homeId, managedId: machine.id, sessionId: 'spawned-session', bindingKey: 'binding',
@@ -258,7 +261,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
       .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(post.mock.calls.length).toBe(before);
   }
-  const { teamCredentialBindings: _selected, ...withoutTeam } = spawnInput;
+  const { teamCredentialBindings: _selected, ...withoutTeam } = publicSpawnInput;
   const absentEnvelope = mode === 'plain' ? { v: 1 as const, requestId: 'spawn-request', target, input: StrictJsonValueSchema.parse(withoutTeam) }
     : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, material, input: withoutTeam, randomBytes: nacl.randomBytes });
   const absentAuthorization = await admit({ ...root, binding: { ...root.binding,

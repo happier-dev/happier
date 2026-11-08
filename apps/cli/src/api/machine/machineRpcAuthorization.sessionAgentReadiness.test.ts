@@ -43,6 +43,7 @@ describe('signed Session Agent readiness receiver', () => {
     const envelope = { v: 1 as const, requestId: 'spawn', target: { kind: 'machine' as const, machineId: admission.machineId }, input: {
       executionTarget: { serverId: 'home', machineId: admission.machineId }, directory: { kind: 'path', path: '/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      organizationPlacement: { sectionId: 'section', tagIds: [] },
       agentInstallConsent: { vendorRecipe: false },
     } };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {
