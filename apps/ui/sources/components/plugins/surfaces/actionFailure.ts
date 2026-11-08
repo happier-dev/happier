@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
@@ -11,6 +11,7 @@ import {
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import type { PluginUiHostApiErrorPayloadV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 
 import {
     createPluginSurfaceHostApiError,
@@ -92,6 +93,29 @@ export function actionOutcomeUnknownFailure(
 export function clientActionFailure(code: string, author?: FailureMetadata): Failure {
     return actionDeclinedFailure(code) ?? createPluginSurfaceActionFailure(
         author?.layer ? code : code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable', code, author);
+}
+
+/** Lazy preparation can refuse before invocation; retain the same authored recovery. */
+export function clientActionPreparationFailure(error: unknown): Failure {
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'activation_failed';
+    const metadata = readPluginSurfaceHostApiFailureMetadata(error);
+    const authored = isPluginError(error) ? error : undefined;
+    const author = readPluginActionFailureAuthorPayload(authored?.data);
+    return clientActionFailure(code, {
+        ...metadata,
+        ...(authored?.data.message === undefined
+            ? metadata.layer ? { message: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body } : {}
+            : { message: authored.data.message }),
+        ...(author.details === undefined ? {} : { details: author.details }),
+        ...(author.failureCause === undefined ? {} : { failureCause: author.failureCause }),
+        ...(author.remediation === undefined ? {} : { remediation: author.remediation }),
+        ...(error && typeof error === 'object' && 'retryable' in error && typeof error.retryable === 'boolean'
+            ? { retryable: error.retryable } : {}),
+        ...(author.diagnostics?.length ? { diagnostics: author.diagnostics.map(diagnostic => diagnostic.code) }
+            : error && typeof error === 'object' && 'diagnostics' in error && Array.isArray(error.diagnostics)
+                ? { diagnostics: error.diagnostics.filter((value: unknown): value is string => typeof value === 'string') } : {}),
+    });
 }
 
 /** The invocation owner has already admitted the author's structured failure. */

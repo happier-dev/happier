@@ -15,7 +15,7 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
-import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { getInstalledPluginUiClientExecutableComposition, type PluginUiClientExecutableActivation } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/projection';
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
@@ -73,6 +73,7 @@ export async function installPortableAccountPluginReleaseForTest(
 export async function installPortableAccountPluginForTest(input: Readonly<{
     manifest: PluginManifest;
     activate(api: PluginAccountApi): void | Promise<void>;
+    prepareRegistration?: PluginUiClientExecutableActivation['prepareRegistration'];
     accountLifetime: ActiveServerAccountScopeLifetime;
     origin?: PluginUiAccountExecutableOrigin;
     /** Model the AppShell's scoped publication for ordinary host dependencies. */
@@ -102,7 +103,8 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
         digest: `sha256:${'a'.repeat(64)}`, builtWith: { bundler: 'esbuild', version: '0.27.2' },
         executable: { exports: [account.exportName] }, hostUiApiRange: '^1.0.0' });
     const projectedActions = actions.map(declaration => {
-        const { hostAccess: _hostAccess, inputSchema: _inputSchema, resultSchema: _resultSchema, ...projected } = declaration;
+        const { hostAccess: _hostAccess, connectedAccountPurposeBindings: _connectedAccountPurposeBindings,
+            inputSchema: _inputSchema, resultSchema: _resultSchema, ...projected } = declaration;
         return { ...PluginProjectedActionV2Schema.parse({ ...projected, pluginId: input.manifest.id,
             occurrenceId, available: true, authorization }), hostAccountOrigin: origin, accountActionDeclaration: declaration };
     });
@@ -144,6 +146,7 @@ export async function installPortableAccountPluginForTest(input: Readonly<{
                 try { return await input.activate(api); } catch (error) { activationFailure = error; throw error; }
             }; } },
         authority: entry.authority, accountLifetime: input.accountLifetime, occurrenceId,
+        ...(input.prepareRegistration ? { prepareRegistration: input.prepareRegistration } : {}),
         isCurrent: input.accountLifetime.isCurrent,
     })));
     if (attempts.some(attempt => !attempt.result.ok)) {

@@ -137,6 +137,54 @@ describe('deployment UI Action callbacks', () => {
         } finally { await installed.dispose(); account.dispose(); }
     });
 
+    it('returns typed activation recovery from a zones read and allows an explicit retry', async () => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const { createLazyAccountExecutable } = await import('@/components/plugins/reactNative/lazyAccountExecutable');
+        const { resolvePluginUiClientExecutablePlatform } = await import('@/sync/domains/plugins/ui/projection');
+        const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+        const serverId = await homes.addHome({ name: 'Zones activation', serverUrl: 'https://zones-activation.test',
+            serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const account = await captureLazyActionAccountContext(serverId);
+        const authored = definePlugin({ id: 'happier.deploy.cloudflare', version: '1.0.0', displayName: 'Cloudflare',
+            actions: { 'cloudflare-named/selections-read': { title: 'Read zones', surfaces: ['ui'], dangerLevel: 'safe', readOnly: true,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+                run: async () => ({ kind: 'ready', zones: [], options: [] }),
+            } } });
+        let unavailable = true;
+        // Executable bytes are a genuine loader boundary; activation and Action dispatch remain real.
+        const lazy = createLazyAccountExecutable({ pluginId: authored.manifest.id, contributes: authored.manifest.contributes,
+            target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activateAccount',
+                platform: resolvePluginUiClientExecutablePlatform() },
+            isCurrent: account.accountLifetime.isCurrent,
+            async load() { return { ok: true, exported: async api => {
+                if (unavailable) throw new TypeError('synthetic private activation detail');
+                return authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' });
+            } }; } });
+        let disposeLazy: (() => Promise<void>) | undefined;
+        const installed = await installPortableAccountPluginForTest({ manifest: authored.manifest,
+            activate: api => { disposeLazy = lazy.activate(api); },
+            prepareRegistration: lazy.prepareRegistration,
+            accountLifetime: account.accountLifetime, publishProjection: true });
+        try {
+            const actions = createDeploymentActions(account.accountLifetime, 'source');
+            const actionId = 'happier.deploy.cloudflare/actions/cloudflare-named/selections-read';
+            const refused = await actions.inspectPlatformTarget(actionId, {});
+            expect(refused).toMatchObject({ ok: false, code: 'activation_failed',
+                details: { requiredFact: 'pluginAccountActivation', remedy: expect.any(String) },
+                failureCause: { phase: 'plugin.account.activate', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+            if (refused.ok) throw new Error('Unavailable activation reached the read');
+            const recovery = readDeploymentFailureRecoveryV1(refused.code, refused.details);
+            expect(recovery.requiredFact).toBe('pluginAccountActivation');
+            expect(recovery.remedy).not.toBe(refused.code);
+            expect(JSON.stringify(refused)).not.toContain('synthetic private activation detail');
+            unavailable = false;
+            expect(await actions.inspectPlatformTarget(actionId, {}))
+                .toEqual({ ok: true, value: { kind: 'ready', zones: [], options: [] } });
+        } finally { await installed.dispose(); await disposeLazy?.(); account.dispose(); }
+    });
+
     it('uses the disposition confirmation for one exact deletion without asking again', async () => {
         const homeId = `srv_${'b'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Confirmed disposition', serverUrl: 'https://confirmed-disposition.test',

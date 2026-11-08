@@ -139,6 +139,7 @@ import {
     actionDeclinedFailure,
     actionOutcomeUnknownFailure,
     clientActionFailure,
+    clientActionPreparationFailure,
     projectClientActionInvocationFailure,
     type PluginSurfaceActionDispatchOutcome,
 } from './actionFailure';
@@ -1161,19 +1162,7 @@ async function prepareClientContributedAction(
     try {
         await initial.registration.prepare?.(input.signal);
     } catch (error) {
-        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : 'activation_failed';
-        // Lazy Account preparation throws the acquisition owner's classified
-        // failure before an author handler enters. Preserve that settlement.
-        const metadata = readPluginSurfaceHostApiFailureMetadata(error);
-        return clientActionFailure(code, {
-            ...metadata,
-            ...(metadata.layer ? { message: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body } : {}),
-            ...(error && typeof error === 'object' && 'retryable' in error && typeof error.retryable === 'boolean'
-                ? { retryable: error.retryable } : {}),
-            ...(error && typeof error === 'object' && 'diagnostics' in error && Array.isArray(error.diagnostics)
-                ? { diagnostics: error.diagnostics.filter((value: unknown): value is string => typeof value === 'string') } : {}),
-        });
+        return clientActionPreparationFailure(error);
     }
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);

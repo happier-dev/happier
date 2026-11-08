@@ -1,6 +1,7 @@
-import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -48,10 +49,13 @@ export function createLazyAccountExecutable(input: Readonly<{
                 cleanup = result as (() => void | Promise<void>) | undefined;
                 assertCurrent();
                 return capture.commit();
-            } catch {
+            } catch (error) {
                 await releaseRuntime();
                 if (retired || !input.isCurrent()) throw Object.assign(new Error('plugin_action_generation_retired'), { code: 'plugin_action_generation_retired' });
-                throw Object.assign(new Error('activation_failed'), { code: 'activation_failed' });
+                const remedy = 'This integration is not ready on this Home. Retry.';
+                throw new PluginError({ code: 'activation_failed', message: remedy,
+                    details: { requiredFact: 'pluginAccountActivation', remedy },
+                    failureCause: projectActionFailureCauseV1(error, 'plugin.account.activate') });
             }
         })().catch(error => {
             pending = undefined;
