@@ -272,6 +272,81 @@ describe('connectHomeAtAddress', () => {
         expect(resolveReloadedOrigin(reloaded.profiles.getActiveServerSnapshot())).toBe(enteredUrl);
     });
 
+    it.each(['stack-env', 'url', 'preconfigured'] as const)(
+        'admits an explicit Home after public discovery persisted an unused %s startup hint', async (source) => {
+            if (source === 'preconfigured') {
+                vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', JSON.stringify([canonicalUrl]));
+            } else {
+                vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', canonicalUrl);
+                vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', source === 'stack-env' ? 'stack' : '');
+            }
+            const location = new URL('https://borrowed.example.test/');
+            vi.stubGlobal('window', { location });
+            vi.stubGlobal('document', {});
+            const { operation, profiles } = await owner();
+            await profiles.setServerProfileIdentityForUrl(canonicalUrl, homeIdentity);
+            expect(profiles.resolveUniqueServerProfileByUrl(canonicalUrl)).toMatchObject({ source, lastUsedAt: 0 });
+            location.searchParams.set('server', enteredUrl);
+            advertisedFeatures = createRootLayoutFeaturesResponse({ capabilities: {
+                server: { canonicalServerUrl: enteredUrl }, serverIdentity: { serverIdentityId: homeIdentity },
+            } });
+            const attempt = input({ source: 'url', confirmCanonicalUrl: vi.fn(async () => false) });
+            expect(await operation.connectHomeAtAddress(attempt)).toMatchObject({ kind: 'connected', profile: {
+                serverUrl: enteredUrl, canonicalServerUrl: enteredUrl, serverIdentityId: homeIdentity,
+            } });
+            expect(attempt.confirmCanonicalUrl).not.toHaveBeenCalled();
+            expect(boundary.fetch.mock.calls.every(([url]) => new URL(String(url)).origin === enteredUrl)).toBe(true);
+        },
+    );
+
+    it.each(['selected', 'credentialed', 'descriptor', 'unreadable-credentials'] as const)(
+        'preserves address-change authority for a %s configured Home', async (retainedAuthority) => {
+            vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', canonicalUrl);
+            vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', 'stack');
+            const location = new URL('https://borrowed.example.test/');
+            vi.stubGlobal('window', { location });
+            vi.stubGlobal('document', {});
+            const { operation, profiles, profileFacts } = await owner();
+            const configured = await profiles.setServerProfileIdentityForUrl(canonicalUrl, homeIdentity);
+            if (!configured) throw new Error('Expected configured Home');
+            if (retainedAuthority === 'selected') await profiles.setActiveServerId(configured.id);
+            const credentialKeys = new Set<string>();
+            if (retainedAuthority === 'credentialed' || retainedAuthority === 'unreadable-credentials') {
+                const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+                const previousKeys = new Set(storage.store.keys());
+                await TokenStorage.setCredentialsForServerUrl(canonicalUrl, { serverId: homeIdentity }, { token: crypto.randomUUID() });
+                for (const key of storage.store.keys()) if (!previousKeys.has(key)) credentialKeys.add(key);
+                expect(credentialKeys.size).toBeGreaterThan(0);
+            }
+            if (retainedAuthority === 'descriptor') await profiles.adoptHomeProfile({ descriptor: {
+                v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: canonicalUrl,
+                revision: 1, endpoints: [{ kind: 'https', url: canonicalUrl }],
+            }, source: 'stack-env' });
+            const before = profileFacts();
+            location.searchParams.set('server', enteredUrl);
+            advertisedFeatures = createRootLayoutFeaturesResponse({ capabilities: {
+                server: { canonicalServerUrl: enteredUrl }, serverIdentity: { serverIdentityId: homeIdentity },
+            } });
+            const attempt = input({ source: 'url', confirmCanonicalUrl: vi.fn(async () => false) });
+            if (retainedAuthority === 'unreadable-credentials') {
+                storage.getItemMock.mockImplementation((key) => {
+                    if (credentialKeys.has(key)) throw new Error('Credential storage unavailable');
+                    return storage.store.get(key) ?? null;
+                });
+                await expect(operation.connectHomeAtAddress(attempt)).rejects.toThrow();
+                expect(attempt.confirmCanonicalUrl).not.toHaveBeenCalled();
+                storage.getItemMock.mockImplementation((key) => storage.store.get(key) ?? null);
+                const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+                expect(await TokenStorage.getCredentialsForServerUrl(canonicalUrl, { serverId: homeIdentity })).not.toBeNull();
+            } else {
+                expect(await operation.connectHomeAtAddress(attempt)).toMatchObject({ kind: 'declined' });
+                expect(attempt.confirmCanonicalUrl).toHaveBeenCalledWith({ previousUrl: canonicalUrl, nextUrl: enteredUrl });
+            }
+            expect(profileFacts()).toEqual(before);
+            expect(boundary.fetch.mock.calls.every(([url]) => new URL(String(url)).origin === enteredUrl)).toBe(true);
+        },
+    );
+
     it('keeps the entered URL when canonical adoption is declined', async () => {
         const { operation, profiles, before } = await owner();
         const attempt = input({ confirmCanonicalUrl: async () => false });

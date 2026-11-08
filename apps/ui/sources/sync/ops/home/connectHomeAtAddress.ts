@@ -8,10 +8,12 @@ import {
 } from '@/components/serverReachability/remediation';
 import { observeAuthenticatedServerFeaturesFresh, probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
 import { adoptHomeProfileWithCredentials } from '@/sync/domains/server/adoptHomeProfile';
+import { readHomeAddressSelection, type HomeAddressSelection } from '@/sync/domains/server/homeAddressSelection';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
     adoptHomeProfile,
     defaultHomeNameForAddress,
+    isActiveServerSelectionExplicit,
     resolveServerProfileForPortableIdentity,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
@@ -95,49 +97,62 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
         ?? snapshot.features.capabilities.serverIdentity?.serverIdentityId
         ?? undefined;
 
-    let canonicalServerUrl: string | undefined;
+    const resolution = learnedIdentity ? resolveServerProfileForPortableIdentity(learnedIdentity) : null;
+    const existing = resolution?.kind === 'resolved' ? resolution.profile : null;
+    const previousSelection = existing ? readHomeAddressSelection(existing) : undefined;
+    let useCanonical = true;
     if (advertisedUrl && advertisedUrl !== enteredUrl) {
-        const accepted = await input.confirmCanonicalUrl();
+        useCanonical = previousSelection?.enteredUrl === enteredUrl
+            && previousSelection.canonicalServerUrl === advertisedUrl
+            ? previousSelection.useCanonical
+            : await input.confirmCanonicalUrl();
         throwIfAborted(input.signal);
-        if (accepted) canonicalServerUrl = advertisedUrl;
-    } else if (advertisedUrl) {
-        canonicalServerUrl = advertisedUrl;
     }
 
-    if (canonicalServerUrl && canonicalServerUrl !== enteredUrl && isInsecureRemoteHttpServerUrl(canonicalServerUrl)) {
+    if (useCanonical && advertisedUrl && advertisedUrl !== enteredUrl && isInsecureRemoteHttpServerUrl(advertisedUrl)) {
         const accepted = await input.confirmInsecureHttp();
         throwIfAborted(input.signal);
-        if (!accepted) canonicalServerUrl = undefined;
+        if (!accepted) useCanonical = false;
     }
 
+    const canonicalServerUrl = advertisedUrl || existing?.canonicalServerUrl || existing?.serverUrl || enteredUrl;
+    const addressSelection: HomeAddressSelection | undefined = learnedIdentity && advertisedUrl && advertisedUrl !== enteredUrl
+        ? { serverIdentityId: learnedIdentity, enteredUrl, canonicalServerUrl: advertisedUrl, useCanonical }
+        : undefined;
     throwIfAborted(input.signal);
-    if (!canonicalServerUrl && learnedIdentity) {
-        const existing = resolveServerProfileForPortableIdentity(learnedIdentity);
-        if (existing.kind === 'resolved' && existing.profile.homeConnectionDescriptor) {
-            // Keeping the entered URL grants no authority to replace a revisioned
-            // descriptor. Continue with the established Home unchanged instead.
-            return { kind: 'connected', profile: existing.profile };
-        }
-    }
-    if (canonicalServerUrl && learnedIdentity) {
-        const existing = resolveServerProfileForPortableIdentity(learnedIdentity);
-        if (existing.kind === 'resolved' && existing.profile.homeConnectionDescriptor
-            && createServerUrlComparableKey(existing.profile.canonicalServerUrl ?? existing.profile.serverUrl)
-            !== createServerUrlComparableKey(canonicalServerUrl)) {
+    if (existing && learnedIdentity) {
+        const previousUrl = existing.canonicalServerUrl ?? existing.serverUrl;
+        const canonicalChanged = createServerUrlComparableKey(previousUrl) !== createServerUrlComparableKey(canonicalServerUrl);
+        const unknownAddress = !useCanonical
+            && createServerUrlComparableKey(enteredUrl) !== createServerUrlComparableKey(existing.serverUrl)
+            && enteredUrl !== previousSelection?.enteredUrl;
+        if (canonicalChanged || unknownAddress) {
             const credentials = await TokenStorage.getCredentialsForServerUrl(
-                existing.profile.canonicalServerUrl ?? existing.profile.serverUrl,
-                { serverId: learnedIdentity },
+                // Retained pre-fix profiles may have a different canonical metadata
+                // URL. The credential owner admits only their established serverUrl.
+                existing.serverUrl,
+                { serverId: learnedIdentity, storageReadFailure: 'surface' },
             );
             throwIfAborted(input.signal);
+            // Public discovery can persist a build's startup hint before a supplied
+            // Home is opened. That hint is not a saved address-change authority.
+            // Preserve consent for every chosen, adopted or authenticated Home.
+            const unusedStartupHint = !credentials
+                && !isActiveServerSelectionExplicit()
+                && existing.lastUsedAt === 0
+                && !existing.canonicalServerUrl
+                && !existing.homeConnectionDescriptor
+                && (existing.source === 'stack-env' || existing.source === 'url' || existing.source === 'preconfigured');
+            if (!unusedStartupHint) {
+                // Selecting Keep does not grant permission to route a saved Home's
+                // future sign-in to an origin claiming its identity, even while signed out.
+                const accepted = await input.confirmCanonicalUrl({ previousUrl, nextUrl: enteredUrl });
+                throwIfAborted(input.signal);
+                if (!accepted) return { kind: 'declined' };
+            }
             if (credentials) {
                 // A public identity claim alone cannot authorize forwarding an incumbent
                 // credential to another origin, including an address supplied by a link.
-                const accepted = await input.confirmCanonicalUrl({
-                    previousUrl: existing.profile.canonicalServerUrl ?? existing.profile.serverUrl,
-                    nextUrl: enteredUrl,
-                });
-                throwIfAborted(input.signal);
-                if (!accepted) return { kind: 'declined' };
                 // The public projection cannot replace a saved generation. Observe the
                 // exact descriptor at the address the user reached, without staging a
                 // profile or switching focus before identity and credentials are proven.
@@ -154,34 +169,39 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
                 const descriptor = observation.features.homeConnectionDescriptor;
                 if (observation.serverIdentityId !== learnedIdentity
                     || (descriptor && descriptor.homeServerIdentityId !== learnedIdentity)) {
-                    return { kind: 'identity_mismatch', home: existing.profile.name };
+                    return { kind: 'identity_mismatch', home: existing.name };
                 }
-                if (!descriptor || createServerUrlComparableKey(descriptor.canonicalServerUrl)
-                    !== createServerUrlComparableKey(canonicalServerUrl)) {
+                if ((existing.homeConnectionDescriptor && !descriptor)
+                    || (descriptor && createServerUrlComparableKey(descriptor.canonicalServerUrl)
+                        !== createServerUrlComparableKey(canonicalServerUrl))) {
                     return { kind: 'unreachable', remediation: null };
                 }
-                const profile = await adoptHomeProfileWithCredentials({
-                    descriptor,
-                    credentials,
-                    source: existing.profile.source ?? input.source ?? 'manual',
-                    preserveUserLabel: true,
-                    descriptorAuthority: 'current_connection_observation',
-                    shouldCancel: () => input.signal?.aborted === true,
-                });
-                return { kind: 'connected', profile };
+                if (canonicalChanged) {
+                    const profile = await adoptHomeProfileWithCredentials({
+                        descriptor: descriptor ?? { serverUrl: canonicalServerUrl, canonicalServerUrl, homeServerIdentityId: learnedIdentity },
+                        credentials,
+                        source: existing.source ?? input.source ?? 'manual',
+                        preserveUserLabel: true,
+                        ...(addressSelection ? { addressSelection } : {}),
+                        descriptorAuthority: 'current_connection_observation',
+                        shouldCancel: () => input.signal?.aborted === true,
+                    });
+                    return { kind: 'connected', profile };
+                }
             }
-            return { kind: 'unreachable', remediation: null };
+            if (canonicalChanged && existing.homeConnectionDescriptor) return { kind: 'unreachable', remediation: null };
         }
     }
     const saved = await adoptHomeProfile({
-        descriptor: {
-            serverUrl: enteredUrl,
-            ...(canonicalServerUrl ? { canonicalServerUrl } : {}),
+        descriptor: existing?.homeConnectionDescriptor ?? {
+            serverUrl: canonicalServerUrl,
+            canonicalServerUrl,
             displayName: input.displayName?.trim() || defaultHomeNameForAddress(enteredUrl),
             ...(learnedIdentity ? { homeServerIdentityId: learnedIdentity } : {}),
         },
-        source: input.source ?? 'manual',
+        source: existing?.source ?? input.source ?? 'manual',
         preserveUserLabel: true,
+        ...(addressSelection ? { addressSelection } : {}),
     });
     return { kind: 'connected', profile: saved };
 }
