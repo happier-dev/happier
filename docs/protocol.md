@@ -649,7 +649,9 @@ protects and materializes it on fresh spawn. See
 [managed directory ownership](./cli-architecture.md#managed-session-directories-planned-03-development-behavior).
 
 Owner metadata retains a real `path` for machine RPC and adds the optional strict
-`sessionDirectoryV1: { v: 1, kind: 'managed' }` marker. The Protocol classifier
+`sessionDirectoryV1: { v: 1, kind: 'managed' }` marker. The daemon writes it with
+the birth metadata (`buildCommittedLaunchMetadata`), so a Session whose runner never
+starts is still classified as managed. The Protocol classifier
 `readSessionDirectoryKind` owns interpretation for presentation and resume routing.
 Absent or malformed markers retain ordinary path-session behavior, including
 released 0.2 session data. The marker never establishes filesystem ownership;

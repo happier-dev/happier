@@ -62,6 +62,19 @@ describe('createSessionMetadata', () => {
         expect(applyInitialSessionCreationFactsToMetadata(createTestMetadata({ work: { memoryEnabled: true } }), options).work)
             .toMatchObject({ authoringOriginV1: authoringOrigin });
     });
+    it('marks a managed directory at birth, before any runner starts', () => {
+        // A Bot whose runner never starts (a refused first turn) keeps only its birth metadata; without
+        // the marker its private allocation reads as a user folder named by its 64-hex digest.
+        const managed = buildCommittedLaunchMetadata({ options: { directory: '/state/session-directories/a', directoryKind: 'managed' }, directory: '/state/session-directories/a' });
+        expect(managed).toMatchObject({ path: '/state/session-directories/a', sessionDirectoryV1: { v: 1, kind: 'managed' } });
+        const owner = createSessionOwnerMetadataV1({ metadata: managed });
+        if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
+        expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata: managed }), ownerMetadata: owner.ownerMetadata }))
+            .toMatchObject({ sessionDirectoryV1: { v: 1, kind: 'managed' } });
+
+        const path = buildCommittedLaunchMetadata({ options: { directory: '/repo', directoryKind: 'path' }, directory: '/repo' });
+        expect(path).not.toHaveProperty('sessionDirectoryV1');
+    });
     it('keeps actual checkout branch private at birth and preserves detached observations on attach', () => {
         for (const branchName of ['feature/actual', null]) {
             const correspondence = buildSessionCreationCorrespondence({

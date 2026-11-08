@@ -372,6 +372,7 @@ type SessionBirthMetadataFieldsV1 = Pick<SessionOwnerMetadataV1, 'work'>
 
 export type CommittedLaunchMetadataOptionsV1 = Readonly<{
   machineId?: string;
+  directoryKind?: 'path' | 'managed';
   sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
   placementOrigin?: MachinePoolSelectionOriginV1;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -469,6 +470,8 @@ export function buildCommittedLaunchMetadata(input: Readonly<{
     const machineId = options.machineId || options.sessionCreationCorrespondence?.recipe.execution.machineId;
     let metadata: SessionMetadata = {
         ...(input.directory !== undefined ? { path: input.directory, ...(input.host ? { host: input.host } : {}) } : {}),
+        // The private allocation is never a folder to show: say so at birth, not only once a runner starts.
+        ...(options.directoryKind === 'managed' ? { sessionDirectoryV1: { v: 1 as const, kind: 'managed' as const } } : {}),
         ...(machineId ? { machineId } : {}),
         ...(options.sessionCreationCorrespondence ? { sessionCreationCorrespondenceV1: options.sessionCreationCorrespondence } : {}),
         ...(options.sessionCreationCorrespondence?.recipe.checkout?.branchName !== undefined
