@@ -6503,16 +6503,17 @@ Left-behind paths. Job absence is not evidence that all its former members exite
 
 [`processes/terminate/terminateProcessTree.ts`](../apps/cli/src/processes/terminate/terminateProcessTree.ts)
 is the typed entry to the one shipped algorithm in `scripts/process_tree.cjs`.
-Discovery uses the census/tree owner; every signal round validates PID and start
-identity against one census, with no per-member census or awaited callback in the
-POSIX signal volley. In development source, parents are frozen before descendants,
-the termination signal is delivered to every admitted member, then the frozen
-members are resumed so graceful handlers can finish. This prevents a waiting shell
-from advancing after its child is killed. Windows uses the existing native Job
+Discovery uses the census/tree owner. In development source, each per-PID signal
+checks the target's native generation, principal and protection immediately before
+effect; the lifecycle callback then checks current ownership. A table admitted for
+an earlier target cannot authorize a reused or reowned PID. Parents receive the
+termination signal before descendants when ending a tree, so a waiting shell
+stops before its child is released. Explicit remainder targets retain their
+descendants-first order. Windows uses the existing native Job
 termination or root-first `taskkill /T` for a wholly admitted subtree. A failed
 gentle Windows request leaves the subtree for the existing force round.
 Ownership-sensitive callers establish current ownership and containment
-authority through their authorization callback before the volley. Per-PID signals protect
+authority through their authorization callback before each effect. Per-PID signals protect
 the reader and its ancestors by generation; only group signals additionally protect
 groups containing them. A non-detached child sharing the reader's group can still be
 ended individually. Listener termination keeps its existing TOCTOU and port-release

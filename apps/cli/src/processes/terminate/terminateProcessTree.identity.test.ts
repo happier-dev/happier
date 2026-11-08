@@ -140,7 +140,7 @@ describe('process-tree generation safety', () => {
             await waitForProcessExit(peer.pid!);
         }
     });
-    it('gives the graceful root its existing exit grace after the atomic signal volley', async () => {
+    it('gives the graceful root its existing exit grace after signalling the tree', async () => {
         const root = 4100;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [4101, { parent: root, start: 30 }]]);
         let clock = 1000;
@@ -150,7 +150,6 @@ describe('process-tree generation safety', () => {
         const owner = fixture(rows, {
             wait: async (ms: number) => { clock += ms; },
             kill(pid: number, signal: NodeJS.Signals) {
-                if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
                 if (pid !== root) { clock += 200; rows.delete(pid); }
                 else { rootSignals.push(signal); rootSignalAt = clock; }
             },
@@ -161,7 +160,25 @@ describe('process-tree generation safety', () => {
         expect(rootSignals).toEqual(['SIGTERM']);
         expect(result.status).toBe('complete');
     });
-    it('refuses the entire volley when execution authority is withdrawn before admission', async () => {
+    it('never signals a captured member whose principal changes after another member is terminated', async () => {
+        const root = 4100;
+        const child = 4101;
+        const rows = new Map([[process.pid, { parent: 1, start: 10, uid: 1000 }],
+            [root, { parent: 1, start: 20, uid: 1000 }], [child, { parent: root, start: 30, uid: 1000 }]]);
+        const signals: Array<[number, NodeJS.Signals]> = [];
+        const result = await fixture(rows, { kill(pid: number, signal: NodeJS.Signals) {
+            signals.push([pid, signal]);
+            if (pid === root && signal === 'SIGTERM') {
+                rows.delete(root);
+                rows.set(child, { parent: 1, start: 30, uid: 1001 });
+            }
+        } }).terminateTargets({ targets: [{ pid: root }], waitForExit: false });
+        expect(signals).toEqual([[root, 'SIGTERM']]);
+        expect(result).toMatchObject({ status: 'incomplete', outcomes: expect.arrayContaining([
+            { pid: child, outcome: 'refused', reason: 'principal_unavailable' },
+        ]) });
+    });
+    it('refuses every signal when execution authority is withdrawn before effect', async () => {
         const root = 4100;
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [4101, { parent: root, start: 30 }]]);
         const signals: number[] = [];
@@ -184,7 +201,6 @@ describe('process-tree generation safety', () => {
         const enrichmentReads: string[] = [];
         const signals: number[] = [];
         const owner = fixture(rows, { kill(pid: number, signal: NodeJS.Signals) {
-            if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
             signals.push(pid); rows.delete(pid);
         } }, false,
             path => {
@@ -219,7 +235,6 @@ describe('process-tree generation safety', () => {
         const rows = new Map([[process.pid, { parent: 1, start: 10 }], [root, { parent: 1, start: 20 }], [child, { parent: root, start: 30 }]]);
         const signals: Array<[number, NodeJS.Signals]> = [];
         const owner = fixture(rows, { kill(pid: number, signal: NodeJS.Signals) {
-            if (signal === 'SIGSTOP' || signal === 'SIGCONT') return;
             signals.push([pid, signal]); rows.delete(pid);
         } });
         const result = await owner.terminateTargets({ targets: [{ pid: root }], policy: 'kill', rootKind: 'dev_server',
