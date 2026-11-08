@@ -220,12 +220,14 @@ it.each([
         defaults: { connector: { imageRef: 'cloudflare/cloudflared', version: 'fixture' } },
         connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } };
     const failureCause = { phase: 'plugin.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null };
+    const relayRefusal = { errorCode: 'plugin_fetch_adapter_unavailable', error: 'plugin_fetch_adapter_unavailable', failureCause };
     let received: unknown;
     await answerExternalActionAccountForHome(homes, serverId, { machineId: 'browser-action-machine',
         actionId: 'action.invoke', tokenEpoch: 0,
-        execute: (value) => { received = value; return relayFailure
-            ? { ok: false, errorCode: 'plugin_fetch_adapter_unavailable', error: 'plugin_fetch_adapter_unavailable', failureCause }
-            : { ok: true, result }; } });
+        // The HTTP boundary owns the execution envelope. Returning another
+        // envelope here would conceal placement decoding a bare plugin result.
+        execute: (value) => { received = value; return relayFailure ? relayRefusal : result; },
+        failure: value => value === relayRefusal ? relayRefusal : null });
     const machine = createMachineFixture({ id: 'browser-action-machine', activeAt: Date.now(),
         access: { custodian: { accountId, displayName: 'Test Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
     storage.setState({ machines: { [machine.id]: machine },

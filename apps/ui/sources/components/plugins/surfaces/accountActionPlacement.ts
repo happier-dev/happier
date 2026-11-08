@@ -35,14 +35,15 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
                     externalActionTarget: { kind: 'machine', machineId },
                     actionCaller: params.context.actionCaller ?? { kind: 'host' } },
             });
+            // The Account carrier already unwraps successful execution results.
+            // Recognize its refusals; the plugin runtime owns payload validation.
             const parsed = ActionExecuteResultSchema.safeParse(response);
-            if (!parsed.success) throw new PluginError({ code: 'invalid_action_output' });
-            if (!parsed.data.ok) {
+            if (parsed.success && !parsed.data.ok) {
                 const failure = parsed.data;
                 throw new PluginError({ code: failure.errorCode, message: failure.error,
                     failureCause: failure.failureCause ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') });
             }
-            return parsed.data.result;
+            return response;
         } finally { account.dispose(); }
     }
 }
