@@ -19,6 +19,25 @@ App `Text` (`apps/ui/sources/components/ui/text/Text.tsx`) paints no colour of i
 | entry-loads (hstack-exec, current source) | PASS 7/7, rc=0 | `apps/stack/scripts/perf/entry-load.mjs` |
 | Live dark capture | NOT RUN | needs the next fin2 reload (no stack lifecycle in this lane) |
 
+## Round 2 (coordinator: editor + triggers + full sweep)
+| Surface | Change |
+|---|---|
+| `editor/WorkflowRolesEditor.tsx:50,88` | new local stylesheet `primary` on role catalog failure and per-role loading/unavailable lines |
+| `triggers/TriggerPluginEventRows.tsx:93` | event-ref subtitle node (Item renders element subtitles as-is) → `eventRef` (mono, `text.secondary`) |
+| `triggers/TriggerPluginEventRows.tsx:126` | event test result → `testResult` (`text.primary`) |
+| `run/WorkflowRunComposer.tsx:745` | roles prefill loading/failed → existing `body` (`text.primary`) |
+
+Sweep of `components/workflows/**` (every `<Text` tag, multi-line aware; style keys resolved against the file's and imported local stylesheets). Not changed, verified coloured:
+- `WorkflowLoopEditor.tsx:372` passes into `WorkflowBlockHeading` `meta`, wrapped in a Text with `headingMeta`/`headingName` (both coloured).
+- `WorkflowStepDataEditor.tsx:91` literal token is reached only from `WorkflowReferenceSentence`, whose callers all sit inside coloured Text (heading meta, `laneLabel`, `metaText`). The `:211` caller handles literals itself.
+- `WorkflowBlockListEditor.tsx:768` goes to heading `meta` or lane `content`, rendered inside `laneLabel` Text.
+- `WorkflowProjectTargetControl.tsx:250` nested in `styles.fixed` (`text.secondary`). `WorkflowResultFieldsEditor` `label`/`labelStacked` and `quietAction` carry colour.
+- `WorkflowStepOptionsChip` gets the chip host's `textStyle`. The `WorkflowRunFoldHeader` host Text gets coloured styles from the plugin-ui owner. `TriggerRow` uses the row subtitle or `workStatusWordStyle` ink.
+
 ## Residual
-- Same bare-`Text` pattern remains outside the run/review corridor (not touched, not review surfaces): `editor/WorkflowRolesEditor.tsx:50,88`, `triggers/TriggerPluginEventRows.tsx:126`, `editor/WorkflowLoopEditor.tsx:372` (wrapper; child may set ink), `editor/WorkflowStepDataEditor.tsx:91` (inline literal, likely inherits from its sentence). Root cause is app-wide: `Text` has no default ink. A default `text.primary` in `Text` would close the class but changes nested-inheritance behaviour app-wide; that is a Text-owner decision, not taken here.
-- `workflowRunStyles.ts` carries foreign uncommitted hunks; the commit includes only the `sheetSubtitle` hunk.
+- Root cause stays app-wide: `Text` has no default ink. Not changed, because in React Native a nested Text would override its parent's colour (coordinator agreed). New bare `<Text>` can reintroduce this anywhere.
+- `workflowRunStyles.ts` carries foreign uncommitted hunks. Commit 7185beabfe includes only the `sheetSubtitle` hunk.
+
+Commit: 7185beabfe (private index, CAS on read-tree base; diff-tree lists only the 6 lane paths).
+
+Model trial: Opus 5.5, low effort; surface Workflow run/review/editor/trigger dark ink; 1 coordinator round (scope widening, no rework); no usage limit hit.

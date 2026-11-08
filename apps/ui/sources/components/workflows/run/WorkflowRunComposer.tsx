@@ -746,6 +746,7 @@ export function WorkflowRunComposer(
                         accessibilityRole={
                           roleDraft.status === 'failed' ? 'alert' : undefined
                         }
+                        style={styles.body}
                       >
                         {roleDraft.status === 'failed'
                           ? t('workflows.start.rolesPrefillFailed')

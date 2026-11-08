@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
@@ -17,6 +18,11 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+
+/** Text paints no colour of its own; role status lines read in primary ink in both themes. */
+const styles = StyleSheet.create((theme) => ({
+    primary: { color: theme.colors.text.primary },
+}));
 
 /** Definition-local role pins. No Settings write or per-run override is made here:
  * every edit is a draft change recorded by the editor's existing history owner. */
@@ -47,7 +53,7 @@ export function WorkflowRolesEditor(props: Readonly<{
     };
     return <View>
         {catalog.status === 'failed' ? <View>
-            <Text accessibilityRole="alert">{t('roles.settings.loadFailed')}</Text>
+            <Text accessibilityRole="alert" style={styles.primary}>{t('roles.settings.loadFailed')}</Text>
             <RoundButton size="small" title={t('common.retry')} onPress={catalog.refresh} />
         </View> : null}
         {roleIds.map((roleId) => {
@@ -85,7 +91,7 @@ export function WorkflowRolesEditor(props: Readonly<{
                             { id: 'background_run', label: describeRoleRunsAs('background_run') },
                         ]} testIDPrefix={`${prefix}-target`}
                         onChange={(kind) => change({ runsAs: resolveRoleRunsAsKindV1(kind, effective.selection.runsAs) })} />
-                </> : <Text accessibilityRole="alert">{`${inline?.name ?? roleId} · ${t(catalog.status === 'loading' ? 'common.loading' : 'roles.settings.engineUnavailable')}`}</Text>}
+                </> : <Text accessibilityRole="alert" style={styles.primary}>{`${inline?.name ?? roleId} · ${t(catalog.status === 'loading' ? 'common.loading' : 'roles.settings.engineUnavailable')}`}</Text>}
                 {pin && editable ? <RoundButton size="small" display="inverted" title={t(inline ? 'common.remove' : 'roles.session.reset')}
                     testID={`${prefix}-reset`} onPress={() => props.onEdit([{ kind: 'remove_role', roleId }])} /> : null}
             </View>;

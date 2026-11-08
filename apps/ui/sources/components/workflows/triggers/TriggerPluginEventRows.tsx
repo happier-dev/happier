@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { AutomationEventTestResultV1Schema } from '@happier-dev/protocol/automations/automationEventTestV1';
 import { type AutomationEventTestResultV1 } from '@happier-dev/protocol/automations/automationEventTestV1';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -18,6 +19,12 @@ import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/p
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import type { TriggerWhenValue } from './sessionTriggerForm';
+
+/** Text paints no colour of its own: an element subtitle takes the row's subtitle ink here, and the test outcome reads in primary ink. */
+const styles = StyleSheet.create((theme) => ({
+    eventRef: { ...Typography.mono(), color: theme.colors.text.secondary },
+    testResult: { color: theme.colors.text.primary },
+}));
 
 type EventWhen = Extract<TriggerWhenValue, { kind: 'pluginEvent' }>;
 
@@ -90,7 +97,7 @@ export function TriggerPluginEventRows(props: Readonly<{
                 onComplete={(value, intent) => { props.onChange({ kind: 'pluginEvent', value, ...intent }); setEditing(false); }}
                 onCancel={() => setEditing(false)} /> : <Item testID={`${props.testID}-configure-event`}
                 title={t(props.when.value || props.eventEdit ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.popover.configureEvent')}
-                subtitle={eventRef ? <Text style={Typography.mono()}>{`${eventRef.pluginId}/${eventRef.localId}`}</Text> : undefined}
+                subtitle={eventRef ? <Text style={styles.eventRef}>{`${eventRef.pluginId}/${eventRef.localId}`}</Text> : undefined}
                 detail={props.when.value?.displayLabel} onPress={() => setEditing(true)} />}
         {props.activityEvent ? <Item testID={`${props.testID}-test`} title={t('workflows.triggers.activity.test')}
             disabled={props.when.value === null || editing || testing} loading={testing} showChevron={false}
@@ -123,6 +130,6 @@ export function TriggerPluginEventRows(props: Readonly<{
                 });
             }} /> : null}
         {tested?.when === props.when && tested.evidence === props.activityEvent
-            ? <Text testID={`${props.testID}-test-result`} accessibilityLiveRegion="polite">{t(`workflows.triggers.activity.${tested.result}`)}</Text> : null}
+            ? <Text testID={`${props.testID}-test-result`} accessibilityLiveRegion="polite" style={styles.testResult}>{t(`workflows.triggers.activity.${tested.result}`)}</Text> : null}
     </>;
 }
