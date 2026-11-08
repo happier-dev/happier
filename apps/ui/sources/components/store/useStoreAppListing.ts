@@ -16,6 +16,7 @@ import type { RegistryItemV1, RegistryItemPayloadV1, DeploymentTemplateV1 } from
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useCatalogAppPreparation } from '@/components/projects/deployments/useCatalogAppPreparation';
+import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
@@ -111,7 +112,7 @@ export function useStoreAppListing(input: Readonly<{
                             ...prepared.creationDefaults.values, controllerMachineId },
                         ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
                         target: { kind: 'new', installationId: prepared.machine.installationId },
-                        destination: { kind: 'stored' }, bindings: [],
+                        destination: { kind: 'stored' }, ...buildCatalogAppTemplateBindings(prepared.template),
                     } };
                     attempt.current = currentAttempt;
                 }

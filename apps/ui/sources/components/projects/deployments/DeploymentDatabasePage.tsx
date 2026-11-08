@@ -56,6 +56,7 @@ import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinat
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
+import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import {
   deploymentDataTargetOperands,
   deploymentRestoreOperands,
@@ -603,12 +604,12 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
       operands={{ machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
-        destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
-        bindings: [] }} />
+        destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest } }} />
   );
 }
 
-type AddOperands = Omit<Parameters<ReturnType<typeof createDeploymentActions>['instantiateTemplate']>[0], 'mode' | 'templateRef'>;
+type AddOperands = Omit<Parameters<ReturnType<typeof createDeploymentActions>['instantiateTemplate']>[0],
+  'mode' | 'templateRef' | 'bindings' | 'generatedSecretAudience'>;
 type Preflight =
   | Readonly<{ status: 'checking' }>
   | Readonly<{ status: 'ready'; shortOn: readonly ('memoryBytes' | 'freeDiskBytes')[]; firstRun: boolean }>
@@ -632,18 +633,20 @@ function DeploymentAddReview(props: Readonly<{
   const templateRef = item && item.payload.kind === 'app' && item.payload.state !== 'needs_review' && item.summary.version
     ? { sourceId: item.summary.sourceId, itemId: item.summary.itemId, version: item.summary.version, ref: item.payload.ref } : null;
   const needsReview = item?.payload.kind === 'app' && item.payload.state === 'needs_review';
+  const app = item?.payload.kind === 'app' && item.payload.state !== 'needs_review' ? item.payload.app : null;
+  const operands = app ? { ...props.operands, ...buildCatalogAppTemplateBindings(app) } : null;
   const actions = React.useMemo(() => createDeploymentActions(props.lifetime, props.detail.environment.projectSourceId),
     [props.lifetime, props.detail.environment.projectSourceId]);
   const [preflight, setPreflight] = React.useState<Preflight>({ status: 'checking' });
   const [added, setAdded] = React.useState(false);
   const refKey = templateRef ? JSON.stringify(templateRef) : null;
-  const operandsKey = JSON.stringify(props.operands);
+  const operandsKey = JSON.stringify(operands);
   // The review's preview is the preflight: one read per chosen template, never repeated on its own.
   React.useEffect(() => {
-    if (!templateRef) return;
+    if (!templateRef || !operands) return;
     let live = true;
     setPreflight({ status: 'checking' });
-    actions.instantiateTemplate({ ...props.operands, mode: 'preview', templateRef }).then((result) => {
+    actions.instantiateTemplate({ ...operands, mode: 'preview', templateRef }).then((result) => {
       if (!live) return;
       if (result.kind !== 'preview') { setPreflight({ status: 'failed', code: 'invalid_response' }); return; }
       setPreflight({ status: 'ready', firstRun: result.review.firstRunSetup === true,
@@ -661,9 +664,9 @@ function DeploymentAddReview(props: Readonly<{
   const refusalCode = press.outcome?.kind === 'refused' ? press.outcome.code
     : preflight.status === 'failed' ? preflight.code : null;
   const add = () => {
-    if (!templateRef) return;
+    if (!templateRef || !operands) return;
     void press.press(async () => {
-      await actions.instantiateTemplate({ ...props.operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } });
+      await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef, deploy: { requestKey: randomUUID() } });
       return { ok: true };
     });
   };
@@ -700,6 +703,11 @@ function DeploymentAddReview(props: Readonly<{
             <ItemGroup testID="project-deployments.add.facts" header="none">
               <Item testID="project-deployments.add.template" title={title} subtitle={props.item.description ?? undefined} mode="info" />
               <Item testID="project-deployments.add.where" title={t('projects.deployments.machine')} detail={props.machine} mode="info" />
+              {app && app.generatedSecrets.length > 0 ? (
+                <Item testID="project-deployments.add.secrets" mode="info"
+                  title={t('capabilities.store.appPage.secretsTitle', { count: app.generatedSecrets.length })}
+                  subtitle={t('capabilities.store.appPage.secretsBody')} />
+              ) : null}
               <Item testID="project-deployments.add.preflight" title={t('projects.deployments.addPreflight')} mode="info"
                 detail={preflight.status === 'checking' ? t('projects.deployments.addChecking')
                   : preflight.status === 'failed' ? undefined

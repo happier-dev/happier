@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { parse as parseYaml } from 'yaml';
+import { prepareDeploymentTemplateInstantiationV1, DeploymentTemplatePreparationErrorV1 } from '@happier-dev/deployments';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
@@ -32,7 +35,8 @@ beforeEach(() => homes.reset());
 afterEach(standardCleanup);
 
 let fixtureSequence = 0;
-async function createFixture(requiredDomain = false, withOtherSource = false, domainFailure = false) {
+async function createFixture(requiredDomain = false, withOtherSource = false, domainFailure = false,
+    selectedApp?: ReturnType<typeof DeploymentTemplateV1Schema.parse>) {
     const serverUrl = `https://store-app-listing-${++fixtureSequence}.test`;
     const catalogUrl = `${serverUrl}/apps.json`;
     const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -42,7 +46,7 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
                 url: `${serverUrl}/other-apps.json`, format: 'happier-catalog' as const,
                 kinds: ['app' as const], enabled: true, addedAt: 1 }] : [])], disabledSourceIds: [],
     } }] });
-    const app = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'Uptime Kuma',
+    const app = selectedApp ?? DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'Uptime Kuma',
         compose: { document: 'services:\n  kuma:\n    image: louislam/uptime-kuma:2\n', profiles: [], services: ['kuma'] },
         variables: [], generatedSecrets: [], domains: requiredDomain ? [{ key: 'web', service: 'kuma', containerPort: 3001,
             protocol: 'https', required: true, healthCheck: { path: '/api/entry-page', expectStatus: 200 } }] : [], volumes: [], firstRunSetup: true });
@@ -113,6 +117,17 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
         const input = DeploymentTemplateInstantiateInputV1Schema.parse(operand);
         expect(context.target).toEqual({ kind: 'machine', machineId: controller.id });
         expect(input.machineId).toBe(machine.id);
+        // The daemon HTTP boundary runs the real planner for catalog-variable regressions.
+        // No secret bytes are generated: this boundary only admits the inert plan.
+        if (selectedApp) {
+            try {
+                prepareDeploymentTemplateInstantiationV1({ template: app, templateRef: input.templateRef,
+                    source: parseYaml(app.compose.document), bindings: input.bindings });
+            } catch (error) {
+                if (!(error instanceof DeploymentTemplatePreparationErrorV1)) throw error;
+                return { ok: false, errorCode: error.code, error: error.code };
+            }
+        }
         const creating = input.environment.kind === 'create';
         if (input.mode === 'apply') (creating ? creations : retries).push(input);
         const creationDefaults = { values: { controllerMachineId: 'controller', buildMachineId: 'builder', retainPreviousDeployments: 1 },
@@ -364,6 +379,31 @@ it.each(['created', 'refused', 'approval'] as const)('creates only on explicit i
             environment: { kind: 'create', ...prepared.creationDefaults.values, ...choices,
                 purpose: 'standard', requestKey: expect.any(String) } });
         expect(fixture.preparations).toHaveLength(1);
+        expect(fixture.boundary.list()).toEqual([]);
+    } finally { await hook.unmount(); await fixture.dispose(); }
+});
+
+it.each([false, true])('installs bundled PostgreSQL defaults and generated password; truly missing variable=%s', async trulyMissing => {
+    const catalog: unknown = JSON.parse(await readFile(new URL('../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+    if (!catalog || typeof catalog !== 'object' || !('apps' in catalog) || !Array.isArray(catalog.apps)) throw new Error('Expected bundled catalog');
+    const entry: unknown = catalog.apps.find((entry: { itemId: string }) => entry.itemId === 'postgresql');
+    if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected PostgreSQL');
+    const app = DeploymentTemplateV1Schema.parse(entry.app);
+    if (trulyMissing) delete app.variables.find(variable => variable.key === 'DB_USER')!.default;
+    const fixture = await createFixture(false, false, false, app);
+    const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+        lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('ready'));
+        const ready = hook.getCurrent();
+        if (ready.kind !== 'ready') throw new Error('Expected ready App');
+        const prepared = await ready.prepare({ machineId: 'target', installationId: 'installed', projectSourceId: 'source/with space', sourceRevision: 1 });
+        if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared App');
+        const result = await ready.create(prepared, { name: 'Database', protection: 'nonProduction', deployerMode: 'managers' });
+        expect(result).toMatchObject(trulyMissing ? { ok: false, errorCode: 'template_variable_required' }
+            : { projectSourceId: 'source/with space', environmentId: 'environment/created' });
+        if (!trulyMissing) expect(fixture.creations[0]?.generatedSecretAudience)
+            .toEqual({ accountGrants: [], teamGrants: [], groupGrants: [] });
         expect(fixture.boundary.list()).toEqual([]);
     } finally { await hook.unmount(); await fixture.dispose(); }
 });

@@ -5,6 +5,19 @@ import { ActionApprovalRequestCreatedResultSchema,
 import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { MountedAuthoringActionExecute } from './sessionAuthoringActions';
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
+import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+
+/** Select the catalog's declared generators; the template planner owns defaults and missing-value validation.
+ * Generated Saved Secrets stay private to their creator, with no additional audience grants.
+ */
+export function buildCatalogAppTemplateBindings(template: DeploymentTemplateV1): Pick<DeploymentTemplateInstantiateInputV1,
+    'bindings' | 'generatedSecretAudience'> {
+    const bindings: DeploymentTemplateInstantiateInputV1['bindings'] = template.generatedSecrets.map(secret => ({
+        purpose: 'variable', name: secret.key, phase: 'runtime', source: { kind: 'generated', key: secret.key },
+    }));
+    return { bindings, ...(bindings.length ? { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } } : {}) };
+}
 
 /** Store and New app enter the existing Publish owner with the unchanged pinned operand. */
 export async function prepareCatalogAppPublish(input: DeploymentPublishPrepareInputV1,
