@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
@@ -40,7 +40,8 @@ import {
   type HappierRovingCollectionItem,
 } from './semantics.js';
 import { useHappierItemGroupItemBehavior } from './ItemGroup.js';
-import { HappierRowActionRevealSlot } from './RowActionRevealSlot.js';
+import { ListItemFrame, ListItemOverlayActions } from './ListItemFrame.js';
+export { HappierRowActionsReveal } from './ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_LIST_METRICS,
   type HappierCollectionRowRole,
@@ -358,16 +359,6 @@ export function HappierList({
       {children}
     </View>
   );
-}
-
-/** Whether a hover-revealing row's actions are drawn now; `null` outside such a row (always drawn). */
-const HappierRowActionsRevealContext = createContext<boolean | null>(null);
-
-/** Wraps a row's overflow control so a precise pointer reveals it with the row; it stays laid out and named. */
-export function HappierRowActionsReveal(props: Readonly<{ children: ReactNode }>): ReactElement {
-  const revealed = useContext(HappierRowActionsRevealContext);
-  if (revealed === null) return <>{props.children}</>;
-  return <HappierRowActionRevealSlot revealed={revealed}>{props.children}</HappierRowActionRevealSlot>;
 }
 
 /** A card corner's actions fade (a positioned overlay). */
@@ -694,7 +685,6 @@ export function HappierListItem({
   const openRow = useContext(HappierListRowOpenContext);
   const cardRing = useContext(HappierCardSelectionRingContext);
   const cardCorner = useContext(HappierCardActionsCornerContext);
-  const [collectionRowHovered, setCollectionRowHovered] = useState(false);
   const [cardActionsShown, setCardActionsShown] = useState({ hovered: false, focused: false });
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion === true;
   // Page and Collection rows with wrapping controls share the existing narrow
@@ -1072,7 +1062,7 @@ export function HappierListItem({
   // overflow itself reads this through `HappierRowActionsReveal`, whatever else shares the row's accessory.
   const hoverRevealRowActions = collectionRow && hasSecondaryActions && cardCornerAccessory === null
     && behavior.accessoryPlacement === 'outside' && !overlayRowActions && precisePointer;
-  const rowActionsRevealed = collectionRowHovered || cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
+  const rowActionsRevealed = cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
   const layered = contentBesidePressable === true && isInteractive && resolvedTheme !== undefined && resolvedTheme !== null;
   const withRowLayer = (style: HappierPortableStyle): HappierPortableStyle => layered ? { ...style, ...ROW_LAYER_TARGET_STYLE } : style;
   const pressTarget = isInteractive && resolvedTheme ? (
@@ -1176,9 +1166,9 @@ export function HappierListItem({
       // On the row's trailing inset, where an accessory cell would hold the trigger; a resting list's rows end on
       // the page's edge, and so does the trigger.
       style={{ position: 'absolute', end: collectionItem?.hairline === false ? 0 : resolvedTheme?.spacing.medium ?? 0, top: 0, bottom: 0, justifyContent: 'center' }}>
-      <HappierRowActionRevealSlot revealed={accessoryHeld === true || (precisePointer && collectionRowHovered)}>
+      <ListItemOverlayActions held={accessoryHeld === true} precisePointer={precisePointer}>
         {accessory}
-      </HappierRowActionRevealSlot>
+      </ListItemOverlayActions>
     </View>
   ) : null;
   const rowAccessory = overlaidRowActions ?? accessory;
@@ -1249,8 +1239,17 @@ export function HappierListItem({
   ) : row;
 
   return (
-    <HappierRowActionsRevealContext.Provider value={hoverRevealRowActions ? rowActionsRevealed : null}>
-    <View
+    <ListItemFrame
+      hoverEnabled={collectionRow && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
+      hoverFill={collectionRow && resolvedTheme && isInteractive && disabled !== true && selected !== true && !openRow
+        ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover) : undefined}
+      restingFill={collectionRow && resolvedTheme
+        ? selected === true || openRow
+          ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationSelected)
+          : 'transparent'
+        : undefined}
+      actionsRevealed={hoverRevealRowActions ? rowActionsRevealed : null}
+      overrideStyle={style}
       {...(suppressListItemRole ? (isGridRow ? {
         role: 'row',
         'aria-selected': selected === true ? true : false,
@@ -1288,10 +1287,6 @@ export function HappierListItem({
       testID={isInteractive ? undefined : testID}
       // RNW observes only at mount, so retain the measurement when a compound accessory arrives later.
       onLayout={pageSection !== null || collectionItem !== null ? handlePageRowLayout : undefined}
-      {...(collectionRow && isInteractive ? {
-        onMouseEnter: () => { setCollectionRowHovered(true); },
-        onMouseLeave: () => { setCollectionRowHovered(false); },
-      } : {})}
       {...(cardCornerAccessory !== null && precisePointer ? {
         onMouseEnter: () => { setCardActionsShown(state => state.hovered ? state : { ...state, hovered: true }); },
         onMouseLeave: () => { setCardActionsShown(state => state.hovered ? { ...state, hovered: false } : state); },
@@ -1307,12 +1302,7 @@ export function HappierListItem({
         // The pointer's fill eases in at the fast step (web); selection lands at once.
         ...(reducedMotion ? {} : COLLECTION_ROW_FILL_TRANSITION),
         ...(collectionItem?.insetFill === true ? CATALOG_INSET_FILL_STYLE : null),
-        backgroundColor: selected === true || openRow
-          ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationSelected)
-          : collectionRowHovered && isInteractive && disabled !== true
-            ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover)
-            : 'transparent',
-      } : undefined, style]}
+      } : undefined]}
     >
       {rowContent}
       {collectionRow && resolvedTheme ? (
@@ -1347,7 +1337,6 @@ export function HappierListItem({
       ) : behavior.dividerVisible && resolvedTheme ? (
         <HappierDivider color={resolvedTheme.colors.border} />
       ) : null}
-    </View>
-    </HappierRowActionsRevealContext.Provider>
+    </ListItemFrame>
   );
 }
