@@ -157,3 +157,40 @@ it('stacks a card hung from a control inside a dialog above that dialog (Connect
         container.remove();
     }
 });
+
+it('closes a card hung from a control inside a dialog when that dialog closes, and settles its request', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 600, y: 300, width: 80, height: 32, top: 300, left: 600, right: 680, bottom: 332, toJSON: () => ({}),
+    });
+    const cardDismissed = vi.fn();
+    let hostId: string | null = null;
+    function KeySheet() {
+        return <button data-testid="key-sheet-2">Paste a key</button>;
+    }
+    function ConnectDialog() {
+        const anchorRef = React.useRef<HTMLButtonElement>(null);
+        return <button ref={anchorRef} data-testid="add-key-2" onClick={() => Modal.show({
+            component: KeySheet, onRequestClose: cardDismissed,
+            chrome: { kind: 'card', title: 'Connect', phonePresentation: 'sheet', scrollHost: 'bounded', anchor: { kind: 'view', ref: anchorRef } },
+        })}>Add key</button>;
+    }
+    try {
+        const { PopoverScope } = await import('@/components/ui/popover/PopoverScope');
+        await act(async () => root.render(<PopoverScope><ModalProvider><span /></ModalProvider></PopoverScope>));
+        await act(async () => { hostId = Modal.show({ component: ConnectDialog, chrome: { kind: 'card', title: 'Connect a provider' } }); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="add-key-2"]')).not.toBeNull());
+        await act(async () => document.querySelector('[data-testid="add-key-2"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="key-sheet-2"]')).not.toBeNull());
+        // Cancel on the Connect dialog: the card it hung leaves with it, and its opener hears the dismissal.
+        await act(async () => { Modal.hide(hostId!); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="key-sheet-2"]')).toBeNull());
+        expect(cardDismissed).toHaveBeenCalledTimes(1);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});

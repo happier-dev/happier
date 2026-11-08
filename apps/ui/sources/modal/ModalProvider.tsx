@@ -40,6 +40,8 @@ type ModalProviderProps = Readonly<{
 
 type ModalHostEntry = ModalConfig & Readonly<{
     visible: boolean;
+    /** The dialog a card hung from a control belongs to: it closes with that dialog. */
+    hostId?: string;
 }>;
 
 type ModalHostState = Readonly<{
@@ -129,7 +131,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                 ? { current: readDocumentFocusReturnTarget(document) }
                 : undefined
         );
-        const modalConfig = { ...config, focusReturnRef, id, visible: true } as ModalHostEntry;
+        // A card hung from a control belongs to the dialog that control sits in (the topmost open one).
+        const hostId = anchor ? [...stateRef.current.modals].reverse().find(modal => modal.visible)?.id : undefined;
+        const modalConfig = { ...config, focusReturnRef, id, visible: true, ...(hostId ? { hostId } : {}) } as ModalHostEntry;
         clearRemovalTimer(id);
         setState(prev => {
             const nextState = {
@@ -142,8 +146,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         return id;
     }, [clearRemovalTimer, generateId]);
 
-    const hideModal = useCallback((id: string) => {
+    const hideModal = useCallback(function hide(id: string) {
         const target = stateRef.current.modals.find(modal => modal.id === id);
+        const hungCards = stateRef.current.modals.filter(modal => modal.visible && modal.hostId === id);
         // Every dialog kind leaves through the same exit as a custom modal; the host removes it once that has played.
         const shouldDelayRemoval = target?.visible === true;
 
@@ -160,6 +165,16 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             stateRef.current = nextState;
             return nextState;
         });
+
+        // Cards hung from controls in this dialog leave with it; their openers hear a dismissal.
+        for (const card of hungCards) {
+            try {
+                if (card.type === 'custom') card.onRequestClose?.();
+            } catch {
+                // One card's observer must not keep the others open.
+            }
+            hide(card.id);
+        }
 
         if (!shouldDelayRemoval) return;
         clearRemovalTimer(id);
