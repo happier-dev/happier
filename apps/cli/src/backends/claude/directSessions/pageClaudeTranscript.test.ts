@@ -12,6 +12,31 @@ function jsonlLine(value: unknown): string {
 }
 
 describe('pageClaudeTranscript', () => {
+  it('keeps takeover prompts in live reads and reopened history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-direct-prompts-'));
+    const configDir = join(root, '.claude');
+    const sessionFile = join(configDir, 'projects', 'proj-a', 'sess-1.jsonl');
+    await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
+    await writeFile(sessionFile, jsonlLine({ type: 'user', uuid: 'terminal', entrypoint: 'cli', message: { content: 'Before takeover' } }));
+    const params = { source: { kind: 'claudeConfig' as const, configDir, projectId: 'proj-a' }, env: {},
+      remoteSessionId: 'sess-1', maxBytes: 1024 * 1024, maxItems: 100 };
+    const initial = await pageClaudeTranscript({ ...params, direction: 'older' });
+    const prompts = ['First app prompt', 'Second app prompt', 'Third app prompt'];
+    await appendFile(sessionFile, prompts.flatMap((text, index) => [
+      jsonlLine({ type: 'user', uuid: `user-${index}`, entrypoint: 'sdk-ts', message: { role: 'user', content: [{ type: 'text', text }] } }),
+      jsonlLine({ type: 'assistant', uuid: `assistant-${index}`, message: { role: 'assistant', content: [{ type: 'text', text: `Reply ${index}` }] } }),
+    ]).join(''));
+
+    const followed = await readAfterClaudeTranscript({ ...params, cursor: initial.tailCursor! });
+    const expectedPrompts = prompts.map(text => ({ role: 'user', content: { type: 'text', text } }));
+    expect(followed.items.filter(item => item.messageRole === 'user').map(item => item.raw)).toEqual(expectedPrompts);
+    expect(followed.items.filter(item => item.messageRole === 'agent')).toHaveLength(3);
+    const reopened = await pageClaudeTranscript({ ...params, direction: 'older' });
+    expect(reopened.items.filter(item => item.messageRole === 'user').map(item => item.raw)).toEqual([
+      { role: 'user', content: { type: 'text', text: 'Before takeover' } }, ...expectedPrompts,
+    ]);
+  });
+
   it('fails observably when the existing oversized-line budget cannot establish a safe tail', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-direct-page-'));
     const configDir = join(root, '.claude');

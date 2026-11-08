@@ -174,6 +174,13 @@ rejected best-effort message.
 
 ## Direct-session JSONL read progress (development)
 
+Claude's direct-session mapper and stored-session writer share
+`backends/claude/utils/readClaudeUserMessageText` to project human prompts from
+both string content and SDK text-block arrays into user text messages. Direct
+history, follow and import use the same mapper. Tool/media content, peer deliveries,
+sidechains and meta records retain their structured output path. This correction
+is in development source; it does not establish preview or stable availability.
+
 The shared readers in `api/directSessions/filePaging` own byte paging for native
 JSONL sources. If their existing read allowance cannot complete the next record
 and no source has been consumed, they throw `JsonlRecordTooLargeError` with code

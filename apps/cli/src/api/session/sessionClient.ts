@@ -21,6 +21,7 @@ import { configuration } from '@/configuration';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { persistClaudeToolResultMedia } from '@/backends/claude/attachments/persistClaudeToolResultMedia';
 import { compactClaudeToolResultMetadata } from '@/backends/claude/utils/claudeToolResultMetadata';
+import { readClaudeUserMessageText } from '@/backends/claude/utils/readClaudeUserMessageText';
 import {
     buildClaudeJsonlLocalId,
     buildClaudeJsonlLocalIdFromMessageKey,
@@ -70,7 +71,7 @@ import {
     bootstrapAccountSettingsContext,
     refreshActiveAccountSettingsFromServer,
 } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { AccountSettingsV2GetResponseSchema, readClaudePeerMessage } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol';
 import {
     getActiveAccountSettingsSnapshot,
     subscribeActiveAccountSettingsSnapshot,
@@ -4128,16 +4129,9 @@ export class ApiSessionClient extends EventEmitter {
 
         let content: MessageContent;
 
-        // Check if body is already a MessageContent (has role property)
-        if (
-            body.type === 'user' &&
-            typeof body.message.content === 'string' &&
-            body.isSidechain !== true &&
-            body.isMeta !== true &&
-            // Peer deliveries keep their sender provenance in the raw output envelope.
-            !readClaudePeerMessage(body)
-        ) {
-            content = this.buildUserTextMessageContent(body.message.content, meta);
+        const userText = readClaudeUserMessageText(body);
+        if (userText !== null) {
+            content = this.buildUserTextMessageContent(userText, meta);
         } else {
             // Wrap Claude messages in the expected format
             content = {
