@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
-import { once } from 'node:events';
-import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { ChildProcess, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -22,8 +20,53 @@ import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/s
 import { createSpawnNewSessionLifecycleActionHandler } from './createSpawnNewSessionLifecycleActionHandler';
 import { runRequesterSessionLifecycle } from './requesterSessionLifecycle';
 import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 describe('Session startup operation custody', () => {
+  it.each(['project_environment_binding_unavailable', 'agent_isolation_unavailable'] as const)(
+    'retains the %s preparation cause in the terminal startup operation', async code => {
+    // Only the OS exit and retained diagnostic read are substituted boundaries.
+    const child = new ChildProcess();
+    Object.defineProperty(child, 'exitCode', { value: 1 });
+    const tracked: TrackedSession = { pid: 4321, processStartTimeMs: 1000, startedBy: 'daemon',
+      happySessionId: 'project-environment-startup', childProcess: child,
+      agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/environment-authority' };
+    const failureCause = { code, retryable: false, phase: 'client_start',
+      preparationCause: { code, stage: 'dispatch' }, failureReason: 'unclassified_provider_error' } as const;
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 1001,
+      error: new PluginError({ code, message: 'PRIVATE_PROJECT_ENVIRONMENT', details: { failureCause } }) });
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: {
+      spawnSession: async () => ({ type: 'success', sessionId: tracked.happySessionId! }),
+      stopSession: async () => ({ status: 'stopped' }),
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null }) });
+    const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'environment-startup', supportsCoreCancellation: () => true });
+    let spawnResult: SpawnSessionResult | undefined;
+    const response = await operations.observeExecution({ actionId: 'session.spawn_new',
+      input: { creationKey: 'environment-startup' }, execute: async operation => {
+        spawnResult = await handler({ directory: '/project',
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }, { signal: operation.signal, localActionContext: operation });
+        return { ok: true, result: spawnResult };
+      } });
+    expect(response).toMatchObject({ ok: true, result: { type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: { code, failureCause } } });
+    if (!response.ok || !spawnResult || spawnResult.type !== 'error') throw new Error('Expected startup refusal');
+    const projected = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure(spawnResult));
+    expect(projected).toMatchObject({ type: 'error', code: 'spawn_failed',
+      ...(code === 'agent_isolation_unavailable' ? { retryable: false } : {}),
+      launchError: { code, failureCause } });
+    expect(await operations.handlers.getV2({ operationId: 'environment-startup', waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { type: 'error',
+        errorDetail: { code, failureCause } } } });
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_');
+  });
+
   it('settles a carrier still waiting for native open with the Session startup owner timeout', async () => {
     vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', '100');
     // The OS child is the native boundary; handler, startup observation,
@@ -392,6 +435,9 @@ describe('Session startup operation custody', () => {
     const tracked: TrackedSession = { pid: 100, startedBy: 'daemon', happySessionId: 'session-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json' };
     const trackedSessions = [tracked];
+    const startupInput = { creationKey: 'same-creation', executionTarget: { serverId: 'home', machineId: scope.machineId },
+      directory: { kind: 'path' as const, path: '/project' }, agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
     let captured: SpawnSessionOptions | undefined;
     // Physical runner launch/webhook is the OS boundary. Its later open is
     // observed by the actual tracked-runner startup owner, not a test promise.
@@ -406,7 +452,7 @@ describe('Session startup operation custody', () => {
     }) });
     try {
       const response = operations.observeExecution({ actionId: 'session.spawn_new',
-        input: { creationKey: 'same-creation' }, execute: async operation => {
+        input: startupInput, execute: async operation => {
           try {
             return { ok: true, result: await handler({ directory: '/project',
               agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -417,8 +463,14 @@ describe('Session startup operation custody', () => {
           }
         } });
       await vi.waitFor(() => expect(captured).toBeDefined());
-      const rejoined = operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'same-creation' },
+      const rejoined = operations.observeExecution({ actionId: 'session.spawn_new', input: startupInput,
         execute: async () => { throw new Error('An existing startup must not spawn again'); } });
+      const presented = operations.observeExecution({ actionId: 'session.spawn_new',
+        input: { ...startupInput, observeSessionCommit: true },
+        execute: async () => { throw new Error('Presentation must observe the original startup'); } });
+      await vi.waitFor(async () => expect(await presented).toMatchObject({ ok: true, result: {
+        type: 'pending', outcome: 'accepted', sessionId: 'session-child',
+      } }));
       expect(captured?.projectSetupOperation?.operationAcceptance?.operationId).toBe('original-startup');
       expect(operations.store.get(scope, 'original-startup')).toMatchObject({ state: 'running' });
       await vi.advanceTimersByTimeAsync(15_100);

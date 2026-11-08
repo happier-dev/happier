@@ -508,7 +508,17 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
             details: { reason, status: admittedSnapshot.status.kind, launchKind } }), reason, launchKind);
     };
     const requestedCwd = input.requestedCwd ?? input.cwd ?? process.cwd();
-    if (!isAbsolute(requestedCwd) || requestedCwd.includes('\u0000')) return refuse('workspace_not_ready');
+    const workspaceNotReady = (branch: 'requested_cwd_invalid' | 'cwd_unavailable' | 'workspace_roots_empty' | 'root_invalid' | 'root_unavailable' | 'root_escape', root?: string): never => {
+        try {
+            logger.warnLocalFile('[P11] Workspace admission refused', {
+                branch, cwd: input.cwd ?? requestedCwd, requestedCwd,
+                ...(root ? { root } : {}),
+                ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}),
+            });
+        } catch { /* File diagnostics must preserve the original refusal. */ }
+        return refuse('workspace_not_ready');
+    };
+    if (!isAbsolute(requestedCwd) || requestedCwd.includes('\u0000')) return workspaceNotReady('requested_cwd_invalid');
     const requireReady = () => {
         if (process.platform !== 'linux') return refuse('unsupported_platform');
         if (admittedSnapshot.status.kind !== 'effective') return refuseIsolationNotReady(admittedSnapshot.status, code, launchKind);
@@ -533,15 +543,16 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
         if (input.context?.prepareLaunch) await prepare();
     }
     const canonicalCwd = await realpath(input.cwd ?? requestedCwd).catch(() => null);
-    if (!canonicalCwd || snapshot.workspaceRoots.length === 0) return refuse('workspace_not_ready');
+    if (!canonicalCwd) return workspaceNotReady('cwd_unavailable');
+    if (snapshot.workspaceRoots.length === 0) return workspaceNotReady('workspace_roots_empty');
     let workspaceExec = false;
     for (const root of snapshot.workspaceRoots) {
-        if (!isAbsolute(root)) return refuse('workspace_not_ready');
+        if (!isAbsolute(root)) return workspaceNotReady('root_invalid', root);
         const canonicalRoot = await realpath(root).catch(() => null);
-        if (!canonicalRoot) return refuse('workspace_not_ready');
+        if (!canonicalRoot) return workspaceNotReady('root_unavailable', root);
         const lexicalMatch = isCanonicalAbsolutePathInsideRoot(root, requestedCwd);
         const canonicalMatch = isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonicalCwd);
-        if (lexicalMatch && !canonicalMatch) return refuse('workspace_not_ready');
+        if (lexicalMatch && !canonicalMatch) return workspaceNotReady('root_escape', root);
         workspaceExec ||= canonicalMatch;
     }
     // An explicit kind is issued by a trusted native/Project owner. Its admitted

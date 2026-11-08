@@ -125,7 +125,9 @@ export function createAgentIsolationSessionContext(input: Readonly<{
         requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home }, signal }) } : {}), read() {
         if (input.readMaterial() !== material) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'The Session materialization was retired', retryable: false });
-        const snapshot = withWorkspaceRoot(input.machine?.read(), member?.workspaceRoot);
+        // A shared-agent Session can precede any Project. Its prepared native
+        // home supplies the same root that finite native operations consume.
+        const snapshot = withWorkspaceRoot(input.machine?.read(), member?.workspaceRoot ?? identity.home);
         if (!snapshot) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Current Machine isolation policy is unavailable', retryable: false });
         return { ...snapshot, ...(member ? { memberIdentity: member } : {}),

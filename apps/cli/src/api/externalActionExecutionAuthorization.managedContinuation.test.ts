@@ -280,7 +280,8 @@ describe('managed continuation through the ordinary public Action transport', ()
             ? dispatchManagedMachineSetupPlan({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), serverId: 'home-profile', input: { homeId: 'srv_home', machineId: 'guest' } })
             : dispatchManagedSessionStart({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), input: sessionInput });
         const expected = actionId === 'machines.setup.plan' ? { ok: true, result: { desiredRevision: 3 } }
-            : { ok: true, result: { type: 'error', code: 'invalid_input' } };
+            : { ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
+                launchError: { code: 'invalid_directory' } } };
         const first = await invoke();
         expect(first, JSON.stringify({ first, receiverResult, preparedAccount, boundaryFailure })).toMatchObject(expected);
         expect(await invoke()).toMatchObject(expected);

@@ -119,7 +119,9 @@ export function projectSessionCreationTargetPreparationFailureV1(
 ): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
   switch (failure.code) {
     case 'invalid_directory':
-      return { type: 'error', code: 'invalid_input', retryable: false };
+      return { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: failure.code,
+          message: 'The working directory cannot be used. Choose an accessible folder.' } };
     case 'checkout_unavailable':
       return { type: 'error', code: 'incompatible_target', retryable: false,
         incompatibleTarget: { reason: 'checkout_unavailable' } };

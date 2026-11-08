@@ -4,6 +4,8 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
@@ -23,7 +25,10 @@ vi.mock('@/api/session/sockets', () => ({
 }));
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['preflight', 'native'] as const)('retains the member-runnable Agent refusal from %s native-fork launch', async phase => {
+it.each([
+    ['agent_cli_not_runnable', 'preflight'], ['agent_cli_not_runnable', 'native'],
+    ['agent_isolation_unavailable', 'preflight'], ['agent_isolation_unavailable', 'native'],
+] as const)('retains the %s refusal from %s native-fork launch', async (code, phase) => {
     boundary.create.mockImplementation(() => Object.assign(new EventEmitter(), {
         connected: false, connect() {}, disconnect() {}, close() {},
     }));
@@ -47,9 +52,12 @@ it.each(['preflight', 'native'] as const)('retains the member-runnable Agent ref
     const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: childSessionId,
         processStartTimeMs: 100, processCommandHash: 'a'.repeat(64), childProcess };
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
-        error: { code: 'agent_cli_not_runnable', message: 'PRIVATE_RUNTIME' }, occurredAt: 101 });
+        error: new PluginError({ code, message: 'PRIVATE_RUNTIME', details: { failureCause: {
+            code, retryable: false, phase: 'client_start', preparationCause: { code, stage: 'dispatch' },
+            failureReason: 'unclassified_provider_error',
+        } } }), occurredAt: 101 });
     const spawnSession = vi.fn<ForkSpawnSession>(async () => phase === 'preflight'
-        ? { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'agent_cli_not_runnable', agentId: 'codex' }
+        ? { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: code, agentId: 'codex' }
         : { type: 'success', sessionId: childSessionId });
     const stopSession = vi.fn(async () => true);
     const result = await attemptNativeForkOpen({ credentials: { token: 'token', encryption: null },
@@ -59,10 +67,12 @@ it.each(['preflight', 'native'] as const)('retains the member-runnable Agent ref
         awaitAgentSessionOpen: params => awaitTrackedRunnerAgentSessionOpen({ ...params,
             getTrackedSessions: () => [tracked], readStartupFailure: async () => issue }),
     });
-    expect(result).toMatchObject({ ok: false, errorCode: 'agent_cli_not_runnable' });
+    expect(result).toMatchObject({ ok: false, errorCode: code });
     if (!result || result.ok) throw new Error('Expected typed fork refusal');
-    expect(result.errorMessage).toContain(resolveAgentDisplayTitle('codex'));
-    expect(result.errorMessage).toMatch(/install.*managed runtime/iu);
+    if (code === 'agent_cli_not_runnable') {
+        expect(result.errorMessage).toContain(resolveAgentDisplayTitle('codex'));
+        expect(result.errorMessage).toMatch(/install.*managed runtime/iu);
+    } else if (phase === 'native') expect(result.errorMessage).toBe(readSessionStartupFailurePreview(code));
     expect(JSON.stringify(result)).not.toContain('PRIVATE_');
     expect(spawnSession).toHaveBeenCalledTimes(1);
     expect(stopSession).toHaveBeenCalledTimes(phase === 'native' ? 1 : 0);

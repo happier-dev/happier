@@ -16,6 +16,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { logger } from '@/ui/logger';
 
 describe('fresh native Session directory preflight', () => {
   it('resolves the UI default in the selected native home while refusing an explicit inaccessible daemon home', async () => {
@@ -35,6 +36,7 @@ describe('fresh native Session directory preflight', () => {
         agentIsolation: { enabled: true } },
       metadataVersion: 1, daemonState: null, daemonStateVersion: 1 };
     const rpc = new RpcHandlerManager({ scopePrefix: machine.id, encryptionMode: 'plain', logger() {} });
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc });
     const invoke = (path: string) => rpc.invokeLocal(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path } }, { signal: new AbortController().signal });
@@ -42,10 +44,15 @@ describe('fresh native Session directory preflight', () => {
     try {
       expect(await invoke('~')).toEqual(ready);
       expect(await invoke(daemonHome)).toEqual({ ok: false, code: 'invalid_directory' });
+      expect(diagnostics).toHaveBeenCalledWith('[sessionCreation] Directory preflight refused', expect.objectContaining({
+        branch: 'directory_readiness', requestedDirectory: daemonHome, directory: daemonHome,
+        ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}),
+      }));
       const path = resolveDefaultDirectoryForMachine({ machineId: machine.id, machines: [machine], recentPaths: [] });
       expect(await invoke(path)).toEqual(ready);
     } finally {
       nativeAccess.mockRestore();
+      diagnostics.mockRestore();
       vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true });
     }
@@ -125,7 +132,8 @@ describe('fresh native Session directory preflight', () => {
       const denied = await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
         ...request, creationKey: 'explicit-daemon-home', directory: { kind: 'path', path: daemonHome },
       }), { surface: 'cli', authority: 'present_user' });
-      expect(denied).toMatchObject({ ok: true, result: { type: 'error', code: 'invalid_input', retryable: false } });
+      expect(denied).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { code: 'invalid_directory' } } });
       expect(launched).toEqual([root]);
     } finally {
       homeGet.mockRestore(); homePost.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();

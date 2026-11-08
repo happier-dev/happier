@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChildProcess } from 'node:child_process';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { PluginError } from '@happier-dev/plugin-sdk';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type { TrackedSession } from '@/daemon/types';
@@ -68,7 +69,18 @@ describe('runner-owned Agent session-open attestation', () => {
       : { status: 'runner_exited', code: 'agent_startup_failed', ...(kind === 'current' ? { failureCause } : {}) });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
   });
-  it.each(['current', 'predecessor'] as const)('attributes a broker startup cause only to its %s runner birth', async age => {
+  it.each([
+    ['broker_unavailable', 'current'], ['broker_unavailable', 'predecessor'],
+    ['update_required', 'current'], ['team_credential_usage_limit', 'current'],
+    ['team_credential_provider_selection_not_current', 'current'],
+    ['provider_endpoint_unavailable', 'current'], ['provider_endpoint_unavailable', 'predecessor'],
+    ['connected_service_credential_reconnect_required', 'current'],
+    ['connected_service_credential_reconnect_required', 'predecessor'],
+    ['provider_compatibility_unverified', 'current'], ['provider_compatibility_unverified', 'predecessor'],
+    ['plugin_services_managed_provider_authority_unavailable', 'current'],
+    ['agent_startup_transport_failed', 'current'],
+    ['agent_isolation_unavailable', 'current'], ['agent_isolation_unavailable', 'predecessor'],
+  ] as const)('attributes %s only to its %s runner birth', async (code, age) => {
     const { tracked, runner } = createFixture();
     tracked.pid = runner.pid - 1;
     tracked.sessionRunnerPid = runner.pid;
@@ -78,11 +90,62 @@ describe('runner-owned Agent session-open attestation', () => {
     tracked.childProcess = new ChildProcess();
     Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
-      error: new SessionTeamCredentialLaunchUnavailableError('broker_unavailable'),
+      error: code === 'plugin_services_managed_provider_authority_unavailable' || code === 'agent_startup_transport_failed'
+        ? { code } : new SessionTeamCredentialLaunchUnavailableError(code),
       occurredAt: runner.processStartTimeMs + (age === 'current' ? 1 : -1) });
     expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
       getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
-    })).toEqual(age === 'current' ? { status: 'runner_exited', code: 'broker_unavailable' } : { status: 'runner_exited' });
+    })).toEqual(age === 'current' ? { status: 'runner_exited', code } : { status: 'runner_exited' });
+  });
+
+  it.each([
+    ['broker_unavailable', 'agent_session_error'],
+    ['broker_unavailable', 'dependency_failure'],
+    ['connected_service_credential_reconnect_required', 'auth_error'],
+    ['provider_compatibility_unverified', 'team_credential'],
+    ['provider_compatibility_unverified', 'auth_error'],
+    ['agent_startup_transport_failed', 'team_credential'],
+    ['agent_isolation_unavailable', 'team_credential'],
+  ] as const)('does not attribute %s from foreign source %s to runner startup', async (code, source) => {
+    const { tracked, runner } = createFixture();
+    tracked.childProcess = new ChildProcess();
+    Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
+      error: code === 'agent_startup_transport_failed' ? { code } : new SessionTeamCredentialLaunchUnavailableError(code),
+      occurredAt: runner.processStartTimeMs + 1 });
+    expect(issue).toMatchObject({ code });
+    expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => ({ ...issue, source }), timeoutMs: null,
+    })).toEqual({ status: 'runner_exited' });
+  });
+
+  it.each(['current', 'predecessor'] as const)('attributes a legitimate Provider reconnect only to its %s runner birth', async age => {
+    const { tracked, runner } = createFixture();
+    tracked.childProcess = new ChildProcess();
+    Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
+    const code = 'connected_service_credential_reconnect_required';
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
+      error: Object.assign(new Error(code), createProviderErrorV1(code)),
+      occurredAt: runner.processStartTimeMs + (age === 'current' ? 1 : -1) });
+    expect(issue).toMatchObject({ code, source: 'agent_session_error' });
+    expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
+    })).toEqual(age === 'current' ? { status: 'runner_exited', code } : { status: 'runner_exited' });
+  });
+
+  it('does not attribute a failure after the tracked runner is rebound to a foreign Session', async () => {
+    const { tracked, runner } = createFixture();
+    tracked.childProcess = new ChildProcess();
+    Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
+      error: new SessionTeamCredentialLaunchUnavailableError('connected_service_credential_reconnect_required'),
+      occurredAt: runner.processStartTimeMs + 1 });
+    expect(await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => {
+        tracked.happySessionId = 'session-foreign';
+        return issue;
+      }, timeoutMs: null,
+    })).toEqual({ status: 'runner_exited' });
   });
 
   it('keeps a native fork attestation owned until a slow provider lifecycle commits it', async () => {

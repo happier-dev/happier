@@ -9,6 +9,11 @@ import {
 } from './sessionCreationTargetPreparationV1.js';
 
 describe('Session creation target preparation V1', () => {
+  it('retains the directory preflight refusal through the public creation result', () => {
+    expect(readSessionCreationTargetPreparationResultV1({ ok: false, code: 'invalid_directory' }))
+      .toMatchObject({ ok: false, result: { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: 'invalid_directory' } } });
+  });
   it.each(['agent_isolation_unavailable', 'filesystem_identity_custody_unavailable', 'MACHINE_ENCRYPTION_UNAVAILABLE'] as const)(
     'preserves %s after the real CLI Machine transport envelope reader throws it', code => {
     let refused: unknown;
@@ -19,6 +24,38 @@ describe('Session creation target preparation V1', () => {
     expect(readSessionCreationTargetPreparationResultV1(refused)).toEqual({ ok: false,
       result: { type: 'error', code: 'spawn_failed', retryable: false,
         launchError: { kind: 'launch_error', code, message: code } } });
+  });
+
+  it('preserves a raw filesystem custody refusal without exposing private native details', () => {
+    expect(readSessionCreationTargetPreparationResultV1({
+      error: 'private native detail', errorCode: 'filesystem_identity_custody_unavailable',
+      details: { directory: '/private/requester/home', reason: 'private custody detail' },
+    })).toEqual({ ok: false, result: { type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'filesystem_identity_custody_unavailable',
+        message: 'filesystem_identity_custody_unavailable' } } });
+  });
+
+  it('keeps preparation success, typed refusals and raw isolation refusals in one response projection', () => {
+    const preparedTarget = SessionCreationTargetPreparationResultV1Schema.parse({ ok: true, directory: '/workspace',
+      directoryKind: 'path', directoryCreationRequired: true, checkout: null });
+    expect(readSessionCreationTargetPreparationResultV1(preparedTarget)).toEqual({ ok: true, preparedTarget });
+    expect(readSessionCreationTargetPreparationResultV1({ ok: false, code: 'checkout_unavailable' })).toEqual({
+      ok: false, result: { type: 'error', code: 'incompatible_target', retryable: false,
+        incompatibleTarget: { reason: 'checkout_unavailable' } },
+    });
+    expect(readSessionCreationTargetPreparationResultV1({ error: 'private daemon detail', errorCode: 'agent_isolation_unavailable' }))
+      .toEqual({ ok: false, result: { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: 'agent_isolation_unavailable', message: 'agent_isolation_unavailable' } } });
+  });
+
+  it.each([
+    { error: 'private detail', errorCode: 'unknown_private_cause' },
+    { errorCode: 'agent_isolation_unavailable' },
+    { ok: true, error: 'conflicting result', errorCode: 'agent_isolation_unavailable' },
+  ])('keeps malformed or unclassified preparation responses incompatible without exposing their contents', raw => {
+    expect(readSessionCreationTargetPreparationResultV1(raw)).toEqual({ ok: false,
+      result: { type: 'error', code: 'incompatible_target', retryable: false,
+        incompatibleTarget: { reason: 'target_preparation_invalid_result' } } });
   });
 
   it('carries the canonical creation tag for a managed intent without accepting a raw creation key', () => {

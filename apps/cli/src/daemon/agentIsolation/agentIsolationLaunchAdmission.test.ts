@@ -5,6 +5,32 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { admitAgentIsolationLaunchForHost, type HostAgentIsolationLaunchSnapshot,
     type HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
+import { createAgentIsolationSessionContext } from './agentIsolationSessionContext';
+import { logger } from '@/ui/logger';
+
+it.skipIf(process.platform !== 'linux')('admits a shared-agent Session with its prepared native home before any Project exists', async () => {
+    await withTempDir('shared-session-native-home-', async home => {
+        const requester = { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' };
+        const material = { runtimeHome: join(home, 'runtime'), environment: {}, selectedMaterials: [] };
+        const context = createAgentIsolationSessionContext({
+            machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }) },
+            managedHappierBinaryPath: '/managed/happier', sessionRequester: requester,
+            sessionRequesterHomeServerIdentityId: 'home', hostHomeServerIdentityId: 'home',
+            sessionCustodianAccountId: 'owner', readMaterial: () => material,
+        });
+        const launch = await authorizeResolvedProjectExecLaunchForHost({
+            launch: { command: '/bin/echo', args: ['ready'], cwd: home, env: {} },
+            agentIsolation: context, agentNativeLaunch: true,
+            sessionMcpContext: { v: 1, socketPath: join(home, 'mcp.sock'), bearerToken: 'synthetic-session-token' },
+            mcpLaunchMaterial: { ...material, nativeIdentity: { home, agentUid: 2401, agentGid: 2401 } },
+            signal: new AbortController().signal, assertCurrent() {},
+        });
+        try {
+            expect(launch).toMatchObject({ command: 'sudo', cwd: home, launcherCwd: process.cwd() });
+            expect(launch.args).toEqual(['-n', '-u', 'happier-agent', '--', '/managed/happier', 'agent-launch']);
+        } finally { await launch.release(); }
+    });
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -14,6 +40,19 @@ const snapshot = (root: string): HostAgentIsolationLaunchSnapshot => ({ enabled:
     status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [root], localTransport: { agentUid: 2401 },
     launch: { managedHappierBinaryPath: '/managed/happier', runtimeHome: '/member/runtime',
         selectedEnvironmentKeys: [], selectedMaterials: [] } });
+
+it.skipIf(process.platform !== 'linux')('identifies the exact workspace admission branch and checked cwd in file diagnostics', async () => {
+    await withTempDir('workspace-refusal-diagnostics-', async cwd => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        await expect(admitAgentIsolationLaunchForHost({ cwd, requesterIdentity: requester, agentNativeLaunch: true,
+            context: { read: () => ({ ...snapshot(cwd), workspaceRoots: [] }) } }))
+            .rejects.toMatchObject({ code: 'agent_isolation_unavailable', details: { reason: 'workspace_not_ready' } });
+        expect(diagnostic).toHaveBeenCalledWith('[P11] Workspace admission refused', expect.objectContaining({
+            branch: 'workspace_roots_empty', cwd, requestedCwd: cwd,
+            ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}),
+        }));
+    });
+});
 
 it.skipIf(process.platform !== 'linux')('walks member roots only after preparation creates the admitted workspace', async () => {
     await withTempDir('member-admitted-roots-', async root => {

@@ -8,6 +8,7 @@ import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory'
 import { createManagedSessionDirectories } from './managedSessionDirectories';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { DirectoryInCheckoutError, resolveDirectoryInCheckout } from '@/workspaces/activation/resolveDirectoryInCheckout';
+import { logger } from '@/ui/logger';
 
 type SessionCheckoutCreationResult = ScmWorktreeCreateResponse & Readonly<{
   created?: boolean;
@@ -71,8 +72,19 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   scmRegistry?: ScmBackendRegistry;
 }>): Promise<SessionCreationTargetPreparationResultV1> {
   const request = SessionCreationTargetPreparationRequestV1Schema.parse(input.request);
+  const invalidDirectory = (branch: 'managed_tag' | 'canonical_path' | 'directory_readiness' | 'checkout_directory', directory?: string) => {
+    try {
+      logger.warnLocalFile('[sessionCreation] Directory preflight refused', {
+        branch, directoryKind: request.directory.kind,
+        ...(request.directory.kind === 'path' ? { requestedDirectory: request.directory.path } : {}),
+        ...(directory ? { directory } : {}),
+        ...(process.geteuid ? { effectiveUid: process.geteuid() } : {}),
+      });
+    } catch { /* File diagnostics never replace the original refusal. */ }
+    return { ok: false as const, code: 'invalid_directory' as const };
+  };
   if (request.directory.kind === 'managed') {
-    if (!request.sessionCreationTag) return { ok: false, code: 'invalid_directory' };
+    if (!request.sessionCreationTag) return invalidDirectory('managed_tag');
     const target = createManagedSessionDirectories({ activeServerDir: input.activeServerDir, platform: input.platform }).prepareForCreation({
       sessionCreationTag: request.sessionCreationTag,
     });
@@ -85,7 +97,7 @@ export async function prepareSessionCreationTarget(input: Readonly<{
     platform: input.platform,
   });
   if (!canonicalSource) {
-    return { ok: false, code: 'invalid_directory' };
+    return invalidDirectory('canonical_path');
   }
 
   const draft = request.checkoutCreationDraft;
@@ -97,7 +109,7 @@ export async function prepareSessionCreationTarget(input: Readonly<{
     });
     input.signal?.throwIfAborted();
     if (!directoryReadiness.ok && directoryReadiness.response.type === 'error') {
-      return { ok: false, code: 'invalid_directory' };
+      return invalidDirectory('directory_readiness', canonicalSource.path);
     }
     return SessionCreationTargetPreparationResultV1Schema.parse({
       ok: true,
@@ -149,7 +161,7 @@ export async function prepareSessionCreationTarget(input: Readonly<{
       platform: input.platform,
     });
   } catch (error) {
-    if (error instanceof DirectoryInCheckoutError) return { ok: false, code: 'invalid_directory' };
+    if (error instanceof DirectoryInCheckoutError) return invalidDirectory('checkout_directory', canonicalFinal.path);
     throw error;
   }
   return SessionCreationTargetPreparationResultV1Schema.parse({
