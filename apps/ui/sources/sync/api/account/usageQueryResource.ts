@@ -2102,6 +2102,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         || change === 'quota-inputs' || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true);
                     projectionOnly = projectionOnly !== false && !accountModeChanged && change === 'projection-inputs';
                     woken = true;
+                    // Presentation inputs keep the admitted source facts fresh.
+                    // The matching digest is only the store's existing continuity
+                    // hint: it still rereads and publishes the changed projection.
+                    const digest = projectionOnly === true && event.kind === 'invalidated'
+                        ? owner.store.getEntry(reference).getSnapshot().digest : undefined;
+                    const notification = digest && event.kind === 'invalidated' ? { ...event, digest } : event;
                     if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
@@ -2111,12 +2117,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             queueMicrotask(() => {
                                 if (!accountingWakeScheduled || !listeners.has(observe)) return;
                                 accountingWakeScheduled = false;
-                                listener(event);
+                                listener(notification);
                             });
                         }
                     } else {
                         accountingWakeScheduled = false;
-                        listener(event);
+                        listener(notification);
                     }
                 };
                 listeners.set(observe, {

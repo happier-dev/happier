@@ -21,16 +21,10 @@ import {
   projectUsageRunLengthModel, projectUsageScoreModel, projectUsageShippedModel, projectUsageSkyModel, projectUsageSteeringModel,
   projectUsageRecordFacts, projectUsagePortraitModel, projectUsageWeekHours, resolveUsageChartDay, resolveUsageChartMetric,
 } from './usageChartModels';
+import { readUsageChartSources } from './usageSourceSelection';
 
 export type UsageChartStyleBodyProps = UsageBodyProps;
 
-const HOW_YOU_WORK = ['how_you_work'] as const;
-const ACCOUNTING = ['accounting'] as const;
-
-/** The query owner decides whether this chart reads private activity or accounting alone. */
-function readUsageChartSources(slice: UsageBodyProps['slice']) {
-  return slice.shownQuery.includeSessionEvidence ? HOW_YOU_WORK : ACCOUNTING;
-}
 const LEVEL_NAMES = () => [t('usage.board.charts.levelNone'), t('usage.board.charts.levelQuiet'), t('usage.board.charts.levelSteady'),
   t('usage.board.charts.levelBusy'), t('usage.board.charts.levelBusiest')];
 

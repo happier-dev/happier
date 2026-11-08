@@ -8,7 +8,6 @@ import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -40,7 +39,7 @@ import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, Usa
 import { useUsageAnalyticsView } from './usageBodyKit';
 import { createUsageWidgetPresets } from '@happier-dev/protocol/widgets/usageWidgetPresetsV1';
 import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
-import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 
@@ -923,20 +922,34 @@ describe('Usage page batch', () => {
     expect(seen.at(-1)).toBe(false);
   });
   it.each(['usage_daily', 'usage_outcomes', 'usage_footprint', 'usage_source_coverage', 'usage_unpriced'] as const)('admits private evidence through the real %s body only when its projection consumes it', async narrowId => {
-    const sessionReads = createSessionReadBatchHttpBoundary(request => {
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-widget-demand.test', accountId: 'account-a' }],
+      route: request => {
         if (request.path === '/v2/usage/query') return Response.json(accounting);
         if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-        if (request.path === '/v2/sessions/work') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'work',
-          createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
-          metadataVersion: 1, metadata: { path: '', host: '', name: 'work' }, agentStateVersion: 1 }) });
-        if (request.path === '/v1/sessions/work/turns') return Response.json({ v: 1, sessionId: 'work', updatedAt: 900,
-          turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] });
-        if (request.path === '/v1/sessions/work/messages') return Response.json({ messages: [], hasMore: false });
-        return undefined;
-      });
-    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-widget-demand.test', accountId: 'account-a' }],
-      route: sessionReads.handle });
+        if (request.path === USAGE_SESSION_EVIDENCE_PATH && request.method === 'POST') {
+          const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+          const turns = { status: 200, body: { v: 1, sessionId: 'work', updatedAt: 900,
+            turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] } };
+          return Response.json(UsageSessionEvidenceResponseSchema.parse({
+            requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['work'] })),
+            results: [{ sessionId: 'work', turns, ...(input.readWorkFacts ? {
+              workFacts: { session: { id: 'work', seq: 1, createdAt: 1, updatedAt: 900, active: true,
+                metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
+                encryptionMode: 'plain', dataEncryptionKey: null, viewerRole: 'owner',
+                access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } }, content: null },
+            } : {
+              detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: 'work',
+                createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
+                metadataVersion: 1, metadata: { path: '', host: '', name: 'work' }, agentStateVersion: 1 }) } },
+              messageEvidence: {}, messagesComplete: true,
+            }) }],
+          }));
+        }
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+      } });
+    const { sync } = await import('@/sync/sync');
+    await sync.awaitBootstrapForegroundAcquisition();
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
@@ -951,29 +964,32 @@ describe('Usage page batch', () => {
         serverId={home!.homes.a!.id} testID="widget-demand" /></UsageWidgetBatchProvider></CoreCollectionScope>
     </InjectedAuthProvider>;
     const screen = await renderScreen(body(narrowId));
+    const evidenceReads = () => home!.requests.filter(request => request.method === 'POST' && request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .map(request => UsageSessionEvidenceRequestSchema.parse(request.body));
     await expect.poll(() => home!.requests.filter(request => request.path === '/v2/usage/query').length).toBeGreaterThan(0);
     await flushHookEffects({ cycles: 30 });
+    expect(evidenceReads()).toEqual([]);
     expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch'
       || request.method === 'GET' && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
     await screen.update(body('usage_period_summary'));
-    await expect.poll(() => sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/turns').length).toBe(1);
-    await flushHookEffects({ cycles: 30 });
-    expect(sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/messages')).toHaveLength(0);
-    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
-      .toEqual([['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: true, includeMessages: false })]]);
+    // Custom windows open unconverted evidence under the shared window policy,
+    // even when this widget's output does not consume transcript facts.
+    await expect.poll(evidenceReads).toEqual([
+      expect.objectContaining({ readWorkFacts: true,
+        requests: [expect.objectContaining({ query: expect.objectContaining({ includeSessionEvidence: true, includeTranscriptEvidence: false }) })] }),
+      expect.objectContaining({ requests: [expect.objectContaining({ sessionIds: ['work'],
+        query: expect.objectContaining({ includeTranscriptEvidence: true }) })] }),
+    ]);
+    expect(evidenceReads()[1]).not.toHaveProperty('readWorkFacts');
     await expect.poll(() => slices.find(slice => slice.howYouWork)?.howYouWork?.intervals?.agentTimeMs).toBe(300);
-    expect(slices.find(slice => slice.howYouWork)?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
+    expect(slices.find(slice => slice.howYouWork)?.sources)
+      .toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
+    const admittedReads = evidenceReads();
     await screen.update(body('usage_coach'));
-    await expect.poll(() => sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v1/sessions/work/messages').length).toBe(1);
     await flushHookEffects({ cycles: 30 });
-    expect(sessionReads.componentRequests.filter(request => request.method === 'GET' && request.path === '/v2/sessions/work')).toHaveLength(1);
-    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch').map(request => [request.method, request.body]))
-      .toEqual([
-        ['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: true, includeMessages: false })],
-        ['POST', expect.objectContaining({ sessionIds: ['work'], includeSnapshot: false, includeMessages: true })],
-      ]);
-    expect(home.requests.filter(request => request.method === 'GET'
-      && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
+    expect(evidenceReads()).toEqual(admittedReads);
+    expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch'
+      || request.method === 'GET' && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
     await expect.poll(() => slices.find(slice => slice.howYouWork)?.sources)
       .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
   });

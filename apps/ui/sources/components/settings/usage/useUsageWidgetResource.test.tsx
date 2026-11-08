@@ -12,6 +12,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
 import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryBatchKey, getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { useUsageWidgetResource, useUsageWidgetBodyModel, type UsageWidgetResource, type UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
 import { usageAgentTitle, useUsageAnalyticsView } from './widgets/usageBodyKit';
@@ -1073,7 +1074,7 @@ describe('Usage widget shared Resource selection', () => {
     });
     it('keeps a settled sibling body and its model work stable through another query progress, while forwarding its own activity and authority loss', async () => {
         const slowAccounting = createDeferred<Response>();
-        const slowDetail = createDeferred<Response>();
+        const slowDetail = createDeferred<void>();
         let detailIssued = false;
         let denied = false;
         const credentials = await mountHome(request => {
@@ -1082,7 +1083,15 @@ describe('Usage widget shared Resource selection', () => {
                 const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
                 return query.filters?.sessionIds?.includes('slow-session') ? slowAccounting.promise : Response.json(accounting);
             }
-            if (request.path === '/v2/sessions/slow-session') { detailIssued = true; return slowDetail.promise; }
+            if (request.path === USAGE_SESSION_EVIDENCE_PATH && request.method === 'POST') {
+                const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                expect(input.requests[0]?.sessionIds).toEqual(['slow-session']);
+                detailIssued = true;
+                return slowDetail.promise.then(() => Response.json(UsageSessionEvidenceResponseSchema.parse({
+                    requests: input.requests.map(demand => ({ query: demand.query, sessionIds: ['slow-session'] })),
+                    results: [{ sessionId: 'slow-session', detail: { status: 404, body: { error: 'not_found' } } }],
+                })));
+            }
             return undefined;
         });
         const first = normalizeUsageQuery({ session: 'settled-session', period: { startMs: 0, endMs: 1000 },
@@ -1126,7 +1135,7 @@ describe('Usage widget shared Resource selection', () => {
             expect(computations.get('second')).toBeGreaterThan(secondComputations);
             expect(models.get('second')!.pending).toBe(true);
             expect(models.get('second')!.refreshing).toBe(false);
-            await act(async () => { slowDetail.resolve(Response.json({ error: 'not_found' }, { status: 404 })); });
+            await act(async () => { slowDetail.resolve(); });
             await expect.poll(() => models.get('second')!.pending).toBe(false);
             expect(models.get('first')!.pending).toBe(false);
             expect(models.get('first')!.slice).toBe(settledSlice);
@@ -1140,7 +1149,7 @@ describe('Usage widget shared Resource selection', () => {
             }
         } finally {
             slowAccounting.resolve(Response.json(accounting));
-            slowDetail.resolve(Response.json({ error: 'not_found' }, { status: 404 }));
+            slowDetail.resolve();
         }
     });
     it('exposes source-only initial progress to page chrome while bodies retain their first-read placeholder', async () => {
@@ -1253,14 +1262,22 @@ describe('Usage widget shared Resource selection', () => {
     });
 
     it('releases accounting activity while slow private detail is still being read', async () => {
-        const detail = createDeferred<Response>();
+        const detail = createDeferred<void>();
         let issued = false;
         const withDetail: UsageAnalyticsQueryResponse = { ...accounting, contributions: [{ id: 'fact', observedAtMs: 500,
             sessionId: 'slow-session', turnId: 'turn', agentId: null, modelId: null, machineId: null, projectKey: null,
             workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost }] };
         const credentials = await mountHome(request => {
             if (request.path === '/v2/usage/query') return Response.json(withDetail);
-            if (request.path === '/v2/sessions/slow-session') { issued = true; return detail.promise; }
+            if (request.path === USAGE_SESSION_EVIDENCE_PATH && request.method === 'POST') {
+                const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                expect(input.requests[0]?.sessionIds).toEqual(['slow-session']);
+                issued = true;
+                return detail.promise.then(() => Response.json(UsageSessionEvidenceResponseSchema.parse({
+                    requests: input.requests.map(demand => ({ query: demand.query, sessionIds: ['slow-session'] })),
+                    results: [{ sessionId: 'slow-session', detail: { status: 404, body: { error: 'not_found' } } }],
+                })));
+            }
             return undefined;
         });
         const queryPlan = plan(normalizeUsageQuery({ session: 'slow-session', period: { startMs: 0, endMs: 1000 } }));
@@ -1279,11 +1296,11 @@ describe('Usage widget shared Resource selection', () => {
             expect(hook.getCurrent().slice?.sources.find(source => source.source === 'how_you_work')?.status).toBe('pending');
             expect(hook.getCurrent().pending).toBe(true);
             expect(hook.getCurrent().refreshing).toBe(false);
-            await act(async () => { detail.resolve(Response.json({ error: 'not_found' }, { status: 404 })); await settled.promise; });
+            await act(async () => { detail.resolve(); await settled.promise; });
             await flushHookEffects({ cycles: 30 });
             expect(entry.getSnapshot().pending).toBe('idle');
             expect(hook.getCurrent().slice?.sources.find(source => source.source === 'how_you_work')?.status).not.toBe('pending');
             expect(hook.getCurrent().refreshing).toBe(false);
-        } finally { release(); detail.resolve(Response.json({ error: 'not_found' }, { status: 404 })); }
+        } finally { release(); detail.resolve(); }
     });
 });

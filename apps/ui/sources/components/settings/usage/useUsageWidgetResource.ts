@@ -16,7 +16,7 @@ import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
 
 export type UsageWidgetResource = Readonly<{ entry: UsageQueryResourceEntry | null; lifetime: ServerAccountScopeLifetime | null; plan: UsageWidgetQueryPlan }>;
 export type UsageWidgetQueryIdentity = Readonly<{ query: UsageQuery; authority: ServerAccountScope }>;
-/** A body selects the facts its current presentation consumes; source/lifecycle fields stay intact. */
+/** A body selects its consumed facts and source facets; shared Resource authority and transport lifecycle stay intact. */
 export type UsageWidgetSliceProjection = (slice: UsageQueryResultSlice, previous: UsageQueryResultSlice | undefined) => UsageQueryResultSlice;
 const identitySlice: UsageWidgetSliceProjection = slice => slice;
 /** Hidden retained bodies and page chrome admit no live or static reads. */

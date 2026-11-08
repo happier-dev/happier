@@ -18,6 +18,7 @@ import { decodeUsageQueryResource } from '@/sync/api/account/usageQueryResource'
 import { resolveAvailableCostModes } from '@/sync/api/account/usageAnalytics';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
+import { readUsageChartSources, readUsageSourceStates } from './usageSourceSelection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { UsageWidgetQueryPlan } from '../usageWidgetQueries';
 import { useUsageHistory, type UsageHistoryModel } from '../useUsageHistory';
@@ -257,13 +258,20 @@ function readStandaloneClauses(): UsageWidgetQueryOverrides {
 }
 
 type HowYouWork = NonNullable<UsageQueryResultSlice['howYouWork']>;
+/** These inspected chart styles consume accounting and private activity, including their coverage. */
+function projectUsageWidgetHowSources(slice: UsageQueryResultSlice, previous: UsageQueryResultSlice | undefined): UsageQueryResultSlice {
+  const { quota: _quota, pools: _pools, planInsights: _planInsights, coach: _coach, ...facts } = slice;
+  const sources = retainShallow(previous?.sources, readUsageSourceStates(slice, ['accounting', ...readUsageChartSources(slice)]));
+  return retainShallow(previous, { ...facts, sources,
+    pending: sources.some(source => source.status === 'pending' || source.status === 'not_loaded') });
+}
 /** These chart presentations consume a subset of the shared private projection, never its other facts.
  * Keep selection at the subscription owner: unused facts are absent from the body view, rather than
- * exposing an old full slice after an equality bailout. All source, accounting and lifecycle fields
- * still come directly from the Resource. This is a UI view, not a usage.query transport result. */
+ * exposing an old full slice after an equality bailout. Source state follows the consumed facts.
+ * This is a UI view, not a usage.query transport result. */
 function projectUsageWidgetHowFacts(slice: UsageQueryResultSlice, previous: UsageQueryResultSlice | undefined,
   facts: Partial<HowYouWork>): UsageQueryResultSlice {
-  if (!slice.howYouWork) return slice;
+  if (!slice.howYouWork) return projectUsageWidgetHowSources(slice, previous);
   // These styles do not draw the calendar's separate day/night activity share.
   // Daylight and the other night-window consumers retain their full projection.
   const agentCalendar = facts.agentCalendar;
@@ -274,7 +282,7 @@ function projectUsageWidgetHowFacts(slice: UsageQueryResultSlice, previous: Usag
     intervals: null, todayInParallel: null, nightShift: null, activity: null, permissions: null, inputs: null, footprint: null,
     ...selected,
   });
-  return retainShallow(previous, { ...slice, howYouWork });
+  return projectUsageWidgetHowSources({ ...slice, howYouWork }, previous);
 }
 const projectCalendarFacts: UsageWidgetSliceProjection = (slice, previous) =>
   projectUsageWidgetHowFacts(slice, previous, { agentCalendar: slice.howYouWork?.agentCalendar });
@@ -343,7 +351,9 @@ function resolveQuery(
       : (widgetId === 'usage_parallel' && (style === 'lanes' || style === 'dial')
         || widgetId === 'usage_planet' && style === undefined) ? projectIntervalCalendarFacts
       : widgetId === 'usage_run_length' && style === 'runLength' ? projectRunLengthFacts
-      : widgetId === 'usage_recap' && style === 'personalRecords' ? projectRecordFacts : undefined;
+      : widgetId === 'usage_recap' && style === 'personalRecords' ? projectRecordFacts
+      : widgetId === 'usage_human_loop' && style === 'tide'
+        || widgetId === 'usage_rhythm' && style === 'daylight' ? projectUsageWidgetHowSources : undefined;
     return { query, key: getUsageQueryKey(query), clauses, projectSlice };
   } catch {
     return null;

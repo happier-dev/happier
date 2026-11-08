@@ -42,6 +42,7 @@ import { useUsageDisclosureCommand, useUsageRetryCommand } from './usageMountedC
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { readUsageSourceStates } from './usageSourceSelection';
 
 /** What every Usage body receives from the one dispatcher: admitted facts, never a fetch handle. */
 export type UsageBodyProps = Readonly<{
@@ -614,8 +615,7 @@ export function readUsageCoverageGaps(
   const accounting = sources.includes('accounting') ? slice.accounting?.coverage : undefined;
   const dependent = new Set([...sources, ...(accounting?.sources.map(source => source.source) ?? [])]);
   const quotaRequested = sources.includes('quota');
-  const gaps = slice.sources.filter(source => (dependent.has(source.source)
-    || quotaRequested && source.source.startsWith('quota:')) && source.status !== 'available');
+  const gaps = readUsageSourceStates(slice, sources).filter(source => source.status !== 'available');
   // Comparison owns its source state beside its exact preceding query, rather
   // than in the slice's general source list. Consumers must see that same state.
   if (dependent.has('comparison') && slice.comparison && slice.comparison.source.status !== 'available')

@@ -664,6 +664,31 @@ describe('resolveUsagePageAggregation', () => {
     expect(progress.results[0]!.accounting).toBe(result.results[0]!.accounting);
     expect(visits, 'independent source progress must not revisit the already reconciled accounting population').toBe(0);
   });
+  it('retains unchanged source rows while admitting sibling progress and corrected source facts', () => {
+    const query = normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence: false, includeWorkEvidence: false });
+    const base = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: accounting, status: 'available' }] });
+    const sources = [{ source: 'accounting', status: 'available' as const, asOfMs: 100 },
+      { source: 'accounting', status: 'partial' as const },
+      { source: 'quota', status: 'pending' as const }];
+    const previous = { ...base, results: [{ ...base.results[0]!, sources }] };
+    const changedQuota = { source: 'quota', status: 'available' as const, asOfMs: 200 };
+    const after = retainUsageQueryResultReferences({ ...base, results: [{ ...base.results[0]!,
+      sources: [{ ...sources[0]! }, { ...sources[1]! }, changedQuota] }] }, previous);
+    expect(after.results[0]!.sources.slice(0, 2)).toEqual(sources.slice(0, 2));
+    expect(after.results[0]!.sources[0]).toBe(sources[0]);
+    expect(after.results[0]!.sources[1]).toBe(sources[1]);
+    expect(after.results[0]!.sources[2]).toBe(changedQuota);
+    for (const corrected of [{ ...sources[0]!, asOfMs: 101 },
+      { ...sources[0]!, status: 'error' as const, errorCode: 'permission_denied' },
+      { ...sources[0]!, updateRequired: { kind: 'update_required' as const, operation: 'usage.read',
+        component: 'server' as const, reason: 'unsupported_schema' } }]) {
+      const next = retainUsageQueryResultReferences({ ...after, results: [{ ...after.results[0]!,
+        sources: [corrected, { ...sources[1]! }, { ...changedQuota }] }] }, after);
+      expect(next.results[0]!.sources[0]).toBe(corrected);
+      expect(next.results[0]!.sources[1]).toBe(sources[1]);
+      expect(next.results[0]!.sources[2]).toBe(changedQuota);
+    }
+  });
   it('retains unaffected contribution identities when one admitted fact changes under the same ID', () => {
     const query = normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence: false, includeWorkEvidence: false });
     const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, contributions: Array.from({ length: 3600 }, (_, index) => ({

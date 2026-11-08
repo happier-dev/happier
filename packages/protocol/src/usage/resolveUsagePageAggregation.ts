@@ -332,6 +332,21 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
     // Source progress replaces the slice, not its unchanged accounting. Mounted
     // consumers key their existing price/ranking projections by these facts.
     let reconciled = slice;
+    // Coverage can repeat a source name. Match the complete admitted state,
+    // rather than treating its name as an immutable or unique source fact.
+    if (slice.sources !== retained.sources) {
+      const priorSources = new Map<string, UsageQuerySourceState[]>();
+      for (const source of retained.sources) {
+        const rows = priorSources.get(source.source) ?? [];
+        rows.push(source);
+        priorSources.set(source.source, rows);
+      }
+      const rows = slice.sources.map(source => priorSources.get(source.source)?.find(previous => previous === source
+        || sameStrictJsonValue(source, previous, { omitUndefinedObjectMembers: true })) ?? source);
+      const sources = rows.length === retained.sources.length && rows.every((row, index) => row === retained.sources[index])
+        ? retained.sources : rows;
+      reconciled = { ...reconciled, sources };
+    }
     const accounting = retainAccountingReferences(slice.accounting, retained.accounting);
     if (accounting !== slice.accounting) {
       reconciled = { ...reconciled, accounting };
@@ -348,7 +363,7 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
     const projectedKeys: (keyof UsageQueryResultSlice)[] = (slice as ProjectedUsageSlice)[usagePageProjections] && retainedProjections
       ? (['work', 'mergedOutcomes', 'howYouWork', 'coach', 'planInsights', 'costFactTotals'] as const)
         .filter(key => retainedProjections[key].value === retained[key]) : [];
-    const result = retainUsageMembers(reconciled, retained, ['accounting', ...projectedKeys, ...(slice.comparison?.accounting && retained.comparison?.accounting
+    const result = retainUsageMembers(reconciled, retained, ['accounting', 'sources', ...projectedKeys, ...(slice.comparison?.accounting && retained.comparison?.accounting
       && getUsageQueryKey(slice.comparison.query) === getUsageQueryKey(retained.comparison.query) ? ['comparison' as const] : [])]);
     const baseline = original.get(slice.key);
     if (!baseline || result === retained) return carryUsageProjectionInputs(result, slice);
