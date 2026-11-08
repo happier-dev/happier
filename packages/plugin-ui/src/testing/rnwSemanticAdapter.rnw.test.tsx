@@ -32,21 +32,15 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from './rnwSemanticAdapter.te
 
 describe('ephemeral shared scope test host binding', () => {
   it('injects one explicitly host-owned scope into separate semantic artifact mounts', async () => {
-    const sharedValue = Object.freeze({ id: 'shared' });
     const scope: PluginUiEphemeralSharedScope = Object.freeze({
-      acquire: vi.fn(() => Object.freeze({ value: sharedValue, release() {} })),
+      acquire: () => null,
     });
-    const observed: unknown[] = [];
+    const observed: (PluginUiEphemeralSharedScope | null)[] = [];
 
     function SharedScopeProbe() {
       const mountedScope = usePluginUiEphemeralSharedScope();
       useEffect(() => {
-        const lease = mountedScope?.acquire('window.v1', () => ({
-          value: Object.freeze({ id: 'cold' }),
-          dispose() {},
-        }));
-        observed.push(lease?.value);
-        return () => lease?.release();
+        observed.push(mountedScope);
       }, [mountedScope]);
       return <Text value="Shared scope probe" />;
     }
@@ -67,8 +61,9 @@ describe('ephemeral shared scope test host binding', () => {
       adapter: adapter(),
     });
 
-    expect(observed).toEqual([sharedValue, sharedValue]);
-    expect(scope.acquire).toHaveBeenCalledTimes(2);
+    expect(observed).toHaveLength(2);
+    expect(observed[0]).toBe(scope);
+    expect(observed[1]).toBe(scope);
     await first.dispose();
     await second.dispose();
   });
@@ -80,7 +75,7 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
       return <TargetedSurface surface={{ point: { pointId: 'sources', protocol: { id: 'review-sources', version: 1 } },
         contributor: { pluginId: 'com.acme.child', contributionId: 'review-source', occurrenceId: 'child-a',
           sourceCustody: { kind: 'development', registeredRootId: 'child-root' } },
-        role: 'detail', presentation: 'content' }} fallback={<Text value="Child unavailable" />} />;
+        role: 'detail', presentation: 'content' }} input={{}} fallback={<Text value="Child unavailable" />} />;
     }
     const { targetedContributions: _runtimeTarget, ...context } = createSurfaceContext();
     const fixture = await createPluginUiTestkit({
@@ -147,6 +142,31 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
 
     await fixture.dispose();
     expect(document.body.children).toHaveLength(bodyChildCount);
+  });
+
+  it('keeps controls live after concurrent host context publications', async () => {
+    function AuthorSurface() {
+      const { locale } = useSurfaceContext();
+      const [presses, setPresses] = useState(0);
+      return <Button title={`${locale}: ${presses}`} onPress={() => { setPresses(value => value + 1); }} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'concurrent-context', mountNonce: 'concurrent-context-mount' },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(AuthorSurface),
+      surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    });
+    try {
+      await Promise.all([
+        fixture.updateSurface(createSurfaceContext({ locale: 'de-CH' })),
+        fixture.updateSurface(createSurfaceContext({ locale: 'fr-CH' })),
+      ]);
+      await fixture.press(await fixture.getByRole('button', { name: 'fr-CH: 0' }));
+      await expect(fixture.getByRole('button', { name: 'fr-CH: 1' })).resolves.toBeDefined();
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('renders the exact declared targeted child across replacement, uninstall, and reinstall', async () => {
@@ -798,7 +818,7 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
     const bodyChildCount = document.body.children.length;
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    function ThrowingAuthorSurface() {
+    function ThrowingAuthorSurface(): never {
       throw initialRenderFailure;
     }
 

@@ -14,6 +14,7 @@ import type {
   PluginUiSemanticTarget,
 } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
 import type { HappierFocusable } from '../presentation/portableTypes.js';
 import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
@@ -54,6 +55,11 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    */
   sessions?: boolean;
   /**
+   * The host's Viewed owner for a pull request (`useScmFileViewed`): the source a same-realm host would join for
+   * this request. Omitted, the surface has no Viewed source, as in a host without one.
+   */
+  scmFileViewed?: (request: ScmFileViewedRequest) => ScmFileViewedSource | null;
+  /**
    * Present `ChangedFilesReview` the way a same-realm host does, as a semantic stand-in: a `group` named by its
    * label listing every file, each an "Open <path>" button that reads that one file through `loadDiff` and shows
    * its diff (or its reason). The host's real review (index, tree/list, prefetch window) is app composition and
@@ -75,7 +81,8 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
   /**
    * Mount the surface as the host mounts a session tab: under the pane header the host draws for it. What the
    * surface's `PaneHeaderContent` publishes then renders in a host header OUTSIDE the surface's React tree — a
-   * `group` named "Pane header" with the live line and the actions. Omitted, the surface has no pane header.
+   * `group` named "Pane header" with the widget-frame caption, the live line and the actions. Omitted, the surface has
+   * no pane header.
    */
   paneHeader?: boolean;
   targetedSurfaces?: Readonly<{
@@ -88,7 +95,7 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
      * still runs first; this only lets a source-side test component exercise
      * target-provided React context such as mutation completion.
      */
-    renderAdmittedContent?: (input: Readonly<{ content: ReactNode }>) => ReactNode;
+    renderAdmittedContent?: (input: Readonly<{ content: ReactNode; launchInput: PluginUiTargetedSurfacePresentation['input'] }>) => ReactNode;
   }>;
 }>;
 
@@ -148,9 +155,19 @@ function createSemanticPresentationHost(input: Readonly<{
   paneHeader?: PluginUiPaneHeaderHost;
 }>): PluginUiPresentationHost {
   return Object.freeze({
-    ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => <SemanticChangedFilesReview request={request} /> } : {}),
     ...(input.options.find === undefined ? {} : { find: input.options.find }),
-    ...(input.detailsPane === undefined ? {} : { detailsPane: input.detailsPane }),
+    ...(input.options.scmFileViewed === undefined ? {} : { useScmFileViewed: input.options.scmFileViewed }),
+    ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => <SemanticChangedFilesReview request={request} /> } : {}),
+    ...(input.detailsPane === undefined ? {} : {
+      detailsPane: input.detailsPane,
+      // The host's shared Open as page control, as a plain host-drawn button the test presses by name.
+      renderDetailsPaneOpenAsPageButton: (button: Readonly<{ onPress: () => unknown; disabled?: boolean; accessibilityLabel?: string }>) => (
+        <Pressable accessibilityRole="button" accessibilityLabel={button.accessibilityLabel ?? 'Open as page'}
+          disabled={button.disabled === true} onPress={() => { void button.onPress(); }}>
+          <NativeText>Open as page</NativeText>
+        </Pressable>
+      ),
+    }),
     ...(input.paneHeader === undefined ? {} : { paneHeader: input.paneHeader }),
     ...(input.options.physicalFocus === undefined
       ? {}
@@ -184,7 +201,7 @@ function createSemanticPresentationHost(input: Readonly<{
       const content = <Text value={admission.content.text} />;
       return (
         <Fragment key={admission.key}>
-          {targetedSurfaces.renderAdmittedContent?.({ content }) ?? content}
+          {targetedSurfaces.renderAdmittedContent?.({ content, launchInput: presentation.input }) ?? content}
         </Fragment>
       );
     },
@@ -268,6 +285,7 @@ function createSemanticPaneHeader(): Readonly<{ binding: PluginUiPaneHeaderHost;
     if (input === null) return null;
     return (
       <View role="group" aria-label="Pane header">
+        {input.caption == null ? null : <NativeText>{input.caption}</NativeText>}
         {input.line === null ? null : <NativeText>{input.line.map((part) => typeof part === 'string' ? part : part.text).join(' · ')}</NativeText>}
         {input.actions}
       </View>
@@ -517,7 +535,9 @@ async function mountRnw(element: ReactNode): Promise<SemanticRnwMount> {
     container,
     async render(next) {
       if (unmounted) throw new Error('The Plugin UI semantic surface is no longer current.');
-      await act(async () => { mountedRoot.render(next); });
+      // Publishing context is synchronous. Separate async act scopes overlap
+      // when host publications arrive together and strand later React updates.
+      act(() => { mountedRoot.render(next); });
     },
     unmount() {
       if (unmounted) return;
@@ -549,6 +569,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
         : createSemanticDetailsPane(options.detailsPane);
       const paneHeader = options.paneHeader === true ? createSemanticPaneHeader() : undefined;
       const presentationHost = options.targetedSurfaces === undefined
+        && options.scmFileViewed === undefined
         && options.changedFilesReview !== true
         && options.find === undefined
         && options.physicalFocus === undefined

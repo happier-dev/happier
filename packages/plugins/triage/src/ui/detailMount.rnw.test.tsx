@@ -1297,7 +1297,8 @@ it('publishes and dispatches real detail controls from a resource preview', asyn
     expect(moreSessions).toBeDefined();
     const invoke = async (command: typeof tab) => {
         if (command?.command.kind !== 'executeAction') throw new Error('Missing resource command');
-        await act(async () => { expect(await page.context.hostApi.executeAction(command.command.action, command.command.input)).toEqual({ status: 'applied' }); });
+        const action = command.command;
+        await act(async () => { expect(await page.context.hostApi.executeAction(action.action, action.input)).toEqual({ status: 'applied' }); });
     };
     await invoke(source);
     await expect(page.getByText('Resource source page loaded')).resolves.toBeDefined();
@@ -1319,7 +1320,10 @@ it('recovers failed fix PR links in a resource preview through its mounted Retry
     const published: (PluginUiContextEnrichmentV1 | null)[] = [];
     const page = await mountShell({ resource: true, automaticDemandOnly: true, activeSurface: true,
         fixPullRequestState: 'unreachable', publishCurrentUiContext: context => { published.push(context); } });
-    await expect(page.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
+    // A host context publication renders the context; the source's read settles separately.
+    await vi.waitFor(async () => {
+        await expect(page.getByText('Fix pull request links could not be read.')).resolves.toBeDefined();
+    });
     const retry = published.at(-1)?.commands?.find(command => {
         if (command.command.kind !== 'executeAction') return false;
         const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
@@ -1327,8 +1331,9 @@ it('recovers failed fix PR links in a resource preview through its mounted Retry
     });
     expect(retry).toBeDefined();
     if (retry?.command.kind !== 'executeAction') throw new Error('Missing resource fix PR Retry');
+    const action = retry.command;
     await act(async () => {
-        expect(await page.context.hostApi.executeAction(retry.command.action, retry.command.input)).toEqual({ status: 'applied' });
+        expect(await page.context.hostApi.executeAction(action.action, action.input)).toEqual({ status: 'applied' });
     });
     await expect(page.queryByText('Fix pull request links could not be read.')).resolves.toBeUndefined();
 });

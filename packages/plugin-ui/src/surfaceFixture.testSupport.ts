@@ -57,6 +57,7 @@ export function createHostApiStub(
     readOpenableContent: async () => unsupportedHostMethod(),
     watchResource: async () => unsupportedHostMethod(),
     openSurface: async () => undefined,
+    openResource: async () => unsupportedHostMethod(),
     replacePageLocation: async () => unsupportedHostMethod(),
     setUnsavedChanges: async () => unsupportedHostMethod(),
     setPageNavigation: async () => unsupportedHostMethod(),
