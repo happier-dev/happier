@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { useActiveServerAccountScopeLifetime, useWorkspaceScmSnapshot } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { readProjectWidgetAreaContextV1, type ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useProjectSource } from './sources/useProjectSources';
@@ -41,7 +41,7 @@ export function useProjectContext(input: Readonly<{
     const workspaceScope = React.useMemo(() => checkout ? {
         serverId: checkout.serverId, machineId: checkout.machineId, rootPath: checkout.rootPath,
     } : null, [checkout?.serverId, checkout?.machineId, checkout?.rootPath]);
-    const snapshot = useWorkspaceScmSnapshot(canInherit ? null : workspaceScope);
+    const snapshot = useWorkspaceScmSummarySnapshot(canInherit ? null : workspaceScope);
     const previous = React.useRef<ProjectWidgetAreaContextV1 | null>(null);
     if (canInherit) return inherited;
     previous.current = readProjectWidgetAreaContextV1({ ...input, source, snapshot, authority }, previous.current);

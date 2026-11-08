@@ -25,7 +25,7 @@ import { filterVisibleRepoWorktreeRows } from '@/components/workspaces/scm/workt
 import { sortRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/sortRepoWorktreeRows';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
-import { useActiveServerAccountScope, useAllMachines, useWorkspaceRefs, useWorkspaceScmSnapshot } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useWorkspaceRefs, useWorkspaceScmSummarySnapshot, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { warmWorkspaceRepositoryDirectoryCache } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
@@ -65,7 +65,7 @@ export function ProjectBuiltinWidgetBody(props: Props): React.ReactElement {
     if (props.id === 'project_readme') return <ReadmeBody {...props} />;
     if (props.id === 'project_checkouts') return <CheckoutsBody {...props} />;
     if (props.id === 'project_changes') return <ChangesBody {...props} />;
-    if (props.id === 'project_scripts') return <ProjectScriptsBody workspace={props.workspace} presentation="widget" testID={props.testID} />;
+    if (props.id === 'project_scripts') return <ScriptsBody {...props} />;
     return <ProjectSessionsWidgetBody checkout={props.checkout} testID={props.testID} />;
 }
 
@@ -89,9 +89,9 @@ function useProjectNavigation(workspace: WorkspaceAddressV1, checkout: Workspace
         ? routeParams : undefined;
     const storedCheckout = useWorkspaceRefById(workspace.workspaceId, workspace.serverId);
     const scope = useScope(workspace);
-    const snapshot = useWorkspaceScmSnapshot(scope);
+    const snapshot = useWorkspaceScmSummarySnapshot(scope);
     const defaultRootPath = storedCheckout?.rootPath ?? workspace.rootPath;
-    const href = React.useCallback((segment: 'overview' | 'code' | 'changes', filePath?: string, rootPath = workspace.rootPath, worktreeId?: string | null, details?: SessionPaneUrlDetailsTarget, codeLocation?: WorkspaceCodeLocation) => filePath !== undefined
+    const href = React.useCallback((segment: 'overview' | 'code' | 'changes' | 'scripts', filePath?: string, rootPath = workspace.rootPath, worktreeId?: string | null, details?: SessionPaneUrlDetailsTarget, codeLocation?: WorkspaceCodeLocation) => filePath !== undefined
         ? buildWorkspaceFileLink({ target: { kind: 'project', workspaceRefId: workspace.workspaceId, serverId: workspace.serverId,
             machineId: workspace.machineId, rootPath }, path: filePath }) : buildProjectRouteHref({
         workspaceRefId: workspace.workspaceId, serverId: workspace.serverId, segment,
@@ -123,9 +123,10 @@ function AboutBody(props: Props): React.ReactElement {
     const teamServerIds = React.useMemo(() => (teamId ? [scope.serverId] : []), [scope.serverId, teamId]);
     const teams = useTeamsDirectory({ serverIds: teamServerIds, enabled: teamId != null });
     const teamName = teamId ? teams.rows.find(row => row.team.id === teamId)?.team.name ?? null : null;
-    const repository = props.checkout.repositoryIdentity?.repository ?? (source ? formatProjectSourceAddress(source.repository) : null);
-    const snapshot = useWorkspaceScmSnapshot(scope);
-    const defaultBranch = source?.defaultRef ?? snapshot?.repo.defaultBranch ?? null;
+    const repository = source && !source.repository ? null : props.checkout.repositoryIdentity?.repository
+        ?? (source?.repository ? formatProjectSourceAddress(source.repository) : null);
+    const snapshot = useWorkspaceScmSummarySnapshot(scope);
+    const defaultBranch = source && !source.repository ? null : source?.defaultRef ?? snapshot?.repo.defaultBranch ?? null;
     // A folder without a repository is named where it lives, home-relative on its own machine (`~/code/x`).
     const machine = useMachinePresenceSummary(scope.serverId, scope.machineId);
     const folder = formatPathRelativeToHome(scope.rootPath, machine.homeDir ?? undefined);
@@ -137,17 +138,25 @@ function AboutBody(props: Props): React.ReactElement {
     if (phone) {
         return <View testID={props.testID}>
             <WidgetGlanceRow testID={`${props.testID}.inline`} variant="fact" mark={repository ? 'book-bookmark' : 'folder'}
-                title={repository ?? folder} tag={defaultBranchLabel} fact={teamLabel} />
+                title={repository ?? source?.name ?? folder} tag={defaultBranchLabel} fact={teamLabel} />
         </View>;
     }
     return <View testID={props.testID}>
         {repository
             ? <WidgetGlanceRow testID={`${props.testID}.repository`} variant="fact" mark="book-bookmark" title={repository} />
-            : <WidgetGlanceRow testID={`${props.testID}.folder`} variant="fact" mark="folder" title={folder} />}
+            : <WidgetGlanceRow testID={`${props.testID}.folder`} variant="fact" mark="folder" title={source?.name ?? folder} />}
         {defaultBranchLabel ? <WidgetGlanceRow testID={`${props.testID}.default-branch`} variant="fact" mark="git-branch"
             title={defaultBranchLabel} /> : null}
         {teamLabel ? <WidgetGlanceRow testID={`${props.testID}.team`} variant="fact" mark="users" title={teamLabel} /> : null}
     </View>;
+}
+
+/** Scripts (lab p-overview HOME / HIDDEN): the widget's Review opens this checkout's Scripts page. */
+function ScriptsBody(props: Props): React.ReactElement {
+    const navigation = useProjectNavigation(props.workspace, props.checkout);
+    const { href, router } = navigation;
+    const openScripts = React.useCallback(() => router.push(href('scripts') as Parameters<typeof router.push>[0]), [href, router]);
+    return <ProjectScriptsBody workspace={props.workspace} presentation="widget" onOpenScripts={openScripts} testID={props.testID} />;
 }
 
 function CodeBody(props: Props): React.ReactElement {
@@ -203,12 +212,13 @@ const CHECKOUTS_GLANCE_OTHERS = 2;
 
 function CheckoutsBody(props: Props): React.ReactElement {
     const scope = useScope(props.workspace);
-    const { snapshot } = useWorkspaceScmSnapshotController(scope);
+    // Branch and worktrees only.
+    const { snapshot } = useWorkspaceScmSnapshotController(scope, { detail: 'summary' });
     const navigation = useProjectNavigation(props.workspace, props.checkout);
     const navigateToOpen = useNavigateToProjectOpen();
     const checkout = props.checkout;
     const refs = useWorkspaceRefs();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const activeAccountScope = useActiveServerAccountScope();
     const accountScope = selectActiveServerAccountScopeForServer(activeAccountScope, scope.serverId);
     useMachineReachabilityRevision();
@@ -284,14 +294,14 @@ function ChangesBody(props: Props): React.ReactElement {
         return () => { mounted.current = false; };
     }, []);
     const isCurrent = () => Boolean(lifetime?.isCurrent()) && currentScopeKey.current === scopeKey;
-    const openReview = (path?: string, walkthrough = false) => {
+    const openReview = (path?: string) => {
         if (!mounted.current || !isCurrent() || !lifetime || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, scope.serverId)) return;
         const href = navigation.href('changes', undefined, scope.rootPath, undefined,
-            { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: walkthrough ? 'walkthrough' : 'files' });
+            { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'files' });
         navigation.router.push(href as Parameters<typeof navigation.router.push>[0]);
         // The source widget unmounts during this intended route promotion; changing its scope still retires the request.
         if (path) requestActiveReviewFileForComparison(activeReviewFileKeyForWorkspace(scope), path, { kind: 'workingTree' }, isCurrent);
     };
     return <WorkspaceLocalChangesBody key={tryBuildWorkspaceCacheKey(scope)} scope={scope} onOpenReview={path => openReview(path)}
-        onWalkThrough={() => openReview(undefined, true)} testID={props.testID} />;
+        testID={props.testID} />;
 }
