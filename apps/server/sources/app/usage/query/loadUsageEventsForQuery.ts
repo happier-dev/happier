@@ -64,6 +64,11 @@ function usageEventWhere(accountId: string, endMs: number | undefined): Prisma.U
         source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } };
 }
 
+/** A covering window can use the single history read instead of evidence plus body hydration. */
+export async function hasUsageEventHistoryBefore(tx: Tx, accountId: string, startMs: number): Promise<boolean> {
+    return await tx.usageEvent.findFirst({ where: usageEventWhere(accountId, startMs), select: { id: true } }) !== null;
+}
+
 function usageEventReadSql(accountId: string, endMs: number | undefined,
     select: typeof usageEventSelect | typeof usageEventEvidenceSelect, eventIds?: readonly string[]) {
     const columns = prismaRuntime.join(Object.keys(select).map(key => key === 'metadata'

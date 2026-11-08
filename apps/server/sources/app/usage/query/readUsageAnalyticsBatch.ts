@@ -9,7 +9,7 @@ import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/u
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
-import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
+import { hasUsageEventHistoryBefore, loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
 import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
@@ -58,9 +58,18 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
         : ends.reduce<number>((latest, end) => Math.max(latest, end ?? -Infinity), -Infinity);
     const range = { dateRange: endMs === undefined ? undefined : { endMs } };
     const allHistory = queries.some(query => query.dateRange?.startMs === undefined);
+    const readEvents = async (): Promise<{ rows: UsageAnalyticsSnapshot['rows'] }
+        | { evidence: Awaited<ReturnType<typeof loadUsageEventEvidenceForQuery>> }> => {
+        const startMs = queries.reduce((earliest, query) => Math.min(earliest, query.dateRange?.startMs ?? -Infinity), Infinity);
+        // PostgreSQL's window candidates include every in-window event. If there
+        // is no earlier personal history, both phases would return the same rows.
+        const coveredHistory = allHistory || (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres'
+            && !await hasUsageEventHistoryBefore(tx, accountId, startMs));
+        return coveredHistory ? { rows: await loadUsageEventsForQuery(tx, accountId, range) }
+            : { evidence: await loadUsageEventEvidenceForQuery(tx, accountId, range) };
+    };
     const [events, legacyReports, priceCatalog] = await Promise.all([
-        allHistory ? loadUsageEventsForQuery(tx, accountId, range).then(rows => ({ rows }))
-            : loadUsageEventEvidenceForQuery(tx, accountId, range).then(evidence => ({ evidence })),
+        readEvents(),
         loadRetainedLegacyUsageReports(tx, accountId, range),
         captureUsageModelPriceCatalogInTx(tx),
     ]);
