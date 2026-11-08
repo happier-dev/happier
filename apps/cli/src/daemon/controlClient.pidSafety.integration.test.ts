@@ -1,3 +1,4 @@
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -31,6 +32,7 @@ describe.sequential('daemon control client PID safety', () => {
   }
 
   afterEach(() => {
+    vi.restoreAllMocks();
     killTrackedChildren();
     envScope.restore();
     envScope = createEnvKeyScope([
@@ -41,12 +43,20 @@ describe.sequential('daemon control client PID safety', () => {
     ]);
   });
 
-  it.skipIf(process.platform !== 'linux').each([true, false])('force stop binds the recorded runtime instead of the stopping CLI runtime (matching: %s)', async (matches) => {
+  it.skipIf(process.platform !== 'linux').each([
+    { matches: true, runtimeEntrypoint: 'package-dist/index.mjs', standalone: false },
+    { matches: false, runtimeEntrypoint: 'package-dist/index.mjs', standalone: false },
+    { matches: true, runtimeEntrypoint: 'apps/cli/src/index.ts', standalone: false },
+    { matches: false, runtimeEntrypoint: 'apps/cli/src/index.ts', standalone: false },
+    { matches: true, runtimeEntrypoint: 'apps/cli/src/index.ts', standalone: true },
+    { matches: false, runtimeEntrypoint: 'apps/cli/src/index.ts', standalone: true },
+  ])('force stop binds the recorded $runtimeEntrypoint (matching: $matches, standalone: $standalone)', async ({ matches, runtimeEntrypoint, standalone }) => {
     await withConfiguredDaemonTestHome({ prefix: 'daemon-stop-recorded-runtime-', env: {
-      HAPPIER_ACTIVE_SERVER_ID: 'cloud', HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'cloud',
+      HAPPIER_ACTIVE_SERVER_ID: standalone ? undefined : 'cloud',
+      HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: standalone ? undefined : 'cloud',
       HAPPIER_SERVER_URL: 'https://api.happier.dev', HAPPIER_DAEMON_HTTP_TIMEOUT: '150',
     } }, async ({ homeDir }) => {
-      const entrypoint = join(homeDir, '.runner-snapshots', 'previous', 'package-dist', 'index.mjs');
+      const entrypoint = join(homeDir, '.runner-snapshots', 'previous', runtimeEntrypoint);
       const child = spawnSleepyDetachedProcess([entrypoint, 'daemon', 'start-sync']);
       try {
         const { configuration } = await import('@/configuration');
@@ -59,7 +69,7 @@ describe.sequential('daemon control client PID safety', () => {
         mkdirSync(dirname(configuration.daemonStateFile), { recursive: true });
         writeFileSync(configuration.daemonStateFile, JSON.stringify({ pid: child.pid, httpPort: 1,
           startedAt: Date.now(), startedWithCliVersion: '0.0.0-test', controlToken: 'fixture-token',
-          startedWithRuntimeEntrypoint: matches ? entrypoint : join(homeDir, '.runner-snapshots', 'other', 'package-dist', 'index.mjs') }));
+          startedWithRuntimeEntrypoint: matches ? entrypoint : join(homeDir, '.runner-snapshots', 'other', runtimeEntrypoint) }));
         writeFileSync(configuration.daemonLockFile, JSON.stringify({ t: 'happier_daemon_lock_v2', pid: child.pid,
           ownerToken: '00000000-0000-4000-8000-000000000123', processStartedAtMs: identity.processStartTimeMs,
           processInstanceFingerprint: readProcessInstanceFingerprintSync(child.pid), createdAtMs: Date.now() }));
@@ -261,7 +271,7 @@ describe.sequential('daemon control client PID safety', () => {
 
     try {
       await app.ready();
-      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      stubUndiciFetch(async (input: any, init?: any) => {
         const url = new URL(typeof input === 'string' ? input : input.url);
         if (url.hostname !== '127.0.0.1' || Number(url.port) !== daemonPort) {
           return await realFetch(input, init);
@@ -364,7 +374,7 @@ describe.sequential('daemon control client PID safety', () => {
       const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
 
       await app.ready();
-      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      stubUndiciFetch(async (input: any, init?: any) => {
         const url = new URL(typeof input === 'string' ? input : input.url);
         if (url.hostname !== '127.0.0.1' || Number(url.port) !== daemonPort) {
           return await realFetch(input, init);
@@ -432,7 +442,7 @@ describe.sequential('daemon control client PID safety', () => {
     const daemonPort = 43210;
     const realFetch = globalThis.fetch;
     try {
-      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      stubUndiciFetch(async (input: any, init?: any) => {
         const url = new URL(typeof input === 'string' ? input : input.url);
         if (url.hostname === '127.0.0.1' && Number(url.port) === daemonPort) {
           throw new TypeError('fetch failed');
@@ -624,7 +634,7 @@ describe.sequential('daemon control client PID safety', () => {
     }));
 
     try {
-      vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+      stubUndiciFetch(fetchSpy as unknown as typeof fetch);
       const result = await spawnDaemonSession({ directory: '/tmp' });
       expect(result).toEqual({ success: true, sessionId: 's-1' });
       expect(timeoutSpy).toHaveBeenCalledWith(300_000);
