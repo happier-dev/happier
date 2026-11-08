@@ -1342,7 +1342,9 @@ describe('MachinePathBrowserModal', () => {
             expect(machineRequests.some(request => request.method.endsWith(`:${RPC_METHODS.CREATE_DIRECTORY}`))).toBe(false);
             expect(folderActionRequests).toEqual([]);
             if (mode === 'ask') {
-                expect(homes.artifacts(scope.serverId).list()).toHaveLength(1);
+                // Own-UI Ask uses local confirmation; the declined review creates no Artifact.
+                expect(actualModal.confirm).toHaveBeenCalledTimes(1);
+                expect(homes.artifacts(scope.serverId).list()).toHaveLength(0);
             }
         }
     });
