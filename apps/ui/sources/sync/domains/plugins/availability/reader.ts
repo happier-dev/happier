@@ -15,7 +15,6 @@ import {
     createPluginAccountBundledSelectionV1,
     type PluginAccountExecutionSelectionV1,
 } from '@happier-dev/protocol/plugins/availability';
-import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { derivePluginAccountExecutionArtifactSlots, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiHostApiVersionCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
@@ -25,7 +24,6 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { PluginDeclaredUiEntriesV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { preparePluginContributionPointDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 import { samePluginUiMaterializationFacts, normalizePluginInstalledUiDeclarations, type PluginUiActionProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -651,10 +649,10 @@ function cloneMaterialization(
     const uiEntries = materialization.declaredUiEntries;
     if (manifest && !declarations.manifests.has(manifest)) declarations.manifests.set(manifest,
         retainIfEqual(previous?.declaredManifest,
-            freezeDeepDeclaration(PluginManifestV2LoadSchema.parse(manifest))));
+            snapshotDeepDeclaration(manifest)));
     if (uiEntries && !declarations.uiEntries.has(uiEntries)) declarations.uiEntries.set(uiEntries,
         retainIfEqual(previous?.declaredUiEntries,
-            freezeDeepDeclaration(PluginDeclaredUiEntriesV1Schema.parse(uiEntries))));
+            snapshotDeepDeclaration(uiEntries)));
     return freezeAvailabilitySnapshotValue({
         ...materialization,
         ...(manifest ? {
@@ -670,6 +668,16 @@ function cloneMaterialization(
     });
 }
 
+/** HTTP admission owns validation; publication only detaches and freezes its typed JSON. */
+function snapshotDeepDeclaration<T>(value: T): T {
+    if (Array.isArray(value)) return Object.freeze(value.map(child => snapshotDeepDeclaration(child))) as T;
+    if (value && typeof value === 'object') return Object.freeze(Object.fromEntries(
+        Object.entries(value).map(([key, child]) => [key, snapshotDeepDeclaration(child)]),
+    )) as T;
+    return value;
+}
+
+/** Build-owned bundled graphs already have detached ownership; preserve their identity. */
 function freezeDeepDeclaration<T>(value: T): T {
     if (value && typeof value === 'object') {
         for (const child of Object.values(value)) freezeDeepDeclaration(child);
@@ -700,14 +708,14 @@ function snapshotIntentReadResponse(
         ...(response.currentDeclaration === undefined ? {} : {
             currentDeclaration: response.currentDeclaration === null ? null : freezeAvailabilitySnapshotValue({
                 declarationDigestSha256: response.currentDeclaration.declarationDigestSha256,
-                manifest: freezeDeepDeclaration(PluginManifestV2LoadSchema.parse(response.currentDeclaration.manifest)),
+                manifest: snapshotDeepDeclaration(response.currentDeclaration.manifest),
             }),
         }),
         ...(response.machineDeclarations === undefined ? {} : {
             machineDeclarations: freezeAvailabilitySnapshotValue(response.machineDeclarations.map(entry =>
                 freezeAvailabilitySnapshotValue({ ...entry, declaration: freezeAvailabilitySnapshotValue({
                     declarationDigestSha256: entry.declaration.declarationDigestSha256,
-                    manifest: freezeDeepDeclaration(PluginManifestV2LoadSchema.parse(entry.declaration.manifest)),
+                    manifest: snapshotDeepDeclaration(entry.declaration.manifest),
                 }) }))),
         }),
         packageAssets: freezeAvailabilitySnapshotValue(response.packageAssets.map((artifact) => (
@@ -742,9 +750,8 @@ function snapshotPluginAccountAvailabilitySnapshot(
     previous?: PluginAccountAvailabilitySnapshot,
 ): PluginAccountAvailabilitySnapshot {
     const previousMaterializations = new Map(previous?.materializations.map(row => [materializationLookupKey(row), row] as const));
-    // A declaration belongs to this ingress owner, not to each Machine row.
-    // Carry only this owner's immutable proofs, and admit each new external
-    // identity once even when both inventory views and many Machines share it.
+    // HTTP admission has validated each declaration. Share its detached,
+    // immutable snapshot across inventory views and Machine rows.
     // These maps live only for this replacement; they retain no retired roots.
     const manifests = new Map<PluginPortableReleaseManifestV1, PluginPortableReleaseManifestV1>();
     const uiEntries = new Map<NonNullable<PluginMachineMaterializationV1['declaredUiEntries']>, NonNullable<PluginMachineMaterializationV1['declaredUiEntries']>>();

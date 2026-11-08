@@ -4,7 +4,6 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { PluginPackagedResourceContributionV2Schema } from '../contributions/v2.js';
 import { PluginUiArtifactRelativePathV1Schema } from '../contributions/ui/artifacts.js';
 import { PluginManifestV2Schema, type ParsedPluginManifestV2 } from '../manifest/v2.js';
 import {
@@ -178,18 +177,17 @@ function decodeCanonicalBase64(value: string, expectedByteSize: number): Uint8Ar
 export function readDeclaredPackageAssetsV1(manifest: unknown): readonly DeclaredPackageAssetV1[] | null {
   const parsedManifest = PluginManifestV2Schema.safeParse(manifest);
   if (!parsedManifest.success) return null;
+  return readAdmittedPackageAssetsV1(parsedManifest.data);
+}
 
+function readAdmittedPackageAssetsV1(manifest: ParsedPluginManifestV2): readonly DeclaredPackageAssetV1[] | null {
   const declared: DeclaredPackageAssetV1[] = [];
-  for (const resource of parsedManifest.data.contributes.resources) {
-    // The canonical packaged-resource parser both excludes the dynamic arm
-    // (which deliberately has no package path) and gives this byte owner the
-    // exact path/content-type contract it is allowed to archive.
-    const packaged = PluginPackagedResourceContributionV2Schema.safeParse(resource);
-    if (!packaged.success || packaged.data.kind !== 'asset') continue;
+  for (const resource of manifest.contributes.resources) {
+    if (resource.source === 'dynamic' || resource.kind !== 'asset') continue;
     declared.push({
-      resourceId: packaged.data.id,
-      path: packaged.data.path,
-      mimeType: packaged.data.contentType,
+      resourceId: resource.id,
+      path: resource.path,
+      mimeType: resource.contentType,
     });
   }
   const resources = declared.map((resource) => PackageAssetArchiveResourceV1Schema.safeParse({
@@ -214,10 +212,20 @@ export function isPackageAssetArchiveDescriptorDeclaredByManifestV1(input: Reado
   descriptor: unknown;
 }>): boolean {
   const descriptor = PackageAssetArchiveDescriptorV1Schema.safeParse(input.descriptor);
-  const declaredAssets = readDeclaredPackageAssetsV1(input.manifest);
-  if (!descriptor.success || !declaredAssets) return false;
-  return descriptor.data.resources.length === declaredAssets.length
-    && descriptor.data.resources.every((resource, index) => {
+  const manifest = manifestForArchive(input.manifest);
+  return descriptor.success && manifest !== null
+    && isPackageAssetArchiveDescriptorDeclaredByAdmittedManifestV1({ manifest, descriptor: descriptor.data });
+}
+
+/** The release schema already admitted both fields before its cross-field refinement. */
+export function isPackageAssetArchiveDescriptorDeclaredByAdmittedManifestV1(input: Readonly<{
+  manifest: ParsedPluginManifestV2;
+  descriptor: PackageAssetArchiveDescriptorV1;
+}>): boolean {
+  const declaredAssets = readAdmittedPackageAssetsV1(input.manifest);
+  if (!declaredAssets) return false;
+  return input.descriptor.resources.length === declaredAssets.length
+    && input.descriptor.resources.every((resource, index) => {
       const declared = declaredAssets[index]!;
       return resource.resourceId === declared.resourceId
         && resource.path === declared.path
@@ -242,8 +250,9 @@ export function createPackageAssetArchiveV1(input: Readonly<{
     bytes: Uint8Array;
   }>[];
 }>): PackageAssetArchiveV1 | null {
-  if (!manifestForArchive(input.manifest)) return null;
-  const declaredAssets = readDeclaredPackageAssetsV1(input.manifest);
+  const manifest = manifestForArchive(input.manifest);
+  if (!manifest) return null;
+  const declaredAssets = readAdmittedPackageAssetsV1(manifest);
   if (!declaredAssets) return null;
 
   const files = new Map<string, Uint8Array>();

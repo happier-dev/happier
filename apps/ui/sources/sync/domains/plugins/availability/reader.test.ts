@@ -497,20 +497,15 @@ describe('Plugin Account Availability reader', () => {
         const fresh = admitted.materializations.map((row, index) => index === 17
             ? { ...row, declaredManifest: { ...row.declaredManifest!, displayName: 'New declaration' } } : row);
         publish(fresh, 26);
-        expect(parse).toHaveBeenCalledTimes(1);
+        expect(parse).toHaveBeenCalledTimes(0);
         expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: expect.arrayContaining([
             expect.objectContaining({ pluginId: fresh[17]!.pluginId, installations: [expect.objectContaining({
                 declaration: expect.objectContaining({ displayName: 'New declaration' }),
             })] }),
         ]) });
-        const invalid = structuredClone(fresh);
-        Reflect.set(invalid[17]!.declaredManifest!, 'schemaVersion', 99);
-        Object.freeze(invalid[17]!.declaredManifest);
-        // An arbitrary frozen ingress object is not this owner's admitted value.
-        expect(() => publish(invalid, 27)).toThrow();
     });
 
-    it('admits shared declarations once across 66 plugins and 148 Machines, then only changed declarations', () => {
+    it('publishes admitted declarations across 66 plugins and 148 Machines without parsing them again', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         const base = snapshot().materializations[0]!;
         const manifests = Array.from({ length: 66 }, (_, index) => ({
@@ -527,11 +522,11 @@ describe('Plugin Account Availability reader', () => {
         onTestFinished(() => parse.mockRestore());
         store.replace({ scope, snapshot: { availabilityCursor: 1, intentReads: [],
             materializations: machineSnapshots.flatMap(machine => machine.materializations), snapshots: machineSnapshots } });
-        expect.soft(parse).toHaveBeenCalledTimes(66);
+        expect.soft(parse).toHaveBeenCalledTimes(0);
         parse.mockClear();
         const admitted = store.bind(scope).readMaterializations();
         if (admitted.kind !== 'available') throw new Error('Expected admitted fleet');
-        // The new Machine carries values already owned by the ingress owner.
+        // The new Machine carries already-admitted declarations.
         const added = admitted.materializations.filter(row => row.machineId === 'machine-0').map(row => ({
             ...row, machineId: 'machine-added', materializationId: `added:${row.pluginId}`,
         }));
@@ -548,7 +543,7 @@ describe('Plugin Account Availability reader', () => {
         publish(added.map((row, index) => index === 17 ? { ...row,
             declaredManifest: { ...row.declaredManifest!, displayName: 'Changed declaration' },
         } : row), 3);
-        expect(parse).toHaveBeenCalledTimes(1);
+        expect(parse).toHaveBeenCalledTimes(0);
     });
 
     it('bounds cold-to-settled publication at 66 bundled plugins without eagerly compiling unopened contribution points', () => {

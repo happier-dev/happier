@@ -39,7 +39,7 @@ import {
 } from '../ui/uiArtifactsManifest.js';
 import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '../ui/artifactIntegrity.js';
 import {
-  isPackageAssetArchiveDescriptorDeclaredByManifestV1,
+  isPackageAssetArchiveDescriptorDeclaredByAdmittedManifestV1,
   PackageAssetArchiveDescriptorV1Schema,
   type PackageAssetArchiveDescriptorV1,
 } from './packageAssetV1.js';
@@ -155,7 +155,7 @@ export const PluginReleaseFactsV1Schema: z.ZodMiniType<PluginReleaseFactsV1> = l
       message: 'Portable manifest id and version must match the release coordinate.',
     });
   }
-  if (!isPackageAssetArchiveDescriptorDeclaredByManifestV1({
+  if (!isPackageAssetArchiveDescriptorDeclaredByAdmittedManifestV1({
     manifest: value.normalizedManifest,
     descriptor: value.packageAssetArchive,
   })) {

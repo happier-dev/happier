@@ -1,0 +1,341 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+    PluginAvailabilityActionHttpPathsV1,
+    PluginAvailabilityIntentReadActionOutputV1Schema,
+} from '@happier-dev/protocol/plugins/availability';
+import { createPluginAccountAvailabilityReaderStore } from '@/sync/domains/plugins/availability/reader';
+import {
+    applyPluginAccountAvailabilityProjectionRefresh,
+    clearPluginAccountAvailabilityProjection,
+    readPluginAccountAvailability,
+} from '@/sync/domains/plugins/availability/projection';
+import { InvalidateSync } from '@/utils/sessions/sync';
+import { refreshPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/refreshProjection';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { ServerFetchAbortedForServerSwitchError, ServerFetchReadSupersededError } from '@/sync/http/client';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+
+import { createActivePluginAccountAvailabilityProjectionHydrator } from './pluginAvailabilityProjection';
+
+const scope = { serverId: 'srv-manifest-compat', accountId: 'account-manifest-compat' } as const;
+const pluginId = 'com.acme.manifest-compat';
+const materializationsPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'];
+const intentsPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'];
+
+function intentRead() {
+    return PluginAvailabilityIntentReadActionOutputV1Schema.parse({
+        availabilityCursor: 1,
+        hostingCapability: { enabled: false },
+        intent: { pluginId, desiredVersion: '1.0.0', enabled: true,
+            offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+        release: {
+            ref: { pluginId, version: '1.0.0' },
+            archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+            normalizedManifest: {
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Stored plugin',
+                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                contributes: { actions: [{ id: 'healthy', title: 'Healthy Action', scopes: ['global'],
+                    surfaces: ['ui'], placementBindings: ['commandPalette'],
+                    execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
+            },
+            collectionContracts: [], uiSlots: [],
+            packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] },
+        },
+        packageAssets: [], uiArtifacts: [],
+    });
+}
+
+function jsonResponse(body: unknown): Response {
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+function availabilityChange() {
+    return { cursor: 2, kind: 'pluginDomain', entityId: `pluginDomain/${pluginId}/availability`,
+        changedAt: 2, hint: { pluginDomain: 'availability', pluginId } };
+}
+
+afterEach(() => {
+    clearPluginAccountAvailabilityProjection();
+    vi.useRealTimers();
+});
+
+describe('stored manifest Account Availability read', () => {
+    it('validates each wire manifest once and carries admitted declarations through publication without another full parse', async () => {
+        const response = intentRead();
+        if (!response.release) throw new Error('Missing fixture release');
+        const declaration = { manifest: response.release.normalizedManifest,
+            declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
+        const materialization = { serverIdentityId: 'srv_identity', machineId: 'machine-a',
+            materializationId: 'installed-a', pluginId, version: '1.0.0', sourceClass: 'registryPackage',
+            portableRelease: true, enabled: true, trustState: 'trusted', observedAt: 1,
+            uiArtifacts: [], archiveDigestSha256: response.release.archiveDigestSha256,
+            declaredManifest: declaration.manifest };
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => jsonResponse(path === materializationsPath
+                ? { availabilityCursor: 1, releases: [response.release], snapshots: [{
+                    serverIdentityId: 'srv_identity', machineId: 'machine-a', materializations: [materialization],
+                }] }
+                : { availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                    intentReads: [{ pluginId, response: { ...response, currentDeclaration: declaration,
+                        machineDeclarations: [{ machineId: 'machine-a', machineInstallationId: 'installed-a', declaration }] } }] }) }),
+        });
+        // Observe the real schema, including nested load admission, without replacing its logic.
+        const fullParses = vi.spyOn(PluginManifestV2Schema, 'safeParse');
+        try {
+            const refreshed = await hydrator.refresh();
+            if (!refreshed) throw new Error('Availability did not publish');
+            expect(fullParses).toHaveBeenCalledTimes(5);
+            const store = createPluginAccountAvailabilityReaderStore();
+            store.replace(refreshed);
+            expect(fullParses).toHaveBeenCalledTimes(5);
+            expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{
+                pluginId, installations: [{ declaration: { displayName: 'Stored plugin' } }],
+            }] });
+            Reflect.set(refreshed.snapshot.materializations[0]!.declaredManifest!, 'displayName', 'Changed upstream');
+            expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{
+                pluginId, installations: [{ declaration: { displayName: 'Stored plugin' } }],
+            }] });
+            expect(fullParses).toHaveBeenCalledTimes(5);
+        } finally { fullParses.mockRestore(); }
+    });
+
+    it('publishes a stored release with empty retired families and retains its healthy Action', async () => {
+        const response = intentRead();
+        if (!response.release) throw new Error('Missing fixture release');
+        const storedRelease = { ...response.release, normalizedManifest: {
+            ...response.release.normalizedManifest,
+            contributes: { ...response.release.normalizedManifest.contributes, tools: [], commands: [] },
+        } };
+        const materialization = { serverIdentityId: 'srv_identity', machineId: 'machine-a',
+            materializationId: 'installed-a', pluginId, version: '1.0.0', sourceClass: 'registryPackage',
+            portableRelease: true, enabled: true, trustState: 'trusted', observedAt: 1,
+            uiArtifacts: [], archiveDigestSha256: storedRelease.archiveDigestSha256,
+            declaredManifest: storedRelease.normalizedManifest };
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => jsonResponse(path === materializationsPath
+                ? { availabilityCursor: 1, releases: [storedRelease], snapshots: [{
+                    serverIdentityId: 'srv_identity', machineId: 'machine-a', materializations: [materialization],
+                }] }
+                : { availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                    intentReads: [{ pluginId, response: { ...response, release: storedRelease } }] }) }),
+        });
+        const store = createPluginAccountAvailabilityReaderStore();
+        const reader = store.bind(scope);
+        const refreshed = await hydrator.refresh();
+        expect(refreshed).not.toBeNull();
+        if (!refreshed) throw new Error('Availability did not publish');
+        applyPluginAccountAvailabilityProjectionRefresh(refreshed);
+        store.replace(refreshed);
+        expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
+        const installed = reader.readInstalledPlugins();
+        expect(installed).toMatchObject({ kind: 'available', plugins: [{ pluginId, installations: [{
+            declaration: { contributes: { actions: [{ id: 'healthy' }] } },
+        }] }] });
+        if (installed.kind !== 'available') throw new Error('Installation was not admitted');
+        const declaration = installed.plugins[0]?.installations[0]?.declaration;
+        expect(declaration?.contributes).not.toHaveProperty('tools');
+        expect(declaration?.contributes).not.toHaveProperty('commands');
+    });
+
+    it.each(['materializations', 'intent_census'] as const)(
+        'settles a deterministic %s parse failure without automatic reads and recovers on a real change',
+        async phase => {
+            vi.useFakeTimers();
+            let malformed = true;
+            const response = intentRead();
+            const request = vi.fn(async (path: string) => {
+                if (path === materializationsPath) return jsonResponse(malformed && phase === 'materializations'
+                    ? { availabilityCursor: 'invalid', snapshots: [] }
+                    : { availabilityCursor: 2, snapshots: [] });
+                if (path === intentsPath) return jsonResponse(malformed && phase === 'intent_census'
+                    ? { availabilityCursor: 1, pluginIds: [pluginId], intentReads: 'invalid', failedPluginIds: [] }
+                    : { availabilityCursor: 2, pluginIds: [pluginId], failedPluginIds: [],
+                        intentReads: [{ pluginId, response }] });
+                throw new Error('Unexpected Availability request');
+            });
+            const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+                captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+                getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+                captureRequestAuthority: async () => ({ request }),
+            });
+            const reader = readPluginAccountAvailability(scope);
+            const failures: unknown[] = [];
+            const queue = new InvalidateSync(() => refreshPluginAccountAvailabilityProjection(hydrator),
+                { onError: error => failures.push(error) });
+            try {
+                queue.invalidate();
+                await vi.advanceTimersByTimeAsync(0);
+                const readsAfterFailure = request.mock.calls.length;
+                expect(readsAfterFailure).toBe(phase === 'materializations' ? 1 : 2);
+                await vi.advanceTimersByTimeAsync(60_000);
+                expect(request).toHaveBeenCalledTimes(readsAfterFailure);
+                expect(failures).toEqual([expect.objectContaining({
+                    code: 'plugin_availability_invalid_response', phase, retryable: false, scope,
+                })]);
+                expect(vi.getTimerCount()).toBe(0);
+
+                malformed = false;
+                expect(hydrator.invalidate([availabilityChange()])).toEqual([pluginId]);
+                await queue.invalidateAndAwait();
+                expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
+                expect(request).toHaveBeenCalledTimes(readsAfterFailure + 2);
+            } finally {
+                queue.stop();
+            }
+        },
+    );
+
+    it('publishes successful census pages before settling a later deterministic page failure', async () => {
+        const response = intentRead();
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async (path, init) => {
+                if (path === materializationsPath) return jsonResponse({ availabilityCursor: 1, snapshots: [] });
+                const body = JSON.parse(String(init?.body)) as { cursor?: string };
+                return jsonResponse(body.cursor
+                    ? { availabilityCursor: 1, intentReads: 'invalid' }
+                    : { availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [], nextCursor: pluginId,
+                        intentReads: [{ pluginId, response }] });
+            } }),
+        });
+        const refreshed = await hydrator.refresh();
+        if (!refreshed) throw new Error('Missing partial refresh');
+        expect(() => applyPluginAccountAvailabilityProjectionRefresh(refreshed)).toThrowError(
+            expect.objectContaining({ code: 'plugin_availability_invalid_response', phase: 'intent_census', scope }),
+        );
+        expect(readPluginAccountAvailability(scope).readCurrentAccountExecution(pluginId))
+            .toMatchObject({ kind: 'available' });
+    });
+
+    it.each(['pending', 'manual_retry', 'server_switch', 'retirement', 'invalidation'] as const)(
+        'does not publish an outage for an initial read under %s control, and permits its successor', async control => {
+            vi.useFakeTimers();
+            const activeScope = await activateStorageAccountScope(scope);
+            const heldResponse = createDeferred<Response>();
+            const response = intentRead();
+            let current = true;
+            let retire = () => {};
+            let reads = 0;
+            const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+                captureLifetime: () => ({ scope, isCurrent: () => current,
+                    onRetire: callback => { retire = callback; return { dispose: () => {} }; } }),
+                getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+                captureRequestAuthority: async () => ({ request: async path => {
+                    reads += 1;
+                    if (reads === 1) return heldResponse.promise;
+                    return jsonResponse(path === materializationsPath
+                        ? { availabilityCursor: 1, snapshots: [] }
+                        : { availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                            intentReads: [{ pluginId, response }] });
+                } }),
+            });
+            const reader = readPluginAccountAvailability(scope);
+            const initial = reader.readCurrentAccountExecution(pluginId);
+            const observations: unknown[] = [];
+            const unsubscribe = reader.subscribe(() => observations.push(reader.readCurrentAccountExecution(pluginId)));
+            let settled = false;
+            const pending = refreshPluginAccountAvailabilityProjection(hydrator)
+                .catch((error: unknown) => error).finally(() => { settled = true; });
+            try {
+                await vi.advanceTimersByTimeAsync(60_000);
+                expect(settled).toBe(false);
+                expect(reads).toBe(1);
+                expect(reader.readCurrentAccountExecution(pluginId)).toEqual(initial);
+                if (control === 'pending') {
+                    heldResponse.resolve(jsonResponse({ availabilityCursor: 1, snapshots: [] }));
+                } else if (control === 'manual_retry' || control === 'server_switch') {
+                    const error = control === 'manual_retry' ? new ServerFetchReadSupersededError()
+                        : new ServerFetchAbortedForServerSwitchError();
+                    heldResponse.reject(error);
+                    expect(await pending).toBe(error);
+                } else {
+                    if (control === 'retirement') { current = false; retire(); }
+                    else hydrator.invalidate([availabilityChange()]);
+                    heldResponse.reject(new TypeError('Network request failed'));
+                    expect(await pending).toBeUndefined();
+                }
+                await pending;
+                expect(observations).not.toContainEqual({ kind: 'unavailable', code: 'plugin_availability_unavailable' });
+                if (control !== 'pending') {
+                    expect(reader.readCurrentAccountExecution(pluginId)).toEqual(initial);
+                    current = true;
+                    await refreshPluginAccountAvailabilityProjection(hydrator);
+                }
+                expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
+                expect(reads).toBe(control === 'pending' ? 2 : 3);
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                heldResponse.resolve(jsonResponse({ availabilityCursor: 1, snapshots: [] }));
+                await pending;
+                unsubscribe();
+                activeScope.dispose();
+            }
+        },
+    );
+
+    it.each([
+        ['materializations', 'http'], ['intent_census', 'http'],
+        ['materializations', 'transport'], ['intent_census', 'transport'],
+        ['materializations', 'body'], ['intent_census', 'body'],
+    ] as const)(
+        'publishes transient %s %s failure to subscribed readers, keeps automatic retry and clears failure on recovery', async (phase, failure) => {
+        vi.useFakeTimers();
+        const activeScope = await activateStorageAccountScope(scope);
+        let failedPhaseReads = 0;
+        const response = intentRead();
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => {
+                if (path === (phase === 'materializations' ? materializationsPath : intentsPath)) {
+                    failedPhaseReads += 1;
+                    if (failedPhaseReads === 1) {
+                        if (failure === 'transport') throw new TypeError('Network request failed');
+                        if (failure === 'body') return new Response(new ReadableStream({
+                            start(controller) { controller.error(new TypeError('Network request failed')); },
+                        }));
+                        return new Response(null, { status: 503 });
+                    }
+                }
+                if (path === materializationsPath) return jsonResponse({ availabilityCursor: 1, snapshots: [] });
+                return jsonResponse({ availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                    intentReads: [{ pluginId, response }] });
+            } }),
+        });
+        const reader = readPluginAccountAvailability(scope);
+        const observations: unknown[] = [];
+        const unsubscribe = reader.subscribe(() => observations.push(reader.readCurrentAccountExecution(pluginId)));
+        const failures: unknown[] = [];
+        const queue = new InvalidateSync(() => refreshPluginAccountAvailabilityProjection(hydrator),
+            { onRetryFailure: error => failures.push(error) });
+        try {
+            queue.invalidate();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(failedPhaseReads).toBe(1);
+            expect(reader.readCurrentAccountExecution(pluginId)).toEqual({
+                kind: 'unavailable', code: 'plugin_availability_unavailable',
+            });
+            expect(observations).toContainEqual({ kind: 'unavailable', code: 'plugin_availability_unavailable' });
+            expect(failures).toEqual([expect.objectContaining({
+                code: 'plugin_availability_unavailable', phase, scope, retryable: true,
+                ...(failure === 'http' ? { status: 503 } : {}),
+            })]);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(failedPhaseReads).toBe(2);
+            expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
+            expect(observations.at(-1)).toMatchObject({ kind: 'available' });
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            queue.stop();
+            unsubscribe();
+            activeScope.dispose();
+        }
+    });
+});
