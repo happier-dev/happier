@@ -22,7 +22,8 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 export async function executeAccountPluginAction(params: Readonly<{
   host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials' | 'serverHttpBaseUrl'
     | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
-    | 'runtimeActionMachineId' | 'serverId' | 'onApprovalRequested'>;
+    | 'runtimeActionMachineId' | 'serverId' | 'serverIdentityId' | 'onApprovalRequested'
+    | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>;
   deps: ActionExecutorDeps;
   actionId: string;
   input: unknown;
@@ -109,6 +110,14 @@ export async function executeAccountPluginAction(params: Readonly<{
       ?? params.context?.executionRunTargetMachineId;
     const machineId = explicitMachineId ?? params.context?.defaultSessionMachineId;
     const runtime = await resolveAccountExecutionRuntime({
+      externalActionHomeBinding: {
+        ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
+        ...(params.host.serverIdentityId ? { serverIdentityId: params.host.serverIdentityId } : {}),
+        ...(params.host.externalActionMachineRequestPrivateKey
+          ? { externalActionMachineRequestPrivateKey: params.host.externalActionMachineRequestPrivateKey } : {}),
+        ...(params.host.externalActionMachineInstallationId
+          ? { externalActionMachineInstallationId: params.host.externalActionMachineInstallationId } : {}),
+      },
       ...(params.host.happyHomeDir ? { happyHomeDir: params.host.happyHomeDir } : {}),
       ...(params.context?.signal ? { signal: params.context.signal } : {}),
       ...(params.host.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.host.resolveServerFeaturesSnapshot } : {}),

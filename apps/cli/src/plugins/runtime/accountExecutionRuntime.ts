@@ -12,6 +12,7 @@ import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePlugi
 type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>;
 export type AccountExecutionRuntimeInput = Readonly<{
     accountExecution: NonNullable<RegistryInput['accountExecution']>;
+    externalActionHomeBinding?: RegistryInput['externalActionHomeBinding'];
     happyHomeDir?: string;
     signal?: AbortSignal;
     /** A containing Machine operation holds this registry until Account execution ends. */
@@ -62,6 +63,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             });
         })() : null;
         registry = await resolveExecutablePluginRuntimeRegistry({
+            ...(input.externalActionHomeBinding ? { externalActionHomeBinding: input.externalActionHomeBinding } : {}),
             ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
             ...(purposeRuntime ? { connectedAccounts: purposeRuntime.purposes.owner, actionFormConnectedAccounts: {

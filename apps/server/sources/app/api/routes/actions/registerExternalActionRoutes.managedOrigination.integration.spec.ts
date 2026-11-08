@@ -233,6 +233,55 @@ describe('ordinary Account managed Action origination', () => {
         return instance;
     }
 
+    it.each([false, true])('reads the requester profile for a contained connected-account Action (member: %s)', async member => {
+        const selected = await fixture(true);
+        const requester = member ? (await fixture(false)).account : selected.account;
+        if (member) await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: selected.account.id, machineId: selected.controller.machineId,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const input = { action: { pluginId: selected.manifest.id, localId: 'check' }, input: {} };
+        const requestId = crypto.randomUUID();
+        const envelope = { v: 1 as const, requestId, target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: homeId,
+            accountId: requester.id, authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch },
+            actionId: 'action.invoke', machineId: selected.controller.machineId, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const instance = await app(async () => { throw new Error('Profile preparation does not dispatch an Action'); });
+        const read = (path = '/v1/account/profile', effectActionId = 'connectedServices.accounts.list', keys = selected.keys) => instance.inject({
+            method: 'GET', url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target, installationId: selected.controller.installationId,
+                    requestId, method: 'GET', path, privateKey: keys.secretKey }),
+            },
+        });
+        try {
+            const profile = await read();
+            if (member) {
+                expect(profile.statusCode).toBe(401);
+                expect(profile.json()).toMatchObject({ authorizationRefusal: 'machine_admission_after_principal' });
+                return;
+            }
+            expect(profile.statusCode, profile.body).toBe(200);
+            expect(profile.json()).toMatchObject({ id: requester.id, connectedAccountsV4: [], connectedAccountGroupsV4: [] });
+            expect((await read('/v1/account/profile', 'connectedServices.catalog.list')).statusCode).toBe(401);
+            expect((await read('/v1/account/profile?accountId=another-account')).statusCode).toBe(401);
+            expect((await read('/v1/account/profile', 'connectedServices.accounts.list', tweetnacl.sign.keyPair())).statusCode).toBe(401);
+            for (const [path, body] of [['/v1/account/profile', { unexpected: true }], ['/v2/account/settings', undefined]] as const) {
+                expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
+                    effectActionId: 'connectedServices.accounts.list', encodedTarget: encodeExternalActionResolvedTargetV1(target),
+                    method: 'GET', path, body,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: 'connectedServices.accounts.list', target, installationId: selected.controller.installationId,
+                        requestId, method: 'GET', path, body, privateKey: selected.keys.secretKey }),
+                })).toBeNull();
+            }
+        } finally { await instance.close(); }
+    });
+
     it.each([['plain', false], ['e2ee', false], ['plain', true]] as const)(
         'prepares the requester profile without expanding connected inventory Machine custody (%s Account, member: %s)', async (mode, member) => {
         const actionId = 'sessions.spawn.connected_services.list';

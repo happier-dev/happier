@@ -164,6 +164,7 @@ import {
 } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { createPluginSurfaceAccountActionServices } from './pluginSurfaceAccountActionServices';
+import { executeAccountActionAtRuntimeHost } from './accountActionPlacement';
 import { readAccountTargetedContributionSnapshot } from './accountTargetedContributionSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createPluginSurfaceSessionHandlers } from './pluginSurfaceSessionState';
@@ -244,7 +245,7 @@ export type PluginSurfaceActionExecutorContext = ActionExecutorContext & Readonl
             hostAction: PluginSurfaceHostActionBinding) => Promise<ActionExecuteResult>;
         caller: Pick<DispatchPluginSurfaceActionInput, 'callerPluginId' | 'callerContributionLocalId'
             | 'callerBinding' | 'callerSourceCustody' | 'targetSourceCustody' | 'invocation' | 'actionRequestId' | 'onDaemonActionOperationAdmitted'
-            | 'targetedOperation' | 'selectedActionInput' | 'isContributedActionAvailable' | 'onPreInvocationUnavailable'
+            | 'targetedOperation' | 'selectedActionInput' | 'isMachineAvailable' | 'isContributedActionAvailable' | 'onPreInvocationUnavailable'
             | 'requiredReadOnly' | 'readObservation' | 'actionAccountLifetime'>;
         contributedAction?: PluginSurfaceContributedActionBinding;
         clientAction?: PluginSurfaceClientActionBinding;
@@ -404,7 +405,9 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
      * publish or manufacture that third union arm.
      */
     invocation?: PluginSurfaceUnMountedActionInvocation;
-    /** Live daemon capability owned by the bound controller, never a new action owner. */
+    /** Connection-owner fact for native declaration discovery, independent of Action eligibility. */
+    isMachineAvailable?: () => boolean;
+    /** Daemon Action eligibility, including the mount's projection and origin admission. */
     isContributedActionAvailable?: () => boolean;
     /** Reuse the mounted facade's connection settlement before a daemon invocation. */
     settleContributedAction?: PluginSurfaceContributedActionSettlement;
@@ -1330,6 +1333,7 @@ async function prepareContributedActionInvocation(
             targetSourceCustody: input.targetSourceCustody, invocation: input.invocation,
             actionRequestId: input.actionRequestId, onDaemonActionOperationAdmitted: input.onDaemonActionOperationAdmitted,
             targetedOperation: input.targetedOperation, selectedActionInput: input.selectedActionInput,
+            isMachineAvailable: input.isMachineAvailable,
             isContributedActionAvailable: input.isContributedActionAvailable, onPreInvocationUnavailable: input.onPreInvocationUnavailable,
             requiredReadOnly: input.requiredReadOnly, readObservation: input.readObservation,
             actionAccountLifetime: input.actionAccountLifetime,
@@ -1379,8 +1383,8 @@ async function executeClientContributedAction(
             return clientActionFailure('deployment_unavailable');
         }
     }
-    // Account execution stays in this process, while nested Machine Actions
-    // borrow the target already selected by the host Action front door.
+    // Browser Account Actions prefer an own Machine through the incumbent relay;
+    // otherwise execution stays local, including native HTTP hosts.
     const hostContext = input.hostAction?.context;
     const hostTarget = hostContext?.externalActionTarget;
     const explicitMachine = input.contributedAction !== undefined || hostTarget?.kind === 'machine'
@@ -1548,7 +1552,7 @@ async function executeClientContributedAction(
             const observationRetirement = observationController
                 ? current.registration.accountLifetime?.onRetire(() => observationController.abort()) : undefined;
             const currentUiContext = current.action.execution.target === 'account' ? undefined : readClientActionCurrentUiContext(current);
-            const invokeHandler = (messageAction?: MessageActionAvailableSnapshotV1) => {
+            const executeHandler = (messageAction?: MessageActionAvailableSnapshotV1) => {
                 if (signal.aborted || !current.isCurrent()) throw new PluginError({ code: 'plugin_action_generation_retired' });
                 const accountOrigin = current.action.execution.target === 'account'
                     ? readPluginUiAccountExecutableOrigin(current.action) : null;
@@ -1563,7 +1567,7 @@ async function executeClientContributedAction(
                     ...(input.managedBootstrapCredential ? { managedBootstrapCredential: input.managedBootstrapCredential } : {}),
                     sourceCustody: accountOrigin.sourceCustody, accountLifetime, signal, isCurrent: current.isCurrent,
                     resolveMachine: resolveAccountMachine,
-                    isMachineAvailable: accountSessionTarget ? undefined : input.isContributedActionAvailable,
+                    isMachineAvailable: accountSessionTarget ? undefined : input.isMachineAvailable,
                     ...(input.readObservation?.retire ? { retireReadObservation: input.readObservation.retire } : {}),
                     ...(!accountSessionTarget && input.contributedAction ? { machine: {
                         machineId: input.contributedAction.machineId,
@@ -1583,7 +1587,10 @@ async function executeClientContributedAction(
                                         ? { expectedAccountId: accountLifetime.scope.accountId } : {}),
                                     requestContributedActionCurrentIntent: undefined, contributedActionInvocation: undefined } } } : {}),
                             ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
-                            ...(input.isContributedActionAvailable ? { isContributedActionAvailable: input.isContributedActionAvailable } : {}),
+                            ...(input.isMachineAvailable ? { isMachineAvailable: input.isMachineAvailable } : {}),
+                            // The Account Action is this invocation's caller.
+                            // Its callee's admitted projection owns eligibility;
+                            // the originating surface's capabilities do not.
                             ...(input.settleContributedAction ? { settleContributedAction: input.settleContributedAction } : {}),
                             clientAction: current.binding, pluginUiProjection: input.pluginUiProjection,
                             resolveContributedAction: input.resolveContributedAction,
@@ -1836,6 +1843,21 @@ async function executeClientContributedAction(
                     dispose();
                     throw error;
                 }
+            };
+            const invokeHandler = (messageAction?: MessageActionAvailableSnapshotV1) => {
+                // Read observation hooks retain their Account-local dependency
+                // subscriptions. The finite read effect takes this placement path.
+                if (current.action.execution.target !== 'account' || input.readObservation) return executeHandler(messageAction);
+                const accountLifetime = current.registration.accountLifetime;
+                if (!accountLifetime) throw new PluginError({ code: 'plugin_surface_account_action_unavailable' });
+                const caller = resolveMountedPluginActionCaller(input);
+                const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
+                const context = mountedHostActionContext(input, caller, clientCaller, 'action.invoke');
+                return executeAccountActionAtRuntimeHost({ accountScope: accountLifetime.scope,
+                    action: identity, input: actionInput, signal,
+                    context: { ...context, surface: invocationSurface,
+                        ...(context.actionCaller?.kind === 'plugin' ? {} : { authority: invocationAuthority }) },
+                    executeLocal: () => executeHandler(messageAction) });
             };
             const reference = current.binding.messageActionReference;
             if (!reference) return invokeHandler();
@@ -2439,6 +2461,7 @@ export type CreatePluginSurfaceActionDispatchHandlerInput = Readonly<{
     requestCurrentIntent?: PluginSurfaceActionCurrentIntentPresenter;
     invocationSurface?: PluginSurfaceActionInvocationSurface;
     resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
+    isMachineAvailable?: () => boolean;
     isContributedActionAvailable?: () => boolean;
     settleContributedAction?: PluginSurfaceContributedActionSettlement;
     isCurrent?: () => boolean;
@@ -2529,6 +2552,7 @@ export function createPluginSurfaceActionDispatchHandler(
             ...(input.isContributedActionAvailable
                 ? { isContributedActionAvailable: input.isContributedActionAvailable }
                 : {}),
+            ...(input.isMachineAvailable ? { isMachineAvailable: input.isMachineAvailable } : {}),
             ...(input.settleContributedAction ? { settleContributedAction: input.settleContributedAction } : {}),
             onPreInvocationUnavailable: () => { connectionPendingEligible = true; },
             ...(cancellation.signal ? { signal: cancellation.signal } : {}),
@@ -2631,6 +2655,8 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         options?: PluginSurfaceHostApiRequestOptions) => boolean;
     /** Live controller capability for the daemon branch of `executeAction`. */
     isContributedActionAvailable?: () => boolean;
+    /** Connection availability for native declarations read by Account Actions. */
+    isMachineAvailable?: () => boolean;
     /**
      * Exact host-owned semantics for this physical mount. These supplement the
      * canonical facade; they never replace Action, Resource, or local handlers.
@@ -2750,6 +2776,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         ...(input.isContributedActionAvailable
             ? { isContributedActionAvailable: input.isContributedActionAvailable }
             : {}),
+        ...(input.isMachineAvailable ? { isMachineAvailable: input.isMachineAvailable } : {}),
         settleContributedAction: async (identity, options) => {
             const daemon = options.placement === 'daemon';
             const requestedTarget = machine.executionTarget;
@@ -2772,7 +2799,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
             // outage is not an absent selection. Preserve its canonical
             // unavailable diagnostic so the facade can publish the target
             // owner's classified failure, even before a binding ever arrived.
-            if (daemon && currentTarget && input.isContributedActionAvailable?.() === false) {
+            if (daemon && currentTarget && input.isMachineAvailable?.() === false) {
                 return failure('unavailable', 'plugin_surface_contributed_action_unavailable');
             }
             return { ok: true, binding: machineBindings.contributedAction };

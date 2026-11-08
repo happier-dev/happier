@@ -116,6 +116,11 @@ import { buildV2PluginProjectionById } from '@/agents/backendCatalog/daemonContr
 // Configure responses only at the physical daemon boundary, after real scoped
 // Home/Account and per-caller read admission have run.
 const daemonRpc = vi.hoisted(() => vi.fn());
+// O-OPS browser placement is covered by the public Account composition suite;
+// these local execution/admission cases retain the desktop native HTTP host.
+vi.mock('@/utils/platform/tauri/transferFetch', () => ({
+    resolveTauriRuntimeFetch: async () => (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
 // The OS picker is the only substituted media owner; capability admission and
 // transfer routing below still run through the real Home/Account network path.
 const openerMediaPicker = vi.hoisted(() => ({ getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: null })) }));
@@ -2712,8 +2717,9 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
-    it.each([true, false, 'Session origin'] as const)('observes and reads a Machine source through the Account dispatcher with Machine available=%s', async placement => {
-        const machineAvailable = placement !== false;
+    it.each([true, false, 'Session origin', 'mounted Online Auto', 'mounted offline', 'mounted native read'] as const)('observes and reads a Machine source through the Account dispatcher with Machine available=%s', async placement => {
+        const mounted = typeof placement === 'string' && placement.startsWith('mounted');
+        const machineAvailable = placement !== false && placement !== 'mounted offline';
         const sessionTarget = placement === 'Session origin' ? { field: 'sessionId', cardinality: 'one' as const } : undefined;
         const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
         const schema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
@@ -2741,7 +2747,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             target: parsedTarget.ok ? null : parsedTarget, source: parsedSource.ok ? null : parsedSource,
         }));
         replacePluginAccountAvailabilityProjection({ scope: accountLifetime.scope, snapshot: {
-            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [parsedTarget.manifest, parsedSource.manifest].map(manifest => ({ pluginId: manifest.id, response: {
+            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: (mounted ? [parsedTarget.manifest] : [parsedTarget.manifest, parsedSource.manifest]).map(manifest => ({ pluginId: manifest.id, response: {
                 availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
                 intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
                     offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
@@ -2769,6 +2775,12 @@ describe('Account Action placement through the executable dispatcher', () => {
                 let native: import('@happier-dev/plugin-sdk').Disposable | undefined;
                 try {
                     const snapshot = await observation.readCurrent();
+                    if (placement === 'mounted native read') {
+                        expect(snapshot.contributions).toHaveLength(1);
+                        return await context.services.actions.executeAdmittedTargetedOperation(
+                            snapshot.contributions[0]!.operations.inspect, { key: 'source read' });
+                    }
+                    if (mounted) return { sources: snapshot.contributions.map(contribution => contribution.contributor.pluginId) };
                     expect(snapshot.contributions).toHaveLength(1);
                     if (sessionTarget) {
                         const placementReads = sessionReads;
@@ -2856,9 +2868,19 @@ describe('Account Action placement through the executable dispatcher', () => {
             const accountProjection = readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection();
             const projection = { ...activation.projection, actionsById: {
                 ...activation.projection.actionsById, ...accountProjection?.actionsById,
-                [`${source.manifest.id}/inspect`]: provider,
+                ...(placement === 'mounted native read' ? {} : { [`${source.manifest.id}/inspect`]: provider }),
             } };
-            const outcome = sessionTarget ? await dispatchPluginSurfaceAction({
+            const controller = mounted ? createBoundPluginSurfaceController({ facts: {
+                ...surfaceContext(), machineId: 'provider-machine', serverId: accountLifetime.scope.serverId,
+                occurrenceId: selected.custodyId,
+                accountExecutionOrigin: { ...accountLifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                accountLifetime, interactionEnabled: true, daemonInteractionEnabled: false,
+                daemonReachable: machineAvailable, pluginUiProjection: projection,
+            } }) : null;
+            if (controller) onTestFinished(() => controller.dispose());
+            const outcome = controller ? await controller.hostApi.handleRequest(executeActionRequest({
+                action: activation.action.id, input: {},
+            })) : sessionTarget ? await dispatchPluginSurfaceAction({
                 action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: { sessionId: 'source-session' },
                 clientAction: {}, pluginUiProjection: projection,
                 resolveContributedAction: createPluginUiProjectedActionResolver(projection.actionsById),
@@ -2869,6 +2891,12 @@ describe('Account Action placement through the executable dispatcher', () => {
                 scopedLaunchFacts: { serverId: accountLifetime.scope.serverId, machineId: machineAvailable ? 'provider-machine' : null, interactionEnabled: true },
                 accountLifetime, scopeIsCurrent: () => accountLifetime.isCurrent(),
             });
+            if (mounted) {
+                expect(outcome).toEqual(placement === 'mounted native read'
+                    ? { key: 'initial source' } : { sources: machineAvailable ? [source.manifest.id] : [] });
+                expect(requests).toHaveLength(placement === 'mounted native read' ? 1 : 0);
+                return;
+            }
             expect(outcome).toEqual({ ok: true, result: machineAvailable ? { key: 'changed source' } : { code: 'plugin_action_machine_required' } });
             if (machineAvailable) expect(selectedOccurrence).toBe(provider.occurrenceId);
             expect(requests).toHaveLength(machineAvailable ? 1 : 0);

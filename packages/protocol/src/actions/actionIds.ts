@@ -6,6 +6,7 @@ import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionI
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
+export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 
 export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
 export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
@@ -260,7 +261,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'action.spec.search',
     'action.spec.get',
     'action.options.resolve',
-    'action.invoke',
+    ACTION_INVOKE_ACTION_ID_V1,
   ],
   workflows: WORKFLOW_ACTION_IDS_V1,
   workflow_effects: WORKFLOW_EFFECT_ACTION_IDS_V1,

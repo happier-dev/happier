@@ -1641,6 +1641,17 @@ their plugin-scoped typed refusal to the demanding operation while healthy peers
 remain discoverable. The next explicit operation may retry preparation. This
 applies to bundled and external plugins in 0.3 development source.
 
+On the browser HTTP host, the surface Action dispatcher prefers an own connected
+Machine for finite Account Actions through the existing Account `action.invoke` relay.
+The receiving daemon runs the Account plugin runtime and resolves selected
+Connected Account credentials through the incumbent purpose owner. Native mobile
+and desktop HTTP hosts retain direct Account execution. Placement applies to every
+provider, without a provider list, retry or fallback after relay selection. A browser
+without an eligible own Machine retains local execution. Account
+read observers retain their local dependency subscriptions; their finite Action
+reads follow the same placement rule. Authentication and established credential
+runtimes are separate from this Action placement contract.
+
 The UI admits Account Action and Resource descriptors without acquiring or
 evaluating their executable artifact. The first invocation, Resource read or
 observation prepares that exact Account target through the existing executable
@@ -1690,6 +1701,14 @@ it does not run the handler to establish the subscription. Private
 public Resource event union. A delivery gap retires this dependency rather than
 reopening it as a potentially unchanged read. Direct Resource callers without
 the supported Account Action provenance remain typed unavailable at this seam.
+
+The app's Resource watch pump follows runtime activity (0.3 development source).
+Hiding the page or backgrounding the app cancels the parked `next` poll at once,
+so it never holds the socket's user-request lease, and nothing is polled,
+re-opened or retried while inactive. On return the pump re-opens the
+subscription and delivers `invalidated` only when the digest moved. A
+read-authority or `actionRead` watch treats that interval as a delivery gap and
+retires, as above.
 
 An executable Plugin UI can observe the authority of its own Machine read Action with
 `host.watchResource({ readAuthority: { consumer: { pluginId, localId }, purpose,

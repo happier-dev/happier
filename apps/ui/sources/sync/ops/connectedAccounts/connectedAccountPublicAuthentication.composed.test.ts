@@ -12,6 +12,13 @@ const packaged = vi.hoisted(() => ({
     artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0,
 }));
+// Existing direct Account-runtime cases exercise the desktop native HTTP host.
+// The browser placement case below disables that physical adapter explicitly.
+const nativeHttpHost = vi.hoisted(() => ({ available: false }));
+vi.mock('@/utils/platform/tauri/transferFetch', () => ({
+    resolveTauriRuntimeFetch: async () => nativeHttpHost.available
+        ? (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init) : null,
+}));
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 // Only packaged inventory, native asset IO and OS randomness leave the real
@@ -57,6 +64,7 @@ afterEach(async () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     packaged.reads = 0;
+    nativeHttpHost.available = false;
 });
 
 async function prepareDeviceInventory() {
@@ -103,7 +111,9 @@ async function prepareCloudflareInventory() {
     await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST, target,
         projectPath: 'packages/plugins/deploy-cloudflare',
         entryPath: 'packages/plugins/deploy-cloudflare/src/connectedAccounts/portableAuthentication.ts',
-        packageName: '@happier-dev/plugins-deploy-cloudflare' });
+        packageName: '@happier-dev/plugins-deploy-cloudflare',
+        additionalArtifacts: [{ target: { artifactId: 'account-runtime', exportName: 'activateAccount' },
+            entryPath: 'packages/plugins/deploy-cloudflare/src/accountRuntime.ts' }] });
     return { pluginId: PLUGIN_MANIFEST.id, localId: descriptor.id };
 }
 
@@ -162,6 +172,92 @@ const inventories = {
     antigravity: await prepareOtherOAuthInventory('antigravity'),
     codex: await prepareOtherOAuthInventory('codex'),
 };
+
+it.each([
+    { relayFailure: false, mountedCaller: false },
+    { relayFailure: true, mountedCaller: false },
+    { relayFailure: false, mountedCaller: true },
+])('places a browser Cloudflare Account Action on an own Machine relay (failure=$relayFailure, mounted=$mountedCaller)', async ({ relayFailure, mountedCaller }) => {
+    nativeHttpHost.available = false;
+    const [{ answerExternalActionAccountForHome }, { createMachineFixture }, { storage },
+        { captureActiveServerAccountScopeLifetime }, { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability },
+        { createPluginUiCommonJsLoaderBackend }, { dispatchPluginSurfaceAction }] = await Promise.all([
+        import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+        import('@/dev/testkit/fixtures/machineFixtures'), import('@/sync/domains/state/storage'),
+        import('@/sync/domains/scope/activeServerAccountScope'), import('@/sync/domains/plugins/availability/projection'),
+        import('@/components/plugins/reactNative/commonJsLoaderBackend'),
+        import('@/components/plugins/surfaces/pluginSurfaceActionDispatch'),
+    ]);
+    const accountId = 'browser-action-account';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverUrl = 'https://browser-action-home.test';
+    const serverIdentityId = 'srv_browser_action';
+    const serverId = await homes.addHome({ name: 'Browser Action', serverUrl, serverIdentityId,
+        accountId, credentials, accountEncryptionMode: 'plain' });
+    const action = { pluginId: inventories.cloudflare.pluginId, localId: 'cloudflare-named/selections-read' };
+    const input = { credentialRef: { service: inventories.cloudflare, accountId: 'selected-cloudflare' }, hostname: 'example.test' };
+    homes.answer(serverId, 'GET /v4/connect/qualified/accounts', { body: { service: inventories.cloudflare,
+        accounts: [{ ref: input.credentialRef, status: 'connected', authenticationModeId: 'token', configurationReady: true,
+            configurationRevision: null, revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }] } });
+    homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+    let browserCredentialReads = 0;
+    let browserVendorRequests = 0;
+    connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId, credentials,
+        configureSocket: configureConnectedServerSocketBoundary,
+        request: async (input, init) => {
+            const url = new URL(String(input));
+            if (url.origin !== serverUrl) {
+                browserVendorRequests += 1;
+                throw new TypeError('Provider does not permit browser CORS');
+            }
+            if (url.pathname === '/v4/connect/qualified/credential') {
+                browserCredentialReads += 1;
+                throw new Error('Selected credential belongs at the daemon');
+            }
+            return homes.request(input, init);
+        } });
+    const result = { kind: 'ready', zones: [{ zoneId: 'zone-selected', name: 'example.test' }], options: [],
+        defaults: { connector: { imageRef: 'cloudflare/cloudflared', version: 'fixture' } },
+        connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } };
+    const failureCause = { phase: 'plugin.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null };
+    let received: unknown;
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'browser-action-machine',
+        actionId: 'action.invoke', tokenEpoch: 0,
+        execute: (value) => { received = value; return relayFailure
+            ? { ok: false, errorCode: 'plugin_fetch_adapter_unavailable', error: 'plugin_fetch_adapter_unavailable', failureCause }
+            : { ok: true, result }; } });
+    const machine = createMachineFixture({ id: 'browser-action-machine', activeAt: Date.now(),
+        access: { custodian: { accountId, displayName: 'Test Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+    storage.setState({ machines: { [machine.id]: machine },
+        machineListByServerId: { [serverId]: [machine] },
+        machineListStatusByServerId: { [serverId]: 'idle' } });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Missing browser Account lifetime');
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope,
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const reader = readPluginAccountAvailability(lifetime.scope);
+    const selected = await reader.ensureCurrentAccountExecution(action.pluginId);
+    expect(selected.kind).toBe('available');
+    const projection = reader.readAccountUiProjection();
+    if (!projection) throw new Error('Missing browser Account projection');
+    await reconcileProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform: 'web', reader,
+        accountLifetime: lifetime, loaderBackend: createPluginUiCommonJsLoaderBackend() });
+    const callerAction = projection.actionsById[`${action.pluginId}/${action.localId}`];
+    if (!callerAction?.hostAccountOrigin) throw new Error('Missing Account caller custody');
+    const outcome = await dispatchPluginSurfaceAction({ action, input, clientAction: {}, pluginUiProjection: projection,
+        ...(mountedCaller ? { callerPluginId: action.pluginId, callerContributionLocalId: action.localId,
+            callerBinding: { pluginId: action.pluginId, contributionLocalId: action.localId,
+                occurrenceId: callerAction.occurrenceId, sourceCustody: callerAction.hostAccountOrigin.sourceCustody } } : {}),
+        invocationSurface: 'ui', originSurface: 'ui',
+        resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
+        hostAction: { execute: createDefaultActionExecutor().execute,
+            context: { serverId, expectedAccountId: accountId, surface: 'ui', authority: 'present_user' } } });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject(relayFailure
+        ? { ok: false, reason: 'plugin_fetch_adapter_unavailable', failureCause } : { ok: true, result });
+    expect(received).toEqual({ action, input });
+    expect(browserCredentialReads).toBe(0);
+    expect(browserVendorRequests).toBe(0);
+});
 
 it.each([
     { provider: 'cold public-author', service: inventories.cold, defaultModeId: 'manual', modeIds: ['manual'], declarationLoads: 1 },
@@ -408,6 +504,8 @@ it.each([
     { mode: 'plain', coldProvider: false }, { mode: 'e2ee', coldProvider: false },
     { mode: 'plain', coldProvider: true },
 ] as const)('materializes the exact selected purpose through the public Account artifact without a Machine ($mode; cold provider=$coldProvider)', async ({ mode, coldProvider }) => {
+    // This existing direct-execution contract belongs to native HTTP hosts.
+    nativeHttpHost.available = true;
     const service = coldProvider ? inventories.coldMaterialization : inventories.materialization;
     const consumerPluginId = inventories.materialization.pluginId;
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');

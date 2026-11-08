@@ -10,6 +10,13 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storage';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { parseToken } from '@/utils/auth/parseToken';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+
+// Exercise the native host's direct Account execution; browser placement has
+// its own composed dispatcher/relay contract coverage.
+vi.mock('@/utils/platform/tauri/transferFetch', () => ({
+    resolveTauriRuntimeFetch: async () => (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
 
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
@@ -21,15 +28,21 @@ import {
     activate as activatePublicAuthoringReviewClientActions,
 } from '../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewClientActions.ts';
 import {
-    formatQualifiedPluginActionId,
+    formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import {
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
-    type CurrentUiContextSnapshotV1,
-    type PluginContributionClientPlatform,
-    type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    type CurrentUiContextSnapshotV1} from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import {
+    type PluginContributionClientPlatform} from '@happier-dev/protocol/plugins/contributions/catalog';
+import {
+    type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginProjectedNotificationCategoryEntryV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PluginSessionInboxRowV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/sessionInbox';
 import type { PluginUiActionProjection, PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -42,8 +55,11 @@ import type {
     PluginReactNativeLoaderBackend,
 } from '@/components/plugins/reactNative/loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
-import { preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
+import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
+import { createPluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema } from '@happier-dev/protocol/socketRpc';
 
 // Daemon replies are an external Socket boundary. Home selection, Account
@@ -568,6 +584,8 @@ function withoutAbortSignalAny(): () => void {
 function createDaemonActionProjection(input: Readonly<{
     dangerLevel?: PluginProjectedActionV2['dangerLevel'];
     sessionTarget?: PluginProjectedActionV2['sessionTarget'];
+    surfaces?: PluginProjectedActionV2['surfaces'];
+    operation?: PluginProjectedActionV2['operation'];
 }> = {}): PluginUiProjectionModel {
     const dangerLevel = input.dangerLevel ?? 'safe';
     const daemonAction = PluginProjectedActionV2Schema.parse({
@@ -576,9 +594,10 @@ function createDaemonActionProjection(input: Readonly<{
         occurrenceId: 'acme-triage-occurrence-27',
         title: 'File ticket',
         scopes: ['global'],
-        surfaces: ['voice'],
+        surfaces: input.surfaces ?? ['voice'],
         execution: { target: 'daemon' },
         dangerLevel,
+        ...(input.operation ? { operation: input.operation } : {}),
         ...(input.sessionTarget ? { sessionTarget: input.sessionTarget } : {}),
         ...(dangerLevel === 'safe'
             ? {}
@@ -755,6 +774,672 @@ describe('current UI context Voice tool port', () => {
             }
         } finally { onVisibleVoiceConfirmation = undefined; controller.abort(); await pending.catch(() => {}); store.resetVoiceSessionStoreForTests(); }
     });
+    it('dispatches shared cross-plugin controls with admission-time row custody, viewer confirmation and target CAS', async () => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject, defineProtocolNumber, defineProtocolString } = await import('@happier-dev/plugin-sdk/protocol');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const { dispatchPluginDeclarativeButton } = await import('@/components/plugins/surfaces/pluginDeclarativeButtonDispatch');
+        const account = await captureLazyActionAccountContext(actionHomeId);
+        let revision = 1;
+        let effects = 0;
+        let handlerEntries = 0;
+        const received: Array<Readonly<{ sessionId: string; surface: string; callerKind?: string }>> = [];
+        const authored = definePlugin({ id: 'acme.row-control-target', version: '1.0.0', displayName: 'External row control target',
+            actions: { apply: { title: 'Apply the current revision', surfaces: ['ui'], dangerLevel: 'writesRemote',
+                confirmation: { title: 'Apply this revision?' },
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({ expectedRevision: defineProtocolNumber({ integer: true }),
+                    sessionId: defineProtocolString() }, { policy: 'closed' }),
+                run: async (value, context) => {
+                    handlerEntries += 1;
+                    received.push({ sessionId: value.sessionId, surface: context.surface,
+                        ...(context.caller ? { callerKind: context.caller.kind } : {}) });
+                    if (value.expectedRevision !== revision) return { applied: false, revision };
+                    revision += 1;
+                    effects += 1;
+                    return { applied: true, revision };
+                },
+            } } });
+        const installed = await installPortableAccountPluginForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
+            accountLifetime: account.accountLifetime });
+        let currentProjection = installed.projection;
+        let projectionChanged = () => {};
+        const unpublish = publishCommittedAppShellPluginUiProjection(read => read?.scope.accountId === account.accountId
+            && areServerProfileIdentifiersEquivalent(read.scope.serverId, account.serverId) ? currentProjection : null,
+        undefined, listener => { projectionChanged = listener; return () => {}; });
+        const row = PluginSessionInboxRowV1Schema.parse({ id: 'external-row',
+            session: { serverId: account.serverId, sessionId: 'row-session' }, title: 'External review', detail: null,
+            detailResource: { pluginId: 'acme.inbox-producer', resourceId: 'row-detail' }, controls: [
+                { id: 'Continue / now', label: 'Continue', effect: { kind: 'action', invocation: {
+                    action: { pluginId: authored.manifest.id, localId: 'apply' }, input: { expectedRevision: 1, sessionId: 'row-session' },
+                } } },
+                { id: 'Open', label: 'Open', effect: { kind: 'open', page: { pageId: 'review', subPath: 'items/124' } } },
+            ],
+        });
+        const [button, open] = row.controls ?? [];
+        if (!button || !open) throw new Error('Expected admitted Inbox controls');
+        let current = true;
+        const dispatch = (input?: Readonly<{ expectedRevision: number; sessionId: string }>, signal?: AbortSignal) => dispatchPluginDeclarativeButton({
+            button, ownerPluginId: 'acme.inbox-producer', scope: account.accountLifetime.scope,
+            defaultRoute: '/inbox', sessionId: row.session.sessionId, isCurrent: () => current,
+            ...(input ? { input } : {}),
+            ...(signal ? { signal } : {}),
+        });
+        const confirm = async (start: () => ReturnType<typeof dispatch>, beforeConfirm?: () => void) => {
+            await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).toBeNull());
+            let pending!: ReturnType<typeof dispatch>;
+            await act(async () => { pending = start(); });
+            await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+            beforeConfirm?.();
+            await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
+            return pending;
+        };
+        try {
+            expect(await dispatchPluginDeclarativeButton({ button: open, ownerPluginId: 'acme.inbox-producer',
+                scope: account.accountLifetime.scope, defaultRoute: '/inbox', isCurrent: () => current }))
+                .toEqual({ kind: 'open', route: `/plugins/acme.inbox-producer/review/items/124?serverId=${encodeURIComponent(account.serverId)}` });
+            expect(await confirm(() => dispatch(), () => {
+                current = false;
+                currentProjection = { ...currentProjection, actionsById: Object.fromEntries(Object.entries(currentProjection.actionsById)
+                    .map(([id, action]) => [id, { ...action }])) };
+                projectionChanged();
+            })).toMatchObject({ kind: 'action', result: { ok: true, result: { applied: true, revision: 2 } } });
+            expect(effects).toBe(1);
+            expect(received).toEqual([{ sessionId: 'row-session', surface: 'ui' }]);
+            expect(await dispatch()).toEqual({ kind: 'unavailable' });
+            current = true;
+            // The target Action owns replay admission: the unchanged producer
+            // input reaches its real handler again, and its CAS grants nothing.
+            expect(await confirm(() => dispatch())).toMatchObject({ kind: 'action', result: { ok: true, result: { applied: false, revision: 2 } } });
+            expect(handlerEntries).toBe(2);
+            expect(effects).toBe(1);
+            // A stale row cannot admit a new press. An explicit cancellation
+            // still belongs to the admitted operation rather than its renderer.
+            const cancellation = new AbortController();
+            let retiring!: ReturnType<typeof dispatch>;
+            await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).toBeNull());
+            await act(async () => { retiring = dispatch(undefined, cancellation.signal); });
+            await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+            await act(async () => { cancellation.abort(); });
+            await retiring;
+            expect(handlerEntries).toBe(2);
+            expect(revision).toBe(2);
+            expect(daemonRequests).toEqual([]);
+        } finally { unpublish(); await installed.dispose(); account.dispose(); }
+    });
+
+    it('executes a parsed external native notification binding with captured scope and per-notice input', async () => {
+        const actionProjection = createDaemonActionProjection({ surfaces: ['ui'] });
+        const category = PluginProjectedNotificationCategoryEntryV1Schema.parse({
+            id: `${ACTION_ID.pluginId}/review`, pluginId: ACTION_ID.pluginId, pluginVersion: '1.0.0',
+            occurrenceId: 'acme-triage-occurrence-27', definition: { id: 'review', title: 'Review', kind: 'plugin', eventIds: [],
+                buttons: [
+                    { id: 'Ship 🚀', label: 'Ship this', effect: { kind: 'action', invocation: { action: ACTION_ID, input: { title: 'default title' } } } },
+                    { id: 'Show / review', label: 'Show review', effect: { kind: 'open' } },
+                ] },
+        });
+        const projection: PluginUiProjectionModel = { ...actionProjection, notificationCategoriesById: { [category.id]: category } };
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+        daemonReply.mockResolvedValue({ ok: true, result: { ticketId: 'native-button-ticket' } });
+        const { parseNotificationTap } = await import('@/activity/notifications/notificationRouting');
+        const { executePluginNotificationButton } = await import('@/activity/notifications/pluginNotificationActions');
+        const commandFor = (buttonId: string, buttonInputs?: Record<string, { title: string }>) => {
+            const parsed = parseNotificationTap({ defaultActionIdentifier: 'default', response: {
+                actionIdentifier: `happier.pluginNotification.v1/${ACTION_ID.pluginId}/review/${encodeURIComponent(buttonId)}`,
+                notification: { request: { identifier: 'external-button-notice', content: { data: {
+                    v: 1, topic: 'account_notice', serverId: actionHomeId, serverUrl: 'https://current-ui-actions.test',
+                    accountId: 'current-ui-account', artifactId: 'external-notice',
+                    source: { kind: 'plugin', pluginId: ACTION_ID.pluginId, itemId: 'review-124' },
+                    page: { pageId: 'review', subPath: 'items/124' },
+                    pluginNotification: { pluginId: ACTION_ID.pluginId, categoryId: 'review', occurrenceId: 'acme-triage-occurrence-27',
+                        clientRequestId: 'notice-send-one', ...(buttonInputs ? { buttonInputs } : {}) },
+                } } } },
+            } });
+            if (parsed?.command.kind !== 'openNotice') throw new Error('Expected parsed plugin notice button');
+            return parsed.command;
+        };
+        try {
+            const open = commandFor('Show / review');
+            expect(await executePluginNotificationButton(open, { allowExecution: true })).toBe(open.route);
+            expect(daemonRequests).toEqual([]);
+            const action = commandFor('Ship 🚀', { 'Ship 🚀': { title: 'notice-selected title' } });
+            expect(await executePluginNotificationButton(action, { allowExecution: true })).toBeNull();
+            expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-actions',
+                method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                payload: expect.objectContaining({ input: { title: 'notice-selected title' }, executionSurface: 'ui',
+                    expectedContributorOccurrenceId: 'acme-triage-occurrence-27' }) }));
+            daemonReply.mockClear();
+            expect(await executePluginNotificationButton(commandFor('Ship 🚀'), { allowExecution: true })).toBeNull();
+            expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ input: { title: 'default title' } }) }));
+            daemonReply.mockClear();
+            expect(await executePluginNotificationButton(action, { allowExecution: false })).toBe(action.route);
+            expect(daemonReply).not.toHaveBeenCalled();
+            expect(visibleModalCount).toBe(0);
+        } finally { unpublish(); }
+    });
+
+    it('falls back from native notification buttons requiring review or carrying a stale category or foreign Account', async () => {
+        const category = PluginProjectedNotificationCategoryEntryV1Schema.parse({
+            id: `${ACTION_ID.pluginId}/review`, pluginId: ACTION_ID.pluginId, pluginVersion: '1.0.0',
+            occurrenceId: 'acme-triage-occurrence-27', definition: { id: 'review', title: 'Review', kind: 'plugin', eventIds: [],
+                buttons: [{ id: 'Ship 🚀', label: 'Ship this', effect: { kind: 'action', invocation: { action: ACTION_ID, input: {} } } }] },
+        });
+        const projection: PluginUiProjectionModel = { ...createDaemonActionProjection({ surfaces: ['ui'], dangerLevel: 'writesRemote' }),
+            notificationCategoriesById: { [category.id]: category } };
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+        const { parseNotificationTap } = await import('@/activity/notifications/notificationRouting');
+        const { executePluginNotificationButton } = await import('@/activity/notifications/pluginNotificationActions');
+        try {
+            for (const [accountId, occurrenceId] of [['current-ui-account', 'acme-triage-occurrence-27'],
+                ['current-ui-account', 'retired-category'], ['foreign-account', 'acme-triage-occurrence-27']]) {
+                const parsed = parseNotificationTap({ defaultActionIdentifier: 'default', response: {
+                    actionIdentifier: `happier.pluginNotification.v1/${ACTION_ID.pluginId}/review/${encodeURIComponent('Ship 🚀')}`,
+                    notification: { request: { identifier: 'external-button-refused', content: { data: {
+                        v: 1, topic: 'plugin_session', serverId: actionHomeId, serverUrl: 'https://current-ui-actions.test', accountId,
+                        sessionId: 'native-source-session', pluginNotification: { pluginId: ACTION_ID.pluginId, categoryId: 'review',
+                            occurrenceId, clientRequestId: 'notice-send-refused' },
+                    } } } },
+                } });
+                if (parsed?.command.kind !== 'openNotice') throw new Error('Expected parsed plugin Session notice');
+                expect(await executePluginNotificationButton(parsed.command, { allowExecution: true })).toBe(parsed.command.route);
+            }
+            expect(daemonRequests).toEqual([]);
+            expect(homes.requests.filter(request => request.path === '/v1/artifacts' && request.input != null)).toEqual([]);
+            expect(visibleModalCount).toBe(0);
+        } finally { unpublish(); }
+    });
+
+    it('runs an exact captured-scope native Action without a mounted port and retains one-shot preparation', async () => {
+        const projection = createDaemonActionProjection({ surfaces: ['ui'], operation: {
+            version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' },
+        } });
+        const unpublish = publishCommittedAppShellPluginUiProjection(read => areServerProfileIdentifiersEquivalent(read?.scope.serverId, actionHomeId)
+            && read?.scope.accountId === 'current-ui-account' ? projection : null);
+        daemonReply.mockResolvedValue({ ok: true, result: { ticketId: 'native-ticket' } });
+        try {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const prepared = await createFrontDoorActionExecute().prepare('action.invoke', {
+                action: ACTION_ID, input: { title: 'native ticket' },
+            }, { surface: 'ui', serverId: actionHomeId, expectedAccountId: 'current-ui-account',
+                expectedContributedActionOccurrenceId: 'acme-triage-occurrence-27', interactivePresentation: 'unavailable',
+                actionRequestId: 'native-contributed-request' });
+            expect(prepared.kind).toBe('ready');
+            expect(daemonRequests).toEqual([]);
+            if (prepared.kind !== 'ready') throw new Error('Expected captured-scope prepared invocation');
+            const result = prepared.invocation.run();
+            expect(prepared.invocation.run()).toBe(result);
+            await expect(result).resolves.toEqual({ ok: true, result: { ticketId: 'native-ticket' } });
+            expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-actions',
+                method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                payload: expect.objectContaining({ executionSurface: 'ui', expectedContributorOccurrenceId: 'acme-triage-occurrence-27',
+                    requestId: 'native-contributed-request' }) }));
+            expect(visibleModalCount).toBe(0);
+        } finally { unpublish(); }
+    });
+
+    it('refuses native interactive review and retired occurrences before a prompt or contributed effect', async () => {
+        let projection: PluginUiProjectionModel | null = createDaemonActionProjection({ dangerLevel: 'writesRemote', surfaces: ['ui'] });
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+        try {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const execute = createFrontDoorActionExecute();
+            const context = { surface: 'ui' as const, serverId: actionHomeId, expectedAccountId: 'current-ui-account',
+                interactivePresentation: 'unavailable' as const, expectedContributedActionOccurrenceId: 'acme-triage-occurrence-27' };
+            await expect(execute('action.invoke', { action: ACTION_ID, input: {} }, context))
+                .resolves.toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+            projection = createDaemonActionProjection({ surfaces: ['ui'] });
+            await expect(execute('action.invoke', { action: ACTION_ID, input: {} }, {
+                ...context, expectedContributedActionOccurrenceId: 'retired-occurrence',
+            })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
+            const prepared = await execute.prepare('action.invoke', { action: ACTION_ID, input: {} }, context);
+            expect(prepared.kind).toBe('ready');
+            projection = null;
+            if (prepared.kind !== 'ready') throw new Error('Expected prepared invocation');
+            await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false });
+            expect(visibleModalCount).toBe(0);
+            expect(daemonRequests).toEqual([]);
+        } finally { unpublish(); }
+    });
+
+    it('retains ordinary foreground confirmation for an exact captured-scope Action without a mounted port', async () => {
+        const projection = createDaemonActionProjection({ dangerLevel: 'writesRemote', surfaces: ['ui'] });
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+        daemonReply.mockResolvedValue({ ok: true, result: { applied: true } });
+        try {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            let pending!: ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
+            await act(async () => { pending = createFrontDoorActionExecute()('action.invoke', { action: ACTION_ID, input: {} }, {
+                surface: 'ui', serverId: actionHomeId, expectedAccountId: 'current-ui-account',
+                expectedContributedActionOccurrenceId: 'acme-triage-occurrence-27',
+            }); });
+            await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+            expect(daemonRequests).toEqual([]);
+            await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
+            await expect(pending).resolves.toEqual({ ok: true, result: { applied: true } });
+        } finally { unpublish(); }
+    });
+
+    it('retains the captured Home when a mounted foreground port exposes a different origin', async () => {
+        const projection = createDaemonActionProjection({ surfaces: ['ui'] });
+        const key = `${ACTION_ID.pluginId}/${ACTION_ID.localId}`;
+        const ambient: PluginUiProjectionModel = { ...projection, actionsById: { [key]: {
+            ...projection.actionsById[key]!, hostOrigin: { ...ACTION_ORIGIN, serverId: clientHomeId,
+                machineId: 'machine-current-ui-client-action' },
+        } } };
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => ambient, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        }));
+        daemonReply.mockResolvedValue({ ok: true, result: { applied: true } });
+        try {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            await expect(createFrontDoorActionExecute()('action.invoke', { action: ACTION_ID, input: {} }, {
+                surface: 'ui', serverId: actionHomeId, expectedAccountId: 'current-ui-account',
+                expectedContributedActionOccurrenceId: 'acme-triage-occurrence-27',
+            })).resolves.toEqual({ ok: true, result: { applied: true } });
+            expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-actions',
+                method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE }));
+        } finally { unregister(); unpublish(); }
+    });
+
+    it('refuses a client-target native Action before entering its declared UI handler', async () => {
+        const handler = vi.fn(async () => ({ applied: true }));
+        const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['ui'] });
+        await fixture.composition.unload();
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            await expect(createFrontDoorActionExecute()('action.invoke', { action: CLIENT_ACTION_ID, input: {} }, {
+                surface: 'ui', serverId: clientHomeId, expectedAccountId: 'current-ui-account',
+                expectedContributedActionOccurrenceId: fixture.action.occurrenceId, interactivePresentation: 'unavailable',
+            })).resolves.toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+            expect(handler).not.toHaveBeenCalled();
+            expect(visibleModalCount).toBe(0);
+        } finally { unpublish(); await fixture.composition.unload(); }
+    });
+
+    it('uses the captured Account Action policy while another Account is focused', async () => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject } = await import('@happier-dev/plugin-sdk/protocol');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const accountId = 'native-action-account';
+        const serverUrl = 'https://captured-native-account.test';
+        const serverId = await homes.addHome({ name: 'Captured Account', serverUrl, accountId, currentAccount: true });
+        const credentials = await TokenStorage.setCredentialsForServerUrlWithRollback(serverUrl, { serverId }, {
+            token: createAccountTokenForTests(accountId, { currentAccount: true }),
+        });
+        if (!credentials) throw new Error('Captured Account credential unavailable');
+        credentialsToRestore.push(credentials);
+        homes.answer(serverId, '/v1/auth/ping', { body: { ok: true } });
+        const account = await captureLazyActionAccountContext(serverId);
+        let effects = 0;
+        const authored = definePlugin({ id: 'acme.native-account', version: '1.0.0', displayName: 'Native Account',
+            actions: { apply: { title: 'Apply', surfaces: ['ui'],
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+                run: async () => { effects += 1; return { applied: true }; },
+            } } });
+        const installed = await installPortableAccountPluginForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
+            accountLifetime: account.accountLifetime });
+        const action = { pluginId: authored.manifest.id, localId: 'apply' };
+        const unpublish = publishCommittedAppShellPluginUiProjection(read => areServerProfileIdentifiersEquivalent(read?.scope.serverId, serverId)
+            && read?.scope.accountId === accountId ? installed.projection : null);
+        // The focused Account's policy forbids the Action; the addressed
+        // Account's baseline allows it, so ambient settings would be decisive.
+        getStorage().getState().activateProfileScope({ serverId: publicHomeId, accountId: 'current-ui-account' });
+        getStorage().getState().applySettingsLocal({ actionsSettingsV1: { v: 1,
+            actions: { [formatQualifiedPluginActionId(action)]: { disabledSurfaces: ['ui'] } } } });
+        try {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            await expect(createFrontDoorActionExecute()('action.invoke', { action, input: {} }, {
+                surface: 'ui', serverId, expectedAccountId: accountId, interactivePresentation: 'unavailable',
+                expectedContributedActionOccurrenceId: installed.projection.actionsById[`${action.pluginId}/${action.localId}`]!.occurrenceId,
+            })).resolves.toEqual({ ok: true, result: { applied: true } });
+            expect(effects).toBe(1);
+            expect(visibleModalCount).toBe(0);
+        } finally { unpublish(); await installed.dispose(); account.dispose(); }
+    });
+
+    it('reads exact Account schemas on demand when the listed descriptor carries no schema', async () => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject } = await import('@happier-dev/plugin-sdk/protocol');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account');
+        const authored = definePlugin({ id: 'acme.cold-schema', version: '1.0.0', displayName: 'Cold schema',
+            actions: { read: { title: 'Read', surfaces: ['ui', 'voice'],
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }), run: async () => null } } });
+        const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }), accountLifetime: lifetime });
+        const key = `${authored.manifest.id}/read`;
+        const { accountActionDeclaration: _declaration, ...descriptor } = installed.projection.actionsById[key]!;
+        const projection = { ...installed.projection, actionsById: { [key]: descriptor } };
+        const port = createCurrentUiContextVoiceToolPort({ invocationSurface: 'ui', readProjection: () => projection,
+            readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} } });
+        try {
+            expect(await port.readCurrentContributedActionSchemas?.(formatQualifiedPluginActionId({ pluginId: authored.manifest.id, localId: 'read' })))
+                .toMatchObject({ inputSchema: { type: 'object', additionalProperties: false } });
+        } finally { await installed.dispose(); await connection.dispose(); }
+    });
+
+    it.each(['installed', 'initial', 'absent', 'aborted', 'retired', 'replaced', 'replacement-gap',
+        'replacement-absent', 'replacement-disabled', 'replacement-aborted', 'replacement-retired', 'after-acquired',
+        'activation-gap', 'target-unavailable', 'after-acquired-retired', 'during-attachment'] as const)(
+        'settles cold Action acquisition from AppShell declaration publication (%s)', async settlement => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject } = await import('@happier-dev/plugin-sdk/protocol');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { CurrentUiContextBridge } = await import('./CurrentUiContextProvider');
+        const { useCurrentUiContextVoiceToolPort } = await import('./currentUiContextVoiceToolPort');
+        const { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+            PluginAvailabilityIntentsListActionOutputV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+        // Supply the cold HTTP census below real Sync, parsing each boundary
+        // reply with its owner schema before the real consumer reads it.
+        const censusReplies = new Map<string, unknown>([
+            [PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+                PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 0, snapshots: [] })],
+            [PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
+                PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 0, pluginIds: [], intentReads: [], failedPluginIds: [] })],
+        ]);
+        const request = vi.fn(async (...args: Parameters<typeof homes.request>) => {
+            const reply = censusReplies.get(new URL(String(args[0])).pathname);
+            return reply ? new Response(JSON.stringify(reply), { headers: { 'Content-Type': 'application/json' } })
+                : homes.request(...args);
+        });
+        setRuntimeFetch(request);
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request });
+        // Join the actual startup discovery queue before measuring arrival
+        // costs; its initial census is not a read caused by this acquisition.
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshPluginAccountAvailability();
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Account lifetime missing');
+        let attachments = 0;
+        let disposals = 0;
+        const attachedVersions: string[] = [];
+        let releaseAttachment!: () => void;
+        const attachmentGate = new Promise<void>(resolve => { releaseAttachment = resolve; });
+        const defineReadPlugin = (version: string) => definePlugin({ id: 'acme.cold-observation', version, displayName: 'Cold observation',
+            actions: { read: { title: 'Read', surfaces: ['ui', 'voice'], readOnly: true,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+                run: async () => null,
+                observeRead: async () => {
+                    attachments += 1; attachedVersions.push(version);
+                    if (settlement === 'during-attachment' && version === '1.0.0') await attachmentGate;
+                    return { dispose() { disposals += 1; } };
+                },
+            } } });
+        const authored = defineReadPlugin('1.0.0');
+        const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
+            accountLifetime: lifetime });
+        const replacing = settlement.startsWith('replace') || settlement === 'after-acquired'
+            || settlement === 'activation-gap' || settlement === 'target-unavailable' || settlement === 'after-acquired-retired'
+            || settlement === 'during-attachment';
+        const composition = getInstalledPluginUiClientExecutableComposition();
+        if (replacing && settlement !== 'after-acquired' && settlement !== 'after-acquired-retired' && settlement !== 'during-attachment') {
+            await composition.invalidatePlugin(authored.manifest.id);
+        }
+        let replacement: typeof installed | undefined;
+        let projection: PluginUiProjectionModel | null = settlement === 'activation-gap' || settlement === 'target-unavailable'
+            ? { ...installed.projection, reactNativeBundlesById: {} } : replacing ? installed.projection : null;
+        let published = false;
+        const installs = settlement === 'installed' || settlement === 'initial' || settlement === 'replaced'
+            || settlement === 'replacement-gap' || settlement === 'after-acquired' || settlement === 'activation-gap'
+            || settlement === 'during-attachment';
+        let port: ReturnType<typeof useCurrentUiContextVoiceToolPort> = null;
+        const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
+        function Probe() { port = useCurrentUiContextVoiceToolPort(); return null; }
+        function AppShell() {
+            const defaults = useAppShellPluginUiProjection();
+            return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
+                value: { ...defaults, pluginUiProjection: replacing ? projection : published && installs ? installed.projection : null,
+                    // An unrelated current member and ready activation do not
+                    // establish the missing declaration's absence.
+                    phase: !published && settlement !== 'target-unavailable' && (settlement === 'initial' || replacing) ? 'establishing' : 'current',
+                    hasEstablishingMembers: !published && settlement !== 'initial' && settlement !== 'target-unavailable',
+                    clientExecutableActivation: { status: replacing && !published ? 'establishing' : 'ready' },
+                    accountLifetime: lifetime, serverId: lifetime.scope.serverId },
+                children: React.createElement(CurrentUiContextBridge, { publisher: null, reader,
+                    children: React.createElement(Probe) }),
+            });
+        }
+        const screen = await renderScreen(React.createElement(AppShell));
+        const controller = new AbortController();
+        // Account restoration also bootstraps unrelated Session and settings
+        // reads. Count physical plugin acquisition requests at the HTTP boundary.
+        const acquisitionReads = () => request.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v1/plugins/')).length;
+        const readCount = acquisitionReads();
+        const daemonReadCount = daemonRequests.length;
+        // Capture the real hook-produced port; an absent declaration still has
+        // a live Account-scoped acquisition subscription.
+        const currentPort = port as ReturnType<typeof useCurrentUiContextVoiceToolPort>;
+        if (!currentPort?.observeAction) throw new Error('Action observer missing');
+        let outcome: 'pending' | 'attached' | 'refused' = 'pending';
+        const refusalCodes: unknown[] = [];
+        const pending = currentPort.observeAction({ action: { pluginId: authored.manifest.id, localId: 'read' }, input: {},
+            signal: controller.signal, isCurrent: settlement === 'after-acquired-retired' ? () => true : lifetime.isCurrent,
+            invalidate: () => {} })
+            .then(observer => { outcome = 'attached'; return { observer }; }, error => {
+                refusalCodes.push(error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : 'unexpected');
+                outcome = 'refused'; return { error: isPluginError(error) ? error.code : 'unexpected' };
+            });
+        // Retire after acquire's synchronous read but before its awaiting
+        // observation consumer resumes. Only the target lifetime ends.
+        if (settlement === 'after-acquired') await composition.invalidatePlugin(authored.manifest.id);
+        if (settlement === 'after-acquired-retired') await act(async () => {
+            getStorage().getState().activateProfileScope({ serverId: lifetime.scope.serverId, accountId: 'retired-account' });
+        });
+        if (settlement === 'during-attachment') {
+            await act(async () => {});
+            expect(attachments).toBe(1);
+            await composition.invalidatePlugin(authored.manifest.id);
+            releaseAttachment();
+        }
+        try {
+            await act(async () => {});
+            if (settlement === 'after-acquired-retired') {
+                expect(outcome).toBe('refused');
+                expect(await pending).toEqual({ error: 'plugin_action_generation_retired' });
+                expect(attachments).toBe(0);
+                return;
+            }
+            if (settlement === 'target-unavailable') {
+                // Global activation of unrelated targets supplies no exact
+                // admission and no reason to wait after discovery settled.
+                expect(outcome).toBe('refused');
+                expect(await pending).toEqual({ error: 'contributed_action_unavailable' });
+                expect(attachments).toBe(0);
+                expect(acquisitionReads()).toBe(readCount);
+                expect(daemonRequests.length).toBe(daemonReadCount);
+                return;
+            }
+            expect(outcome, refusalCodes.join(',')).toBe('pending');
+            expect(attachments).toBe(settlement === 'during-attachment' ? 1 : 0);
+            for (let arrival = 0; arrival < 10; arrival += 1) await screen.update(React.createElement(AppShell));
+            expect(outcome).toBe('pending');
+            if (settlement === 'replacement-gap') {
+                projection = null;
+                await screen.update(React.createElement(AppShell));
+                expect(outcome).toBe('pending');
+            }
+            if (replacing && settlement !== 'replacement-absent'
+                && settlement !== 'replacement-aborted' && settlement !== 'replacement-retired') {
+                const successor = defineReadPlugin('1.0.1');
+                replacement = await installPortableAccountPluginReleaseForTest({ manifest: successor.manifest,
+                    activate: api => successor.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
+                    accountLifetime: lifetime });
+                // Registration publication precedes AppShell's successor
+                // declaration; the old occurrence must not settle this wait.
+                expect(outcome).toBe('pending');
+                projection = settlement === 'replacement-disabled' ? replacement.disable() : replacement.projection;
+            }
+            if (settlement === 'replacement-absent') projection = null;
+            if (settlement === 'aborted' || settlement === 'replacement-aborted') controller.abort();
+            if (settlement === 'retired' || settlement === 'replacement-retired') await act(async () => {
+                getStorage().getState().activateProfileScope({ serverId: lifetime.scope.serverId, accountId: 'different-account' });
+            });
+            published = true;
+            await screen.update(React.createElement(AppShell));
+            const result = await pending;
+            expect(attachments).toBe(settlement === 'during-attachment' ? 2 : installs ? 1 : 0);
+            expect(attachedVersions).toEqual(settlement === 'during-attachment' ? ['1.0.0', '1.0.1']
+                : installs ? [replacing ? '1.0.1' : '1.0.0'] : []);
+            if ('observer' in result) await result.observer.dispose();
+            else expect(result.error).toBe(settlement === 'absent' || settlement === 'replacement-absent'
+                || settlement === 'replacement-disabled' ? 'contributed_action_unavailable' : 'plugin_action_generation_retired');
+            expect(disposals).toBe(settlement === 'during-attachment' ? 2 : installs ? 1 : 0);
+            expect(acquisitionReads(), JSON.stringify(request.mock.calls.map(([url]) => new URL(String(url)).pathname)
+                .filter(path => path.startsWith('/v1/plugins/')))).toBe(readCount);
+            expect(daemonRequests.length).toBe(daemonReadCount);
+        } finally {
+            releaseAttachment(); controller.abort(); await pending; await screen.unmount(); await replacement?.dispose(); await installed.dispose(); await connection.dispose();
+        }
+    });
+
+    it.each([true, false])('retains cold Session observer attachment through equal Account declarations and refuses replacement, cancellation and retirement (caller current: %s)', async callerRemainsCurrent => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/plugin-sdk/protocol');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the captured Account lifetime');
+        let executions = 0;
+        let invalidations = 0;
+        let observerAttachments = 0;
+        let observerDisposals = 0;
+        let callerCurrent = true;
+        let publish: (() => void) | undefined;
+        const authored = definePlugin({ id: 'acme.portable-context', version: '1.0.0', displayName: 'Portable context',
+            actions: { read: { title: 'Read portable context', surfaces: ['ui', 'voice'],
+                readOnly: true,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+                resultSchema: defineProtocolObject({ value: defineProtocolString() }, { policy: 'closed' }),
+                run: async () => { executions += 1; return { value: 'portable' }; },
+                observeRead: (_input, invalidate) => { observerAttachments += 1; publish = invalidate; return { dispose() { observerDisposals += 1; } }; },
+            } } });
+        const installed = await installPortableAccountPluginForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }), accountLifetime: lifetime });
+        let projection = installed.projection;
+        getStorage().setState({ machines: {}, machineListByServerId: {} });
+        const port = createCurrentUiContextVoiceToolPort({ invocationSurface: 'ui', readProjection: () => projection,
+            readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} } });
+        const action = { pluginId: authored.manifest.id, localId: 'read' };
+        try {
+            expect(bindCurrentUiContextVoiceToolPortToAdmission(port, new AbortController().signal).observeAction).toBeUndefined();
+            expect(port.listCurrentContributedActionDefinitions?.('allSurfaces')).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: formatQualifiedPluginActionId(action) }),
+            ]));
+            expect(await port.readCurrentContributedActionSchemas?.(formatQualifiedPluginActionId(action)))
+                .toMatchObject({ inputSchema: { type: 'object' }, outputSchema: { type: 'object' } });
+            const observerAttachment = port.observeAction?.({ action, input: {}, defaultSessionId: 'cold-session',
+                invalidate: () => { invalidations += 1; }, isCurrent: () => callerCurrent && lifetime.isCurrent() });
+            const key = `${action.pluginId}/${action.localId}`;
+            const current = projection.actionsById[key]!;
+            // The first observer captures selected Account authority before
+            // asynchronous admission. A reconstructed publication is not a replacement.
+            projection = { ...projection, actionsById: { [key]: { ...current } } };
+            const observer = await observerAttachment;
+            expect(observer).toBeDefined();
+            expect(executions).toBe(0);
+            expect(observerAttachments).toBe(1);
+            expect(observerDisposals).toBe(0);
+            expect(invalidations).toBe(0);
+            // Reconstruction after attachment must also retain the actual subscription.
+            projection = { ...projection, actionsById: { [key]: { ...current } } };
+            publish?.();
+            expect(invalidations).toBe(1);
+            expect(observerAttachments).toBe(1);
+            expect(await port.invokeAction?.({ action, input: {} })).toEqual({ ok: true, result: { value: 'portable' } });
+            for (const mismatched of [
+                { ...current, hostAccountOrigin: { ...current.hostAccountOrigin!, accountId: 'another-account' } },
+                { ...current, hostAccountOrigin: { ...current.hostAccountOrigin!, serverId: clientHomeId } },
+                { ...current, occurrenceId: 'replacement-generation' },
+            ]) {
+                projection = { ...installed.projection, actionsById: { [key]: mismatched } };
+                expect(await port.invokeAction?.({ action, input: {} })).toMatchObject({ ok: false });
+            }
+            projection = installed.projection;
+            const canceled = new AbortController(); canceled.abort();
+            expect(await port.invokeAction?.({ action, input: {}, signal: canceled.signal })).toMatchObject({ ok: false });
+            callerCurrent = callerRemainsCurrent;
+            await installed.dispose();
+            // Target retirement invalidates a still-current caller once, but
+            // never permits the retired observer to publish again.
+            expect(invalidations).toBe(callerRemainsCurrent ? 2 : 1);
+            publish?.();
+            expect(invalidations).toBe(callerRemainsCurrent ? 2 : 1);
+            getStorage().getState().activateProfileScope({ serverId: lifetime.scope.serverId, accountId: 'another-account' });
+            expect(await port.invokeAction?.({ action, input: {} })).toMatchObject({ ok: false });
+            publish?.();
+            expect(invalidations).toBe(callerRemainsCurrent ? 2 : 1);
+            await observer?.dispose();
+            expect(observerDisposals).toBe(1);
+            expect(executions).toBe(1);
+            expect(daemonRequests).toEqual([]);
+        } finally { await installed.dispose(); await connection.dispose(); }
+    });
+
+    it('borrows ready committed translation copy without demanding unseen catalog Resources', async () => {
+        const previousLanguage = getPreferredLanguage();
+        await preloadTranslationsForSettings('fr');
+        setPreferredLanguageFromSettings('fr');
+        const base = createDaemonActionProjection();
+        const projection: PluginUiProjectionModel = { ...base, actionsById: {
+            ...base.actionsById, [`${ACTION_ID.pluginId}/${ACTION_ID.localId}`]: {
+                ...base.actionsById[`${ACTION_ID.pluginId}/${ACTION_ID.localId}`]!, title: { key: 'title', fallback: 'File ticket' },
+            },
+        }, translationsByPluginId: {
+            [ACTION_ID.pluginId]: { id: `translations:${ACTION_ID.pluginId}`, pluginId: ACTION_ID.pluginId,
+                contributionKind: 'translations', locales: ['en', 'fr'], resourceIdsByLocale: { en: 'copy-en', fr: 'copy-fr' } },
+        } };
+        let reads = 0;
+        const runtime = createPluginUiTranslationRuntime({ projection, readResourceBytes: async (_projection, _pluginId, resourceId) => {
+            reads++;
+            return new TextEncoder().encode(JSON.stringify({ title: resourceId === 'copy-fr' ? 'Créer un ticket' : 'File ticket' }));
+        } });
+        let committed = projection;
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => committed, undefined, undefined, runtime);
+        try {
+            const port = createCurrentUiContextVoiceToolPort({
+                reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+                readProjection: () => projection, readNavigationBinding: () => null,
+            });
+            expect(port.listCurrentContributedActionDefinitions?.()[0]?.title).toBe('File ticket');
+            expect(reads).toBe(0);
+            await runtime.demand(ACTION_ID.pluginId, 'fr');
+            expect(port.listCurrentContributedActionDefinitions?.()[0]?.title).toBe('Créer un ticket');
+            expect(reads).toBe(2);
+            committed = EMPTY_PLUGIN_UI_PROJECTION;
+            runtime.setProjection(committed);
+            expect(port.listCurrentContributedActionDefinitions?.()[0]?.title).toBe('File ticket');
+        } finally {
+            unpublish(); runtime.dispose(); setPreferredLanguageFromSettings(previousLanguage);
+        }
+    });
+
     it('retains the strict daemon SessionTarget declaration in Voice discovery', () => {
         const projection = createDaemonActionProjection({ sessionTarget: { field: 'sessionId', cardinality: 'one' } });
         const port = createCurrentUiContextVoiceToolPort({
@@ -850,8 +1535,10 @@ describe('current UI context Voice tool port', () => {
         });
         let deliveries = 0;
         const dispatch = createClientActionMachineRpcExecutor(() => ({
-            hasConnectedClientRpcHandler: method => methods.has(`${machineId}:${method}`),
             callConnectedClientRpc: async (method, payload, options) => {
+                // The server's live RPC registry, not a client advertisement
+                // preflight, owns the typed unavailable transport receipt.
+                if (!methods.has(`${machineId}:${method}`)) return { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
                 options.onIssued(); deliveries += 1;
                 const result = await new Promise<unknown>(resolve => {
                     for (const receive of socket.listeners(SOCKET_RPC_EVENTS.REQUEST)) {
@@ -1274,6 +1961,15 @@ describe('current UI context Voice tool port', () => {
                 }],
             },
         }]);
+        // Exact demand preserves the existing surface mode without borrowing
+        // a sibling declaration or expanding back to the complete catalog.
+        const uiOnlyId = formatQualifiedPluginActionId({ pluginId: ACTION_ID.pluginId, localId: 'ui-only' });
+        expect(port.listCurrentContributedActionDefinitions?.(undefined, { id: uiOnlyId })).toEqual([]);
+        expect(port.listCurrentContributedActionDefinitions?.('allSurfaces', { id: uiOnlyId }))
+            .toEqual([expect.objectContaining({ id: uiOnlyId })]);
+        expect(port.listCurrentContributedActionDefinitions?.('allSurfaces', {
+            id: formatQualifiedPluginActionId({ pluginId: ACTION_ID.pluginId, localId: 'missing' }),
+        })).toEqual([]);
         // Schemas are not listed; they are read per Action from its machine.
         await expect(port.readCurrentContributedActionSchemas?.(ACTION_DISCOVERY_ID)).resolves.toEqual({
             inputSchema,

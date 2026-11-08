@@ -254,11 +254,12 @@ describe('useDaemonMergedProjectionInputs', () => {
         return serverIdentityId;
     }
 
-    async function answerRowSession(session: ReturnType<typeof createSessionFixture>) {
+    async function answerRowSession(session: ReturnType<typeof createSessionFixture>, options?: Readonly<{ withoutMachines?: boolean }>) {
         const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
         network.setHttpResponder(async url => {
             const path = new URL(String(url)).pathname;
+            if (options?.withoutMachines && path === '/v1/machines') return Response.json([]);
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
             if (path === `/v1/sessions/${session.id}/turns`) return Response.json(buildSessionTurnsProjectionV1({
@@ -269,10 +270,14 @@ describe('useDaemonMergedProjectionInputs', () => {
     }
 
     it.each(['direct', 'form'] as const)('invokes an admitted external Account row Action without any Machine (%s)', async mode => {
+        // Restoring the Home starts Sync; keep its census empty before it can
+        // republish the network boundary's default own Machine after store setup.
+        network.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/machines'
+            ? Response.json([]) : null);
         await adoptRowActionHome();
         const session = createSessionFixture({ id: 'account-row-session', serverId, owner: 'account-a', metadata: null });
         storage.setState({ sessions: { [session.id]: session }, machines: {}, machineListByServerId: {} });
-        await answerRowSession(session);
+        await answerRowSession(session, { withoutMachines: true });
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected the restored Account');
         const effects: string[] = [];
