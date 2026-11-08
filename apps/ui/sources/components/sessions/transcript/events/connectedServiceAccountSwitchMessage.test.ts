@@ -127,4 +127,40 @@ describe('buildConnectedServiceAccountSwitchMessage', () => {
             : 'Switched ChatGPT account from Same name · work@example.com to Same name · personal@example.com');
         if (hidden) expect(message).not.toContain('@example.com');
     });
+
+    it.each([false, true])('uses same-service accounts outside the switch as collision context: hidden=%s', (hidden) => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const accounts = [
+            { ref: { service, accountId: 'work' }, displayName: 'Same name', providerIdentity: { email: 'work@example.com' } },
+            { ref: { service, accountId: 'personal' }, displayName: 'Same name', providerIdentity: { email: 'personal@example.com' } },
+            { ref: { service, accountId: 'other' }, displayName: 'Happier', providerIdentity: { email: 'other@example.com' } },
+        ];
+        for (const [fromProfileId, toProfileId] of [['work', 'other'], ['other', 'work']] as const) {
+            const message = buildConnectedServiceAccountSwitchMessage({
+                event: { serviceId: 'openai-codex', groupId: null, fromProfileId, toProfileId },
+                labelsByKey: undefined,
+                accounts,
+                presentIdentity: input => presentConnectedAccountIdentity({ hidden, label: input.label ?? null,
+                    email: input.email ?? null, accountId: input.accountId ?? null, labelKind: input.labelKind }),
+            });
+            const accountName = hidden ? 'Same name · wo•••@e•••.com' : 'Same name · work@example.com';
+            expect(message).toContain(fromProfileId === 'work' ? `from ${accountName} to Happier` : `from Happier to ${accountName}`);
+            expect(message).not.toContain(hidden ? 'pe•••@e•••.com' : 'personal@example.com');
+        }
+    });
+
+    it('excludes other services from the switch collision context', () => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const message = buildConnectedServiceAccountSwitchMessage({
+            event: { serviceId: 'openai-codex', groupId: null, fromProfileId: null, toProfileId: 'work' },
+            labelsByKey: undefined,
+            accounts: [
+                { ref: { service, accountId: 'work' }, displayName: 'Same name', providerIdentity: { email: 'work@example.com' } },
+                { ref: { service: { pluginId: 'another.plugin', localId: 'another-service' }, accountId: 'work' },
+                    displayName: 'Same name', providerIdentity: { email: 'other@example.com' } },
+            ],
+        });
+        expect(message).toContain('to Same name');
+        expect(message).not.toContain('@example.com');
+    });
 });

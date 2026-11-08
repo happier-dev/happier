@@ -437,8 +437,10 @@ describe('TranscriptEventRow', () => {
             const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
             storage.getState().activateProfileScope(scope);
             storage.getState().applyProfileForScope(scope, { ...profileDefaults, id: owner, connectedAccountsV4:
-                [{ accountId: 'work-routing-id', email: 'work@example.com' }, { accountId: 'backup-routing-id', email: 'personal@example.com' }]
-                    .map(({ accountId, email }) => ({ ref: { service, accountId }, displayName: 'Same name',
+                [{ accountId: 'work-routing-id', email: 'work@example.com', displayName: 'Same name' },
+                    { accountId: 'personal-routing-id', email: 'personal@example.com', displayName: 'Same name' },
+                    { accountId: 'backup-routing-id', email: 'backup@example.com', displayName: 'Happier' }]
+                    .map(({ accountId, email, displayName }) => ({ ref: { service, accountId }, displayName,
                         providerIdentity: { email }, status: 'connected' as const, authenticationModeId: 'oauth',
                         revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
                         configurationReady: true, configurationRevision: null, scopes: [] })) });
@@ -464,10 +466,10 @@ describe('TranscriptEventRow', () => {
             if (normalized?.role !== 'event') throw new Error('Expected the normalized account switch');
             storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false });
             row = await renderScreen(<TranscriptEventRow event={normalized.content} serverId={target.id} />);
-            expect(row.getTextContent()).toContain('from Same name · work@example.com to Same name · personal@example.com');
+            expect(row.getTextContent()).toContain('from Same name · work@example.com to Happier');
             expect(row.getTextContent()).not.toContain('routing-id');
             await act(async () => storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: true }));
-            expect(row.getTextContent()).toContain('from Same name · wo•••@e•••.com to Same name · pe•••@e•••.com');
+            expect(row.getTextContent()).toContain('from Same name · wo•••@e•••.com to Happier');
             expect(row.getTextContent()).not.toContain('@example.com');
             expect(reads.filter(path => path === '/v1/account/profile' || path.includes('/machines/') || path.includes('/rpc'))).toHaveLength(0);
         } finally {

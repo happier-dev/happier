@@ -63,13 +63,12 @@ export function buildConnectedServiceAccountSwitchMessage(params: Readonly<{
     const provider = resolveSwitchServiceDisplay(params.event.serviceId);
     const serviceKey = resolveQualifiedConnectedAccountServiceKey(params.event.serviceId);
     const service = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
-    const sides = [
-        { profileId: params.event.fromProfileId, profileLabel: params.event.fromProfileLabel },
-        { profileId: params.event.toProfileId, profileLabel: params.event.toProfileLabel },
-    ].map(({ profileId, profileLabel }) => {
+    const accounts = service ? (params.accounts ?? []).filter(account => account.ref.service.pluginId === service.pluginId
+        && account.ref.service.localId === service.localId) : [];
+    const accountsById = new Map(accounts.map(account => [account.ref.accountId, account] as const));
+    const nameEntry = (profileId: string | null, profileLabel?: string | null) => {
         const accountId = readDisplayLabel(profileId);
-        const account = accountId && service ? params.accounts?.find(candidate => candidate.ref.accountId === accountId
-            && candidate.ref.service.pluginId === service.pluginId && candidate.ref.service.localId === service.localId) : null;
+        const account = accountId ? accountsById.get(accountId) : undefined;
         return {
             key: accountId ? `account:${accountId}` : 'native', serviceTitle: provider, accountId,
             userLabel: accountId ? resolveConnectedServiceProfileLabel({ labelsByKey, serviceId: serviceKey ?? params.event.serviceId, profileId: accountId })
@@ -80,8 +79,13 @@ export function buildConnectedServiceAccountSwitchMessage(params: Readonly<{
             providerAccountId: account?.providerIdentity?.accountId,
             presentIdentity: params.presentIdentity,
         };
-    });
-    const names = presentConnectedAccountNames(sides);
+    };
+    const sides = [
+        nameEntry(params.event.fromProfileId, params.event.fromProfileLabel),
+        nameEntry(params.event.toProfileId, params.event.toProfileLabel),
+    ];
+    // A third account can share an endpoint's name even when the two switched names differ.
+    const names = presentConnectedAccountNames([...sides, ...accounts.map(account => nameEntry(account.ref.accountId))]);
     const fromName = names.get(sides[0]!.key)!;
     const toName = names.get(sides[1]!.key)!;
     const from = fromName.inlineLabel ?? fromName.primaryLabel;
