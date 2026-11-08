@@ -39,7 +39,7 @@ import { createProviderErrorV1 as createForegroundProviderError } from "@happier
 import { configuration } from "@/configuration";
 import { runWithServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 import type { RequesterSessionRuntimeContext } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import { isOriginalOwnAccountActionCustody, readApiTokenDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
+import { isOriginalOwnAccountActionCustody, readRequesterDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createProjectFiniteAction } from "@/workspaces/projectSetup/projectFiniteAction";
 import type { RpcHandlerContext } from "@/api/rpc/types";
@@ -85,6 +85,19 @@ import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCust
 
 type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
   'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay }>;
+
+/** HTTP ingress consumes the same Home-admitted facts as Socket RPC ingress. */
+export function projectAdmittedExternalActionMachineContext(context: RpcActionExecutorContext | undefined,
+  machineId: string, encryptionMode: 'plain' | 'e2ee'): RpcActionExecutorContext | undefined {
+  const root = context?.externalActionExecutionAuthorization?.binding;
+  if (!context || context.machineAdmission || !context.verifyMachineAdmissionCurrent
+    || !root?.admittedMachineRole || root.machineId !== machineId) return context;
+  return { ...context, machineAdmission: {
+    actorAccountId: root.accountId, custodianAccountId: root.custodianAccountId,
+    machineId: root.machineId, installationId: root.installationId,
+    role: root.admittedMachineRole, encryptionMode,
+  } };
+}
 
 export function requiresPortableSessionSpawnServerIdentity(actionId: string, input: unknown): boolean {
   if (actionId === 'session.spawn_new' || actionId === 'approval.request.decide') return true;
@@ -452,18 +465,12 @@ resolveServerFeaturesSnapshot?: () =>
           : resolvedSessionSpawnDirectTargetTransport;
       const projectWorkerAction = params.resolveProjectWorkerAction?.();
       const apiMachineForSessions = params.getApiMachineForSessions();
-      const admittedRoot = executionContext?.externalActionExecutionAuthorization?.binding;
-      if (executionContext && !executionContext.machineAdmission
-        && executionContext.verifyMachineAdmissionCurrent && apiMachineForSessions
-        && admittedRoot?.admittedMachineRole && admittedRoot.machineId === params.machineId) {
+      if (apiMachineForSessions) {
         // Home already decided Machine access for this exact signed root. HTTP
         // ingress has no separate Socket RPC admission carrier; project the same
         // admitted facts here, with resource mode from the installed Machine.
-        executionContext = { ...executionContext, machineAdmission: {
-          actorAccountId: admittedRoot.accountId, custodianAccountId: admittedRoot.custodianAccountId,
-          machineId: admittedRoot.machineId, installationId: admittedRoot.installationId,
-          role: admittedRoot.admittedMachineRole, encryptionMode: apiMachineForSessions.getMachineEncryptionMode(),
-        } };
+        executionContext = projectAdmittedExternalActionMachineContext(executionContext,
+          params.machineId, apiMachineForSessions.getMachineEncryptionMode());
         context = executionContext;
       }
       const filesystemActionExecute = apiMachineForSessions?.createFilesystemActionExecutor(params.serverId);
@@ -565,8 +572,8 @@ resolveServerFeaturesSnapshot?: () =>
         };
       };
       const deploymentDeps = (needsDeploymentDeps || actionId === 'approval.request.decide') && deploymentHomeId ? createRequesterBoundDeploymentActionDeps({
-        ...(readApiTokenDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)
-          ? { accountArtifacts: readApiTokenDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)! } : {}),
+        ...(readRequesterDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)
+          ? { accountArtifacts: readRequesterDeploymentArtifactStore(executionContext?.externalActionExecutionAuthorization)! } : {}),
         credentials, installedCredentials: params.credentials, serverId: deploymentHomeId,
         resolveRequesterIdentity: async context => apiMachineForSessions
           ? await apiMachineForSessions.resolveDeploymentSourceRequesterIdentity(context)

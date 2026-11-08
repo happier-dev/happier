@@ -8,7 +8,7 @@ import { readApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCu
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { requesterActionContext, requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { requesterActionContext, requesterAccountEncryptionMode, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
@@ -60,10 +60,10 @@ export type RequesterAccountActionCustody = Readonly<{
   getBoundSessionId?(): string | null;
 }>;
 
-const tokenDeploymentArtifacts = Symbol('tokenDeploymentArtifacts');
+const requesterDeploymentArtifacts = Symbol('requesterDeploymentArtifacts');
 const requesterAccountMaterial = Symbol('requesterAccountMaterial');
 type TokenProjection = ExternalActionRequesterAccountProjectionV1 & {
-  [tokenDeploymentArtifacts]?: ReturnType<typeof createAccountArtifactStore>;
+  [requesterDeploymentArtifacts]?: ReturnType<typeof createAccountArtifactStore>;
   [requesterAccountMaterial]?: AccountScopedCryptoMaterialSnapshotV1;
 };
 
@@ -143,7 +143,7 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
       ? createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
           dataKeyPublicKey: encryption.publicKey }) : undefined;
     Object.defineProperty(projection, requesterAccountMaterial, { get: () => live ? snapshot : undefined, enumerable: false });
-    Object.defineProperty(projection, tokenDeploymentArtifacts, { get: () => live ? artifacts : undefined, enumerable: false });
+    Object.defineProperty(projection, requesterDeploymentArtifacts, { get: () => live ? artifacts : undefined, enumerable: false });
     Object.defineProperty(authorization, 'requesterAccountProjection', { value: Object.freeze(projection), enumerable: false });
     const retainedKey = key;
     key = null;
@@ -153,9 +153,9 @@ export async function prepareApiTokenDeploymentAccountProjection(authorization: 
   finally { key?.fill(0); }
 }
 
-/** Only the exact token projection above publishes a credential-less store. */
-export function readApiTokenDeploymentArtifactStore(authorization?: ExternalActionExecutionAuthorizationV1) {
-  return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[tokenDeploymentArtifacts] ?? null;
+/** Only an admitted requester projection publishes its captured Account store. */
+export function readRequesterDeploymentArtifactStore(authorization?: ExternalActionExecutionAuthorizationV1) {
+  return (authorization?.requesterAccountProjection as TokenProjection | undefined)?.[requesterDeploymentArtifacts] ?? null;
 }
 
 /** Run content uses admitted requester material, which may belong to the receiver
@@ -346,6 +346,7 @@ async function projectAdmittedAccountCustody(
       value: currentness.mode === 'e2ee' && material
         ? createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
           ...(encryption?.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) }) : undefined });
+    Object.defineProperty(projection, requesterDeploymentArtifacts, { value: artifacts, enumerable: false });
     Object.freeze(projection);
     const carrier: ExternalActionExecutionAuthorizationV1 = { ...parsed.data };
     const requesterHttpProjection = input.authorization.requesterHttpProjection;
@@ -429,6 +430,17 @@ export function readAdmittedRequesterAccountReadRuntime(input: Readonly<{
 export async function resolveAdmittedRequesterAccountReadRuntime(input: Parameters<typeof readAdmittedRequesterAccountReadRuntime>[0]): Promise<AdmittedRequesterAccountReadRuntime | null> {
   const runtime = readAdmittedRequesterAccountReadRuntime(input);
   return runtime && await runtime.isCurrent() ? runtime : null;
+}
+
+function createRequesterEncryptionResolver(credentials: StoredCredentials, serverIdentityId: string,
+  isCurrent: () => Promise<boolean>): ResolveExternalActionEncryption {
+  return async signal => {
+    if (signal?.aborted || !await isCurrent() || !credentials.encryption) return null;
+    const encryption = credentials.encryption;
+    return { serverIdentityId, material: encryption.type === 'legacy'
+      ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(encryption.secret) }
+      : encryption };
+  };
 }
 
 export async function admitRequesterAccountActionContext(input: Readonly<{
@@ -558,16 +570,12 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
     savedSecrets = savedSecretOperationContext;
     settingsPublication = createRequesterAccountSettingsPublication({ observation, currentness, operationContext: savedSecretOperationContext });
     const refreshAccountSettings = settingsPublication.ensureCurrent;
-    const resolveEncryption: ResolveExternalActionEncryption = async signal => {
-      if (signal?.aborted || !await authorization.requesterAccountProjection!.isCurrent() || !input.credentials.encryption) return null;
-      const encryption = input.credentials.encryption;
-      return { serverIdentityId: input.serverIdentityId, material: encryption.type === 'legacy'
-        ? { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(encryption.secret) }
-        : encryption };
-    };
+    const resolveEncryption = createRequesterEncryptionResolver(input.credentials, input.serverIdentityId,
+      authorization.requesterAccountProjection!.isCurrent);
     // HTTP projection retains this exact private Account facet. Its symbol is
     // not an authorization input and never enters the public carrier schema.
-    const projection = { ...authorization.requesterAccountProjection! };
+    const projection = Object.defineProperties({ ...authorization.requesterAccountProjection! },
+      Object.getOwnPropertyDescriptors(authorization.requesterAccountProjection!));
     const carrier: ExternalActionExecutionAuthorizationV1 = Object.defineProperties({ ...authorization }, {
       ...Object.getOwnPropertyDescriptors(authorization),
       requesterAccountProjection: { value: projection, enumerable: false },
@@ -587,14 +595,14 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
           && await input.isCurrent() && await authorization.requesterAccountProjection!.isCurrent()
         : authorization.requesterAccountProjection!.isCurrent,
       ...(input.isCustodyCurrent && !sourcePreparation ? { isCustodyCurrent: authorization.requesterAccountProjection!.isCurrent } : {}),
-      ...(input.isRetainedCustodyCurrent ? { retainCustody: () => {
+      ...(input.isRetainedCustodyCurrent ? { retainCustody: (signal?: AbortSignal) => {
         const isInstalledCurrent = input.isRetainedCustodyCurrent!;
         const snapshot = savedSecretOperationContext.readSnapshot();
         if (!snapshot) throw new Error('requester_account_context_retired');
         const releaseReference = retain();
         let retained = true;
-        const isRetainedCurrent = async () => retained && live && await isInstalledCurrent()
-          && retained && live && observation!.isCurrent(currentness);
+        const isRetainedCurrent = async () => retained && live && !signal?.aborted && await isInstalledCurrent()
+          && retained && live && !signal?.aborted && observation!.isCurrent(currentness);
         const retainedSecrets = createInvocationSavedSecretOperationContextV1({
           credentials: input.credentials, snapshot, serverHttpBaseUrl: input.serverHttpBaseUrl,
           machineAdmission: savedSecretOperationContext.machineAdmission, isCurrent: isRetainedCurrent,
@@ -605,6 +613,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
         return Object.freeze({
           isCurrent: isRetainedCurrent,
           savedSecretOperationContext: retainedSecrets,
+          refreshAccountSettings: retainedPublication.ensureCurrent,
           release: async () => { if (retained) { retained = false; retainedPublication.dispose();
             try { await retainedSecrets.isCurrent(); } finally { await releaseReference(); } } },
         });
@@ -853,25 +862,57 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     custodyTransferred = true;
     let phase = 'requester_http_projection';
     try {
-      // Named native preparation proves controller custody, not a generic HTTP
-      // effect grant for the unchanged guest-targeted original Action.
-      const projected = finiteWake || preparation ? admitted.authorization : await trace('requester.http_projection', () => projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
-        serverId: input.serverId, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: input.serverHttpBaseUrl,
-        target: stopChildTarget ?? admitted.authorization.binding.target, installationId: input.installationId,
-        privateKey: input.installationPrivateKey, isCurrent: admitted.isCustodyCurrent ?? admitted.isCurrent,
-        ...(moveRecipient ? { forwardedMove: { credentials: admitted.credentials, isCurrent: admitted.isCurrent } } : {}),
-        ...(deploymentChild ? { forwardedDeploymentChild: deploymentChild } : {}),
-        ...(deploymentChild && input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
-        ...(input.signal ? { signal: input.signal } : {}) }));
-      if (!projected) { await admitted.dispose(); return refused(phase); }
-      phase = 'requester_executor';
-      const executor = input.createExecutor(Object.freeze({ ...admitted, authorization: projected }));
-      const authorization: ExternalActionExecutionAuthorizationV1 = { ...projected };
-      for (const [key, value] of Object.entries({ requesterAccountProjection: projected.requesterAccountProjection,
-        requesterHttpProjection: projected.requesterHttpProjection, requesterAccountExecutor: executor })) {
-        if (value) Object.defineProperty(authorization, key, { value, enumerable: false });
-      }
-      return { authorization: Object.freeze(authorization), executor, dispose: admitted.dispose, resolveEncryption: admitted.resolveEncryption,
+      const prepareAuthorization = async (context: RequesterAccountActionContext, signal?: AbortSignal, rootAdmitted = false) => {
+        const bound = rebindRequesterAccountActionContext(context.authorization, context.authorization, context);
+        // Native preparation proves controller custody, not a generic HTTP grant.
+        // Retaining that custody must preserve the same restriction.
+        const projected = finiteWake || preparation ? bound : await trace('requester.http_projection', () => projectExternalActionRequesterHttpAuthorization({ authorization: bound,
+          serverId: input.serverId, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: input.serverHttpBaseUrl,
+          target: stopChildTarget ?? bound.binding.target, installationId: input.installationId,
+          privateKey: input.installationPrivateKey, isCurrent: context.isCustodyCurrent ?? context.isCurrent,
+          ...(rootAdmitted ? { rootAdmitted: true } : {}),
+          ...(moveRecipient ? { forwardedMove: { credentials: context.credentials, isCurrent: context.isCurrent } } : {}),
+          ...(deploymentChild ? { forwardedDeploymentChild: deploymentChild } : {}),
+          ...(deploymentChild && input.deploymentChildExecution ? { deploymentChildExecution: input.deploymentChildExecution } : {}),
+          ...(signal ? { signal } : {}) }));
+        if (!projected) return null;
+        const executor = input.createExecutor(Object.freeze({ ...context, authorization: projected }));
+        const authorization: ExternalActionExecutionAuthorizationV1 = { ...projected };
+        for (const [key, value] of Object.entries({ requesterAccountProjection: projected.requesterAccountProjection,
+          requesterHttpProjection: projected.requesterHttpProjection, requesterAccountExecutor: executor })) {
+          if (value) Object.defineProperty(authorization, key, { value, enumerable: false });
+        }
+        return { authorization: rebindRequesterAccountActionContext(authorization, projected, context), executor };
+      };
+      const retainForOperation: RequesterAccountActionContext['retainForOperation'] = admitted.retainCustody ? async signal => {
+        const custody = admitted.retainCustody!(signal);
+        try {
+          // Reuse the admitted encryption witness and retained installed lifetime;
+          // neither the original transport nor a second Home admission owns this work.
+          const authorization = await projectAdmittedAccountCustody({ authorization: admitted.authorization,
+            ...(admitted.invocation ? { invocation: admitted.invocation } : {}),
+            serverIdentityId: input.serverIdentityId, signal, bootstrap: {
+              credentials: admitted.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent: custody.isCurrent,
+              attribution: { serverId: input.serverId, accountId: root.data.binding.accountId,
+                machineId: root.data.binding.machineId, installationId: root.data.binding.installationId },
+            } }, () => true, custody.isCurrent, admitted.accountEncryptionCurrentness);
+          if (!authorization) throw new Error('requester_account_context_retired');
+          const isCurrent = authorization.requesterAccountProjection!.isCurrent;
+          const context: RequesterAccountActionContext = Object.freeze({ ...admitted, authorization, isCurrent,
+            ...(admitted.isCustodyCurrent ? { isCustodyCurrent: isCurrent } : {}),
+            savedSecretOperationContext: custody.savedSecretOperationContext,
+            refreshAccountSettings: custody.refreshAccountSettings,
+            resolveEncryption: createRequesterEncryptionResolver(admitted.credentials, input.serverIdentityId, isCurrent),
+            retainForOperation, dispose: custody.release });
+          const prepared = await prepareAuthorization(context, signal, true);
+          if (!prepared) throw new Error('requester_account_context_retired');
+          return { authorization: prepared.authorization, dispose: custody.release };
+        } catch (error) { await custody.release(); throw error; }
+      } : undefined;
+      const prepared = await prepareAuthorization(Object.freeze({ ...admitted,
+        ...(retainForOperation ? { retainForOperation } : {}) }), input.signal);
+      if (!prepared) { await admitted.dispose(); return refused(phase); }
+      return { ...prepared, dispose: admitted.dispose, resolveEncryption: admitted.resolveEncryption,
         actionsSettings: admitted.accountSettingsContext.settings.actionsSettingsV1,
         ...(encoded?.invocation ? { invocation: encoded.invocation } : {}) };
     } catch (error) { await admitted.dispose(); rethrowRequesterHomeReadFailure(error); return refused(phase, error); }

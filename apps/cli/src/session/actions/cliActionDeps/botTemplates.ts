@@ -11,7 +11,7 @@ import type { CliSessionActionTransport } from '@/session/transport/cliActionTra
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import type { CliActionDepsParams } from './types';
 import type { PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
-import { readApiTokenDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 
@@ -56,8 +56,8 @@ export function createCliBotTemplateActionDeps(
     const signal = args.signal ?? context.signal;
     const requireStore = () => {
       const authorization = context.externalActionExecutionAuthorization;
-      const tokenStore = readApiTokenDeploymentArtifactStore(authorization);
-      if (tokenStore) return tokenStore;
+      const requesterStore = readRequesterDeploymentArtifactStore(authorization);
+      if (requesterStore) return requesterStore;
       if (authorization && 'credentialId' in authorization.binding
         && authorization.binding.accountEncryptionMode === 'e2ee') return refuse('content_unavailable');
       return host.roleArtifactStore ?? refuse('not_authenticated');

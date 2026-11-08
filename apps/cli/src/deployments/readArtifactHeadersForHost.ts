@@ -2,7 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { readApiTokenDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 
 /** Reuses requester custody and the Artifact header transport; never borrows a receiving host's Account. */
 export function createDeploymentArtifactHeaderReader(params: Readonly<{
@@ -15,7 +15,7 @@ export function createDeploymentArtifactHeaderReader(params: Readonly<{
     await params.assertCurrent(context);
     const authorization = context.externalActionExecutionAuthorization;
     const requester = readRequesterAccountActionContext(authorization);
-    const artifacts = authorization ? readApiTokenDeploymentArtifactStore(authorization)
+    const artifacts = authorization ? readRequesterDeploymentArtifactStore(authorization)
       ?? (requester ? createCredentialedAccountArtifactStore(requester.credentials) : null) : params.artifacts;
     const http = authorization?.requesterHttpProjection;
     if (!artifacts || authorization && !http) throw Object.assign(new Error('project_requester_authority_unavailable'),

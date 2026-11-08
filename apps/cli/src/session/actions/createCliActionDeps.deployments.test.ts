@@ -9,10 +9,14 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema,
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema,
   projectDeploymentReadAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActions/deploymentActionDeps';
 import tweetnacl from 'tweetnacl';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
@@ -27,7 +31,8 @@ function executor() {
     serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test' }));
 }
 
-it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee', 'daemon']] as const)(
+it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee', 'daemon'],
+  ['plain', 'signed-session'], ['e2ee', 'signed-session']] as const)(
   'lists %s Environment names for an agent on %s using headers without body reads', async (mode, host) => {
   const secret = randomBytes(32);
   const dataKey = randomBytes(32);
@@ -45,6 +50,7 @@ it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee'
     throw new Error(`Unexpected full Artifact or Environment read: ${url}`);
   });
   const headers = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    if (String(url).endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
     expect(url).toBe('https://deployment-home.test/v1/artifacts/read');
     expect(body).toMatchObject({ projection: 'headers' });
     const ids = (body as { artifactIds: string[] }).artifactIds;
@@ -59,21 +65,55 @@ it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee'
     }) } };
   });
   const accountDeps = createCliActionDeps({ token, credentials,
-    sessionId: 'deployment-session', mode, ctx: null, serverId: 'deployment-home',
+    // Session transport is plain; Account Artifact mode is supplied by Home and credentials above.
+    sessionId: 'deployment-session', mode: 'plain', ctx: null, serverId: 'deployment-home',
     serverHttpBaseUrl: 'https://deployment-home.test' });
-  const actions = createActionExecutor(host === 'session' ? accountDeps : { ...accountDeps, ...createRequesterBoundDeploymentActionDeps({
+  const actions = host === 'signed-session' ? createCliActionExecutorFromCredentials({ credentials,
+    serverId: 'deployment-home', serverIdentityId: 'srv_deployment_home', serverApiUrl: 'https://deployment-home.test',
+    actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
+  }) : createActionExecutor(host === 'session' ? accountDeps : { ...accountDeps, ...createRequesterBoundDeploymentActionDeps({
       credentials, serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test', machineId: 'reader',
       resolveRequesterIdentity: async () => { throw new Error('A list cannot acquire native deployment identity'); },
       runtime: { async acquire() { throw new Error('A list cannot acquire native runtime'); } },
     }) });
+  let authorization: Awaited<ReturnType<typeof projectRequesterAccountActionAuthorization>> = null;
+  if (host === 'signed-session') {
+    // Home mint and HTTP are external boundaries. The Session custody projector,
+    // credentialed factory, signed requests and Artifact header codec remain real.
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'session-list-home-proof', binding: {
+      accountId: 'deployment-account', custodianAccountId: 'deployment-account', authentication: { kind: 'account', tokenEpoch: 7 },
+      accountEncryptionMode: mode, serverIdentityId: 'srv_deployment_home', machineId: 'reader', installationId: 'installed-reader',
+      actionId: 'deployments.environments.list', requestId: 'session-list', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'reader' },
+      sessionActionSource: { machineId: 'reader', installationId: 'installed-reader' },
+      sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'deployment-session', starterDepth: 0, turnDepth: 0 },
+        sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'session-list' },
+    } });
+    const signed = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+      serverId: 'deployment-home', serverIdentityId: 'srv_deployment_home', serverHttpBaseUrl: 'https://deployment-home.test',
+      target: root.binding.target, installationId: 'installed-reader', privateKey: tweetnacl.sign.keyPair().secretKey, isCurrent: async () => true });
+    if (!signed) throw new Error('Missing signed Session HTTP projection');
+    authorization = await projectRequesterAccountActionAuthorization({ authorization: signed,
+      serverIdentityId: 'srv_deployment_home', bootstrap: { credentials, serverHttpBaseUrl: 'https://deployment-home.test',
+        attribution: { serverId: 'deployment-home', accountId: 'deployment-account', machineId: 'reader', installationId: 'installed-reader' },
+        getBoundSessionId: () => 'deployment-session', isCurrent: async () => true } });
+    if (!authorization) throw new Error('Missing admitted Session Account projection');
+  }
   const result = await actions.execute('deployments.environments.list', { serverId: 'deployment-home', projectSourceId: 'source' },
-    { surface: 'mcp', authority: 'account_automation' });
+    { surface: 'mcp', authority: 'account_automation', ...(authorization ? { externalActionExecutionAuthorization: authorization } : {}) });
   expect(result).toMatchObject({ ok: true, result: { ok: true, coverage: 'partial', items: [
     { id: items[0]!.id, name: names[0] }, { id: items[1]!.id, name: names[1] }, { id: items[2]!.id },
   ] } });
   expect(JSON.stringify(result)).not.toContain('Stale private title');
-  expect(headers.mock.calls.flatMap(([, body]) => (body as { artifactIds: string[] }).artifactIds).sort())
+  expect(headers.mock.calls.filter(([url]) => String(url).endsWith('/v1/artifacts/read'))
+    .flatMap(([, body]) => (body as { artifactIds: string[] }).artifactIds).sort())
     .toEqual(['content-0', 'content-1', 'content-2']);
+  if (authorization) {
+    for (const [, , config] of headers.mock.calls.filter(([url]) => String(url).endsWith('/v1/artifacts/read'))) {
+      expect(config?.headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token });
+      expect(config?.headers).not.toHaveProperty('Authorization');
+    }
+  }
 });
 
 describe('Deployment Actions through the default CLI Account front door', () => {

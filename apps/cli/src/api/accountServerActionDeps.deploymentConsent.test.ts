@@ -8,7 +8,7 @@ import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/api
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
-import { prepareApiTokenDeploymentAccountProjection, readApiTokenDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { prepareApiTokenDeploymentAccountProjection, readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { tryDeriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -103,7 +103,7 @@ describe('token deployment authoring through the native Account HTTP owner', () 
     const custody = await prepareApiTokenDeploymentAccountProjection(authorization);
     try {
       expect(custody).not.toBeNull();
-      const store = readApiTokenDeploymentArtifactStore(authorization);
+      const store = readRequesterDeploymentArtifactStore(authorization);
       if (!store) throw new Error('Expected token-owned Artifact store');
       await store.create({ artifactId: '22222222-2222-4222-8222-222222222222',
         header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Candidate' }, body: '{"candidate":true}',
@@ -124,7 +124,7 @@ describe('token deployment authoring through the native Account HTTP owner', () 
         includeSharedAudience: false, authorizationHeaders: async () => ({ 'x-test-root': 'signed' }) }))
         .rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
       custody?.dispose();
-      expect(readApiTokenDeploymentArtifactStore(authorization)).toBeNull();
+      expect(readRequesterDeploymentArtifactStore(authorization)).toBeNull();
       await expect(store.read('22222222-2222-4222-8222-222222222222', { prepareRecipients: false,
         includeSharedAudience: false, authorizationHeaders: async () => ({ 'x-test-root': 'signed' }) }))
         .rejects.toThrow('action_forbidden');
