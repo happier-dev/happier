@@ -3,6 +3,7 @@ import { readHappierActionToolFailure } from '@happier-dev/protocol/actions/happ
 import type { ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 
 import { t } from '@/text';
+import { formatApprovalDecisionFailureLabel } from '@/components/approvals/approvalStatusLabel';
 
 export type ToolActionOutcome = 'refused' | 'failed';
 
@@ -47,7 +48,9 @@ function resolveCauseSummary(cause: string | null): string | null {
     return null;
 }
 
-export function toolActionOutcomeLabel(outcome: ToolActionOutcome): string {
+export function toolActionOutcomeLabel(outcome: ToolActionOutcome, code?: string): string {
+    const decision = code ? formatApprovalDecisionFailureLabel(code) : null;
+    if (decision) return decision;
     return outcome === 'refused' ? t('toolView.actionOutcome.refused') : t('toolView.actionOutcome.failed');
 }
 
@@ -65,7 +68,7 @@ export function resolveToolActionFailure(tool: ToolCall): ToolActionFailurePrese
         code: failure.code,
         cause: failure.cause,
         message: failure.message,
-        summary: failure.code === 'codex_tool_restriction_unsupported_auth'
-            ? t('toolView.actionOutcome.cause.toolPolicyUnsupportedAuth') : resolveCauseSummary(failure.cause),
+        summary: formatApprovalDecisionFailureLabel(failure.code) ?? (failure.code === 'codex_tool_restriction_unsupported_auth'
+            ? t('toolView.actionOutcome.cause.toolPolicyUnsupportedAuth') : resolveCauseSummary(failure.cause)),
     };
 }

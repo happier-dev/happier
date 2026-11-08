@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { buildToolHeaderModel } from './buildToolHeaderModel';
 import { toolActionOutcomeLabel } from './resolveToolActionFailure';
 import type { DeclinedApprovalDisposition, ToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
@@ -43,7 +44,7 @@ export const ToolDetailsPageHeader = React.memo(function ToolDetailsPageHeader(
     metadata: Metadata | null;
     /** The Session whose Agent asked, named when a manager Session handles its question (an Agent-raised question). */
     askedBy?: string | null;
-    /** How the person answered this call's Action approval, when they declined it: the call reads as refused. */
+    /** How the person answered this call's Action approval. */
     declinedApproval?: DeclinedApprovalDisposition | null;
   }>,
 ) {
@@ -64,10 +65,10 @@ export const ToolDetailsPageHeader = React.memo(function ToolDetailsPageHeader(
   const result = React.useMemo(() => resolveToolCallOutcome(tool, declinedApproval), [declinedApproval, tool]);
   let outcome: React.ReactNode;
   if (result.kind === 'status' && result.indicator === 'permission_blocked' && declinedApproval) {
-    // The same quiet mark and word a typed refusal gets.
+    // A person's decision uses the request's vocabulary and quiet mark.
     outcome = (
       <View style={styles.outcome}>
-        <ToolOutcomeStatus testID="tool-details-outcome" label={toolActionOutcomeLabel('refused')} glyph="minus-circle" tone="quiet" />
+        <ToolOutcomeStatus testID="tool-details-outcome" label={formatApprovalStatusLabel(declinedApproval)} glyph="minus-circle" tone="quiet" />
       </View>
     );
   } else if (result.kind === 'status') {
@@ -94,7 +95,7 @@ export const ToolDetailsPageHeader = React.memo(function ToolDetailsPageHeader(
     const mark =
       result.kind === 'failure'
         ? result.failure.outcome === 'refused'
-          ? { label: toolActionOutcomeLabel('refused'), glyph: 'minus-circle' as const, tone: 'quiet' as const }
+          ? { label: toolActionOutcomeLabel('refused', result.failure.code), glyph: 'minus-circle' as const, tone: 'quiet' as const }
           : { label: toolActionOutcomeLabel('failed'), glyph: 'warning-circle' as const, tone: 'danger' as const }
         : result.kind === 'approval_requested'
           ? { label: t('toolView.approvalRequested.title'), glyph: 'paper-plane-tilt' as const, tone: 'quiet' as const }

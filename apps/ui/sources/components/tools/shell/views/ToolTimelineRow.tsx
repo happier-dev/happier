@@ -1,6 +1,8 @@
-import { useSessionTranscriptSource, useTranscriptVisualContext } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { TranscriptToolResultCard } from '@/components/sessions/transcript/references/TranscriptToolResultCard';
+import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import * as React from 'react';
+import { useOpenSubAgentRun } from '@/components/tools/renderers/workflow/useOpenSubAgentRun';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -49,7 +51,8 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
 import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import { readHappierActionCallId } from '@/components/sessions/transcript/references/happierActionToolResult';
-import { resolveToolActionFailure, toolActionOutcomeLabel } from '@/components/tools/shell/presentation/resolveToolActionFailure';
+import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol/activity/agentRequestSummary';
@@ -58,19 +61,16 @@ import {
     TranscriptRowSeqProvider,
     useHistoricalTranscriptAgentId,
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
-import { SessionBoardActionResultReference } from '@/components/sessions/transcript/references/SessionBoardActionResultReference';
-import { WorkflowRunActionResultReference } from '@/components/sessions/transcript/references/WorkflowRunActionResultReference';
 import { readTranscriptProjectCommandCall } from '@/components/sessions/transcript/references/transcriptProjectCommandReference';
 import { ProjectCommandToolTimelineRowHeader } from './timeline/ProjectCommandToolTimelineRowHeader';
-import { WorkflowDefinitionActionResultReference } from '@/components/sessions/transcript/references/WorkflowDefinitionActionResultReference';
-import { BrowserActionResultReference } from '@/components/sessions/transcript/references/BrowserActionResultReference';
-import { ComputerActionResultReference } from '@/components/sessions/transcript/references/ComputerActionResultReference';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
 
 const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
 type ToolTimelineRowProps = {
+    /** Result content mounted only while this tool's existing disclosure is expanded. */
+    children?: React.ReactNode;
     tool: ToolCall;
     metadata: Metadata | null;
     messages?: Message[];
@@ -107,7 +107,6 @@ const ToolTimelineRowWithStoreSettings = React.memo((props: ToolTimelineRowProps
 
 const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displaySettings: ToolViewDisplaySettings }) => {
     const contentDemand = useTranscriptRowContentDemand();
-    const visualContext = useTranscriptVisualContext();
     const { theme } = useUnistyles();
     const transcriptSource = useSessionTranscriptSource();
     const sourceInteraction = transcriptSource.useInteraction();
@@ -185,7 +184,9 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         });
     }, [props.messageId, toolForRendering.id]);
 
+    const openRun = useOpenSubAgentRun({ tool: toolForRendering, sessionId: props.sessionId, serverId: props.serverId, navigate: transcriptSource.navigate });
     const handleOpen = React.useCallback(() => {
+        if (openRun) { openRun(); return; }
         const sessionId = props.sessionId;
         if (!sessionId || !routeMessageId) return;
         navigateWithBlurOnWeb(() => {
@@ -195,9 +196,9 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                 suffix: `/message/${encodeURIComponent(routeMessageId)}`,
             }));
         });
-    }, [props.serverId, props.sessionId, routeMessageId, transcriptSource]);
+    }, [openRun, props.serverId, props.sessionId, routeMessageId, transcriptSource]);
 
-    const canOpen = transcriptSource.navigate !== null && !!(props.sessionId && routeMessageId);
+    const canOpen = transcriptSource.navigate !== null && !!(openRun || (props.sessionId && routeMessageId));
     const primaryTapAction: 'expand' | 'open' =
         toolViewTapAction === 'open' && canOpen ? 'open' : 'expand';
 
@@ -334,9 +335,8 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error'))
             : statusKind === 'permission_blocked'
                 ? (
-                    // A declined Action approval has no permission request: the call was refused, in the group's
-                    // word; its card says how the person answered.
-                    (!toolForRendering.permission && declinedApproval ? toolActionOutcomeLabel('refused') : null)
+                    // Linked decisions use the request's vocabulary, like its card and detail page.
+                    (!toolForRendering.permission && declinedApproval ? formatApprovalStatusLabel(declinedApproval) : null)
                     ?? resolveToolPermissionTerminalErrorMessage({
                         tool: toolForRendering,
                         metadata: props.metadata,
@@ -350,7 +350,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             testID={statusKind === 'permission_blocked' ? 'tool-timeline-row-permission-blocked' : 'tool-timeline-row-error'}
             label={terminalStatusSummary}
             glyph={statusKind === 'permission_blocked' || isRefusal ? 'minus-circle' : 'warning-circle'}
-            tone={isRefusal ? 'quiet' : 'danger'}
+            tone={isRefusal || (statusKind === 'permission_blocked' && declinedApproval !== null) ? 'quiet' : 'danger'}
         />
     ) : null;
     const headerRunningIndicator = !headerTerminalStatus && showTaskRunningIndicator && toolForRendering.state === 'running'
@@ -424,7 +424,17 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         if (matchingApprovalRequests.length === 0) return null;
         const location = buildApprovalToolCallLocation({ messageId: props.messageId });
         const toolOutput = declinedApprovalShown ? readToolOutputText(toolForRendering) : null;
-        return matchingApprovalRequests.map((request) => (
+        return matchingApprovalRequests.map((request) => request.approval.status === 'open' && !showPermissionPromptsInTranscript ? (
+            // While it waits, the one full card lives in the composer; the call's row only points to it.
+            <View key={request.artifact.id} style={styles.approvalPointer}>
+                <ToolOutcomeStatus
+                    testID="approval-pending-pointer"
+                    label={t('status.waitingForYourResponse')}
+                    glyph="clock"
+                    tone="quiet"
+                />
+            </View>
+        ) : (
             <ApprovalPromptCard
                 key={request.artifact.id}
                 chrome="inline"
@@ -432,6 +442,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                 approval={request.approval}
                 location={location}
                 toolOutput={toolOutput}
+                contentDemand={contentDemand}
                 sessionId={props.sessionId!}
                 metadata={props.metadata}
                 canApprovePermissions={interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null}
@@ -439,6 +450,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             />
         ));
     }, [
+        contentDemand,
         declinedApprovalShown,
         matchingApprovalRequests,
         interaction.canApprovePermissions,
@@ -446,6 +458,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         props.messageId,
         props.metadata,
         props.sessionId,
+        showPermissionPromptsInTranscript,
         sourceInteraction.canApprovePermissions,
         toolForRendering,
         transcriptSource.actions,
@@ -519,39 +532,13 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                             setHeaderActions={setHeaderActions}
                             declinedApprovalShown={declinedApprovalShown}
                         />
+                        {effectiveIsExpanded ? props.children : null}
                     </View>
                 </TranscriptCollapsible>
             )}
 
-            {/*
-              * The same row-level outcome the card chrome renders: the Board item
-              * this call created, mirrored beside the row rather than inside its
-              * collapsible body.
-              */}
-            <SessionBoardActionResultReference
-                tool={toolForRendering}
-                sessionId={props.sessionId}
-                serverId={props.serverId}
-                contentDemand={contentDemand}
-                visualContext={visualContext}
-            />
-            <WorkflowRunActionResultReference
-                tool={toolForRendering}
-                serverId={props.serverId}
-            />
-            <WorkflowDefinitionActionResultReference tool={toolForRendering} serverId={props.serverId} />
-            <BrowserActionResultReference
-                tool={toolForRendering}
-                sessionId={props.sessionId}
-                serverId={props.serverId}
-                mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true}
-            />
-            <ComputerActionResultReference
-                tool={toolForRendering}
-                sessionId={props.sessionId}
-                serverId={props.serverId}
-                mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true}
-            />
+            <TranscriptToolResultCard tool={toolForRendering} sessionId={props.sessionId} serverId={props.serverId}
+                mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true} />
 
             {permissionFooter}
             {approvalCards}
@@ -569,6 +556,12 @@ const styles = StyleSheet.create((theme) => ({
         paddingRight: theme.space.s10,
         paddingBottom: theme.space.s12,
         paddingTop: theme.space.s2,
+    },
+    approvalPointer: {
+        paddingLeft: theme.space.s24,
+        paddingRight: theme.space.s10,
+        paddingBottom: theme.space.s8,
+        alignItems: 'flex-start',
     },
     headerRightContent: {
         flexDirection: 'row',

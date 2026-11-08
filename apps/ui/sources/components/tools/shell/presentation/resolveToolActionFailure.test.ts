@@ -3,6 +3,8 @@ import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import { resolveToolActionFailure } from './resolveToolActionFailure';
 import { resolveToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { resolveToolErrorSummary } from './resolveToolErrorSummary';
 
 /** A first-party Action call as the transcript stores it: the MCP text envelope around the typed outcome. */
 function actionCall(actionId: string, outcome: unknown): ToolCall {
@@ -28,6 +30,9 @@ describe('resolveToolActionFailure', () => {
     it.each(['approval_rejected', 'approval_canceled'])('presents a declined approval (%s) as refused: the person said no, nothing failed', (code) => {
         const tool: ToolCall = { ...actionCall('mcp.servers.signIn.start', { errorCode: code, error: code }), state: 'error' };
         expect(resolveToolActionFailure(tool)).toMatchObject({ outcome: 'refused', code });
+        const label = formatApprovalStatusLabel(code === 'approval_rejected' ? 'rejected' : 'canceled');
+        expect(resolveToolActionFailure(tool)?.summary).toBe(label);
+        expect(resolveToolErrorSummary(tool)).toBe(label);
     });
     it('presents a policy refusal as refused, with the cause in words and the typed code kept', () => {
         const tool = actionCall('session.stop', {

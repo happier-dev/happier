@@ -231,6 +231,59 @@ describe('ToolTimelineRow (permission pending)', () => {
         expect(screen.findAllByType('ApprovalPromptCard' as any)).toHaveLength(1);
     });
 
+    it('points to the composer instead of repeating an open approval card, and keeps the card once it settles', async () => {
+        settings = { ...settings, permissionPromptSurface: 'composer' };
+        const tool: any = {
+            id: 'tool-approval',
+            name: 'session_list',
+            state: 'running',
+            input: { limit: 20 },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: 'List sessions',
+            result: null,
+        };
+        const request = (status: 'open' | 'rejected') => ({
+            artifact: { id: 'approval-1', header: {} } as any,
+            approval: {
+                v: 1,
+                status,
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                createdBy: { surface: 'agent', sessionId: 's1' },
+                actionId: 'session.list',
+                actionArgs: {},
+                summary: 'List sessions',
+                origin: {
+                    kind: 'transcript_tool_call',
+                    sessionId: 's1',
+                    messageId: 'm-approval',
+                    toolCallId: 'tool-approval',
+                    toolName: 'session_list',
+                    toolInput: { limit: 20 },
+                },
+            },
+        }) as any;
+        const render = (status: 'open' | 'rejected') => renderWithSessionTranscriptSource(
+            <ToolTimelineRow
+                tool={tool}
+                metadata={null}
+                sessionId="s1"
+                messageId="m-approval"
+                interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                approvalRequests={[request(status)]}
+            />, createTestSessionTranscriptSource({ loadSidechain: (sidechainId) => ensureSidechainMessagesLoadedMock('s1', sidechainId) }),);
+
+        const waiting = await render('open');
+        expect(waiting.findAllByType('ApprovalPromptCard' as any)).toHaveLength(0);
+        expect(waiting.findByTestId('approval-pending-pointer')).toBeTruthy();
+
+        const settled = await render('rejected');
+        expect(settled.findAllByType('ApprovalPromptCard' as any)).toHaveLength(1);
+        expect(settled.findAllByTestId('approval-pending-pointer')).toHaveLength(0);
+    });
+
     it('does not render approval prompt cards when explicit origin message points at another tool row', async () => {
         const tool: any = {
             id: 'tool-current',
@@ -441,7 +494,7 @@ describe('ToolTimelineRow (permission pending)', () => {
         expect(errorStatus?.props.accessibilityLabel).toBe('Filesystem unavailable');
     });
 
-    it.each(['rejected', 'canceled'] as const)('marks a completed call whose Action approval was %s as refused, as its group does', async (status) => {
+    it.each(['rejected', 'canceled'] as const)('marks a completed call whose Action approval was %s with its quiet decision label', async (status) => {
         const tool: any = {
             id: 'tool-declined',
             name: 'writeTextFile',
@@ -476,6 +529,10 @@ describe('ToolTimelineRow (permission pending)', () => {
                 }]}
             />, createTestSessionTranscriptSource({ loadSidechain: (sidechainId) => ensureSidechainMessagesLoadedMock('s1', sidechainId) }),);
 
-        expect(screen.findByTestId('tool-timeline-row-permission-blocked')?.props.accessibilityLabel).toBe('toolView.actionOutcome.refused');
+        // The request and tool retain the same decision, with no error treatment.
+        expect(screen.findByTestId('tool-timeline-row-permission-blocked')?.props.accessibilityLabel).toBe(`approvals.status.${status}`);
+        const decision = screen.tree.root.findAll(node => node.props.testID === 'tool-timeline-row-permission-blocked'
+            && typeof node.props.tone === 'string')[0];
+        expect(decision?.props.tone).toBe('quiet');
     });
 });

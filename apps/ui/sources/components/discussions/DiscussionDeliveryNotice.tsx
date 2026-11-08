@@ -3,7 +3,7 @@ import { View, type StyleProp, type TextStyle } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
-import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { formatApprovalDecisionFailureLabel } from '@/components/approvals/approvalStatusLabel';
 import { ToolOutcomeStatus } from '@/components/tools/shell/presentation/ToolOutcomeStatus';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -27,7 +27,7 @@ export function DiscussionDeliveryNotice(props: Readonly<{
             && isActionApprovalDeclinedErrorCode(delivery.failure.code)
             ? <View key={delivery.participantSessionId} accessibilityLiveRegion="polite"><ToolOutcomeStatus
                 testID={`session-discussion-participant-declined-${props.message.id}-${delivery.participantSessionId}`}
-                label={`${props.resolveSessionLabel(delivery.participantSessionId) ?? t('session.collaboration.discussion.heldParticipant')} · ${formatApprovalStatusLabel(delivery.failure.code === 'approval_rejected' ? 'rejected' : 'canceled')}`}
+                label={`${props.resolveSessionLabel(delivery.participantSessionId) ?? t('session.collaboration.discussion.heldParticipant')} · ${formatApprovalDecisionFailureLabel(delivery.failure.code)}`}
                 glyph="minus-circle" tone="quiet" /></View>
             : <Text key={delivery.participantSessionId}
             testID={`session-discussion-participant-${delivery.disposition}-${props.message.id}-${delivery.participantSessionId}`}

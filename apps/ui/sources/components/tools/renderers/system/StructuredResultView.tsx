@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
@@ -78,7 +79,7 @@ function getPaths(result: unknown): string[] {
 function getText(tool: ToolViewProps['tool']): string | null {
     const failure = resolveToolActionFailure(tool);
     // The product's words for a known cause first, then the executor's own (a run that timed out says so).
-    if (failure) return failure.summary ?? failure.message ?? toolActionOutcomeLabel(failure.outcome);
+    if (failure) return failure.summary ?? failure.message ?? toolActionOutcomeLabel(failure.outcome, failure.code);
     const parsed = maybeParseJson(tool.result);
     if (typeof parsed === 'string' && parsed.trim()) return parsed;
     const obj = asRecord(parsed);
@@ -218,7 +219,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: theme.space.s12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         gap: theme.space.s10,
     },
     block: {

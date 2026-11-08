@@ -22,7 +22,7 @@ function stripErrorPrefix(text: string): string {
 export function resolveToolErrorSummary(tool: ToolCall): string | null {
     // A typed Action failure reads as its outcome, never as the raw code it carries.
     const actionFailure = resolveToolActionFailure(tool);
-    if (actionFailure) return toolActionOutcomeLabel(actionFailure.outcome);
+    if (actionFailure) return toolActionOutcomeLabel(actionFailure.outcome, actionFailure.code);
     const result = tool.result;
     const parsedError = parseToolUseError(result);
     if (!parsedError.isToolUseError && parsedError.errorMessage) return firstLine(parsedError.errorMessage);

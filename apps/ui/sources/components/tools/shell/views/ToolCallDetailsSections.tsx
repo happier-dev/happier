@@ -27,6 +27,7 @@ import {
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import type { DeclinedApprovalDisposition } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -289,7 +290,7 @@ function ApprovalRequestRow(
   return (
     <Item
       testID="tool-details-approval-request"
-      title={declinedApproval ? t(`approvals.status.${declinedApproval}`) : t('toolView.approvalRequested.title')}
+      title={declinedApproval ? formatApprovalStatusLabel(declinedApproval) : t('toolView.approvalRequested.title')}
       subtitle={declinedApproval ? undefined : t('toolView.approvalRequested.description')}
       subtitleLines={0}
       onPress={

@@ -7,7 +7,7 @@ import {
 } from '@/dev/testkit';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { toolActionOutcomeLabel } from '../presentation/resolveToolActionFailure';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { readDecodedToolResult, resolveToolCallOutcome } from '../presentation/resolveToolCallOutcome';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import {
@@ -174,9 +174,9 @@ describe('ToolFullView as the tool-details page', () => {
     expect(collectHostText(screen.tree).join('\n')).toContain('toolView.approvalRequested.title');
     for (const disposition of ['rejected', 'canceled'] as const) {
       await screen.update(page(disposition));
-      expect(headerOutcome(screen)).toBe(toolActionOutcomeLabel('refused'));
+      expect(headerOutcome(screen)).toBe(formatApprovalStatusLabel(disposition));
       const visible = collectHostText(screen.tree).join('\n');
-      expect(visible).toContain(`approvals.status.${disposition}`);
+      expect(visible).toContain(formatApprovalStatusLabel(disposition));
       // A person's rejection or a cancel is not Happier refusing the call: the row says only the request's outcome.
       expect(visible).not.toContain('toolView.actionOutcome.refusedReason');
       expect(visible).not.toContain('toolView.approvalRequested.title');
@@ -276,14 +276,14 @@ describe('ToolFullView as the tool-details page', () => {
     expect(headerOutcome(screen)).toBe('toolView.approvalRequested.title');
   });
 
-  it('reads a completed call whose Action approval was declined as refused in its header, never Completed', async () => {
+  it('retains a completed call’s declined or canceled approval decision in its header', async () => {
     const call = makeToolCall({ name: 'writeTextFile', state: 'completed', input: { path: './notes.txt', content: 'x' }, result: null });
     const header = async (declinedApproval: 'rejected' | 'canceled' | null) =>
       headerOutcome(await renderScreen(React.createElement(ToolDetailsPageHeader, { tool: call, metadata: null, declinedApproval })));
 
     expect(await header(null)).toBe('toolView.outcome.completed');
-    expect(await header('rejected')).toBe(toolActionOutcomeLabel('refused'));
-    expect(await header('canceled')).toBe(toolActionOutcomeLabel('refused'));
+    expect(await header('rejected')).toBe(formatApprovalStatusLabel('rejected'));
+    expect(await header('canceled')).toBe(formatApprovalStatusLabel('canceled'));
   });
 
   it('names the Agent that asked a question in the page header, and nothing when no asker is given', async () => {
