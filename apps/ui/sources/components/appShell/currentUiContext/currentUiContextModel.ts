@@ -27,6 +27,12 @@ import type {
 
 export type CurrentUiNavigation = CurrentUiContextSnapshotV1['navigation'];
 
+/** Only an available page may lend a mounted control to current-context Actions. */
+export function canActivateCurrentUiContextMount(snapshot: CurrentUiContextSnapshotV1 | null): boolean {
+    return snapshot !== null && snapshot.navigation.area !== 'modal' && snapshot.navigation.area !== 'workspace'
+        && snapshot.detail !== CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1;
+}
+
 /** Trusted host-local state only; outward effects retain their ordinary Action owner. */
 export type CurrentUiContextHostCommand = Readonly<{
     kind: 'hostLocal';

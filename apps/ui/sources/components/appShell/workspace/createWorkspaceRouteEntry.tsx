@@ -3,7 +3,7 @@ import { Stack as ExpoStack, useLocalSearchParams, usePathname, type Href } from
 import { Platform } from 'react-native';
 import { useRouteNode } from 'expo-router/build/Route';
 import { resolveHref } from 'expo-router/build/link/href';
-import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from './WorkspaceNavigationContext';
 import { DestinationTitlePublication, useDestinationInstanceKey } from './DestinationInstanceHost';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
@@ -15,10 +15,17 @@ import { NavigationTitleChromeProvider, useNavigationChromeShowsBack, useNavigat
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
+/** Whether this Expo scene is only the URL mirror of a destination the workspace hosts and renders itself. */
+export function useExpoSceneMirrorsWorkspace(): boolean {
+    const hosted = useDestinationInstanceKey() !== null;
+    return useWorkspaceNavigationActive() && !hosted;
+}
+
 /** The Expo entry is only the URL sink when the workspace hosts its body. */
 export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType; mirror?: React.ReactNode; loadingFallback?: React.ReactNode }>) {
     const workspace = useOptionalWorkspaceNavigation();
     const hosted = useDestinationInstanceKey() !== null;
+    const mirrorsWorkspace = useExpoSceneMirrorsWorkspace();
     const pathname = usePathname();
     const params = useLocalSearchParams();
     const ownsHref = React.useContext(WorkspaceRouteHostingContext);
@@ -32,14 +39,22 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
     }
     // Keep the mirror in its pending position: inserting title metadata before
     // it remounts nested Expo navigators and loses their parsed child route.
-    if (workspace?.active === true && !hosted) return <>{props.mirror}<WorkspaceRouteTitle /></>;
-    return !hosted && workspace && Platform.OS !== 'web'
+    if (mirrorsWorkspace) return <>{props.mirror}<WorkspaceRouteTitle /></>;
+    const body = !hosted && workspace && Platform.OS !== 'web'
         ? <NativeWorkspaceRouteTitle><props.Body /></NativeWorkspaceRouteTitle> : <props.Body />;
+    return hosted ? body : <ExpoWorkspaceRouteFocus>{body}</ExpoWorkspaceRouteFocus>;
+}
+
+/** A real Expo scene owns focus when no retained workspace destination hosts it. */
+function ExpoWorkspaceRouteFocus(props: React.PropsWithChildren) {
+    const focused = useOptionalScreenIsFocused();
+    return <PluginSurfaceFocusEligibilityProvider active={focused} currentUiContextActive={focused}>
+        {props.children}
+    </PluginSurfaceFocusEligibilityProvider>;
 }
 
 /** Expo's local module/params remain this scene's identity after the global URL moves elsewhere. */
 function NativeWorkspaceRouteTitle(props: React.PropsWithChildren) {
-    const focused = useOptionalScreenIsFocused();
     const workspace = useOptionalWorkspaceNavigation();
     const node = useRouteNode();
     const params = useLocalSearchParams();
@@ -55,11 +70,9 @@ function NativeWorkspaceRouteTitle(props: React.PropsWithChildren) {
     const tab = destination ? workspace?.state.tabs[destination.tabId] : null;
     // Keep this nonvisual boundary mounted before/after phone readiness; only
     // its publication identity changes, never the native editable body.
-    return <PluginSurfaceFocusEligibilityProvider active={focused}>
-        <NavigationTitleChromeProvider showsTitle={nativeShowsTitle && headerShown} showsBack={nativeShowsBack && headerShown}>
-            <DestinationTitlePublication instance={tab ? { tabId: tab.id, ref: tab.target } : null}>{props.children}</DestinationTitlePublication>
-        </NavigationTitleChromeProvider>
-    </PluginSurfaceFocusEligibilityProvider>;
+    return <NavigationTitleChromeProvider showsTitle={nativeShowsTitle && headerShown} showsBack={nativeShowsBack && headerShown}>
+        <DestinationTitlePublication instance={tab ? { tabId: tab.id, ref: tab.target } : null}>{props.children}</DestinationTitlePublication>
+    </NavigationTitleChromeProvider>;
 }
 
 /** Expo retains navigation metadata while its route is only the workspace's URL mirror. */

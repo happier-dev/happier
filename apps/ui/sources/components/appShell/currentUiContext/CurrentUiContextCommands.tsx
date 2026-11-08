@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand } from './currentUiContextModel';
+import { canActivateCurrentUiContextMount, type CurrentUiContextMountedEnrichment, type CurrentUiContextMountedCommand } from './currentUiContextModel';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { CurrentUiContextBridge, useOptionalCurrentUiContextReader } from './CurrentUiContextProvider';
 import { useModalContentId } from '@/modal/ModalProvider';
@@ -46,6 +46,7 @@ type CommandComposition = Readonly<{
     execution: CurrentUiContextMountedCommandExecution;
     isCurrent(): boolean;
     register(owner: object, commands: ComposedCommands): () => void;
+    focus(owner: object, commands: ComposedCommands, onRetire: () => void): () => void;
 }>;
 const EMPTY_COMMANDS: ComposedCommands = Object.freeze([]);
 const CompositionContext = React.createContext<CommandComposition | null>(null);
@@ -86,13 +87,27 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
         setEntries(current => [...current.filter(entry => entry.owner !== owner), { owner, commands }]);
         return () => setEntries(current => current.filter(entry => entry.owner !== owner));
     }, []);
+    const focused = React.useRef<(() => void) | null>(null);
+    const focus = React.useCallback((owner: object, commands: ComposedCommands, onRetire: () => void) => {
+        focused.current?.();
+        const unregister = register(owner, commands);
+        const clear = () => {
+            if (focused.current !== clear) return;
+            focused.current = null;
+            unregister();
+            onRetire();
+        };
+        focused.current = clear;
+        return clear;
+    }, [register]);
     const composition = React.useMemo<CommandComposition>(() => ({
         authority: props.authority,
         execution,
         isCurrent: () => mounted.current && latest.current.active !== false
             && latest.current.authority === props.authority && props.authority?.isCurrent() === true,
         register,
-    }), [props.authority, execution, register]);
+        focus,
+    }), [props.authority, execution, register, focus]);
     const [retired, setRetired] = React.useState<ServerAccountScopeLifetime | null>(null);
     React.useLayoutEffect(() => {
         const authority = props.authority;
@@ -110,6 +125,58 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
 /** The page appends these definitions to its own enrichment; descendants never publish competing mounts. */
 export function useCurrentUiContextComposedCommands(): ComposedCommands {
     return React.useContext(CommandsContext);
+}
+
+/** Focus selects one field's commands without replacing the current page's entity or commands. */
+export function useCurrentUiContextFocusedCommands(contextKey: string): Readonly<{
+    activate(commands: ComposedCommands): Promise<boolean>;
+    clear(): void;
+}> | null {
+    const composition = React.useContext(CompositionContext);
+    const reader = useOptionalCurrentUiContextReader();
+    const publication = React.useMemo(() => {
+        if (!composition || !reader) return null;
+        const owner = {};
+        let current: Readonly<{ commands: ComposedCommands; clear(): void; retirement: AbortController }> | null = null;
+        const clear = () => { current?.clear(); };
+        const eligible = () => composition.isCurrent() && canActivateCurrentUiContextMount(reader.readCurrentUiContext());
+        return {
+            clear,
+            activate(commands: ComposedCommands): Promise<boolean> {
+                if (!eligible()) return Promise.resolve(false);
+                if (!current || current.commands !== commands) {
+                    clear();
+                    const retirement = new AbortController();
+                    const unregister = composition.focus(owner, commands, () => { current = null; retirement.abort(); });
+                    current = { commands, clear: unregister, retirement };
+                }
+                const active = current;
+                // Publication is pushed by the existing context composer. Callers wait for
+                // its public descriptors rather than issuing an Action against private state.
+                return new Promise(resolve => {
+                    const finish = (accepted: boolean) => {
+                        unsubscribe();
+                        active.retirement.signal.removeEventListener('abort', cancelled);
+                        resolve(accepted);
+                    };
+                    const cancelled = () => finish(false);
+                    const check = () => {
+                        if (active.retirement.signal.aborted || !eligible()) { finish(false); return; }
+                        const snapshot = reader.readCurrentUiContext();
+                        if (commands.every(entry => snapshot?.commands.some(descriptor => {
+                            const resolved = reader.resolveCurrentUiCommand(descriptor.id);
+                            return resolved?.command === entry.command && !resolved.retirementSignal.aborted;
+                        }))) finish(true);
+                    };
+                    const unsubscribe = reader.subscribe(check);
+                    active.retirement.signal.addEventListener('abort', cancelled, { once: true });
+                    check();
+                });
+            },
+        };
+    }, [composition, reader, contextKey]);
+    React.useEffect(() => () => publication?.clear(), [publication]);
+    return publication;
 }
 
 /** Parameterized host Actions borrow the same mounted record and opaque address. */

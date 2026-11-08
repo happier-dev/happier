@@ -190,13 +190,22 @@ export function createExpoRouterRuntime(
 
     let paramsOverrides: ExpoRouterParams = {};
     const paramsListeners = new Set<() => void>();
+    let segmentsSnapshot: string[] | undefined;
+    const syncSegments = () => {
+        const next = resolveSegmentsInput(options.segments);
+        if (!segmentsSnapshot || segmentsSnapshot.length !== next.length
+            || segmentsSnapshot.some((segment, index) => segment !== next[index])) {
+            segmentsSnapshot = next;
+        }
+        return segmentsSnapshot;
+    };
     const state = {
         get pathname() {
             return resolvePathnameInput(options.pathname);
         },
         params: {} as ExpoRouterParams,
         get segments() {
-            return resolveSegmentsInput(options.segments);
+            return syncSegments();
         },
         navigation: options.navigation ?? null,
         router,
@@ -275,7 +284,7 @@ export function createExpoRouterRuntime(
             ),
             useRouter: () => state.router,
             useNavigation: () => state.navigation,
-            useSegments: () => resolveSegmentsInput(options.segments),
+            useSegments: syncSegments,
             usePathname: () => resolvePathnameInput(options.pathname),
             useLocalSearchParams: useSearchParams,
             useGlobalSearchParams: useSearchParams,

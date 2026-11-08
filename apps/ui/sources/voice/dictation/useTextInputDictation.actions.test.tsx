@@ -60,7 +60,8 @@ const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domain
 const { resolveRuntimeFeatureDecision } = await import('@/sync/domains/features/featureDecisionInputs');
 const { MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-const { CurrentUiContextProvider, useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { createCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
 const { registerCurrentUiContextActionPort } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -170,17 +171,32 @@ describe('mounted field Dictation Actions', () => {
             throw new Error(`Unexpected Dictation RPC: ${method}`);
         });
         const credentials = (await TokenStorage.getCredentialsForServerUrl(serverUrl))!;
+        const pageEntity = { kind: 'workflow', label: 'Mounted Workflow', reference: { scope, draftId: 'mounted-workflow' } };
+        function PageContext() {
+            const enrichment = React.useMemo(() => ({ entity: pageEntity }), []);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
         const wrapper = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={credentials}>
-            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider><ActionPort />{children}</CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider><ActionPort />
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <PageContext />{children}
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>;
         // The AppShell modal host outlives the individual field registration.
         const modalScreen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
         let words = 'draft';
-        const field = await renderHook(() => useTextInputDictation({ controlId: 'mounted-field', enabled: true,
+        const field = await renderHook(() => {
+            const [enabled, setEnabled] = React.useState(true);
+            const other = useTextInputDictation({ controlId: 'other-mounted-field', enabled: true,
+                presented: true, editable: true, transcriptionSessionId: null, onTranscription: () => {} });
+            return { ...useTextInputDictation({ controlId: 'mounted-field', enabled,
             presented: true, editable: true, transcriptionSessionId: null, onTranscription: text => {
                 words = applyDictationToComposer({ input: null,
                     state: { text: words, selection: { start: words.length, end: words.length } }, text }).text;
-            } }), { wrapper });
+            } }), other, setEnabled };
+        }, { wrapper });
         let focused: Promise<boolean> | undefined;
         await act(async () => { focused = field.getCurrent().onFocus(); });
         expect(await focused).toBe(true);
@@ -195,7 +211,24 @@ describe('mounted field Dictation Actions', () => {
         const ui = { surface: 'ui' as const, authority: 'present_user' as const, serverId, expectedAccountId: 'alice' };
         const agent = { ...ui, surface: 'agent' as const, authority: 'account_automation' as const,
             actionRequestId: 'dictation-start-request', defaultSessionMachineId: 'speech-machine' } satisfies ActionExecutorContext;
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const initial = await execute('ui.current_context.read', {}, ui);
+        if (!initial.ok) throw new Error('Mounted page context unavailable');
+        expect(CurrentUiContextSnapshotV1Schema.parse(initial.result).entity).toEqual(pageEntity);
+        const previousStart = CurrentUiContextSnapshotV1Schema.parse(initial.result).commands[0]!.id;
+        await act(async () => { focused = field.getCurrent().other.onFocus(); });
+        expect(await focused).toBe(true);
+        expect(await execute('ui.voice_global.dictation.start', { commandId: previousStart }, ui))
+            .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'dictation_field_unmounted' } });
+        const otherContext = await execute('ui.current_context.read', {}, ui);
+        await act(async () => { field.getCurrent().setEnabled(false); });
+        expect(await execute('ui.current_context.read', {}, ui)).toEqual(otherContext);
+        await act(async () => { field.getCurrent().setEnabled(true); });
+        // Returning to an already-known field must rejoin the one command owner.
+        await act(async () => { focused = field.getCurrent().onFocus(); });
+        expect(await focused).toBe(true);
         const read = await execute('ui.current_context.read', {}, ui);
+        expect(read).toMatchObject({ ok: true, result: { entity: pageEntity } });
         expect(read).toMatchObject({ ok: true, result: { commands: expect.arrayContaining([expect.objectContaining({ title: expect.any(String) })]) } });
         if (!read.ok || !read.result || typeof read.result !== 'object' || !('commands' in read.result)) throw new Error('Dictation commands absent');
         const commands = read.result.commands as readonly { id: string; title: string }[];
@@ -292,6 +325,8 @@ describe('mounted field Dictation Actions', () => {
             .toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'idle', inserted: false } });
         expect(voiceDictationController.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
         expect(words === `draft ${dictatedWords}`).toBe(true);
+        await act(async () => { field.getCurrent().setEnabled(false); });
+        expect(await execute('ui.current_context.read', {}, ui)).toMatchObject({ ok: true, result: { entity: pageEntity } });
         // Removing the production AppShell registration must disconnect the
         // Action even while the same focused field/controller are still mounted.
         unregister?.(); unregister = undefined;

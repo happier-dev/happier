@@ -39,6 +39,7 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
+    canActivateCurrentUiContextMount,
     composeCurrentUiContextSnapshot,
     composeCurrentUiContextSnapshotFromNavigation,
     hasActiveDetailsWorkspace,
@@ -488,8 +489,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             activateCurrent(enrichment, signal): Promise<boolean> {
                 const snapshot = readCurrentUiContext();
                 if (!canUseProvider() || !readCurrentUiContextMountLifecycleActive() || signal?.aborted
-                    || !snapshot || snapshot.navigation.area === 'modal' || snapshot.navigation.area === 'workspace'
-                    || snapshot.detail === CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1) return Promise.resolve(false);
+                    || !canActivateCurrentUiContextMount(snapshot)) return Promise.resolve(false);
                 const current = currentMountRecordRef.current;
                 const record = current?.owner === owner && current.enrichment === enrichment
                     ? current : replaceCurrent(enrichment, 'activate');
@@ -508,9 +508,8 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
                             || currentMountRecordRef.current !== record) { finish(false); return; }
                         if (committedSnapshotRef.current?.mountRecord !== record) return;
                         const committed = readCurrentUiContext();
-                        finish(Boolean(committed && committed.navigation.area !== 'modal' && committed.navigation.area !== 'workspace'
-                            && committed.detail !== CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1
-                            && record.semanticCommands.every(command => committed.commands.some(({ id }) => id === command.id))));
+                        finish(Boolean(canActivateCurrentUiContextMount(committed)
+                            && record.semanticCommands.every(command => committed?.commands.some(({ id }) => id === command.id))));
                     };
                     readerListenersRef.current.add(check);
                     record.retirement.signal.addEventListener('abort', cancelled, { once: true });

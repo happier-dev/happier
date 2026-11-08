@@ -562,10 +562,26 @@ describe('UI testkit mock factories', () => {
             isFocused: false,
         });
 
+        expect(createReactNavigationNativeMock().useNavigation().isFocused()).toBe(true);
         const focus = await renderHook(() => moduleMock.useIsFocused());
         try {
             expect(focus.getCurrent()).toBe(false);
+            expect(moduleMock.useNavigation().isFocused()).toBe(false);
         } finally { await focus.unmount(); }
+
+        let focused = true;
+        const dynamicMock = createReactNavigationNativeMock({
+            navigation: { isFocused: () => focused },
+        });
+        const dynamicFocus = await renderHook(() => dynamicMock.useIsFocused());
+        try {
+            expect(dynamicFocus.getCurrent()).toBe(true);
+            expect(dynamicMock.useNavigation().isFocused()).toBe(true);
+            focused = false;
+            await dynamicFocus.rerender();
+            expect(dynamicFocus.getCurrent()).toBe(false);
+            expect(dynamicMock.useNavigation().isFocused()).toBe(false);
+        } finally { await dynamicFocus.unmount(); }
         expect(moduleMock.CommonActions.setParams({ id: 'abc' })).toEqual({
             type: 'SET_PARAMS',
             payload: { params: { id: 'abc' } },
@@ -761,10 +777,23 @@ describe('UI testkit mock factories', () => {
         const routerMock = createExpoRouterMock({ segments });
 
         expect(segments).not.toHaveBeenCalled();
-        expect(routerMock.module.useSegments()).toEqual(['(app)', 'settings']);
+        const initialSegments = routerMock.module.useSegments();
+        expect(initialSegments).toEqual(['(app)', 'settings']);
+        expect(routerMock.module.useSegments()).toBe(initialSegments);
+
+        currentSegments = [...currentSegments];
+        expect(routerMock.module.useSegments()).toBe(initialSegments);
 
         currentSegments = ['(app)', 'session', '123', 'file'];
-        expect(routerMock.module.useSegments()).toEqual(['(app)', 'session', '123', 'file']);
+        const changedSegments = routerMock.module.useSegments();
+        expect(changedSegments).toEqual(['(app)', 'session', '123', 'file']);
+        expect(changedSegments).not.toBe(initialSegments);
+        expect(routerMock.module.useSegments()).toBe(changedSegments);
+
+        currentSegments[1] = 'machine';
+        const mutatedSegments = routerMock.module.useSegments();
+        expect(mutatedSegments).toEqual(['(app)', 'machine', '123', 'file']);
+        expect(mutatedSegments).not.toBe(changedSegments);
     });
 
     it('reads dynamic pathname suppliers lazily on every call', async () => {

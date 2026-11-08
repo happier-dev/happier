@@ -7,7 +7,8 @@ import { t } from '@/text';
 import { useVoiceDictation } from './useVoiceDictation';
 import { resolveVoiceDictationFailureTranslationKey, resolveVoiceDictationStartErrorTranslationKey,
     voiceDictationFailureNeedsSetup } from './voiceDictationErrorCopy';
-import { useCurrentUiContextMountPublisher, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useCurrentUiContextFocusedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { executeMountedCurrentUiContextCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -71,7 +72,7 @@ export function useTextInputDictation(input: Readonly<{
     // Keep the mounted field's detailed capture feedback local; public Actions
     // return the existing structural failure codes.
     const captureErrorRef = React.useRef<unknown>(null);
-    const publisher = useCurrentUiContextMountPublisher();
+    const commands = useCurrentUiContextFocusedCommands(input.controlId);
     const reader = useOptionalCurrentUiContextReader();
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const router = useRouter();
@@ -94,17 +95,16 @@ export function useTextInputDictation(input: Readonly<{
                     serverId: account?.scope.serverId, expectedAccountId: account?.scope.accountId });
             } } });
     }, [execute]);
-    const mount = React.useMemo(() => publisher?.createMount() ?? null, [publisher, input.controlId]);
     const focus = React.useRef<Readonly<{ account: ActiveServerAccountScopeLifetime; enrichment: CurrentUiContextMountedEnrichment; dispose(): void }> | null>(null);
     React.useEffect(() => () => {
         focus.current?.dispose(); focus.current = null;
-        mount?.dispose();
-    }, [mount]);
+        commands?.clear();
+    }, [commands]);
     React.useEffect(() => {
         if (input.enabled && input.presented && input.editable) return;
         focus.current?.dispose(); focus.current = null;
-        mount?.clear();
-    }, [input.enabled, input.presented, input.editable, mount]);
+        commands?.clear();
+    }, [input.enabled, input.presented, input.editable, commands]);
 
     const toggleAndInsert = React.useCallback(async (isCurrent: () => boolean = () => true, retry = false) => {
         const result = await (retry ? dictation.retry() : dictation.toggle());
@@ -120,7 +120,7 @@ export function useTextInputDictation(input: Readonly<{
     const onFocus = React.useCallback(async (): Promise<boolean> => {
         const field = authorityRef.current;
         const account = captureActiveServerAccountScopeLifetime();
-        if (!mount || !account || !field.controlId || !field.enabled || !field.presented || !field.editable) return false;
+        if (!commands || !account || !field.controlId || !field.enabled || !field.presented || !field.editable) return false;
         if (focus.current?.account !== account) {
             focus.current?.dispose();
             const key = input.controlId;
@@ -161,7 +161,7 @@ export function useTextInputDictation(input: Readonly<{
                 } finally { signal.removeEventListener('abort', cancel); }
             };
             const cancelFocusedDictation = dictationRef.current.cancel;
-            const retirement = account.onRetire(() => { mount.clear(); void cancelFocusedDictation(); });
+            const retirement = account.onRetire(() => { commands.clear(); void cancelFocusedDictation(); });
             focus.current = { account, dispose: () => retirement.dispose(), enrichment: {
                 commands: (['start', 'finish', 'cancel', 'dismiss', 'retry'] as const).map(operation => ({
                     title: t(operation === 'start' ? 'voiceAssistant.startDictation' : operation === 'finish' ? 'voiceAssistant.endDictation'
@@ -170,8 +170,8 @@ export function useTextInputDictation(input: Readonly<{
                 })),
             } };
         }
-        return mount.activateCurrent(focus.current.enrichment);
-    }, [input.controlId, mount]);
+        return commands.activate(focus.current.enrichment.commands ?? []);
+    }, [input.controlId, commands]);
 
     const invokeAction = React.useCallback(async (operation: VoiceDictationOperation): Promise<ActionExecuteResult> => {
         if (!await onFocus()) return { ok: true, result: { status: 'unavailable', code: 'dictation_field_unavailable' } };

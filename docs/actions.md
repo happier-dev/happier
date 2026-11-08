@@ -4359,7 +4359,15 @@ ingress and installation lifetime, and derives the review fingerprint from the
 genuine committed receipt and physical root. The exact Home, relationship and
 target produce the existing preview/removal identity, including `rootFingerprint`;
 consumers do not calculate it. Not-owned and unavailable remain distinct from an
-empty copy. No caller path, row presence or
+empty copy. For a committed copy on another Account's Machine, the installed
+SOURCE forwards the original requester's exact relationship and target through
+the existing relationship custody carrier. The target accepts only that retained
+copy, original requester and SOURCE installation; this grants no general Machine
+inspection access. A missing retained custody match is refused.
+Preview after a WORKER daemon restart is refused because this custody is
+process-local; use terminate to clean up that copy. A fresh admitted copy can
+be previewed normally. No persisted inspection authorization is reconstructed.
+No caller path, row presence or
 preview result grants deletion authority; removal remains the separately approved
 `projects.worker.copy.retire` Action. Loaded app/headless validation remains an
 integration prerequisite for this development contract.
@@ -4434,6 +4442,12 @@ existing provenance. Retry acknowledgement requires the same value and source.
 Mounted Workflow Actions use the existing Machine reverse-RPC room with the Home/Account scope and draft id in its address. Only the client that currently mounts that address registers it; another signed-in tab cannot answer through its generic client Action handler. Replacing or closing the draft retires its address. A scope-only Get uses the same room family for the mounted scope, and multiple answering clients are unavailable rather than selected by socket order. The exact installed Machine still authenticates the continuation: installation custody is checked on the sending daemon, not on the receiving App client. The answering client rechecks Account scope and normal Action approvals.
 
 In 0.3 development, a presented new or saved Workflow editor publishes its name and mounted address through the existing current-UI context owner. `ui.current_context.read` returns a `workflow` entity whose `reference` contains `scope` and `draftId` for `workflow.authoring.draft.get`; a saved editor also supplies `workflowId` for saved-definition Actions. This identifies the editor without reading its authored content into the context projection. Draft mutations continue through their ordinary Action admission and approval owners.
+
+Retained workspace destinations inherit the workspace's semantic focus. When Expo
+hosts the route body itself, `WorkspaceRouteEntry` publishes its focused-scene
+eligibility through the same focus owner. Both paths let the mounted editor
+publish its entity; focusing a composer field adds its commands through the
+existing command composition without replacing that entity.
 
 `workflow.authoring.draft.save` and `workflow.definition.update` are safe Actions and do not require an approval card by default, including Agent/MCP requests. Explicit surface Require preferences or a selected approval profile can require review through the existing Action approval owner; draft Save's definition and trigger children keep their own policy. `approval.result: 'required'` describes result custody when review is required, rather than enabling review. The person's own UI admission described below does not exempt an agent request. A mutating reverse-RPC result of `outcome_uncertain` means the effect may have applied without its acknowledgement reaching the caller: read the mounted draft's revision and content before deciding whether to retry.
 
@@ -6743,9 +6757,12 @@ approval by default for automated callers and existing device microphone consent
 The person's own UI Start is direct unless Settings → Actions requires Ask first. Finish inserts
 editable words through the mounted field's insertion owner without Send;
 cancel inserts nothing. Retired, hidden, disabled or other-Account fields return
-typed unavailability rather than targeting another input. The one current-UI
-mount and existing Dictation controller own this capability; no draft or recorder
-is created by the Action adapter.
+typed unavailability rather than targeting another input. The existing current-UI
+command composition adds the focused field's commands to the page's projection;
+focusing or retiring that field preserves the mounted page's entity and commands.
+Another field's focus retires the preceding field's command addresses. The existing
+Dictation controller retains capture ownership; no draft or recorder is created
+by the Action adapter.
 
 In 0.3 development source, `ui.voice_global.history.search`, `.load_older`,
 `.export` and `.clear` use the answering client's existing History consumer.
@@ -8108,6 +8125,15 @@ approval approved without an execution receipt, so the origin can execute it
 after admission recovers. A claimed execution keeps its existing settlement and
 unknown-outcome rules. Currentness adapters report a specific failed fact;
 an unclassified refusal is unavailable context, not evidence of a stale origin.
+
+In 0.3 development, a Discussion publication with an unknown outcome remains
+linked to its original request in that Discussion. Its inline status reflects
+the uncertainty and keeps the existing in-place Review recovery.
+Declining a private Discussion draft settles its exact original Session reply
+before recording the terminal approval Artifact. While that settlement is pending,
+the origin card keeps its decision controls busy; a failure stays inline with its
+typed reason and Retry. A lost reply acknowledgement is reconciled through the
+same original reply before retrying the Artifact transition.
 
 The shared approval creation owner validates its proposed body before writing.
 In 0.3 development, an invalid body returns `approval_invalid` with schema issue
@@ -9906,9 +9932,12 @@ before/after text, reason and full base revision. Posting one changes no Doc tex
 `doc.edit.propose` also accepts `discussionRef`, `localId`, `after` and an optional
 `reason`. The shared Doc adapter reads the thread's latest committed passage
 comment (including an explicit reattachment), then reads the current Doc through
-`doc.read`. It locates that quote unambiguously in the current source and binds
-the current range and full revision before approval; a missing or ambiguous
-quote returns `doc_passage_mismatch`. Approval replay keeps that reviewed basis
+`doc.read`. The shared passage owner places both the margin and the next proposal
+on a suggestion's replacement when it was accepted into the current revision and
+still occupies its reviewed source offset; otherwise it locates the anchor quote
+unambiguously. It binds that current quote, range and full revision before approval;
+a missing or ambiguous passage returns `doc_passage_mismatch`. `after` replaces
+exactly that quoted span, preserving all surrounding text. Approval replay keeps that reviewed basis
 without another anchor or Doc read. The explicit `target`, `baseRevision` and
 `before` form remains supported and retains its authored basis. Acceptance still
 checks the exact reviewed revision and quote.
