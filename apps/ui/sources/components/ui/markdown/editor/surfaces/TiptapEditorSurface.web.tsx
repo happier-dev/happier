@@ -271,8 +271,11 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
 
         const richFind = React.useMemo(() => editor ? createTiptapFind(editor) : null, [editor]);
         React.useEffect(() => () => richFind?.destroy(), [richFind]);
+        // A hidden Activity (a navigation stack's background screen) disconnects these effects and unsubscribes from
+        // the editor; Tiptap then destroys it. On reveal the effects reconnect with that destroyed instance before
+        // the re-render that brings the new one, so every effect that touches the editor skips a destroyed instance.
         React.useEffect(() => {
-            if (!editor) return;
+            if (!editor || editor.isDestroyed) return;
             editor.view.dom.style.setProperty('--happier-rich-find-all', theme.colors.find.matchAll);
             editor.view.dom.style.setProperty('--happier-rich-find-current', theme.colors.find.matchCurrent);
             editor.view.dom.style.setProperty('--happier-rich-find-current-foreground', theme.colors.find.matchCurrentForeground);
@@ -404,7 +407,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
 
         // Keep editability in sync with the readOnly prop after mount.
         React.useEffect(() => {
-            if (!editor) return;
+            if (!editor || editor.isDestroyed) return;
             try {
                 editor.setEditable(!readOnly);
             } catch {
@@ -415,7 +418,7 @@ export const TiptapEditorSurface = React.forwardRef<MarkdownEditorSurfaceRef, Ma
         // Sync external value changes into the editor without echoing them back as
         // user edits (mirrors Monaco's ignoreChangeRef guard).
         React.useEffect(() => {
-            if (!editor) return;
+            if (!editor || editor.isDestroyed) return;
             const current = editor.getMarkdown();
             if (current === props.value) {
                 seedRef.current = props.value;

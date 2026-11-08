@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { HappierPressable, happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
@@ -34,11 +35,13 @@ export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?
     const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const safeArea = useChromeSafeAreaInsets();
+    // The phone's floating tab bar (with its own primary action in this corner) covers the page's foot; rise above it.
+    const bottomClearance = Math.max(safeArea.bottom, useSessionCockpitPageBottomClearance());
     return (
         <View
             style={[
                 styles.container,
-                { bottom: safeArea.bottom + 16 }
+                { bottom: bottomClearance + 16 }
             ]}
         >
             <HappierPressable
