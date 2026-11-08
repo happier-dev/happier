@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "S’ha arribat al límit de VM macOS de l’amfitrió: n’hi ha {count} en execució. Atura una VM macOS en aquest amfitrió i torna-ho a provar.",
+  "machineLume.configure.macosVmCount": "{count} de {limit} màquines virtuals macOS en execució en aquest Mac",
+  "machineLume.configure.macosVmCountUnavailable": "El nombre de màquines virtuals macOS en execució en aquest Mac no està disponible",
+  "machineLume.configure.macosVmLimitReached": "S’ha arribat al límit de VM macOS de l’amfitrió: n’hi ha {count}/{limit} en execució. Atura una VM macOS en aquest amfitrió i torna-ho a provar.",
   "machineLume.presentation.lume_cache_enabled": "A punt · memòria cau d’imatges activada",
   "machineLume.presentation.lume_cache_disabled": "A punt · memòria cau d’imatges desactivada",
   "machineLume.presentation.lume_cache_unknown": "A punt · estat de la memòria cau d’imatges no disponible",

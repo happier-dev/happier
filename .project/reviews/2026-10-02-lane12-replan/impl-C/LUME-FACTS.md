@@ -1,0 +1,22 @@
+DONE — focused GREEN and entry-loads 7/7; package typecheck red in untouched passwordPolicy.ts; optional live QA not run.
+
+- Authority: OWNER-RULINGS.md, 2026-11-08 “Lume headroom and the macOS VM count ship in 0.3”; LAB-GAP-C §(e) G-PROV-02/03.
+- G-PROV-02 → provider.check → nativeClient.hostFacts → hostResources: real OS free memory and available filesystem bytes; existing generic localResources, no protocol change.
+- CPU headroom omitted: Lume 0.6.1 exposes no idle-core measurement; topology/availableParallelism are capacity, not observed headroom.
+- Disk omitted for absent/unreadable storage, non-absolute native paths, or several locations: check has no selected-storage operand, so one volume cannot represent every choice.
+- Native basis: trycua/cua 3350f504014c85416009a90fcb339fe556ce02fc, FileSystem/Settings.swift and Server/Handlers.swift; recorded VM fixture already in capacity.test.ts; real OS measurements, only HTTP transport mocked.
+- G-PROV-03 → options.nativeFacts.image.description → existing image subtitle: localized count/limit and honest unavailable count in all 12 locales.
+- At capacity the existing refusal subtitle takes precedence; it now also interpolates count/limit. Refusal code, threshold, native Start admission and recovery remain unchanged; single existing capacity.ts LUME_MACOS_VM_LIMIT cites Apple’s licence/Virtualization.framework.
+- Constructed RED: AUTO session 40699, 9 intended failures/40 passes (missing facts/count); GREEN: AUTO 52755, 123/123 across provider, capacity, native-route composed and manifest suites.
+- Refusal-display RED: local deciding session 47822, missing limit parameter; final GREEN: local deciding 35453, provider+capacity 49/49. Evidence: qa-shots5/gaps/LUME-FACTS/{green,final-green}.log.
+- Cost: one /config read per check, one /vms inventory per options call; repeated-check and inventory-count assertions pass. No timers, polls, retries, or retained headroom cache.
+- Existing UI verified in source: managedConfiguratorModel.ts:260 carries check.localResources; managedConfigurationPresentation.ts:173/204 consumes it; ManagedMachineConfigurationView.tsx:1066/1085 renders headroom/image descriptions. UI untouched.
+- Same-shape sweep: local providers missing headroom — fixed Lume; routed Lima provider.ts:158 (Mac/Linux controller configurators), Cua nativeFacts.ts:113 (local-sandbox/local-space configurators), Docker Sandboxes provider.ts:36 (local template configurator, no hardware-size options). Distinct native owners, not trivial Lume-pattern edits; unchanged.
+- Crabbox direct local-container also has local observation billing, but its provisioner advertises cloud billing; no local sizing/headroom presentation promise established, unchanged.
+- Locales: all 12 JSON files parsed; ordinary and refusal labels contain count/limit placeholders. Scoped diff whitespace check passed.
+- Entry-loads: AUTO 94309 exit 0, 7/7 current-source graphs. Package typecheck: AUTO 94217 exit 2, passwordPolicy.ts:68 TS2741 / :97 TS2339 (Disposable); that file matches HEAD bytes and was not edited. Unattributed outside this lane, retained under the foreign-break rule; no package-green or zero-delta claim. Evidence: qa-shots5/gaps/LUME-FACTS/{entry-loads,typecheck}.log.
+- Adoption: PAY the updated bundled machine-lume code/assets to the selected controller’s daemon (mac3 for the named Lume guests); Home/UI RELOAD alone cannot adopt daemon plugin code. No UI source change requires RELOAD.
+- Optional live QA not run: PAY/loaded controller identity not established; mac3 online status not checked. No VM creation or lifecycle mutation performed.
+- Touched: packages/plugins/machine-lume/src/machine/{hostResources.ts,nativeClient.ts,provider.ts,provider.test.ts,capacity.test.ts}, src/ui/translations.ts, assets/i18n/*.json; this report.
+- Net mechanism delta: files +1/−0 production (hostResources owns OS observations), native storage schema parse +1/−0 (external configuration), storage-selection conditions +2/−0 (avoid wrong volume/current-directory readings); states/error codes/timers/retries/caches +0/−0. Two localized labels added; existing refusal copy gains the same named limit.
+- Residual risk: physical macOS observations and live whole-page rendering remain unmeasured; resource facts are per-check snapshots. Missing CPU/disk facts stay unknown, never guessed.

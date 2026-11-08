@@ -1,6 +1,7 @@
 import * as z from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isLumeMacos, readLumeCapacity } from './capacity.js';
+import { readLumeHostResources } from './hostResources.js';
 import {
   LumeNativeConfigurationSchema, LumeNativeDetailsSchema, LumeNativeHostStatusSchema, LumeNativeLocationsSchema,
   LumeNativePullResponseSchema, LumeNativePullSchema, LumeNativeResourceSchema,
@@ -131,7 +132,25 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
     return mutate(resource, `${vmPath(resource)}/stop`, 'POST', { storage: resource.storage }, 200, 'stop-accepted', 'stop', signal);
   }
 
+  async function readConfiguration(signal?: AbortSignal): Promise<unknown> {
+    const response = await request('/lume/config', 200, { method: 'GET', signal });
+    if (response instanceof Response) {
+      try { return await response.json(); } catch { /* An unreadable configuration stays unknown. */ }
+    }
+    return undefined;
+  }
+
+  function configurationCacheState(configuration: unknown): LumeCacheState {
+    const result = LumeCacheSettingsSchema.safeParse(configuration);
+    return result.success ? result.data.cachingEnabled ? 'enabled' : 'disabled' : 'unknown';
+  }
+
   const client = {
+    async hostFacts(observedAt: number, signal?: AbortSignal) {
+      const configuration = await readConfiguration(signal);
+      return { cacheState: configurationCacheState(configuration),
+        localResources: await readLumeHostResources(observedAt, configuration) };
+    },
     async inventory(signal?: AbortSignal) {
       // Omit storage: the platform limit covers all Lume locations on this Mac.
       const response = await request('/lume/vms', 200, { method: 'GET', signal });
@@ -202,13 +221,7 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
       return { kind: 'unknown', reason: 'response' };
     },
     async cacheState(signal?: AbortSignal): Promise<LumeCacheState> {
-      const response = await request('/lume/config', 200, { method: 'GET', signal });
-      if (!(response instanceof Response)) return 'unknown';
-      try {
-        const result = LumeCacheSettingsSchema.safeParse(await response.json());
-        if (result.success) return result.data.cachingEnabled ? 'enabled' : 'disabled';
-      } catch { /* Failed reads cannot establish a cache state. */ }
-      return 'unknown';
+      return configurationCacheState(await readConfiguration(signal));
     },
     async enableCaching(signal?: AbortSignal): Promise<LumeCacheState> {
       // Lume 0.6.1 ConfigRequest updates only supplied fields. Preserve both

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createLumeNativeClient } from './nativeClient';
 import { createLumeProvider } from './provider';
+import { tmpdir } from 'node:os';
+import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const resource = { storage: 'external_disk', vmName: 'managed-vm' };
 const launch = { ...resource, image: 'linux-ubuntu:latest', registry: 'ghcr.io', organization: 'trycua' };
@@ -24,6 +26,40 @@ function setup(responses: Array<Response | Error>) {
 }
 
 describe('Lume 0.6.1 native HTTP boundary', () => {
+  // Settings.swift LumeSettings at 3350f504014c85416009a90fcb339fe556ce02fc.
+  // Substitute the real temporary volume for the recorded private Mac path.
+  it('reports observed host memory and native storage headroom with one config read per check', async () => {
+    const config = { vmLocations: [{ name: 'home', path: tmpdir() }], defaultLocationName: 'home',
+      cacheDirectory: '/private/cache', cachingEnabled: true, telemetryEnabled: false };
+    const { client, requests } = setup([Response.json({ version: '0.6.1' }), Response.json(config),
+      Response.json({ version: '0.6.1' }), Response.json(config)]);
+    const provider = createLumeProvider({ native: client, observedAt: 123 });
+    for (let call = 1; call <= 2; call++) {
+      const result = MachineProvisionerCheckResultV1Schema.parse(await provider.check());
+      expect(result).toMatchObject({ available: true, code: 'lume_cache_enabled', localResources: {
+        observedAt: 123, availableMemoryBytes: expect.any(Number), availableDiskBytes: expect.any(Number),
+      } });
+      expect(result.localResources?.availableMemoryBytes).toBeGreaterThan(0);
+      expect(result.localResources?.availableDiskBytes).toBeGreaterThanOrEqual(0);
+      // CPU count is capacity, not observed idle CPU headroom.
+      expect(result.localResources).not.toHaveProperty('availableCpuCores');
+      expect(JSON.stringify(result)).not.toContain('/private');
+      expect(requests.filter(({ url }) => url.pathname === '/lume/config')).toHaveLength(call);
+    }
+  });
+
+  it.each([
+    { cachingEnabled: true },
+    { cachingEnabled: true, defaultLocationName: 'home', vmLocations: [{ name: 'home', path: '~/unobserved' }] },
+    { cachingEnabled: true, defaultLocationName: 'home', vmLocations: [{ name: 'home', path: '/nonexistent-lume-facts-volume' }] },
+    { cachingEnabled: true, defaultLocationName: 'home', vmLocations: [{ name: 'home', path: tmpdir() }, { name: 'external', path: tmpdir() }] },
+  ])('omits unobservable or ambiguous storage headroom without losing memory or readiness', async config => {
+    const { client } = setup([Response.json({ version: '0.6.1' }), Response.json(config)]);
+    const result = MachineProvisionerCheckResultV1Schema.parse(await createLumeProvider({ native: client, observedAt: 123 }).check());
+    expect(result).toMatchObject({ available: true, localResources: { observedAt: 123, availableMemoryBytes: expect.any(Number) } });
+    expect(result.localResources).not.toHaveProperty('availableDiskBytes');
+  });
+
   it.each(['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ENOTFOUND', 'ECONNRESET'])(
     'preserves delivery certainty for a power request failing with %s', async code => {
       const { client } = setup([new TypeError('private fetch URL', { cause: Object.assign(new Error('private address'), { code }) })]);

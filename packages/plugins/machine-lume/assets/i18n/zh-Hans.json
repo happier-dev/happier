@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "已达到主机的 macOS 虚拟机上限：{count} 台正在运行。请停止此主机上的一台 macOS 虚拟机后重试。",
+  "machineLume.configure.macosVmCount": "此 Mac 正在运行 {count} 台 macOS 虚拟机，上限为 {limit} 台",
+  "machineLume.configure.macosVmCountUnavailable": "无法获取此 Mac 上正在运行的 macOS 虚拟机数量",
+  "machineLume.configure.macosVmLimitReached": "已达到主机的 macOS 虚拟机上限：{count}/{limit} 台正在运行。请停止此主机上的一台 macOS 虚拟机后重试。",
   "machineLume.presentation.lume_cache_enabled": "就绪 · 镜像缓存已启用",
   "machineLume.presentation.lume_cache_disabled": "就绪 · 镜像缓存已禁用",
   "machineLume.presentation.lume_cache_unknown": "就绪 · 无法获取镜像缓存状态",

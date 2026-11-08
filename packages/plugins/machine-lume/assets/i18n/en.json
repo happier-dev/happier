@@ -1,7 +1,9 @@
 {
+  "machineLume.configure.macosVmCount": "{count} of {limit} macOS VMs running on this Mac",
+  "machineLume.configure.macosVmCountUnavailable": "Running macOS VM count unavailable on this Mac",
   "machineLume.configure.keepPasswordLogin": "Keep password login",
   "machineLume.configure.keepPasswordLoginDescription": "Allow SSH login with the image password. Leave off to use SSH keys only. Applies to macOS guests.",
-  "machineLume.configure.macosVmLimitReached": "Host macOS VM limit reached: {count} are running. Stop a macOS VM on this host and try again.",
+  "machineLume.configure.macosVmLimitReached": "Host macOS VM limit reached: {count}/{limit} are running. Stop a macOS VM on this host and try again.",
   "machineLume.presentation.lume_cache_enabled": "Ready · image cache enabled",
   "machineLume.presentation.lume_cache_disabled": "Ready · image cache disabled",
   "machineLume.presentation.lume_cache_unknown": "Ready · image cache status unavailable",

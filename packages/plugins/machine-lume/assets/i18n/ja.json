@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "ホストのmacOS仮想マシン数の上限に達しました。{count}台が実行中です。このホストのmacOS仮想マシンを停止して再試行してください。",
+  "machineLume.configure.macosVmCount": "このMacで{limit}台中{count}台のmacOS仮想マシンが実行中",
+  "machineLume.configure.macosVmCountUnavailable": "このMacで実行中のmacOS仮想マシン数を取得できません",
+  "machineLume.configure.macosVmLimitReached": "ホストのmacOS仮想マシン数の上限に達しました。{count}/{limit}台が実行中です。このホストのmacOS仮想マシンを停止して再試行してください。",
   "machineLume.presentation.lume_cache_enabled": "準備完了 · イメージキャッシュ有効",
   "machineLume.presentation.lume_cache_disabled": "準備完了 · イメージキャッシュ無効",
   "machineLume.presentation.lume_cache_unknown": "準備完了 · イメージキャッシュの状態を取得できません",

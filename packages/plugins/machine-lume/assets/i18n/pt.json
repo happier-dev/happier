@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "Limite de VMs macOS do host atingido: {count} estão em execução. Pare uma VM macOS neste host e tente novamente.",
+  "machineLume.configure.macosVmCount": "{count} de {limit} máquinas virtuais macOS em execução neste Mac",
+  "machineLume.configure.macosVmCountUnavailable": "Número de máquinas virtuais macOS em execução neste Mac indisponível",
+  "machineLume.configure.macosVmLimitReached": "Limite de VMs macOS do host atingido: {count}/{limit} estão em execução. Pare uma VM macOS neste host e tente novamente.",
   "machineLume.presentation.lume_cache_enabled": "Pronto · cache de imagens ativada",
   "machineLume.presentation.lume_cache_disabled": "Pronto · cache de imagens desativada",
   "machineLume.presentation.lume_cache_unknown": "Pronto · estado do cache de imagens indisponível",

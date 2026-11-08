@@ -9,6 +9,7 @@ import type { LumeCacheState, LumeNativeClient, LumeNativeInspection } from './n
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema, resolveLumeOptionsImageCandidate, type LumeResourceV1, type LumeLaunchV1, type LumeNativeOperationV1 } from './schemas.js';
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_BILLING } from './definition.js';
 import { lumeConfigurationLabel } from '../ui/translations.js';
+import { LUME_MACOS_VM_LIMIT } from './capacity.js';
 const contributionRef = { pluginId: LUME_PLUGIN_ID, localId: LUME_PROVISIONER_ID };
 const nativeCauseOf = (value: Readonly<{ kind: string; nativeCause?: MachineProvisionerNativeCauseV1 }>) => value.nativeCause;
 const failureCause = (value: Readonly<{ kind: string; nativeCause?: MachineProvisionerNativeCauseV1 }>) => value.nativeCause ? { nativeCause: value.nativeCause } : {};
@@ -89,7 +90,8 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
     async check(): Promise<MachineProvisionerCheckResultV1> {
       const runtime = await native.check(signal);
       if (runtime.kind !== 'runtime') return { available: false, code: `lume_${runtime.reason}`, ...failureCause(runtime) };
-      return { available: true, code: `lume_cache_${await native.cacheState(signal)}` };
+      const facts = await native.hostFacts(observedAt, signal);
+      return { available: true, code: `lume_cache_${facts.cacheState}`, localResources: facts.localResources };
     },
     async options(rawQuery: unknown = {}): Promise<MachineProvisionerOptionsResultV1> {
       const query = LumeOptionsInputV1Schema.parse(rawQuery);
@@ -121,6 +123,9 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
       }));
       const sizeFact = size ? { id: `${size.cpu}/${size.memoryBytes}/${size.diskBytes}`, title: lumeConfigurationLabel('customSize'),
         cpuCores: size.cpu, memoryBytes: size.memoryBytes, diskBytes: size.diskBytes } : undefined;
+      const macosVmStatus = inventory.kind === 'inventory'
+        ? { ...lumeConfigurationLabel('macosVmCount'), params: { count: inventory.runningMacosCount, limit: LUME_MACOS_VM_LIMIT } }
+        : lumeConfigurationLabel('macosVmCountUnavailable');
       return { ...(size ? { base: { launch: { ...size, keepPasswordLogin: query.keepPasswordLogin === true,
         ...(storage ? { storage } : {}) } } } : {}), dimensions: {
         size: sizeFact ? [{ id: sizeFact.id, title: sizeFact.title, assignments: [], nativeFacts: { size: sizeFact } }] : [],
@@ -129,9 +134,10 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
           const refusal = guestPlatform === 'darwin' && inventory.kind === 'inventory' ? inventory.macosStartRefusal : undefined;
           return { id: reference, title: reference, available: available && !refusal,
             ...(refusal && inventory.kind === 'inventory' ? { unavailableReason: { code: refusal.code,
-              status: { ...lumeConfigurationLabel('macosVmLimitReached'), params: { count: inventory.runningMacosCount } } } } : {}),
+              status: { ...lumeConfigurationLabel('macosVmLimitReached'), params: { count: inventory.runningMacosCount, limit: LUME_MACOS_VM_LIMIT } } } } : {}),
             ...(guestPlatform ? { guestPlatform } : {}),
-            assignments: [{ path: 'image', value: image }], nativeFacts: { image: { id: reference, title: reference } } };
+            assignments: [{ path: 'image', value: image }], nativeFacts: { image: { id: reference, title: reference,
+              description: macosVmStatus } } };
         }),
         location: locations.locations.map(location => ({ id: location.name, title: location.name,
           assignments: [{ path: 'storage', value: location.name }], nativeFacts: { location: { id: location.name, title: location.name } } })),

@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "Достигнут лимит виртуальных машин macOS хоста: запущено {count}. Остановите виртуальную машину macOS на этом хосте и повторите попытку.",
+  "machineLume.configure.macosVmCount": "На этом Mac запущено {count} из {limit} виртуальных машин macOS",
+  "machineLume.configure.macosVmCountUnavailable": "Число запущенных виртуальных машин macOS на этом Mac недоступно",
+  "machineLume.configure.macosVmLimitReached": "Достигнут лимит виртуальных машин macOS хоста: запущено {count}/{limit}. Остановите виртуальную машину macOS на этом хосте и повторите попытку.",
   "machineLume.presentation.lume_cache_enabled": "Готово · кэш образов включён",
   "machineLume.presentation.lume_cache_disabled": "Готово · кэш образов отключён",
   "machineLume.presentation.lume_cache_unknown": "Готово · статус кэша образов недоступен",

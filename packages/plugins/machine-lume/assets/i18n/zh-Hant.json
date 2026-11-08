@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "已達主機的 macOS 虛擬機上限：{count} 台正在執行。請停止此主機上的一台 macOS 虛擬機後重試。",
+  "machineLume.configure.macosVmCount": "此 Mac 正在執行 {count} 台 macOS 虛擬機器，上限為 {limit} 台",
+  "machineLume.configure.macosVmCountUnavailable": "無法取得此 Mac 上正在執行的 macOS 虛擬機器數量",
+  "machineLume.configure.macosVmLimitReached": "已達主機的 macOS 虛擬機上限：{count}/{limit} 台正在執行。請停止此主機上的一台 macOS 虛擬機後重試。",
   "machineLume.presentation.lume_cache_enabled": "就緒 · 映像快取已啟用",
   "machineLume.presentation.lume_cache_disabled": "就緒 · 映像快取已停用",
   "machineLume.presentation.lume_cache_unknown": "就緒 · 無法取得映像快取狀態",

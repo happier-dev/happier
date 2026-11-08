@@ -36,6 +36,26 @@ function setup(inventory: unknown = [vm, ...running], target = vm) {
 }
 
 describe('Lume host macOS capacity', () => {
+  it.each([0, 1, 2])('discloses %s running macOS guests in ordinary options without another inventory read', async count => {
+    const { provider, requests } = setup([vm, ...running.slice(0, count), ...running.map(item => ({ ...item, os: 'linux' }))]);
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await provider.options(launch));
+    expect(result.dimensions.image[0]?.nativeFacts?.image?.description).toMatchObject({
+      key: 'machineLume.configure.macosVmCount', params: { count, limit: 2 },
+    });
+    expect(result.dimensions.image[0]?.available).toBe(count < 2);
+    if (count === 2) expect(result.dimensions.image[0]?.unavailableReason?.status).toMatchObject({ params: { count, limit: 2 } });
+    expect(requests.filter(request => request === 'GET /lume/vms')).toHaveLength(1);
+    expect(requests.filter(request => request.startsWith('POST'))).toEqual([]);
+  });
+
+  it('does not report zero running guests when the native inventory is unreadable', async () => {
+    const { provider } = setup({ error: 'unreadable inventory' });
+    const result = MachineProvisionerOptionsResultV1Schema.parse(await provider.options(launch));
+    expect(result.dimensions.image[0]?.nativeFacts?.image?.description).toMatchObject({
+      key: 'machineLume.configure.macosVmCountUnavailable',
+    });
+  });
+
   it('retains native custody when capacity refuses Start after the fresh acquire has pulled a VM', async () => {
     const { provider, requests } = setup();
     expect(MachineProvisionerAcquireResultV1Schema.parse(await provider.acquire(launch, 'capacity')))

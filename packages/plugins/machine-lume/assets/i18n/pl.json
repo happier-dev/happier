@@ -1,5 +1,7 @@
 {
-  "machineLume.configure.macosVmLimitReached": "Osiągnięto limit maszyn wirtualnych macOS hosta: działa ich {count}. Zatrzymaj maszynę macOS na tym hoście i spróbuj ponownie.",
+  "machineLume.configure.macosVmCount": "Na tym Macu działa {count} z {limit} maszyn wirtualnych macOS",
+  "machineLume.configure.macosVmCountUnavailable": "Liczba uruchomionych maszyn wirtualnych macOS na tym Macu jest niedostępna",
+  "machineLume.configure.macosVmLimitReached": "Osiągnięto limit maszyn wirtualnych macOS hosta: działa ich {count}/{limit}. Zatrzymaj maszynę macOS na tym hoście i spróbuj ponownie.",
   "machineLume.presentation.lume_cache_enabled": "Gotowe · pamięć podręczna obrazów włączona",
   "machineLume.presentation.lume_cache_disabled": "Gotowe · pamięć podręczna obrazów wyłączona",
   "machineLume.presentation.lume_cache_unknown": "Gotowe · stan pamięci podręcznej obrazów niedostępny",
