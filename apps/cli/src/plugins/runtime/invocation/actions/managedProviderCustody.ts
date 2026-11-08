@@ -155,7 +155,7 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
       qualifiedActionId: buildQualifiedPluginContributionKey(identity) });
     if (!scopes) return invalid();
     try {
-      const selected = bindManagedMachineRoleCredentials({ authorizations: scopes, providerPluginId: identity.pluginId,
+      const selected = bindManagedMachineRoleCredentials({ authorizations: scopes, provider: machine.launch.provider,
         credentials: machine.launch.credentials, qualification: {
           descriptor: matches.find(candidate => candidate.role === operation.role)!.contribution.definition, launch: machine.launch.choices,
         } });

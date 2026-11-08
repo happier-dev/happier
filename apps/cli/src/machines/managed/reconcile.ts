@@ -42,16 +42,16 @@ export type ManagedMachineReconciliationInput = Readonly<{
     rebuild?: DevcontainerRebuildIntentV1;
 }>;
 
-export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, providerPluginId: string, localId: string,
+export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, provider: ManagedMachineV1['launch']['provider'], localId: string,
     credentials: ManagedMachineV1['launch']['credentials'], qualification?: Readonly<{ descriptor: MachineProvisionerContributionV1; launch: unknown }>) {
     const { resolveRegistryConnectedAccountActionPurposeAuthorizations } = await import('@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations');
     const declarations = resolveRegistryConnectedAccountActionPurposeAuthorizations({
         registry: input.runtimeRegistry.contributes,
-        qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: providerPluginId, localId }),
+        qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: provider.pluginId, localId }),
         resolveOptionalAccess: input.runtimeRegistry.resolveOptionalAccess,
     });
     if (!declarations) throw new ManagedMachineControllerError('provider_unavailable');
-    return bindManagedMachineRoleCredentials({ authorizations: declarations, providerPluginId, credentials, qualification });
+    return bindManagedMachineRoleCredentials({ authorizations: declarations, provider, credentials, qualification });
 }
 
 /** Controller placement and a portable role's execution realm are independent. */
@@ -257,7 +257,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     }
     async function roleCredentialAuthorization(localId: string, input = params.input) {
         const launch = readMachine().launch;
-        return resolveManagedRoleCredentialAuthorizations(input, contribution.pluginId, localId, launch.credentials,
+        return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
             { descriptor: contribution.definition, launch: launch.choices });
     }
     async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile' | 'cleanup' | 'nativeCredentialApply', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {

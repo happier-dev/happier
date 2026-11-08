@@ -77,7 +77,7 @@ export async function prepareUiManagedProvisionerAdmission(
                 authorizations: projectConnectedAccountHostAccessScopes(identity.pluginId, requests).map(scope => ({
                     ...scope, purpose: { consumer: identity, purpose: scope.purpose },
                 })),
-                providerPluginId: identity.pluginId, credentials: input.credentials,
+                provider: input.contribution, credentials: input.credentials,
                 qualification: { descriptor: entry.descriptor, launch: input.selectors },
             });
         } catch (error) {

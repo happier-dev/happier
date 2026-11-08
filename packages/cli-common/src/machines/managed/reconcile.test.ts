@@ -101,12 +101,13 @@ it('binds role authority only to one selected Account in its declared service sc
     const credential = { purpose: { ...purpose, consumer: machine.launch.provider },
         account: { service, accountId: 'selected-account' }, configurationRevision: null };
     const bind = (credentials: ManagedMachineV1['launch']['credentials']) => bindManagedMachineRoleCredentials({
-        authorizations: [{ purpose, serviceRefs: [service] }], providerPluginId: 'acme.compute', credentials,
+        authorizations: [{ purpose, serviceRefs: [service] }], provider: machine.launch.provider, credentials,
     });
     expect(bind([credential])).toEqual([{ purpose, serviceRefs: [service], credential }]);
     for (const credentials of [[], [credential, credential], [{ ...credential,
         account: { ...credential.account, service: { ...service, localId: 'undeclared-service' } } }], [{ ...credential,
-        purpose: { ...credential.purpose, consumer: { ...machine.launch.provider, pluginId: 'another-provider' } } }]]) {
+        purpose: { ...credential.purpose, consumer: { ...machine.launch.provider, pluginId: 'another-provider' } } }], [{ ...credential,
+        purpose: { ...credential.purpose, consumer: { ...machine.launch.provider, localId: 'another-provider' } } }]]) {
         expect(() => bind(credentials)).toThrowError(expect.objectContaining({ code: 'credential_unavailable' }));
     }
 });

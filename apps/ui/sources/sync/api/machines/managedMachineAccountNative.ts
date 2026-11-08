@@ -64,7 +64,7 @@ readCredentialRevision: () => number | undefined, credential: ReturnType<typeof 
             authorizations: projectConnectedAccountHostAccessScopes(identity.pluginId, requests).map(scope => ({
                 ...scope, purpose: { consumer: identity, purpose: scope.purpose },
             })),
-            providerPluginId: identity.pluginId, credentials: machine.launch.credentials,
+            provider: machine.launch.provider, credentials: machine.launch.credentials,
             qualification: { descriptor: admitted.provisioner, launch: machine.launch.choices },
         });
         let active = true;

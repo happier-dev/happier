@@ -3011,6 +3011,12 @@ describe('managed acquisition durable custody', () => {
                 managedProviderOperationAuthority: managedProviderOperationAuthority.forPurposeBindingOwner(credentialOwner) }) });
         await expect(probeDriver.execute('machines.provisioners.options', { homeId: 'home', controller,
             contribution: input.selection.launch.provider, selectors: {}, credentials: [{
+                purpose: { consumer: { ...input.selection.launch.provider, localId: 'another-provisioner' }, purpose: 'upstream' },
+                account: { service, accountId: 'selected-cloud' },
+            }],
+        }, { requestId: 'wrong-consumer-options' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        await expect(probeDriver.execute('machines.provisioners.options', { homeId: 'home', controller,
+            contribution: input.selection.launch.provider, selectors: {}, credentials: [{
                 purpose: { consumer: input.selection.launch.provider, purpose: 'upstream' }, account: { service, accountId: 'selected-cloud' },
             }],
         }, { requestId: 'account-options' })).resolves.toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });

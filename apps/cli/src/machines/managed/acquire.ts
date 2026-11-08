@@ -662,7 +662,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const roleHost = await resolveManagedRoleRuntime(input, pluginId, localId);
                 const roleOccurrenceId = roleHost.runtimeRegistry.readPluginOccurrenceId?.(pluginId);
                 if (!roleOccurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
-                const authorizations = await resolveManagedRoleCredentialAuthorizations(roleHost, pluginId, localId, probe.credentials,
+                const authorizations = await resolveManagedRoleCredentialAuthorizations(roleHost, provider.contribution, localId, probe.credentials,
                     { descriptor: provider.descriptor, launch: 'selectors' in probe ? probe.selectors : undefined });
                 let current = true;
                 const isCurrent = () => current && !options.signal?.aborted && roleHost.runtimeRegistry.readPluginOccurrenceId?.(pluginId) === roleOccurrenceId;
