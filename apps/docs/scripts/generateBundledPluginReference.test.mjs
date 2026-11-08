@@ -89,10 +89,10 @@ test('the admitted bundled registry contains projected plugin ids', async () => 
 
 test('the bundled Machine and language families are categorized without dropping their plugins', async () => {
   const plugins = await bundledPlugins();
-  for (const prefix of ['happier.machine.', 'happier.language.']) {
-    const members = plugins.filter((entry) => entry.id.startsWith(prefix));
+  for (const category of [{ family: 'machineProvisioners', prefix: 'happier.machine.' }, { prefix: 'happier.language.' }]) {
+    const members = plugins.filter((entry) => (category.family && entry.families.includes(category.family)) || entry.id.startsWith(category.prefix));
     assert.ok(members.length > 0);
-    const section = categorize(plugins).find((entry) => entry.prefix === prefix);
+    const section = categorize(plugins).find((entry) => category.family ? entry.family === category.family : entry.prefix === category.prefix);
     assert.deepEqual(section?.plugins, members);
   }
 });
@@ -102,6 +102,8 @@ test('source-admitted CodeBuddy and Email are included without requiring packed 
   const markdown = await renderBundledPluginReferenceMarkdown();
   assert.ok(markdown.includes('`happier.agent.codebuddy`'));
   assert.ok(markdown.includes('`happier.channel.email`'));
+  // Localized `{ key, fallback }` manifest descriptions publish their authored fallback.
+  assert.ok(markdown.includes('Sandboxes that keep their files between runs.'));
 });
 
 test('the normal docs renderer reads source projections without caller-provided TypeScript preloads', () => {

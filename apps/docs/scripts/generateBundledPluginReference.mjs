@@ -72,6 +72,7 @@ const CATEGORIES = [
   },
   {
     prefix: 'happier.machine.',
+    family: 'machineProvisioners',
     title: 'Managed machines',
     blurb: 'Machine provisioning plugins in the 0.3 development source.',
   },
@@ -79,6 +80,16 @@ const CATEGORIES = [
     prefix: 'happier.language.',
     title: 'Language intelligence',
     blurb: 'On-demand language servers in the 0.3 development source.',
+  },
+  {
+    prefix: 'happier.deploy',
+    title: 'Deployments',
+    blurb: 'Deploy targets, managed databases and deployment templates in the 0.3 development source.',
+  },
+  {
+    prefix: 'happier.backup.',
+    title: 'Backups',
+    blurb: 'Backup destinations in the 0.3 development source.',
   },
   {
     family: 'secretSources',
@@ -101,9 +112,8 @@ export async function readBundledPluginRegistry() {
 export function categorize(plugins) {
   const sections = CATEGORIES.map((category) => ({
     ...category,
-    plugins: plugins.filter((p) => category.family
-      ? p.families.includes(category.family)
-      : p.id.startsWith(category.prefix)),
+    plugins: plugins.filter((p) => (category.family && p.families.includes(category.family))
+      || (category.prefix && p.id.startsWith(category.prefix))),
   }));
   const claimed = new Set(sections.flatMap((s) => s.plugins.map((p) => p.id)));
   const standalone = plugins.filter((p) => STANDALONE.ids.includes(p.id));
@@ -130,6 +140,11 @@ export function contributedFamilies(contributes) {
     .sort();
 }
 
+// Manifest strings may be localized `{ key, fallback }`; published docs use the authored fallback.
+function localizedFallback(value) {
+  return (typeof value === 'string' ? value : value?.fallback ?? '').trim();
+}
+
 function readPlugins(locators, { ingestPluginManifestV2, formatPluginManifestIngestionDiagnostics }) {
   return locators.map((entry) => {
     const manifestPath = join(CLI_ROOT, entry.manifestRelativePath);
@@ -151,8 +166,8 @@ function readPlugins(locators, { ingestPluginManifestV2, formatPluginManifestIng
     }
     return {
       id: manifest.id,
-      name: manifest.displayName ?? manifest.id,
-      description: (manifest.description ?? '').trim(),
+      name: localizedFallback(manifest.displayName) || manifest.id,
+      description: localizedFallback(manifest.description),
       families: contributedFamilies(manifest.contributes),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));

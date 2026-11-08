@@ -458,6 +458,9 @@ importers:
       '@happier-dev/plugins-deployment-templates':
         specifier: 0.0.0
         version: link:../../packages/plugins/deployment-templates
+      '@happier-dev/plugins-devcontainer':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/devcontainer
       '@happier-dev/plugins-devin':
         specifier: 0.0.0
         version: link:../../packages/plugins/devin
@@ -810,9 +813,6 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.91.1
         version: 0.91.1(zod@4.6.7)
-      '@happier-dev/plugins-devcontainer':
-        specifier: 0.0.0
-        version: link:../../packages/plugins/devcontainer
       '@types/archiver':
         specifier: ^7.0.0
         version: 7.0.0
