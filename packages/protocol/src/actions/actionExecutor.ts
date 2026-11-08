@@ -3206,7 +3206,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (confidentialChoiceRequired && ctx.bypassApprovals) {
       return { ok: false, errorCode: 'confidential_choice_required', error: 'confidential_choice_required' };
     }
-    const approvalRouting = confidentialChoiceRequired || discussionDraftReviewRequired || deploymentBindingChoiceRequired
+    const approvalRouting: ActionApprovalRoutingDecision = confidentialChoiceRequired || discussionDraftReviewRequired || deploymentBindingChoiceRequired
       ? { required: true, flow: 'deferred' as const, result: 'required' as const }
       : requiredHandoffTargetApproval
       ? {
@@ -3217,7 +3217,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       : requiredDirectoryApproval && baseApprovalRouting.required
       ? { ...baseApprovalRouting, result: 'required' as const }
       : baseApprovalRouting;
-    if (approvalRouting.required && !isApprovalAction && ctx.interactivePresentation === 'unavailable') {
+    if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction && ctx.interactivePresentation === 'unavailable') {
       return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
         ...(baseApprovalRouting.profile ? { details: { approvalProfile: baseApprovalRouting.profile } } : {}) };
     }
@@ -3247,7 +3247,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
 
     try {
-      if (approvalRouting.required && !isApprovalAction) {
+      if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction) {
         if (actionId === 'session.spawn_new') {
           // Review only a Profile that exists after Role/target preparation.
           // Dispatch projects fresh seeds after the approval wait.
@@ -3265,9 +3265,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
           && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {
           const confirmedContext = { ...ctx, presentUserConfirmation: { actionId } };
-          // Only the policy owner can distinguish a confirmable default from an
-          // explicit Ask-first requirement after target/context admission.
-          if (!resolveBaseApprovalRouting(confirmedContext).required) {
+          // The policy owner consumes the completed native product review.
+          const confirmedRouting = resolveBaseApprovalRouting(confirmedContext);
+          if (!confirmedRouting.required && !confirmedRouting.uiConfirmationRequired) {
             const confirm = deps.presentUserActionConfirmation;
             return ready({ actionId, input: admittedInput, context: ctx,
               ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
@@ -3282,11 +3282,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(policyReview ? { preview: policyReview.preview } : {}) });
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
               if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
-              // The host reads current Account policy after this new UI await;
-              // a newly explicit Ask-first requirement invalidates the default confirmation.
-              if (deps.isActionApprovalRequired?.(actionId, confirmedContext, confirmationInput) === true) {
-                return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
-              }
               // Re-enter current authority and domain admission with the existing
               // exact-Action confirmation fact, never an approval bypass.
               return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : confirmationInput,
@@ -3298,6 +3293,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             });
           }
         }
+        // A product review cannot fall through to an agent-approval Artifact
+        // when this invocation has no mounted UI presenter.
+        if (!approvalRouting.required) return { ok: false,
+          errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
         const confirmationSessionId = resolveSessionIdFromInput(admittedInput, ctx);
         const confirmationPreview = confirmationSessionId
           ? spec.projectSessionConfirmation?.(admittedInput, { sessionId: confirmationSessionId })

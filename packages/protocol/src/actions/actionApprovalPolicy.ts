@@ -25,6 +25,8 @@ export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
+  /** Local product review, presented by the UI host without an approval Artifact. */
+  uiConfirmationRequired?: true;
   flow: ActionApprovalFlow;
   result: ActionApprovalResult;
   profile?: ApprovalProfileResolutionV1;
@@ -142,23 +144,14 @@ function requiresDefaultApprovalFloor(
   ctx?: ApprovalInvocationContext | null,
   defaultSafety?: ActionSpec['safety'],
   input?: unknown,
-  defaultUiConfirmation?: boolean,
 ): boolean {
   const surface = resolveApprovalSurface(ctx);
   const spec = getActionSpec(actionId);
   const policy = spec.approvalPolicy;
-  // A direct app press answers the automation default, while the Action's
-  // designed local confirmation and host-discovered consequences still apply.
-  // Home's exact admitted Account press retains the same person default on
-  // the Machine; terminal, Session and workflow origins cannot claim it.
-  if (ctx && isOwnUiInvocation(actionId, ctx)) {
-    return ctx.presentUserConfirmation?.actionId !== actionId
-      && ((defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(input)
-        ?? (policy?.uiConfirmation === 'policy'
-          || policy?.uiConfirmation !== 'direct' && spec.irreversible === true))
-        || defaultSafety === 'danger');
-  }
-  defaultSafety ??= spec.safetyForInput?.(input) ?? spec.safety;
+  const safety = defaultSafety ?? spec.safetyForInput?.(input) ?? spec.safety;
+  // The person's own UI press answers the automation approval floor. Product
+  // confirmations are a separate fact consumed only by the UI host below.
+  if (isOwnUiInvocation(actionId, ctx)) return false;
   if (policy?.pluginCaptureWaiver === true) return true;
   // Permission answers share the Agent default on MCP too; persisted surface
   // waivers remain resolved by the same ActionsSettings owner above this floor.
@@ -183,7 +176,7 @@ function requiresDefaultApprovalFloor(
     && !readBuiltInSettingsPermissionChangingV1(input) && isNonConsequentialSettingDeclaration(readRecord(input).anchor)) {
     return false;
   }
-  if (defaultSafety === 'danger') {
+  if (safety === 'danger') {
     if (surface.kind === 'ambiguous') return true;
     // General RPC remains an internal transport surface. These new semantic
     // filesystem methods are directly reachable effect entry points, however,
@@ -195,9 +188,7 @@ function requiresDefaultApprovalFloor(
   }
   // Agent and external MCP share the declared agent default once here. Surface
   // Require/Waive preferences are resolved above this floor (owner 2026-10-12/29).
-  return (surface.kind !== 'non_agent' || surface.surface === 'mcp') && (defaultSafety === undefined
-    ? isAgentInitiatedApprovalRequiredByDefault(actionId)
-    : policy?.agentDefault !== undefined);
+  return (surface.kind !== 'non_agent' || surface.surface === 'mcp') && policy?.agentDefault !== undefined;
 }
 
 /**
@@ -217,7 +208,7 @@ export function isApprovalRequiredByActionsSettings(
   /** Contributed Action manifest default, resolved by its shared admission owner. */
   contributedApprovalDefault?: boolean,
   input?: unknown,
-  defaultUiConfirmation?: boolean,
+  _defaultUiConfirmation?: boolean,
   defaultConfirmation?: boolean,
   approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null,
   approvalScope?: ActionApprovalScopeV1,
@@ -250,7 +241,7 @@ export function isApprovalRequiredByActionsSettings(
 
   const builtInActionId = ActionIdSchema.safeParse(actionId);
   return builtInActionId.success
-    ? defaultConfirmation === true || requiresDefaultApprovalFloor(builtInActionId.data, ctx, defaultSafety, input, defaultUiConfirmation)
+    ? defaultConfirmation === true || requiresDefaultApprovalFloor(builtInActionId.data, ctx, defaultSafety, input)
     : contributedApprovalDefault === true;
 }
 
@@ -306,6 +297,16 @@ function resolveUnwiredApprovalDefault(
 }
 
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
+  const policy = args.spec.approvalPolicy;
+  const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
+  const uiConfirmationRequired = !args.reviewAdmitted && !args.context?.bypassApprovals
+    && ownUiInvocation
+    && args.context?.presentUserConfirmation?.actionId !== args.actionId
+    && !(args.settings && readExplicitActionApprovalPreferenceV1(args.actionId, args.settings, args.context, args.approvalScope) === false)
+    && ((args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
+      ?? (policy?.uiConfirmation === 'policy'
+        || policy?.uiConfirmation !== 'direct' && args.spec.irreversible === true))
+      || args.defaultSafety === 'danger' || args.defaultConfirmation === true);
   const presentUserRequest = defaultsPersonClassActionToAsk(args.context, args.spec, args.input);
   const computerAction = args.spec.approvalPolicy?.computerConsent === true;
   const computerConsent = computerAction && args.computerConsentGranted === true
@@ -315,7 +316,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const hasPolicyContext = Boolean(args.settings || args.approvedOperation || args.context?.externalActionCredential);
   // The person's exact completed review answers Ask, including a saved preference.
   // The executor withholds this admission when a new child consequence needs review.
-  const requiredByPolicy = args.reviewAdmitted === true
+  const requiredByPolicy = args.reviewAdmitted === true || ownUiInvocation
     ? false
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
@@ -327,7 +328,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     : hasPolicyContext
       ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
-        ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input, args.defaultUiConfirmation)
+        ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
   // Changing the carrier must not escape its selected profile through a broad
   // child-start/Run-control waiver. All carriers share the existing profile
@@ -355,7 +356,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // Allow inherits existing policy, including egress/authority and person Ask.
   // Ask is a user-waivable default; Require tightens requests made for the person.
   // Their own UI admission or exact completed review answers the profile too.
-  const profileRequired = !args.reviewAdmitted && !isOwnUiInvocation(args.actionId, args.context) && (profileMode === 'require' || (profileMode === 'ask'
+  const profileRequired = !args.reviewAdmitted && !ownUiInvocation && (profileMode === 'require' || (profileMode === 'ask'
     && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false)));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
@@ -404,6 +405,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
 
   return {
     required,
+    ...(uiConfirmationRequired ? { uiConfirmationRequired: true as const } : {}),
     flow,
     result: args.spec.approval.result,
     ...(selectedProfile ? { profile: selectedProfile.resolution } : {}),

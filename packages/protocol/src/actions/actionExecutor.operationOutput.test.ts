@@ -9,12 +9,34 @@ import { executeActionOperationActionV1 } from './executor/actionOperationAction
 import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
 
 describe('operation and retained output Actions', () => {
-  it('admits operation observation directly while retaining cancellation and explicit surface settings', () => {
+  it.each(['accept', 'decline', 'unmounted'] as const)(
+    'keeps %s product Stop confirmation out of agent approval custody', async outcome => {
+      const transport = vi.fn(async () => ({ kind: 'requested' }));
+      const confirm = vi.fn(async () => outcome === 'accept');
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'unexpected-approval' }));
+      const executor = createActionExecutor({ approvalsCreate,
+        isActionApprovalRequired: () => true,
+        ...(outcome === 'unmounted' ? {} : { presentUserActionConfirmation: confirm }),
+        actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
+      });
+      const result = await executor.execute('action.operations.cancel', {
+        serverId: 'home', machineId: 'machine', operationId: 'operation',
+      }, { surface: 'ui', serverId: 'home', authority: 'present_user', actionCaller: { kind: 'host' } });
+      expect(result).toMatchObject(outcome === 'accept' ? { ok: true, result: { kind: 'requested' } }
+        : { ok: false, errorCode: outcome === 'decline' ? 'approval_canceled' : 'action_interactive_review_required' });
+      expect(confirm).toHaveBeenCalledTimes(outcome === 'unmounted' ? 0 : 1);
+      expect(transport).toHaveBeenCalledTimes(outcome === 'accept' ? 1 : 0);
+      expect(approvalsCreate).not.toHaveBeenCalled();
+    },
+  );
+  it('admits operation observation directly while retaining product cancellation confirmation and automation approval', () => {
     for (const actionId of ACTION_OPERATION_ACTION_IDS_V1) {
       const spec = getActionSpec(actionId);
       const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
       const consequence = spec.sideEffectClass === 'write';
-      expect(resolveActionApprovalRouting({ actionId, spec, context }).required, actionId).toBe(consequence);
+      const decision = resolveActionApprovalRouting({ actionId, spec, context });
+      expect(decision.required, actionId).toBe(false);
+      expect(decision.uiConfirmationRequired === true, actionId).toBe(consequence);
       for (const surface of ['agent', 'mcp'] as const) {
         expect(resolveActionApprovalRouting({ actionId, spec,
           context: { surface, authority: 'account_automation' } }).required, `${surface}:${actionId}`).toBe(consequence);
@@ -22,7 +44,9 @@ describe('operation and retained output Actions', () => {
       for (const approvalRequired of [false, true]) {
         const settings = setActionApprovalOverride({ settings: normalizeActionsSettingsV1(null),
           actionId, surface: 'ui', approvalRequired });
-        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required, actionId).toBe(approvalRequired);
+        const configured = resolveActionApprovalRouting({ actionId, spec, context, settings });
+        expect(configured.required, actionId).toBe(false);
+        expect(configured.uiConfirmationRequired === true, actionId).toBe(consequence && approvalRequired);
       }
     }
   });
@@ -127,11 +151,13 @@ describe('operation and retained output Actions', () => {
     const actionId = 'action.operations.cancel' as const;
     const spec = getActionSpec(actionId);
     const context = { surface: 'ui', authority: 'present_user' } as const;
-    expect(resolveActionApprovalRouting({ actionId, spec, context }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, context })).toMatchObject({ required: false, uiConfirmationRequired: true });
     const settings = setActionApprovalOverride({
       settings: normalizeActionsSettingsV1(null), actionId, surface: 'ui', approvalRequired: false,
     });
-    expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(false);
+    const waived = resolveActionApprovalRouting({ actionId, spec, context, settings });
+    expect(waived.required).toBe(false);
+    expect(waived.uiConfirmationRequired).toBeUndefined();
   });
   it('declares exact-Home safe observation and configurable consequential cancellation', () => {
     const read = getActionSpec(ActionIdSchema.parse('projects.execution.output.read'));

@@ -17,17 +17,22 @@ import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../plugins/cliproxyapi/
 import { DaemonProviderConnectionMutationResponseV1Schema } from '../rpc/providers.js';
 
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+const automationContext = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
 
 describe('Provider Settings Actions', () => {
-  it.each(['agent', 'mcp'] as const)('holds %s custom Provider creation at one approval with no Account mutation', async surface => {
+  it.each(['ui', 'agent', 'mcp'] as const)('keeps %s custom Provider creation in its own approval class', async surface => {
     const approvals: ApprovalRequestV2[] = [];
     let writes = 0;
+    let confirmations = 0;
     const account = createAccountProviderActionExecuteV1({ assertCurrent() {},
+      now: () => 1_000,
       readCatalog: async () => ({ status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 }),
       readDefinitions: async () => [],
       writeCatalog: async () => { writes++; return { status: 'updated' }; },
     });
     const executor = createActionExecutor({
+      isActionApprovalRequired: () => true,
+      presentUserActionConfirmation: async () => { confirmations++; return true; },
       approvalsCreate: async ({ request }) => {
         approvals.push(ApprovalRequestV2Schema.parse(request));
         return { artifactId: 'custom-provider-approval' };
@@ -40,20 +45,29 @@ describe('Provider Settings Actions', () => {
         baseUrl: 'https://example.com/v1', capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
           statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
         catalog: { source: 'manual', manualModelPolicy: 'allowed' } }, manualModels: [],
-    }, { surface, authority: 'account_automation', serverId: 'test-home', actionRequestId: 'custom-provider-request' });
+    }, { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation',
+      actionCaller: { kind: 'host' }, serverId: 'test-home', actionRequestId: 'custom-provider-request' });
+    if (surface === 'ui') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { action: 'createCustom' } });
+      expect(approvals).toHaveLength(0);
+      expect(confirmations).toBe(0);
+      expect(writes).toBe(1);
+      return;
+    }
     expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
       actionId: 'providers.connections.create_custom' } });
     expect(approvals).toHaveLength(1);
     expect(approvals[0]).toMatchObject({ actionId: 'providers.connections.create_custom', status: 'open' });
     expect(writes).toBe(0);
+    expect(confirmations).toBe(0);
   });
 
   it('preserves a forwarded refresh approval before parsing Provider output', async () => {
     const input = { machineId: 'hub', agentTargetKey: 'agent:happier.agent.codex/codex',
       forceRefresh: true as const };
-    const invocation = { ...context, serverId: 'test-home', machineId: 'hub',
+    const invocation = { ...automationContext, serverId: 'test-home', machineId: 'hub',
       actionRequestId: 'refresh-request', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        actions: { 'providers.models.refresh': { approvalRequiredSurfaces: ['ui'] } },
+        actions: { 'providers.models.refresh': { approvalRequiredSurfaces: ['agent'] } },
       }) };
     const receiver = createActionExecutor({
       approvalsCreate: async ({ request }) => {
@@ -78,12 +92,9 @@ describe('Provider Settings Actions', () => {
     ['providers.models.load', { action: 'load', connectionId: 'gateway', machineId: 'hub', modelId: 'model' }],
     ['providers.connections.enabled.set', { action: 'setEnabled', connectionId: 'gateway', machineId: 'hub', enabled: true, scope: 'machine' }],
   ] as const)('preserves a forwarded %s approval without executing its effect', async (actionId, input) => {
-    for (const surface of ['ui', 'agent'] as const) {
-      const invocation = { ...context, surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
+    for (const surface of ['agent', 'mcp'] as const) {
+      const invocation = { ...automationContext, surface,
         serverId: 'test-home', machineId: 'hub', actionRequestId: 'forward-request',
-        ...(surface === 'ui' ? { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-          [actionId]: { approvalRequiredSurfaces: ['ui'] },
-        } }) } : {}),
       };
       const approvals: ApprovalRequestV2[] = [];
       let rpcRequests = 0;
@@ -150,13 +161,13 @@ describe('Provider Settings Actions', () => {
         setDefault: async () => ({ status: 'applied' }),
       }),
     });
-    const invocation = { ...context, serverId: 'test-home', actionRequestId: 'probe-request',
+    const invocation = { ...automationContext, serverId: 'test-home', actionRequestId: 'probe-request',
       machineId: 'hub', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-        'providers.probe': { approvalRequiredSurfaces: ['ui'] },
+        'providers.probe': { approvalRequiredSurfaces: ['agent'] },
       } }) };
     expect(await executor.execute('providers.probe', { connectionId: 'gateway', machineId: 'hub' }, invocation))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(await executor.execute('approval.request.decide', { artifactId: 'probe-approval', decision: 'approve' }, invocation))
+    expect(await executor.execute('approval.request.decide', { artifactId: 'probe-approval', decision: 'approve' }, { ...invocation, ...context }))
       .toMatchObject({ ok: true, result: { execution: { ok: false,
         errorCode: error.code, error: error.code } } });
   });
@@ -215,15 +226,16 @@ describe('Provider Settings Actions', () => {
           setDefault: async () => ({ status: 'applied' }),
         }),
       });
-      const invocation = { ...context, serverId: 'test-home', actionRequestId: 'slot-request',
+      const invocation = { ...automationContext, serverId: 'test-home', actionRequestId: 'slot-request',
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
-          'providers.connections.update': { approvalRequiredSurfaces: ['ui'] },
+          'providers.connections.update': { approvalRequiredSurfaces: ['agent'] },
         } }) };
+      const decidingContext = { ...invocation, ...context };
       expect(await executor.execute('providers.connections.update', input, invocation))
         .toEqual(expect.objectContaining({ ok: true, result: expect.objectContaining({ kind: 'approval_request_created' }) }));
       const decided = await executor.execute('approval.request.decide', {
         artifactId: 'approval-gateway-slot', decision: 'approve',
-      }, invocation);
+      }, decidingContext);
       const readStored = (): ApprovalRequestV2 => {
         if (!stored) throw new Error('Missing persisted approval');
         return stored;
@@ -247,7 +259,7 @@ describe('Provider Settings Actions', () => {
       if (disposition === 'terminal_lost') {
         expect(await executor.execute('approval.request.decide', {
           artifactId: 'approval-gateway-slot', decision: 'approve',
-        }, invocation)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+        }, decidingContext)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
         expect(catalogRevision).toBe(2);
       }
     },

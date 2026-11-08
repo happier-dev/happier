@@ -3,6 +3,14 @@ import type { ActionId } from './actionIds.js';
 import { resolveSocketRpcSessionAuthorization } from '../rpc/index.js';
 
 describe('Provider Settings present-user approval policy', () => {
+  it('separates a destructive UI product confirmation from an agent approval request', async () => {
+    const { getActionSpec } = await import('./actionSpecs.js');
+    const { resolveActionApprovalRouting } = await import('./actionApprovalPolicy.js');
+    const actionId = 'mcp.servers.delete';
+    const decision = resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+      context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } });
+    expect(decision).toMatchObject({ required: false, uiConfirmationRequired: true });
+  }, 60_000);
   it('honors declared local confirmation for every Provider, connected-service, pool and Saved Secret UI family', async () => {
     const { PROVIDER_ACTION_IDS_V1 } = await import('../providers/providerActionIdsV1.js');
     const { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } = await import('../connect/configurationActionIdsV1.js');
@@ -20,10 +28,14 @@ describe('Provider Settings present-user approval policy', () => {
       const declaredConfirmation = spec.approvalPolicy?.uiConfirmationForInput?.(undefined)
         ?? (spec.approvalPolicy?.uiConfirmation === 'policy'
           || spec.approvalPolicy?.uiConfirmation !== 'direct' && spec.irreversible === true);
-      expect(resolveActionApprovalRouting({ actionId, spec, context }).required, actionId).toBe(declaredConfirmation);
-      expect(resolveActionApprovalRouting({ actionId, spec, context: {
+      const decision = resolveActionApprovalRouting({ actionId, spec, context });
+      expect(decision.required, actionId).toBe(false);
+      expect(decision.uiConfirmationRequired === true, actionId).toBe(declaredConfirmation);
+      const confirmed = resolveActionApprovalRouting({ actionId, spec, context: {
         ...context, presentUserConfirmation: { actionId },
-      } }).required, actionId).toBe(false);
+      } });
+      expect(confirmed.required, actionId).toBe(false);
+      expect(confirmed.uiConfirmationRequired, actionId).toBeUndefined();
     }
   }, 60_000);
   it.each(['providers.connections.enable_detected', 'providers.connections.endpoint.set', 'teams.credentials.delete'] as const)(
@@ -32,10 +44,12 @@ describe('Provider Settings present-user approval policy', () => {
       const { resolveActionApprovalRouting } = await import('./actionApprovalPolicy.js');
       const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
       const args = { actionId, spec: getActionSpec(actionId), context };
-      expect(resolveActionApprovalRouting(args).required).toBe(true);
-      expect(resolveActionApprovalRouting({ ...args, context: {
+      expect(resolveActionApprovalRouting(args)).toMatchObject({ required: false, uiConfirmationRequired: true });
+      const confirmed = resolveActionApprovalRouting({ ...args, context: {
         ...context, presentUserConfirmation: { actionId },
-      } }).required).toBe(false);
+      } });
+      expect(confirmed.required).toBe(false);
+      expect(confirmed.uiConfirmationRequired).toBeUndefined();
     }, 60_000,
   );
   it.each(['providers.connections.create_custom', 'providers.probe'] as const)(
@@ -68,14 +82,14 @@ describe('Provider Settings present-user approval policy', () => {
     'providers.probe', 'providers.legacy.prepare', 'providers.connections.delete',
     'providers.models.experimental.confirm', 'connectedServices.configuration.replace',
     'connectedServices.accounts.revoke', 'secrets.delete'] as const)(
-    'retains explicit Ask and automation approval for %s', async actionId => {
+    'admits the person’s direct %s under Ask while retaining automation approval', async actionId => {
       const { getActionSpec } = await import('./actionSpecs.js');
       const { resolveActionApprovalRouting } = await import('./actionApprovalPolicy.js');
       const { ActionsSettingsV1Schema } = await import('./actionSettings.js');
       const spec = getActionSpec(actionId);
       const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
       const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
-      expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(true);
+      expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(false);
       for (const surface of ['agent', 'mcp', 'cli', 'ui'] as const) {
         expect(resolveActionApprovalRouting({ actionId, spec,
           context: { surface, authority: 'account_automation' } }).required, surface).toBe(true);
@@ -96,8 +110,11 @@ describe('Provider Settings present-user approval policy', () => {
       const input = { ...target, expectedRevision: null, values: {}, secretValues: {} };
       expect(spec.inputSchema.safeParse(input).success).toBe(true);
       const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-      expect(resolveActionApprovalRouting({ actionId, spec, input, context }).required).toBe(false);
-      expect(resolveActionApprovalRouting({ actionId, spec, input: { ...input, expectedRevision: 'existing' }, context }).required).toBe(true);
+      const firstWrite = resolveActionApprovalRouting({ actionId, spec, input, context });
+      expect(firstWrite.required).toBe(false);
+      expect(firstWrite.uiConfirmationRequired).toBeUndefined();
+      expect(resolveActionApprovalRouting({ actionId, spec, input: { ...input, expectedRevision: 'existing' }, context }))
+        .toMatchObject({ required: false, uiConfirmationRequired: true });
       expect(resolveActionApprovalRouting({ actionId, spec, input, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
     }
   }, 60_000);
@@ -111,7 +128,7 @@ describe('Provider Settings present-user approval policy', () => {
         const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const };
         expect(resolveActionApprovalRouting({ actionId, spec, context }).required, `${actionId}/${surface}`).toBe(false);
         const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [surface] } } });
-        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(true);
+        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(surface !== 'ui');
       }
     }
   }, 60_000);
@@ -125,9 +142,11 @@ describe('Provider Settings present-user approval policy', () => {
         const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const };
         const spec = getActionSpec(actionId);
         const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
-        expect(resolveActionApprovalRouting({ actionId, spec, context, settings: waived }).required, `${actionId}/${surface}`).toBe(false);
+        const waivedDecision = resolveActionApprovalRouting({ actionId, spec, context, settings: waived });
+        expect(waivedDecision.required, `${actionId}/${surface}`).toBe(false);
+        expect(waivedDecision.uiConfirmationRequired, `${actionId}/${surface}`).toBeUndefined();
         const ask = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [surface] } } });
-        expect(resolveActionApprovalRouting({ actionId, spec, context, settings: ask }).required, `${actionId}/${surface}`).toBe(true);
+        expect(resolveActionApprovalRouting({ actionId, spec, context, settings: ask }).required, `${actionId}/${surface}`).toBe(surface !== 'ui');
       }
     }
   }, 60_000);
@@ -204,7 +223,7 @@ describe('Provider Settings present-user approval policy', () => {
     for (const id of ['providers.connections.delete', 'providers.models.experimental.confirm',
       'launch_profiles.legacy.convert', 'launch_profiles.legacy.resolve_conflict'] as const satisfies readonly ActionId[]) {
       expect(resolveActionApprovalRouting({ actionId: id, spec: getActionSpec(id),
-        context: { surface: 'ui', authority: 'present_user' } })).toMatchObject({ required: true });
+        context: { surface: 'ui', authority: 'present_user' } })).toMatchObject({ required: false, uiConfirmationRequired: true });
     }
   }, 60_000);
 });

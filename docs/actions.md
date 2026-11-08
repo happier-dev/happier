@@ -1072,8 +1072,13 @@ exact CLI subscribers for sibling scopes. Explicit orphan-row
 removal uses `actions.policy.set` with `change.kind: 'scoped_approval_remove'`.
 
 Declared `uiConfirmationForInput` retains the designed in-place product review.
-Otherwise `uiConfirmation: 'policy'` retains local confirmation; an irreversible
-declaration also retains it unless `uiConfirmation: 'direct'` overrides that default.
+Otherwise `uiConfirmation: 'policy'` retains local confirmation. Irreversibility
+alone does not add an approval card to the person's own UI press. The routing
+owner reports local reviews separately as `uiConfirmationRequired`; the existing
+UI host presents them without creating an approval Artifact. This retains the
+existing irreversible product-confirmation default unless the declaration is
+`direct`. Missing UI presentation refuses the review instead of producing an
+agent-approval card.
 A completed confirmation for that exact Action consumes this default once.
 A present-user UI press keeps this same default on the executor that Home
 admitted that exact Account press for (the signed binding names the Action and
@@ -4289,6 +4294,12 @@ clean flush in the current relationship lifetime. Passive checks and recovered
 cycle counters do not advance it; an absent or null value is unknown. It is an
 observation, not permission to skip a worker's next dequeue Sync barrier.
 
+In 0.3 development, Service Move selects a worker using the Service's source
+workspace to find its Sync component. Only enabled links with a usable native
+session are candidates; paused or unavailable retained links do not make the
+selection ambiguous. Two usable copies of that source workspace on the chosen
+Machine still return `workspace_sync_target_ambiguous`.
+
 In 0.3 development, a signed `projects.script.run` or `projects.compute.exec`
 prepares its linked worker copy through the existing Sync `prepareBetween`
 controller route. The original Action remains addressed to the worker. Its
@@ -7280,7 +7291,7 @@ present-user approval floor. Machine/Session isolation and selected-source conse
 Approval preserves the agent's `account_automation` authority; it does not turn the caller
 into a present user or grant observation consent merely for selecting or handing back.
 When Happier prepares an agent's Computer proposal, its target lookup uses the existing
-Account Action transport with the Session caller and automation authority intact. The
+Account Action transport with the caller, Session context and automation authority intact. The
 direct present-user Computer RPC serves only the person's controls.
 User controls relayed through external Actions carry a Session envelope target, which the
 existing locality resolver validates against the executing machine.
