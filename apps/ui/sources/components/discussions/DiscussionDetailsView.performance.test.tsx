@@ -748,6 +748,36 @@ it('shares the mounted roster across queries, refreshes one invalidation, and st
     expect({ queryReads, membershipReads, hasNewMember }).toEqual({ queryReads: 0, membershipReads: 1, hasNewMember: true });
 });
 
+it('presents a refused Session invitation during Send without an unknown delivery or Retry', async () => {
+    const { serverId, repository, fixture } = await prepareLongDiscussion();
+    fixture.messages.splice(1);
+    const invitePath = '/v1/discussions/committed-thread/participants/invite';
+    homes.answer(serverId, `POST ${invitePath}`, { status: 403, body: { error: 'discussion_access_forbidden' } });
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active />
+    </AppPaneProvider>);
+    await vi.waitFor(() => expect(screen.root.findAllByType(DiscussionComposer)).toHaveLength(1));
+    const postsBefore = homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST').length;
+    await act(async () => screen.root.findByType(DiscussionComposer).props.onSend({ v: 1, parts: [
+        { t: 'mention', participant: { kind: 'session', sessionId: 'uninvitable-session' } },
+        { t: 'text', text: ' Please review this passage' },
+    ] }));
+    await vi.waitFor(() => expect(homes.requestsFor(invitePath)).toHaveLength(1));
+    await flushHookEffects();
+    expect(Object.values(repository.getSnapshot().mutations)).toEqual([expect.objectContaining({
+        status: 'failed', errorCode: 'discussion_access_forbidden', recovery: 'dismiss',
+    })]);
+    expect(screen.getTextContent()).toContain('Permission denied');
+    expect(screen.getTextContent()).not.toContain('Delivery unknown');
+    expect(screen.findByTestId('session-discussion-mutation-retry')).toBeNull();
+    expect(screen.findByTestId('session-discussion-mutation-dismiss')).not.toBeNull();
+    expect(repository.getSnapshot().threads['committed-thread']?.summary).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Root');
+    expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST')).toHaveLength(postsBefore);
+    expect(fixture.messages).toHaveLength(1);
+    await screen.unmount();
+});
+
 it('keeps the transcript and its page out of a redraw while the person types a message', async () => {
     const { serverId } = await prepareLongDiscussion();
     const screen = await renderScreen(<AppPaneProvider><SurfaceStateSizeProvider size="pane">

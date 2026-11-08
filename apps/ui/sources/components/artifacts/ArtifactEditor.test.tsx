@@ -9,7 +9,7 @@ import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGov
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { Modal } from '@/modal';
-import { ApprovalRequestSchema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { runGuardedNavigation, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import type { TextEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 
@@ -116,6 +116,22 @@ describe('ArtifactEditor', () => {
         editorBoundary.rejectFlush = false;
     });
 
+    it('invites writing in an empty Doc and removes the hint as the real body changes', async () => {
+        await restoreEditorHome('https://artifact-editor-placeholder.test');
+        const ArtifactEditor = await loadArtifactEditor();
+        const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
+        const placeholderId = 'artifact-editor:body:placeholder';
+        expect(screen.findByTestId(placeholderId)?.props.accessibilityLabel).toBe('artifacts.bodyLabel');
+        expect(screen.getTextContent()).toContain('artifacts.bodyPlaceholder');
+        expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('');
+        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'My document'); });
+        expect(screen.getTextContent()).not.toContain('artifacts.bodyPlaceholder');
+        expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('My document');
+        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', ''); });
+        expect(screen.getTextContent()).toContain('artifacts.bodyPlaceholder');
+        await screen.unmount();
+    });
+
     it('publishes a settled unavailable Session title through real route hydration and workspace wiring', async () => {
         await restoreEditorHome('https://missing-destination-title.test');
         // The canonical hydration owner settles an unknown qualified Home as missing.
@@ -123,6 +139,7 @@ describe('ArtifactEditor', () => {
         const serverId = 'unknown-home';
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
         const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const { useDestinationInstanceTitles, resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
         const { useHydrateSessionForRoute } = await import('@/hooks/session/useHydrateSessionForRoute');
         getStorage().setState({ isDataReady: true,
@@ -139,14 +156,14 @@ describe('ArtifactEditor', () => {
             return React.createElement('MissingSessionRoute', { state });
         }
         const screen = await renderScreen(
-            <WorkspaceProvider enabled catalog={catalog}>{workspace => {
+            <InjectedAuthProvider credentials={connection?.credentials ?? null}><WorkspaceProvider enabled catalog={catalog}>{workspace => {
                 const tab = workspace.state.tabs[workspace.state.groups[workspace.state.focusedGroupId].activeTabId];
                 return <>
                     <Titles tabId={tab.id} ref={tab.target} />
                     <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname="/session/missing" focused visible
                         navigation={workspace.navigationForTab(tab.id)}><HydratedRoute /></DestinationInstanceHost>
                 </>;
-            }}</WorkspaceProvider>
+            }}</WorkspaceProvider></InjectedAuthProvider>
         );
         await vi.waitFor(() => expect(screen.root.findByType('MissingSessionRoute').props.state).toMatchObject({ kind: 'missing', sessionId: 'missing' }));
         expect(screen.root.findByType('MissingSessionTitle').props.title).toBe('errors.sessionDeleted');

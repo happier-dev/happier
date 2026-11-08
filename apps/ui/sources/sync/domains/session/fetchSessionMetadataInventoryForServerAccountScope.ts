@@ -22,6 +22,62 @@ import { captureSessionFullPublicationBaseline } from './sessionRuntimeObservati
 import { readSessionSnapshotsForAuthority, SessionSnapshotReadError, ensureSessionDisplayProjectionsForRead } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { readSessionListRowForServerId } from './listing/sessionListRowStateLookup';
 import { SESSION_LIST_DOCUMENT_ADMISSION, areSessionListDocumentAdmissionsEqual, hasCurrentSessionListDisplayMetadata } from './sessionDocumentAdmission';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import type { SessionListFetchResult } from '@/sync/engine/sessions/sessionSnapshot';
+
+/**
+ * One demanded display page under an existing captured Account request. Unlike a mounted list,
+ * this finite reader needs no selected-Home runtime and publishes no corpus membership.
+ */
+export async function fetchSessionListQueryPageForServerAccountScope(params: Readonly<{
+    scope: ServerAccountScope;
+    query: SessionListQueryV1;
+    request: (path: string, init?: RequestInit) => Promise<Response>;
+    isCurrent: () => boolean;
+    signal?: AbortSignal;
+}>): Promise<SessionListFetchResult> {
+    const authority = await captureServerRequestAuthorityForServerAccountScope({
+        scope: params.scope, activeRequest: params.request, signal: params.signal,
+    });
+    try {
+        const credentials = authority.context.credentials;
+        if (!credentials) throw new Error('Scoped Session inventory credentials are unavailable');
+        const shouldContinue = () => !params.signal?.aborted && params.isCurrent();
+        const encryption = isTokenOnlyAuthCredentials(credentials) ? null : await createEncryptionFromAuthCredentials(credentials);
+        const result = await fetchAndApplySessions({
+            clientEncryptionRequirement: resolveUiClientEncryptionRequirementForScope({
+                scope: params.scope, focusedSettings: storage.getState().settings,
+            }),
+            serverId: params.scope.serverId,
+            source: { kind: 'query', body: params.query, allowV1Fallback: false },
+            sessionListPageSize: params.query.limit,
+            sessionListCursor: params.query.cursor,
+            sessionListMaxPages: 1,
+            sessionListAttentionMaxPages: params.query.includeAttention ? 1 : 0,
+            requiredHydrationSessionIds: 'all', awaitSessionListHydration: true,
+            contentDemand: 'list-projection',
+            credentials, encryption, signal: params.signal,
+            sessionDataKeys: new Map<string, Uint8Array>(), sessionDataKeyEnvelopes: new Map<string, string>(),
+            // Keep the invocation's request proof and cancellation; do not replace it with
+            // a background runtime's transport merely because that Home is also mounted.
+            request: (path, init) => params.request(path, { ...init, signal: params.signal }),
+            getCurrentSessionListRenderable: sessionId => readSessionListRowForServerId(
+                storage.getState().sessionListRowsByServerId, params.scope.serverId, sessionId),
+            shouldContinue,
+            applySessions: () => {},
+            applySessionListRenderables: rows => {
+                if (shouldContinue()) storage.getState().applyServerScopedSessionListRows(params.scope.serverId, rows,
+                    { source: 'rowOnly', mode: 'append' });
+            },
+            applySessionListRenderablePatches: patches => {
+                if (shouldContinue()) storage.getState().applyServerScopedSessionListRowPatches(params.scope.serverId, patches);
+            },
+            log: { log: () => {} },
+        });
+        const { prefetchedFullSessionReads: _fullReads, ...page } = result;
+        return page;
+    } finally { await authority.release(); }
+}
 
 export type SessionMetadataInventoryAccountLifetime = Readonly<{
     isCurrent(): boolean;

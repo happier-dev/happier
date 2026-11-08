@@ -2,17 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     DiscussionCreateResultV1,
-    DiscussionListResultV1,
     DiscussionOpenedMessageV1,
     DiscussionOpenedSummaryV1,
-    DiscussionReadResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionDraftSubmission } from './discussionRepository';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
-import { DiscussionOpenedMessageV1Schema, DiscussionListResultV1Schema, DiscussionDetailsResultV1Schema,
+import { DiscussionListResultV1Schema, DiscussionDetailsResultV1Schema,
     DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { createDiscussionActionAdapter, type DiscussionClientOutcome } from '@/sync/api/discussions/discussionActions';
+import { createDiscussionActionAdapter, readDiscussionAttentionPage, type DiscussionClientOutcome } from '@/sync/api/discussions/discussionActions';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createResourceDataKey } from '@/sync/encryption/resourceDataKey';
 import { resourceStoredContentContext } from '@/sync/encryption/resourceStoredContent';
@@ -30,13 +28,563 @@ import { useDiscussionRepositorySnapshot } from './useDiscussionRepositorySnapsh
 
 import { createDiscussionRepository, selectDiscussionListSearch, selectDiscussionThreadAccessState, type DiscussionRepositoryClient } from './discussionRepository';
 import { publishMountedDiscussionChanges } from '@/sync/domains/discussions/discussionChangeWatch';
+import { fetchChanges } from '@/sync/api/session/apiChanges';
+import { runSocketReconnectCatchUpViaChanges } from '@/sync/runtime/orchestration/socketReconnectViaChanges';
+import { applyPlannedChangeActions } from '@/sync/runtime/orchestration/changesApplier';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     clearDiscussionRepositoryRegistryForTests,
     getDiscussionRepository,
 } from './discussionRepositoryRegistry';
 
-const address = { serverId: 'home-a' } as const;
-const scope = { serverId: address.serverId, accountId: 'account-a' } as const;
+import { address, scope, summary, message, listResult, readResult, client } from './discussionRepository.testkit';
+
+it('does not publish an empty ready thread from a summary before its first history read', async () => {
+    const history = createDeferred<Response>();
+    const requests: string[] = [];
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        return path.endsWith('/messages') ? history.promise
+            : response({ discussion: storedSummary('discussion-a') });
+    }) });
+    const emptyReady: string[] = [];
+    const leave = repository.subscribe(() => {
+        const thread = repository.getSnapshot().threads['discussion-a'];
+        if (thread?.status === 'ready' && thread.messages.length === 0) emptyReady.push(thread.summary!.id);
+    });
+    try {
+        // Labels can demand a summary before the person opens its thread.
+        await repository.refreshSummary('discussion-a');
+        expect(emptyReady).toEqual([]);
+        const opening = repository.refreshDiscussion('discussion-a');
+        await vi.waitFor(() => expect(requests).toContain('/v1/discussions/discussion-a/messages'));
+        expect(repository.getSnapshot().threads['discussion-a']?.status).toBe('loading');
+        expect(emptyReady).toEqual([]);
+        history.resolve(response({ messages: [storedMessage('discussion-a', 1)], hasMoreOlder: false, messageSeq: 1 }));
+        await opening;
+        expect(repository.getSnapshot().threads['discussion-a']).toMatchObject({ status: 'ready', messages: [{ seq: 1 }] });
+    } finally { leave(); repository.clear(); }
+});
+
+it.each(['catch-up-pending', 'socket'] as const)('keeps Workflow-only %s wakes out of mounted attention while real changes and revocation remain fresh', async source => {
+    const requests: string[] = [];
+    let attentionChanged = false;
+    let denied = false;
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        if (denied) return new Response(JSON.stringify({ error: 'discussion_read_denied' }), { status: 403 });
+        return response({ discussions: attentionChanged ? [{ discussion: storedSummary('discussion-a'),
+            occurrences: [{ type: 'update', message: storedMessage('discussion-a', 1) }] }] : [],
+            nextCursor: null, incomplete: false });
+    }) });
+    await repository.refreshAttention();
+    const leave = repository.mount({ attention: true });
+    try {
+        requests.length = 0;
+        for (let index = 0; index < 1_000; index++) publishHomeAccountChange(scope.serverId, [`workflow-run:run-${index}`], {
+            source, changeKinds: ['account'],
+        });
+        await flushHookEffects();
+        expect(requests).toEqual([]);
+        for (const recovery of ['connected', 'snapshot'] as const) {
+            const before = requests.length;
+            publishHomeAccountChange(scope.serverId, ['workflow-run:run-a'], { source: recovery, changeKinds: ['account'] });
+            await vi.waitFor(() => expect(requests).toHaveLength(before + 1));
+            await flushHookEffects();
+        }
+        for (const entityIds of [[], ['workflow-run:']] as const) {
+            const before = requests.length;
+            publishHomeAccountChange(scope.serverId, entityIds, { source, changeKinds: ['account'] });
+            await vi.waitFor(() => expect(requests).toHaveLength(before + 1));
+            await flushHookEffects();
+        }
+        requests.length = 0;
+        attentionChanged = true;
+        publishHomeAccountChange(scope.serverId, ['self'], { source: 'catch-up-pending', changeKinds: ['account'] });
+        await vi.waitFor(() => expect(repository.getSnapshot().attention.discussions.map(entry => entry.discussion.id))
+            .toEqual(['discussion-a']));
+        expect(requests).toEqual(['/v1/discussions/attention']);
+        denied = true;
+        publishHomeAccountChange(scope.serverId, ['workflow-run:run-a', 'teams'], {
+            source: 'catch-up-pending', changeKinds: ['account'],
+        });
+        await vi.waitFor(() => expect(repository.getSnapshot().attention.errorCode).toBe('discussion_read_denied'));
+        expect(repository.getSnapshot().attention.discussions).toEqual([]);
+        expect(requests).toEqual(['/v1/discussions/attention', '/v1/discussions/attention']);
+    } finally { leave(); repository.clear(); }
+});
+
+it('shares snapshot attention with the mounted thread instead of rereading its occurrence', async () => {
+    const requests: string[] = [];
+    let head = 1;
+    const entries = Array.from({ length: 200 }, (_, index) => ({ discussion: storedSummary(index === 0 ? 'discussion-a' : `attention-${index}`),
+        occurrences: [{ type: 'update', message: storedMessage(index === 0 ? 'discussion-a' : `attention-${index}`, 1) }] }));
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions/attention') return response({ discussions: url.searchParams.has('discussionId')
+            ? entries.filter(entry => entry.discussion.id === url.searchParams.get('discussionId')) : entries, nextCursor: null, incomplete: false });
+        if (url.pathname === '/v1/discussions/discussion-a') return response({ discussion: { ...storedSummary('discussion-a'), messageSeq: head } });
+        const after = Number(url.searchParams.get('afterSeq') ?? 0);
+        return response({ messages: Array.from({ length: head }, (_, index) => storedMessage('discussion-a', index + 1))
+            .filter(row => row.seq > after), hasMoreOlder: false, messageSeq: head });
+    }) });
+    await repository.refreshDiscussion('discussion-a');
+    await repository.refreshAttention();
+    expect(repository.getSnapshot().attention.discussions).toHaveLength(200);
+    const leaves = [repository.mount({ discussionId: 'discussion-a' }), repository.mount({ attention: true })];
+    try {
+        requests.length = 0;
+        head = 2;
+        publishHomeAccountChange(scope.serverId, undefined, { source: 'catch-up-pending' });
+        await vi.waitFor(() => expect(repository.getSnapshot().threads['discussion-a']?.messages.map(row => row.seq)).toEqual([1, 2]));
+        expect(requests.filter(path => new URL(path, 'https://home.invalid').pathname === '/v1/discussions/attention'))
+            .toEqual(['/v1/discussions/attention']);
+    } finally { leaves.forEach(leave => leave()); repository.clear(); }
+});
+
+it.each([false, true])('revalidates a demanded archived page on snapshot repair while a closed archive stays lazy (loaded=%s)', async loaded => {
+    let title = 'Before repair';
+    const requests: string[] = [];
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        const archived = url.searchParams.get('state') === 'archived';
+        return response({ discussions: archived ? [{ ...storedSummary('archived-a'), archivedAt: 1,
+            titleContent: { t: 'plain', v: { v: 1, title } } }] : [], nextCursor: null });
+    }) });
+    await repository.refreshList('active');
+    if (loaded) await repository.refreshList('archived');
+    const leave = repository.mount();
+    try {
+        requests.length = 0;
+        title = 'After repair';
+        publishHomeAccountChange(scope.serverId, undefined, { source: 'catch-up-pending' });
+        await vi.waitFor(() => expect(requests.some(path => new URL(path, 'https://home.invalid').searchParams.get('state') === 'active')).toBe(true));
+        await flushHookEffects();
+        const archived = repository.getSnapshot().lists.archived;
+        if (loaded) {
+            expect(archived.items.map(row => row.title)).toEqual(['After repair']);
+            expect(requests.filter(path => new URL(path, 'https://home.invalid').searchParams.get('state') === 'archived'))
+                .toEqual(['/v1/discussions?state=archived']);
+        } else {
+            expect(archived).toMatchObject({ status: 'idle', items: [] });
+            expect(requests.filter(path => new URL(path, 'https://home.invalid').searchParams.get('state') === 'archived'))
+                .toEqual(['/v1/discussions?state=archived&limit=1']);
+        }
+    } finally { leave(); repository.clear(); }
+});
+
+it('receives a new message through HTTP change catch-up and the mounted repository without a forced refresh', async () => {
+    let head = 1;
+    const requests: string[] = [];
+    const request = async (path: string) => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v2/changes') return response({ changes: [{ cursor: 2, kind: 'discussion',
+            entityId: 'discussion-a', changedAt: 2,
+            hint: { v: 1, discussions: true, changes: { resource: true, readState: true } } }], nextCursor: 2 });
+        if (url.pathname === '/v1/discussions/discussion-a') return response({ discussion: {
+            ...storedSummary('discussion-a'), messageSeq: head } });
+        const after = Number(url.searchParams.get('afterSeq') ?? 0);
+        return response({ messages: Array.from({ length: head }, (_, index) => storedMessage('discussion-a', index + 1))
+            .filter(row => row.seq > after), hasMoreOlder: false, messageSeq: head });
+    };
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(request) });
+    await repository.refreshDiscussion('discussion-a');
+    const seed = repository.getSnapshot().threads['discussion-a']!.messages[0];
+    const leave = repository.mount({ discussionId: 'discussion-a' });
+    let subscriberReceivedOriginal = false;
+    const unsubscribe = repository.subscribe(() => {
+        subscriberReceivedOriginal ||= repository.getSnapshot().threads['discussion-a']?.messages.some(row => row.seq === 2) === true;
+    });
+    try {
+        requests.length = 0;
+        head = 2;
+        const credentials = { token: 'changes-boundary-token' };
+        const result = await runSocketReconnectCatchUpViaChanges({ credentials, accountId: scope.accountId,
+            afterCursor: '1', changesPageLimit: 200, forceSnapshotRefresh: false,
+            fetchChanges: params => fetchChanges({ ...params, request }),
+            applyPlanned: planned => applyPlannedChangeActions({ planned, credentials,
+                isSessionMessagesLoaded: () => false,
+                publishAccountChanges: changes => publishMountedDiscussionChanges({ ...scope, changes }),
+                invalidate: {}, invalidateMessagesForSession: async () => {}, invalidateScmStatusForSession: () => {},
+                applyTodoSocketUpdates: async () => {}, kvBulkGet: async () => ({ values: [] }) }),
+            snapshotRefresh: async () => { throw new Error('Unexpected snapshot repair'); },
+        });
+        expect(result).toMatchObject({ status: 'ok', nextCursor: '2' });
+        await vi.waitFor(() => expect(subscriberReceivedOriginal).toBe(true));
+        const thread = repository.getSnapshot().threads['discussion-a']!;
+        expect(thread).toMatchObject({ status: 'ready', incomplete: false, hasMoreOlder: false, messageSeq: 2 });
+        expect(thread.messages.map(row => row.seq)).toEqual([1, 2]);
+        expect(thread.messages[0]).toBe(seed);
+        expect(requests).toEqual(['/v2/changes?after=1&limit=200', '/v1/discussions/discussion-a',
+            '/v1/discussions/discussion-a/messages?afterSeq=1', '/v1/discussions/discussion-a']);
+    } finally { unsubscribe(); leave(); repository.clear(); }
+});
+
+it('retains newly received history when an older summary read fails and then recovers', async () => {
+    const pendingSummary = createDeferred<Response>();
+    const summaryStarted = createDeferred<void>();
+    const requests: string[] = [];
+    let delaySummary = false;
+    let head = 1;
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (!url.pathname.endsWith('/messages')) {
+            if (delaySummary) {
+                delaySummary = false;
+                summaryStarted.resolve();
+                return pendingSummary.promise;
+            }
+            return response({ discussion: { ...storedSummary('discussion-a'), messageSeq: head } });
+        }
+        const after = Number(url.searchParams.get('afterSeq') ?? 0);
+        return response({ messages: Array.from({ length: head }, (_, index) => storedMessage('discussion-a', index + 1))
+            .filter(row => row.seq > after), hasMoreOlder: false, messageSeq: head });
+    }) });
+    try {
+        await repository.refreshDiscussion('discussion-a');
+        const seed = repository.getSnapshot().threads['discussion-a']!.messages[0];
+        delaySummary = true;
+        const staleSummary = repository.refreshSummary('discussion-a');
+        await summaryStarted.promise;
+        head = 2;
+        await repository.refreshMessages('discussion-a');
+        const received = repository.getSnapshot().threads['discussion-a']!.messages;
+        expect(received.map(row => row.seq)).toEqual([1, 2]);
+        pendingSummary.resolve(response({ error: 'discussions_unavailable' }, 409));
+        await staleSummary;
+        await repository.refreshSummary('discussion-a');
+        const recovered = repository.getSnapshot().threads['discussion-a']!;
+        expect(recovered).toMatchObject({ status: 'ready', incomplete: false, hasMoreOlder: false, messageSeq: 2 });
+        expect(recovered.messages).toBe(received);
+        expect(recovered.messages[0]).toBe(seed);
+        expect(requests.filter(path => path.includes('/messages'))).toEqual([
+            '/v1/discussions/discussion-a/messages', '/v1/discussions/discussion-a/messages?afterSeq=1',
+        ]);
+    } finally { repository.clear(); }
+});
+
+it('shares summary failure and recovery across observers without retrying at idle', async () => {
+    let unavailable = true;
+    let title = 'Initial';
+    const requests: string[] = [];
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        return unavailable ? response({ error: 'discussions_unavailable' }, 409)
+            : response({ discussion: { ...storedSummary('discussion-a'), titleContent: { t: 'plain', v: { v: 1, title } } } });
+    }) });
+    const leave = repository.mount({ discussionId: 'discussion-a', projection: 'summary' });
+    try {
+        const refused = await Promise.all(Array.from({ length: 3 }, () => repository.readSummaryObservation('discussion-a')));
+        expect(refused).toEqual(Array(3).fill({ kind: 'failed', errorCode: 'discussions_unavailable' }));
+        await flushHookEffects();
+        expect(requests).toEqual(['/v1/discussions/discussion-a']);
+        unavailable = false;
+        const recovered = await Promise.all(Array.from({ length: 3 }, () => repository.readSummaryObservation('discussion-a')));
+        expect(recovered).toEqual(Array(3).fill({ kind: 'succeeded', value: { discussionId: 'discussion-a', revision: 0 } }));
+        expect(requests).toEqual(Array(2).fill('/v1/discussions/discussion-a'));
+        leave();
+        title = 'Changed while unobserved';
+        await repository.readSummaryObservation('discussion-a');
+        expect(repository.getSnapshot().threads['discussion-a']?.summary?.title).toBe(title);
+        expect(requests).toEqual(Array(3).fill('/v1/discussions/discussion-a'));
+    } finally { leave(); repository.clear(); }
+});
+
+it('refreshes retained addressed delivery projections by exact id without replaying ordinary history', async () => {
+    const requests: string[] = [];
+    let delivery: DiscussionOpenedMessageV1['participantDeliveryV1'] = [
+        { participantSessionId: 'agent-a', disposition: 'held', code: 'session_input_target_unavailable' },
+    ];
+    const rows = Array.from({ length: 300 }, (_, index) => storedMessage('discussion-a', index + 1));
+    const question = () => ({ ...rows[1]!, addressingV1: { throughSeq: 2, participantSessionIds: ['agent-a'] }, participantDeliveryV1: delivery });
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (!url.pathname.endsWith('/messages')) return response({ discussion: { ...storedSummary('discussion-a'), messageSeq: 300 } });
+        const messages = url.searchParams.has('messageId') ? [question()]
+            : url.searchParams.has('afterSeq') ? [] : rows.map(row => row.seq === 2 ? question() : row);
+        return response({ messages, hasMoreOlder: false, messageSeq: 300 });
+    }) });
+    await repository.refreshDiscussion('discussion-a');
+    expect(repository.getSnapshot().threads['discussion-a']?.messages[1]?.participantDeliveryV1).toEqual(delivery);
+    const ordinary = repository.getSnapshot().threads['discussion-a']!.messages[0];
+    const leave = repository.mount({ discussionId: 'discussion-a' });
+    try {
+        const deliveries: NonNullable<DiscussionOpenedMessageV1['participantDeliveryV1']>[] = [
+            [{ participantSessionId: 'agent-a', disposition: 'failed', failure: { code: 'action_disabled', phase: 'action_admission', retryable: false } }],
+            [],
+        ];
+        for (const [index, next] of deliveries.entries()) {
+            delivery = next;
+            requests.length = 0;
+            publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: index + 1, kind: 'discussion', entityId: 'discussion-a', changedAt: index + 1 }] });
+            await vi.waitFor(() => expect(repository.getSnapshot().threads['discussion-a']?.messages[1]?.participantDeliveryV1).toEqual(delivery));
+            expect(requests.filter(path => path.includes('/messages')).sort()).toEqual([
+                '/v1/discussions/discussion-a/messages?afterSeq=300',
+                '/v1/discussions/discussion-a/messages?messageId=message-2',
+            ]);
+            expect(repository.getSnapshot().threads['discussion-a']!.messages[0]).toBe(ordinary);
+        }
+    } finally { leave(); repository.clear(); }
+});
+
+it('refreshes only matching mounted Doc queries on Artifact changes and withdraws revoked roots', async () => {
+    const requests: string[] = [];
+    let refused = false;
+    const row = (artifactId: string, index: number) => ({ ...storedSummary(`${artifactId}-${index}`),
+        anchor: { kind: 'doc' as const, doc: { ref: { kind: 'doc' as const, serverId: scope.serverId, artifactId },
+            revision: { headerVersion: 1, bodyVersion: 1 } } }, firstMessage: storedMessage(`${artifactId}-${index}`, 1) });
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions') {
+            const artifactId = url.searchParams.get('anchorDocArtifactId')!;
+            const offset = Number(url.searchParams.get('cursor') ?? 0);
+            return response({ discussions: url.searchParams.get('state') === 'archived' || refused && artifactId === 'doc-a'
+                ? [] : Array.from({ length: 100 }, (_, index) => row(artifactId, offset + index)),
+            nextCursor: url.searchParams.get('state') === 'archived' || refused && artifactId === 'doc-a' || offset === 200 ? null : String(offset + 100) });
+        }
+        return response({ error: 'discussion_content_unavailable' }, 409);
+    }) });
+    const releases: (() => void)[] = [];
+    try {
+        for (const artifactId of ['doc-a', 'doc-b']) {
+            await repository.refreshDocList(artifactId);
+            releases.push(repository.mount({ anchorDocArtifactId: artifactId }));
+        }
+        expect(repository.getDocListSnapshot('doc-a').items).toHaveLength(300);
+        requests.length = 0;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'artifact', entityId: 'unrelated-approval', changedAt: 1 }] });
+        await flushHookEffects();
+        expect(requests).toEqual([]);
+        refused = true;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 2, kind: 'artifact', entityId: 'doc-a', changedAt: 2 }] });
+        await vi.waitFor(() => expect(repository.getDocListSnapshot('doc-a').items).toEqual([]));
+        expect(repository.getSnapshot().threads['doc-a-0']).toMatchObject({ summary: null, messages: [], status: 'locked' });
+        expect(repository.getDocListSnapshot('doc-b').items).toHaveLength(300);
+        expect(requests.filter(path => new URL(path, 'https://home.invalid').pathname === '/v1/discussions')
+            .every(path => new URL(path, 'https://home.invalid').searchParams.get('anchorDocArtifactId') === 'doc-a')).toBe(true);
+    } finally { releases.forEach(release => release()); repository.clear(); }
+});
+
+it('preserves non-content round and comment summaries from the list transport without detail reads', async () => {
+    const requests: string[] = [];
+    const row = { ...storedSummary('discussion-summary'), openCommentCount: 3,
+        roundOutcomeV1: { runId: 'run', pattern: 'fresh_opinions', answerCount: 3, synthesized: true, settled: true } };
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        return response({ discussions: [row], nextCursor: null });
+    }) });
+    try {
+        await repository.refreshList('active');
+        expect(repository.getSnapshot().lists.active.status).toBe('ready');
+        expect(repository.getSnapshot().lists.active.items[0]).toMatchObject({ openCommentCount: 3,
+            roundOutcomeV1: row.roundOutcomeV1 });
+        const urls = requests.map(path => new URL(path, 'https://home.invalid'));
+        expect(urls.map(url => url.pathname)).toEqual(['/v1/discussions', '/v1/discussions']);
+        expect(urls.map(url => url.searchParams.get('state'))).toEqual(['active', 'archived']);
+    } finally { repository.clear(); }
+});
+
+it('patches only the changed list row across 300 Discussions and three loaded pages per mounted list', async () => {
+    const requests: string[] = [];
+    const rows = Array.from({ length: 300 }, (_, index) => {
+        const row = storedSummary(`discussion-${index}`);
+        return { ...row, anchor: { kind: 'session' as const, sessionId: 'source' },
+            latestMessage: { ...row.latestMessage, createdAt: 1000 - index } };
+    });
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions') {
+            const offset = Number(url.searchParams.get('cursor') ?? 0);
+            return response({ discussions: url.searchParams.get('state') === 'archived' ? [] : rows.slice(offset, offset + 100),
+                nextCursor: url.searchParams.get('state') === 'archived' || offset === 200 ? null : String(offset + 100) });
+        }
+        const row = rows.find(row => url.pathname === `/v1/discussions/${row.id}`);
+        return row ? response({ discussion: row }) : response({ error: 'not_found' }, 404);
+    }) });
+    for (const anchor of [undefined, 'source']) {
+        await repository.refreshList('active', undefined, anchor);
+        await repository.loadMoreList('active', undefined, anchor);
+        await repository.loadMoreList('active', undefined, anchor);
+    }
+    const leaveHome = repository.mount();
+    const leaveAnchor = repository.mount({ anchorSessionId: 'source' });
+    const unchangedCounter = createRenderCommitCounter();
+    const changedCounter = createRenderCommitCounter();
+    const unchanged = await renderHook(() => {
+        const row = useSyncExternalStore(repository.subscribe, () => repository.getSnapshot().lists.active.items[150]);
+        useRenderCommitCounter(unchangedCounter);
+        return row;
+    });
+    const changed = await renderHook(() => {
+        const row = useSyncExternalStore(repository.subscribe, () => repository.getSnapshot().lists.active.items[0]);
+        useRenderCommitCounter(changedCounter);
+        return row;
+    });
+    const states: string[] = [];
+    const unsubscribe = repository.subscribe(() => states.push(repository.getSnapshot().lists.active.status));
+    try {
+        requests.length = 0;
+        unchangedCounter.reset(); changedCounter.reset();
+        for (let arrival = 1; arrival <= 5; arrival++) {
+            const row = rows[0]!;
+            rows[0] = { ...row, messageSeq: row.messageSeq + 1, unreadCount: row.unreadCount + 1,
+                latestMessage: { ...row.latestMessage, seq: row.messageSeq + 1, createdAt: 1000 + arrival } };
+            await act(async () => {
+                publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: arrival, kind: 'discussion', entityId: row.id, changedAt: arrival }] });
+                await flushHookEffects();
+                await vi.waitFor(() => expect(repository.getSnapshot().lists.active.items[0]?.messageSeq).toBe(arrival + 1));
+            });
+            const listReads = requests.filter(path => new URL(path, 'https://home.invalid').pathname === '/v1/discussions');
+            if (listReads.length) console.info('Discussion list arrival budget violation', { arrivals: arrival, listReads: listReads.length });
+            expect(listReads).toEqual([]);
+        }
+        const listReads = requests.filter(path => new URL(path, 'https://home.invalid').pathname === '/v1/discussions');
+        console.info('Discussion list arrival cost', { arrivals: 5, loadedDiscussions: 300, loadedPagesPerList: 3,
+            listReads: listReads.length, summaryReads: requests.length - listReads.length,
+            unchanged: unchangedCounter.read(), changed: changedCounter.read() });
+        expect(listReads).toEqual([]);
+        expect(requests).toEqual(Array(5).fill('/v1/discussions/discussion-0'));
+        expect(unchangedCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(changedCounter.read()).toEqual({ renders: 5, commits: 5 });
+        expect(states).not.toContain('loading');
+        expect(repository.getListSnapshot('source').lists.active.items[0]?.messageSeq).toBe(6);
+    } finally { unsubscribe(); leaveHome(); leaveAnchor(); await unchanged.unmount(); await changed.unmount(); repository.clear(); }
+});
+
+it('keeps the newer summary when consecutive invalidations overlap an older exact read', async () => {
+    const older = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['get']>>>();
+    const newer = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['get']>>>();
+    const get = vi.fn<DiscussionRepositoryClient['get']>().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const list = vi.fn<DiscussionRepositoryClient['list']>(async input => ({ kind: 'succeeded', value:
+        listResult(input?.state === 'archived' ? [] : [summary('discussion-a', null, 1)], null) }));
+    const repository = createDiscussionRepository({ scope, address, client: client({ list, get }) });
+    await repository.refreshList('active');
+    const leave = repository.mount();
+    try {
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: 'discussion-a', changedAt: 1 }] });
+        await flushHookEffects();
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 2, kind: 'discussion', entityId: 'discussion-a', changedAt: 2 }] });
+        await flushHookEffects();
+        newer.resolve({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId, discussion: summary('discussion-a', null, 3) } });
+        await flushHookEffects();
+        older.resolve({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId, discussion: summary('discussion-a', null, 2) } });
+        await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+        await flushHookEffects();
+        expect(repository.getSnapshot().lists.active.items[0]?.messageSeq).toBe(3);
+    } finally { leave(); repository.clear(); }
+});
+
+it.each([false, true])('keeps archived placement within its loaded frontier without querying a closed inventory (loaded=%s)', async loaded => {
+    const requests: string[] = [];
+    let archived = false;
+    const target = { ...storedSummary('archived-target'), latestMessage: { ...storedSummary('archived-target').latestMessage, createdAt: 50 } };
+    const olderState = Array.from({ length: 100 }, (_, index) => ({ ...storedSummary(`archived-${index}`), archivedAt: 1,
+        latestMessage: { ...storedSummary(`archived-${index}`).latestMessage, createdAt: 1000 - index } }));
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions') return response({ discussions: url.searchParams.get('state') === 'archived'
+            ? loaded ? olderState : archived ? [{ ...target, archivedAt: 1 }] : []
+            : loaded && !archived ? [target] : [], nextCursor: url.searchParams.get('state') === 'archived' && loaded ? 'older' : null });
+        return response({ discussion: { ...target, archivedAt: 1 } });
+    }) });
+    await repository.refreshList('active');
+    if (loaded) await repository.refreshList('archived');
+    const leave = repository.mount();
+    try {
+        requests.length = 0;
+        archived = true;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: target.id, changedAt: 1 }] });
+        await flushHookEffects();
+        await vi.waitFor(() => expect(repository.getSnapshot().threads[target.id]?.summary?.archivedAt).toBe(1));
+        await flushHookEffects();
+        expect(requests).toEqual([`/v1/discussions/${target.id}`]);
+        if (loaded) {
+            expect(repository.getSnapshot().lists.archived.items).toHaveLength(100);
+            expect(repository.getSnapshot().lists.archived.items.some(row => row.id === target.id)).toBe(false);
+            expect(repository.getSnapshot().lists.archived.nextCursor).toBe('older');
+        } else expect(repository.getSnapshot().lists.archived.status).toBe('idle');
+        expect(repository.getSnapshot().archivedExistence).toBe('present');
+    } finally { leave(); repository.clear(); }
+});
+
+
+
+it('places a known reorder from its summary, rechecks unknown membership and leaves unrelated anchors alone', async () => {
+    const requests: string[] = [];
+    let rows = [storedSummary('first'), storedSummary('second')].map((row, index) => ({ ...row,
+        anchor: { kind: 'session' as const, sessionId: 'source' }, latestMessage: { ...row.latestMessage, createdAt: 100 - index } }));
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions') return response({ discussions: url.searchParams.get('state') === 'archived'
+            || url.searchParams.get('anchorSessionId') === 'unrelated' ? [] : rows, nextCursor: null });
+        return response({ discussion: rows.find(row => url.pathname.endsWith(`/${row.id}`)) });
+    }) });
+    await repository.refreshList('active');
+    await repository.refreshAnchoredList('unrelated', 'active');
+    const leave = repository.mount();
+    const leaveAnchor = repository.mount({ anchorSessionId: 'unrelated' });
+    try {
+        const row = rows[1]!;
+        rows = [{ ...row, latestMessage: { ...row.latestMessage, createdAt: 200 } }, rows[0]!];
+        requests.length = 0;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: row.id, changedAt: 1 }] });
+        await flushHookEffects();
+        expect(repository.getSnapshot().lists.active.items.map(row => row.id)).toEqual(['second', 'first']);
+        expect(requests.some(path => { const url = new URL(path, 'https://home.invalid');
+            return url.pathname === '/v1/discussions' && url.searchParams.get('state') === 'active'; })).toBe(false);
+        expect(requests.some(path => path.includes('anchorSessionId=unrelated'))).toBe(false);
+        const unknown = { ...storedSummary('new'), anchor: { kind: 'session' as const, sessionId: 'source' },
+            latestMessage: { ...storedSummary('new').latestMessage, createdAt: 300 } };
+        rows = [unknown, ...rows];
+        requests.length = 0;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 2, kind: 'discussion', entityId: unknown.id, changedAt: 2 }] });
+        await flushHookEffects();
+        expect(repository.getSnapshot().lists.active.items.map(row => row.id)).toEqual(['new', 'second', 'first']);
+        expect(requests.some(path => { const url = new URL(path, 'https://home.invalid');
+            return url.pathname === '/v1/discussions' && url.searchParams.get('state') === 'active'; })).toBe(true);
+        expect(requests.some(path => path.includes('anchorSessionId=unrelated'))).toBe(false);
+    } finally { leaveAnchor(); leave(); repository.clear(); }
+});
+
+it('rechecks only a changed Doc root and withdraws its source-refused content without rereading sibling roots', async () => {
+    const requests: string[] = [];
+    let refused = false;
+    const rows = ['doc-thread-a', 'doc-thread-b'].map(id => ({ ...storedSummary(id),
+        anchor: { kind: 'doc' as const, doc: { ref: { kind: 'doc' as const, serverId: scope.serverId, artifactId: 'source-doc' },
+            revision: { headerVersion: 1, bodyVersion: 1 } } }, firstMessage: storedMessage(id, 1) }));
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        requests.push(path);
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions') return response({ discussions: refused ? [rows[1]] : rows, nextCursor: null });
+        const row = rows.find(row => url.pathname.startsWith(`/v1/discussions/${row.id}`))!;
+        if (url.pathname.endsWith('/messages')) return refused && row.id === rows[0]!.id
+            ? response({ error: 'discussion_content_unavailable' }, 409)
+            : response({ messages: [row.firstMessage], hasMoreOlder: false, messageSeq: 1 });
+        const { firstMessage: _root, ...discussion } = row;
+        return response({ discussion });
+    }) });
+    await repository.refreshDocList('source-doc');
+    const sibling = repository.getDocListSnapshot('source-doc').items[1];
+    const leave = repository.mount({ anchorDocArtifactId: 'source-doc' });
+    try {
+        requests.length = 0;
+        refused = true;
+        publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: rows[0]!.id, changedAt: 1 }] });
+        await flushHookEffects();
+        expect(repository.getDocListSnapshot('source-doc').items).toEqual([sibling]);
+        expect(repository.getSnapshot().threads[rows[0]!.id]).toMatchObject({ summary: null, messages: [], status: 'locked' });
+        expect(requests).toEqual([`/v1/discussions/${rows[0]!.id}`, `/v1/discussions/${rows[0]!.id}/messages?messageId=message-1`]);
+    } finally { leave(); repository.clear(); }
+});
 
 it('refreshes a changed closed Discussion without hydrating retained histories from the open rail', async () => {
     const requests: string[] = [];
@@ -62,6 +610,7 @@ it('refreshes a changed closed Discussion without hydrating retained histories f
         publishMountedDiscussionChanges({ serverId: scope.serverId, accountId: scope.accountId,
             changes: [{ cursor: 1, kind: 'discussion', entityId: ids[0]!, changedAt: 1 }] });
         await flushHookEffects();
+        console.info('Discussion rail invalidation reads', requests);
         expect(requests.filter(path => path.endsWith('/messages'))).toEqual([]);
         expect(requests.filter(path => ids.slice(1).some(id => path === `/v1/discussions/${id}`))).toEqual([]);
         expect(repository.getSnapshot().threads[ids[0]!]!.messages).toHaveLength(300);
@@ -82,6 +631,136 @@ it('refreshes a changed closed Discussion without hydrating retained histories f
     } finally { unmount(); repository.clear(); }
 });
 
+it('reconciles a relationship-only latest-message actor update from the list into an already opened thread', async () => {
+    const profile = { name: 'QA N3 Bob', firstName: null, lastName: null, username: 'qa-n3b', avatarUrl: null };
+    const root = message(1);
+    const currentMessage = {
+        ...message(2),
+        authorAccountId: 'bob',
+        accountActor: { v: 1 as const, accountId: 'bob', accessibility: 'current' as const, profile },
+    };
+    const latestMessage = (row: DiscussionOpenedMessageV1): DiscussionOpenedSummaryV1['latestMessage'] => ({
+        id: row.id,
+        localId: row.localId,
+        seq: row.seq,
+        authorAccountId: row.authorAccountId,
+        accountActor: row.accountActor,
+        producerV1: row.producerV1,
+        createdAt: row.createdAt,
+    });
+    const openedSummary = { ...summary('discussion-a', null, 2), firstMessage: root, latestMessage: latestMessage(currentMessage) };
+    let listedSummary = openedSummary;
+    const read = vi.fn<DiscussionRepositoryClient['read']>().mockResolvedValue({
+        kind: 'succeeded', value: readResult([root, currentMessage], false, 2),
+    });
+    const repository = createDiscussionRepository({ scope, address, client: client({
+        get: async () => ({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId, discussion: openedSummary } }),
+        read,
+        list: async input => ({ kind: 'succeeded', value: listResult(input?.state === 'archived' ? [] : [listedSummary], null) }),
+    }) });
+    try {
+        await repository.refreshDiscussion('discussion-a');
+        const before = repository.getSnapshot().threads['discussion-a']!;
+        const unchangedRoot = before.messages[0];
+        expect(before.messages[1]?.accountActor?.accessibility).toBe('current');
+        read.mockClear();
+
+        listedSummary = {
+            ...openedSummary,
+            latestMessage: {
+                ...openedSummary.latestMessage,
+                accountActor: { ...openedSummary.latestMessage.accountActor!, accessibility: 'former' },
+            },
+        };
+        await repository.refreshList('active');
+
+        const after = repository.getSnapshot();
+        expect(after.lists.active.items[0]?.latestMessage.accountActor?.accessibility).toBe('former');
+        expect(after.threads['discussion-a']?.messages[1]?.accountActor?.accessibility).toBe('former');
+        expect(after.threads['discussion-a']?.messages[0]).toBe(unchangedRoot);
+        expect(read).not.toHaveBeenCalled();
+    } finally { repository.clear(); }
+});
+
+it('publishes only a changed thread when repeated summary refreshes return equal facts', async () => {
+    const profile = { name: 'QA N3 Bob', firstName: null, lastName: null, username: 'qa-n3b', avatarUrl: null };
+    const root = message(1);
+    let openedSummary: DiscussionOpenedSummaryV1 = {
+        ...summary('discussion-a', null, 1),
+        firstMessage: root,
+        participantAccounts: [{
+            v: 1,
+            accountId: 'bob',
+            accessibility: 'current',
+            profile,
+        }],
+    };
+    const repository = createDiscussionRepository({ scope, address, client: client({
+        get: async () => ({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId, discussion: openedSummary } }),
+        read: async () => ({ kind: 'succeeded', value: readResult([root], false, 1) }),
+    }) });
+    await repository.refreshDiscussion(openedSummary.id);
+    const initialThread = repository.getSnapshot().threads[openedSummary.id]!;
+    const wholeSnapshotCounter = createRenderCommitCounter();
+    const unaffectedCounter = createRenderCommitCounter();
+    const wholeSnapshot = await renderHook(() => {
+        const snapshot = useDiscussionRepositorySnapshot(repository);
+        useRenderCommitCounter(wholeSnapshotCounter);
+        return snapshot.threads[openedSummary.id];
+    });
+    const unaffected = await renderHook(() => {
+        const thread = useSyncExternalStore(repository.subscribe, () => repository.getSnapshot().threads['discussion-b']);
+        useRenderCommitCounter(unaffectedCounter);
+        return thread;
+    });
+    let publications = 0;
+    const unsubscribe = repository.subscribe(() => { publications += 1; });
+    try {
+        wholeSnapshotCounter.reset();
+        unaffectedCounter.reset();
+        for (let refresh = 0; refresh < 5; refresh++) {
+            await act(async () => { await repository.refreshSummary(openedSummary.id); });
+        }
+        console.info('Discussion equal-summary refresh cost', {
+            refreshes: 5,
+            publications,
+            wholeSnapshot: wholeSnapshotCounter.read(),
+            unaffected: unaffectedCounter.read(),
+        });
+        expect(publications).toBe(0);
+        expect(wholeSnapshotCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(unaffectedCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(repository.getSnapshot().threads[openedSummary.id]).toBe(initialThread);
+
+        openedSummary = {
+            ...openedSummary,
+            participantAccounts: openedSummary.participantAccounts?.map(actor => actor.accountId === 'bob'
+                ? { ...actor, accessibility: 'former' as const }
+                : actor),
+        };
+        await act(async () => { await repository.refreshSummary(openedSummary.id); });
+        console.info('Discussion changed-summary refresh cost', {
+            publications,
+            wholeSnapshot: wholeSnapshotCounter.read(),
+            unaffected: unaffectedCounter.read(),
+        });
+        const changedThread = repository.getSnapshot().threads[openedSummary.id]!;
+        expect(publications).toBe(1);
+        expect(wholeSnapshotCounter.read()).toEqual({ renders: 1, commits: 1 });
+        expect(unaffectedCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(changedThread).not.toBe(initialThread);
+        expect(changedThread.messages).toBe(initialThread.messages);
+        expect(changedThread.summary?.firstMessage).toBe(initialThread.summary?.firstMessage);
+        expect(changedThread.summary?.latestMessage).toBe(initialThread.summary?.latestMessage);
+        expect(changedThread.summary?.participantAccounts?.[0]?.accessibility).toBe('former');
+    } finally {
+        unsubscribe();
+        await wholeSnapshot.unmount();
+        await unaffected.unmount();
+        repository.clear();
+    }
+});
+
 it('publishes no unchanged history or list rows on a warm 300-message refresh and does no settled idle reads', async () => {
     const requests: string[] = [];
     const rows = Array.from({ length: 300 }, (_, index) => storedMessage('discussion-a', index + 1));
@@ -99,6 +778,7 @@ it('publishes no unchanged history or list rows on a warm 300-message refresh an
     requests.length = 0;
     const historyCounter = createRenderCommitCounter();
     const listCounter = createRenderCommitCounter();
+    const wholeSnapshotCounter = createRenderCommitCounter();
     const history = await renderHook(() => {
         const messages = useSyncExternalStore(repository.subscribe, () => repository.getSnapshot().threads['discussion-a']!.messages);
         useRenderCommitCounter(historyCounter);
@@ -109,15 +789,26 @@ it('publishes no unchanged history or list rows on a warm 300-message refresh an
         useRenderCommitCounter(listCounter);
         return items;
     });
+    const wholeSnapshot = await renderHook(() => {
+        const snapshot = useDiscussionRepositorySnapshot(repository);
+        useRenderCommitCounter(wholeSnapshotCounter);
+        return snapshot;
+    });
+    let publications = 0;
+    const unsubscribe = repository.subscribe(() => { publications += 1; });
     vi.useFakeTimers();
     const timeoutInstalls = vi.spyOn(globalThis, 'setTimeout');
     const intervalInstalls = vi.spyOn(globalThis, 'setInterval');
     const unmount = repository.mount({ discussionId: 'discussion-a' });
     let unmountRail: (() => void) | undefined;
     try {
-        historyCounter.reset(); listCounter.reset();
+        historyCounter.reset(); listCounter.reset(); wholeSnapshotCounter.reset();
         await act(async () => { await repository.refreshDiscussion('discussion-a'); await repository.refreshList('active'); });
         const warm = [...requests];
+        console.info('Discussion warm refresh cost', { cold, warm, publications,
+            wholeSnapshot: wholeSnapshotCounter.read(), history: historyCounter.read(), list: listCounter.read() });
+        expect(publications).toBe(0);
+        expect(wholeSnapshotCounter.read()).toEqual({ renders: 0, commits: 0 });
         expect(historyCounter.read()).toEqual({ renders: 0, commits: 0 });
         expect(listCounter.read()).toEqual({ renders: 0, commits: 0 });
         requests.length = 0;
@@ -136,12 +827,14 @@ it('publishes no unchanged history or list rows on a warm 300-message refresh an
         expect(vi.getTimerCount()).toBe(0);
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
         const railTimerInstalls = timeoutInstalls.mock.calls.length + intervalInstalls.mock.calls.length;
+        console.info('Discussion owner idle cost', { discussionRequestsPerMinute: discussionIdleRequests, railRequestsPerMinute: requests.length,
+            discussionTimerInstalls, railTimerInstalls, pendingTimers: vi.getTimerCount() });
         expect(requests).toEqual([]);
         expect(railTimerInstalls).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
     } finally {
-        unmountRail?.(); unmount(); timeoutInstalls.mockRestore(); intervalInstalls.mockRestore();
-        vi.useRealTimers(); await history.unmount(); await list.unmount(); repository.clear();
+        unsubscribe(); unmountRail?.(); unmount(); timeoutInstalls.mockRestore(); intervalInstalls.mockRestore();
+        vi.useRealTimers(); await history.unmount(); await list.unmount(); await wholeSnapshot.unmount(); repository.clear();
     }
 });
 
@@ -160,70 +853,7 @@ function draftSubmission(kind: 'newDiscussion' | 'discussion' = 'newDiscussion')
     };
 }
 
-function summary(id: string, localId: string | null, messageSeq: number): DiscussionOpenedSummaryV1 {
-    return {
-        id,
-        ownerAccountId: scope.accountId,
-        encryptionMode: 'plain',
-        anchor: null,
-        access: 'owner',
-        keyReadiness: true,
-        dataEncryptionKey: null,
-        creationLocalId: localId,
-        title: id,
-        latestMessage: { id: `${id}-message`, localId: null, seq: messageSeq, authorAccountId: 'account-a', accountActor: { v: 1, accountId: 'account-a', profile: null }, producerV1: null, createdAt: messageSeq },
-        messageSeq,
-        lastReadSeq: 0,
-        unreadCount: messageSeq,
-        unreadMentionCount: 0,
-        recentAuthorAccountIds: ['account-a'],
-        archivedAt: null,
-        capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true, sendToSession: true, manageAccess: true, leave: false },
-    };
-}
 
-function message(seq: number, localId: string | null = null, discussionId = 'discussion-a'): DiscussionOpenedMessageV1 {
-    const row = { id: `message-${seq}`, discussionId, localId, seq, authorAccountId: 'account-a', accountActor: { v: 1 as const, accountId: 'account-a', profile: null }, producerV1: null,
-        content: { t: 'plain' as const, v: { v: 1, parts: [{ t: 'text', text: `message ${seq}` }] } }, mentionedAccountIds: [], createdAt: seq };
-    return DiscussionOpenedMessageV1Schema.parse({ ...row, content: row.content.v,
-        messageRef: createDiscussionMessageRefV1({ ...address, discussionId: row.discussionId }, row) });
-}
-
-function listResult(discussions: readonly DiscussionOpenedSummaryV1[], nextCursor: string | null): DiscussionListResultV1 {
-    return { v: 1, serverId: address.serverId, discussions: [...discussions], nextCursor, incomplete: false };
-}
-
-function readResult(messages: readonly DiscussionOpenedMessageV1[], hasMoreOlder: boolean, messageSeq: number, discussionId = 'discussion-a'): DiscussionReadResultV1 {
-    return { v: 1, serverId: address.serverId, discussionId, messages: [...messages], hasMoreOlder, messageSeq, incomplete: false };
-}
-
-function client(overrides: Partial<DiscussionRepositoryClient> = {}): DiscussionRepositoryClient {
-    return {
-        attention: async () => ({ kind: 'succeeded', value: { v: 1, serverId: address.serverId, discussions: [], nextCursor: null, incomplete: false } }),
-        list: vi.fn<DiscussionRepositoryClient['list']>().mockResolvedValue({ kind: 'succeeded', value: listResult([], null) }),
-        get: vi.fn<DiscussionRepositoryClient['get']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_found' }),
-        read: vi.fn<DiscussionRepositoryClient['read']>().mockResolvedValue({ kind: 'succeeded', value: readResult([], false, 0) }),
-        create: vi.fn<DiscussionRepositoryClient['create']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        post: vi.fn<DiscussionRepositoryClient['post']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        rename: vi.fn<DiscussionRepositoryClient['rename']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        archive: vi.fn<DiscussionRepositoryClient['archive']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        restore: vi.fn<DiscussionRepositoryClient['restore']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        readState: vi.fn<DiscussionRepositoryClient['readState']>().mockResolvedValue({ kind: 'failed', errorCode: 'not_implemented' }),
-        participants: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        getSettings: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        setSettings: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        setParticipantPolicy: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        invite: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        inviteExecutableParticipant: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        removeParticipant: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        leave: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        transferOwner: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        listGrants: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        setGrant: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        removeGrant: async () => ({ kind: 'failed', errorCode: 'not_implemented' }),
-        ...overrides,
-    };
-}
 
 /** Compose the real resource HTTP/crypto adapter; only its request leaves this process. */
 function httpClient(request: (path: string, init?: RequestInit) => Promise<Response>,
@@ -240,6 +870,7 @@ function httpClient(request: (path: string, init?: RequestInit) => Promise<Respo
         | 'discussion.access.grants.set' | 'discussion.access.grants.remove', input: unknown, signal?: AbortSignal) =>
         opened(DiscussionAccessGrantMutationResponseV1Schema, await execute({ actionId, input, context, signal }));
     return client({
+        attention: (input, signal) => readDiscussionAttentionPage({ scope, availability: 'available', accountMode: 'plain', encryption: null, request, ...crypto }, input, signal),
         list: async (input = {}, signal) => opened(DiscussionListResultV1Schema, await execute({ actionId: 'discussion.list', input, context, signal })),
         get: async (discussionId, signal) => opened(DiscussionDetailsResultV1Schema, await execute({ actionId: 'discussion.get', input: { discussionId }, context, signal })),
         read: async (discussionId, input = {}, signal) => opened(DiscussionReadResultV1Schema, await execute({ actionId: 'discussion.read', input: { discussionId, ...input }, context, signal })),
@@ -560,116 +1191,6 @@ describe('Discussion repository', () => {
         expect(repository.getSnapshot().archivedExistence).toBe('present');
     });
 
-    it('does not append an older attention page over a newer owner disposition refresh', async () => {
-        const first = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const refreshed = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const older = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const open = { v: 1 as const, serverId: address.serverId, discussions: [{ discussion: summary('discussion-a', null, 1),
-            occurrences: [{ message: message(1), type: 'decision' as const }] }], nextCursor: 'older', incomplete: false };
-        const attention = vi.fn<DiscussionRepositoryClient['attention']>().mockReturnValueOnce(first.promise)
-            .mockReturnValueOnce(refreshed.promise).mockReturnValueOnce(older.promise);
-        const repository = createDiscussionRepository({ scope, address, client: client({ attention }) });
-        const unmount = repository.mount({ attention: true });
-        try {
-            const initial = repository.refreshAttention();
-            publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: 'discussion-a', changedAt: 1 }] });
-            const more = repository.loadMoreAttention();
-            first.resolve({ kind: 'succeeded', value: open });
-            await initial;
-            await vi.waitFor(() => expect(attention.mock.calls.length).toBeGreaterThanOrEqual(2));
-            refreshed.resolve({ kind: 'succeeded', value: { ...open, discussions: [], nextCursor: null } });
-            await vi.waitFor(() => expect(repository.getSnapshot().attention.discussions).toEqual([]));
-            older.resolve({ kind: 'succeeded', value: { ...open, nextCursor: null } });
-            await more;
-            expect(repository.getSnapshot().attention.discussions).toEqual([]);
-        } finally { unmount(); }
-    });
-    it('does not hydrate a previously viewed thread on Doc changes when only Inbox attention remains mounted', async () => {
-        const attention = vi.fn<DiscussionRepositoryClient['attention']>().mockResolvedValue({ kind: 'succeeded', value: {
-            v: 1, serverId: address.serverId, discussions: [], nextCursor: null, incomplete: false,
-        } });
-        const network = client({ attention,
-            get: vi.fn<DiscussionRepositoryClient['get']>().mockResolvedValue({ kind: 'succeeded', value: {
-                v: 1, serverId: address.serverId, discussion: summary('discussion-a', null, 1),
-            } }),
-            read: vi.fn<DiscussionRepositoryClient['read']>().mockResolvedValue({ kind: 'succeeded', value: readResult([message(1)], false, 1) }) });
-        const repository = createDiscussionRepository({ scope, address, client: network });
-        const leaveDetail = repository.mount();
-        await repository.refreshDiscussion('discussion-a');
-        leaveDetail();
-        expect(repository.getSnapshot().threads['discussion-a']?.messages).toHaveLength(1);
-        vi.mocked(network.get).mockClear();
-        vi.mocked(network.read).mockClear();
-        const leaveInbox = repository.mount({ attention: true });
-        try {
-            publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'artifact', entityId: 'plan', changedAt: 1 }] });
-            await vi.waitFor(() => expect(repository.getSnapshot().attention.status).toBe('ready'));
-            expect(network.get).not.toHaveBeenCalled();
-            expect(network.read).not.toHaveBeenCalled();
-            expect(network.list).not.toHaveBeenCalled();
-        } finally { leaveInbox(); }
-    });
-    it.each(['discussion', 'artifact'] as const)('rereads an owner %s change invalidated while the prior attention snapshot is still in flight', async kind => {
-        const pending = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const old = { v: 1 as const, serverId: address.serverId, discussions: [{ discussion: summary('discussion-a', null, 1),
-            occurrences: [{ message: message(1), type: 'decision' as const }] }], nextCursor: null, incomplete: false };
-        const attention = vi.fn<DiscussionRepositoryClient['attention']>().mockReturnValueOnce(pending.promise)
-            .mockResolvedValue({ kind: 'succeeded', value: { ...old, discussions: [] } });
-        const repository = createDiscussionRepository({ scope, address, client: client({ attention }) });
-        const unmount = repository.mount({ attention: true });
-        try {
-            const read = repository.refreshAttention();
-            publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind, entityId: 'discussion-a', changedAt: 1 }] });
-            pending.resolve({ kind: 'succeeded', value: old });
-            await read;
-            await vi.waitFor(() => expect(repository.getSnapshot().attention.discussions).toEqual([]));
-        } finally { unmount(); }
-    });
-    it('batches cold attention demand, keeps unchanged identities and refreshes only its captured Home/Account', async () => {
-        const pending = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const value = { v: 1 as const, serverId: address.serverId, discussions: [{ discussion: summary('discussion-a', null, 1),
-            occurrences: [{ message: message(1), type: 'decision' as const }] }], nextCursor: null, incomplete: false };
-        const attention = vi.fn<DiscussionRepositoryClient['attention']>().mockReturnValueOnce(pending.promise)
-            .mockResolvedValue({ kind: 'succeeded', value });
-        const network = client({ attention });
-        const repository = createDiscussionRepository({ scope, address, client: network });
-        const unmount = repository.mount({ attention: true });
-        try {
-            const first = repository.refreshAttention();
-            const second = repository.refreshAttention();
-            expect(second).toBe(first);
-            pending.resolve({ kind: 'succeeded', value });
-            await first;
-            const before = repository.getSnapshot().attention.discussions;
-            expect(repository.getSnapshot().threads).toEqual({});
-            publishMountedDiscussionChanges({ ...scope, serverId: 'other-home', changes: [{ cursor: 1, kind: 'discussion', entityId: 'discussion-a', changedAt: 1 }] });
-            publishMountedDiscussionChanges({ ...scope, accountId: 'other-person', changes: [{ cursor: 1, kind: 'discussion', entityId: 'discussion-a', changedAt: 1 }] });
-            expect(attention).toHaveBeenCalledTimes(1);
-            publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 2, kind: 'discussion', entityId: 'discussion-a', changedAt: 2 }] });
-            await vi.waitFor(() => expect(repository.getSnapshot().attention.status).toBe('ready'));
-            expect(attention).toHaveBeenCalledTimes(2);
-            expect(repository.getSnapshot().attention.discussions).toBe(before);
-            expect(network.list).not.toHaveBeenCalled();
-            expect(network.read).not.toHaveBeenCalled();
-        } finally { unmount(); }
-    });
-
-    it('does not resurrect retired or explicitly refused attention from an in-flight read', async () => {
-        const pending = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['attention']>>>();
-        const value = { v: 1 as const, serverId: address.serverId, discussions: [{ discussion: summary('discussion-a', null, 1),
-            occurrences: [{ message: message(1), type: 'decision' as const }] }], nextCursor: null, incomplete: false };
-        const attention = vi.fn<DiscussionRepositoryClient['attention']>().mockResolvedValueOnce({ kind: 'succeeded', value })
-            .mockReturnValueOnce(pending.promise).mockResolvedValue({ kind: 'failed', errorCode: 'discussion_read_denied' });
-        const repository = createDiscussionRepository({ scope, address, client: client({ attention }) });
-        await repository.refreshAttention();
-        const stale = repository.refreshAttention();
-        repository.clear();
-        pending.resolve({ kind: 'succeeded', value });
-        await stale;
-        expect(repository.getSnapshot().attention.discussions).toEqual([]);
-        await repository.refreshAttention();
-        expect(repository.getSnapshot().attention).toMatchObject({ status: 'revoked', discussions: [] });
-    });
     it('opens only the exact qualified root and hides it when its Doc source becomes unavailable', async () => {
         const root = storedMessage('discussion-a', 1);
         let denied = false;
@@ -774,17 +1295,24 @@ describe('Discussion repository', () => {
         expect(repository.getSnapshot().threads['discussion-a']).toMatchObject({ status: 'revoked', summary: null });
     });
 
-    it.each([1, 2])('reconciles a lost create through its creator-qualified atomic first message, never a later message at seq %i', async firstMessageSeq => {
+    it.each([{ firstMessageSeq: 1, abort: false }, { firstMessageSeq: 2, abort: false }, { firstMessageSeq: 1, abort: true }])('reconciles a lost create through its creator-qualified atomic first message (seq $firstMessageSeq, abort $abort)', async ({ firstMessageSeq, abort }) => {
         const creationLocalId = 'same-creator-local-id';
         const messageLocalId = 'same-message-local-id';
         const own = { ...storedSummary('discussion-a'), creationLocalId };
         const foreign = { ...storedSummary('discussion-foreign'), creationLocalId };
         const messageReads: URL[] = [];
+        const creationIds: string[] = [];
         let committed = false;
+        const controller = new AbortController();
         const repository = createDiscussionRepository({ scope, address, client: httpClient(async (path, init) => {
             const url = new URL(path, 'https://home.invalid');
             if (url.pathname === '/v1/discussions' && init?.method === 'POST') {
+                creationIds.push(DiscussionCreateRequestV1Schema.parse(JSON.parse(String(init.body))).creationLocalId);
+                if (abort && committed) return response({ discussion: own, firstMessage: {
+                    ...storedMessage(own.id, 1), localId: messageLocalId,
+                } });
                 committed = true;
+                if (abort) { controller.abort(); throw new DOMException('Response aborted after commit', 'AbortError'); }
                 throw new TypeError('create response lost after commit');
             }
             if (url.pathname === '/v1/discussions') return response({ discussions: !committed || url.searchParams.get('state') === 'archived' ? []
@@ -798,9 +1326,15 @@ describe('Discussion repository', () => {
             return response({ discussion: discussionId === own.id ? own : foreign });
         }) });
         expect(await repository.create({ creationLocalId, messageLocalId, title: 'Mine',
-            content: { v: 1, parts: [{ t: 'text', text: 'Mine' }] }, draftSubmission: draftSubmission() })).toMatchObject({ kind: 'checking' });
+            content: { v: 1, parts: [{ t: 'text', text: 'Mine' }] }, draftSubmission: draftSubmission() }, controller.signal)).toMatchObject({ kind: 'checking' });
+        if (abort) {
+            await vi.waitFor(() => expect(repository.getSnapshot().mutations[creationLocalId]?.status).toBe('outcome_unknown'));
+            expect(repository.getSnapshot().mutations[creationLocalId]).toMatchObject({ localId: creationLocalId, messageLocalId });
+            await repository.retry(creationLocalId);
+        }
         await vi.waitFor(() => expect(repository.getSnapshot().mutations[creationLocalId]?.status).toBe(firstMessageSeq === 1 ? 'observed_success' : 'outcome_unknown'));
-        expect(messageReads.map(url => url.search)).toEqual([`?localId=${messageLocalId}`]);
+        expect(messageReads.map(url => url.search)).toEqual(abort ? [] : [`?localId=${messageLocalId}`]);
+        expect(creationIds).toEqual(abort ? [creationLocalId, creationLocalId] : [creationLocalId]);
         expect(repository.getSnapshot().mutations[creationLocalId]?.discussionId).toBe(firstMessageSeq === 1 ? own.id : undefined);
         expect(repository.getSnapshot().threads[foreign.id]).toBeUndefined();
     });
@@ -902,6 +1436,7 @@ describe('Discussion repository', () => {
         const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
             const url = new URL(path, 'https://home.invalid');
             reads.push(path);
+            if (url.pathname === '/v1/discussions/matching') return response({ discussion: anchored });
             const filtered = url.searchParams.get('anchorSessionId') === 'anchor-a';
             if (url.searchParams.get('anchorSessionId') === 'anchor-b') return response({ discussions: [], nextCursor: null });
             if (url.searchParams.get('state') === 'archived') return response({ discussions: filtered ? [{ ...anchored, id: 'archived', archivedAt: 20 }] : [], nextCursor: null });
@@ -923,9 +1458,10 @@ describe('Discussion repository', () => {
         const releaseCurrent = repository.mount({ anchorSessionId: 'anchor-b' });
         reads.length = 0;
         publishMountedDiscussionChanges({ ...scope, changes: [{ cursor: 1, kind: 'discussion', entityId: 'matching', changedAt: 1 }] });
-        await vi.waitFor(() => expect(repository.getListSnapshot('anchor-b').lists.active.status).toBe('ready'));
-        expect(reads.length).toBeGreaterThan(0);
-        expect(reads.every(path => new URL(path, 'https://home.invalid').searchParams.get('anchorSessionId') === 'anchor-b')).toBe(true);
+        await vi.waitFor(() => expect(repository.getSnapshot().threads.matching?.summary?.id).toBe('matching'));
+        await flushHookEffects();
+        expect(repository.getListSnapshot('anchor-b').lists.active.status).toBe('idle');
+        expect(reads).toEqual(['/v1/discussions/matching']);
         releaseCurrent();
     });
 
@@ -1171,6 +1707,55 @@ describe('Discussion repository', () => {
         expect(repository.getSnapshot()).toBe(snapshot);
     });
 
+    it.each(['active', 'archived'] as const)('repairs %s list readability when exact summaries open after key delivery', async state => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(37));
+        const key = await createResourceDataKey({ mode: 'e2ee', encryptDataEncryptionKey: value => encryption.encryptEncryptionKey(value) });
+        if (!key || key.mode !== 'e2ee') throw new Error('Expected resource key fixture');
+        const title = await sealSessionStoredContent(resourceStoredContentContext(key), { v: 1, title: 'Release discussion' });
+        const body = await sealSessionStoredContent(resourceStoredContentContext(key), { v: 1, parts: [{ t: 'text', text: 'Ready for review' }] });
+        if (title.status !== 'ready' || body.status !== 'ready') throw new Error('Expected sealed resource fixture');
+        const anchorSessionId = state === 'active' ? 'source' : undefined;
+        const ready = new Set<string>();
+        const rows = ['discussion-a', 'discussion-b'].map((id, index) => ({ ...storedSummary(id),
+            anchor: { kind: 'session' as const, sessionId: 'source' },
+            archivedAt: state === 'archived' ? 1 : null,
+            encryptionMode: 'e2ee' as const, dataEncryptionKey: key.dataEncryptionKey, titleContent: title.content,
+            latestMessage: { ...storedSummary(id).latestMessage, createdAt: 1000 - index, content: body.content },
+        }));
+        const requests: string[] = [];
+        const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+            const url = new URL(path, 'https://home.invalid');
+            requests.push(url.pathname);
+            const project = (row: typeof rows[number]) => ({ ...row, keyReadiness: ready.has(row.id) });
+            if (url.pathname === '/v1/discussions') return response({
+                discussions: url.searchParams.get('state') === state ? rows.map(project) : [], nextCursor: 'unread-page',
+            });
+            const row = rows.find(row => url.pathname.endsWith(`/${row.id}`));
+            if (!row) throw new Error('Unexpected Discussion request');
+            return response({ discussion: project(row) });
+        }, { encryption, accountMode: 'e2ee' }) });
+        const list = () => anchorSessionId === undefined ? repository.getSnapshot().lists[state]
+            : repository.getListSnapshot(anchorSessionId).lists[state];
+        if (anchorSessionId === undefined) await repository.refreshList(state);
+        else await repository.refreshAnchoredList(anchorSessionId, state);
+        expect(list()).toMatchObject({ status: 'locked', incomplete: true, nextCursor: 'unread-page' });
+        requests.length = 0;
+
+        ready.add('discussion-a');
+        await repository.refreshSummary('discussion-a');
+        expect(list()).toMatchObject({ status: 'locked', incomplete: true });
+        expect(list().items.find(row => row.id === 'discussion-a')).toMatchObject({ title: 'Release discussion',
+            latestMessage: { content: { parts: [{ text: 'Ready for review' }] } } });
+
+        ready.add('discussion-b');
+        await repository.refreshSummary('discussion-b');
+        expect(list()).toMatchObject({ status: 'ready', incomplete: false, nextCursor: 'unread-page' });
+        expect(list().items.map(row => row.id)).toEqual(['discussion-a', 'discussion-b']);
+        // Exact key recovery changes row readability, not query membership or paging demand.
+        expect(requests).toEqual(['/v1/discussions/discussion-a', '/v1/discussions/discussion-b']);
+        repository.clear();
+    });
+
     it('searches a later-page title opened by the actual resource cipher, never ciphertext or message bodies', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(37));
         const key = await createResourceDataKey({ mode: 'e2ee', encryptDataEncryptionKey: value => encryption.encryptEncryptionKey(value) });
@@ -1199,6 +1784,17 @@ describe('Discussion repository', () => {
         expect(selectDiscussionListSearch(list, 'body-only-needle', new Map()).items).toEqual([]);
         expect(requests.every(({ url, init }) => init?.method === 'GET' && init.body === undefined
             && [...url.searchParams.keys()].every(name => ['state', 'cursor', 'limit'].includes(name)))).toBe(true);
+    });
+
+    it('does not index a former participant by retained profile identity', () => {
+        const row = { ...summary('former-participant', null, 1), participantAccounts: [{
+            v: 1 as const, accountId: 'former', accessibility: 'former' as const,
+            profile: { name: 'Retained Person', firstName: 'Retained', lastName: 'Person', username: 'retained', avatarUrl: null },
+        }] };
+        const list = { items: [row], nextCursor: null, status: 'ready' as const, errorCode: null, incomplete: false };
+
+        expect(selectDiscussionListSearch(list, 'Retained Person', new Map()).items).toEqual([]);
+        expect(selectDiscussionListSearch(list, 'retained', new Map()).items).toEqual([]);
     });
 
     it('does not publish a later search page or continue traversal after Home retirement', async () => {
@@ -1566,22 +2162,15 @@ describe('Discussion repository', () => {
         clearDiscussionRepositoryRegistryForTests();
     });
 
-    it('refreshes mounted canonical state for any exact-Session AccountChange while retaining the last page', async () => {
+    it('refreshes mounted canonical state for an exact Discussion change without blanking the retained page', async () => {
         const first = summary('discussion-a', null, 1);
         const refreshed = { ...first, messageSeq: 2, unreadCount: 2 };
-        let resolveRefresh: (value: Awaited<ReturnType<DiscussionRepositoryClient['list']>>) => void = () => {
-            throw new Error('refresh resolver was not installed');
-        };
-        const activeOutcomes: Array<() => ReturnType<DiscussionRepositoryClient['list']>> = [
-            async () => ({ kind: 'succeeded', value: listResult([first], null) }),
-            () => new Promise((resolve) => { resolveRefresh = resolve; }),
-        ];
+        const pending = createDeferred<Awaited<ReturnType<DiscussionRepositoryClient['get']>>>();
         const list = vi.fn<DiscussionRepositoryClient['list']>((input) => (
-            input?.state === 'archived'
-                ? Promise.resolve({ kind: 'succeeded' as const, value: listResult([], null) })
-                : activeOutcomes.shift()!()
+            Promise.resolve({ kind: 'succeeded' as const, value: listResult(input?.state === 'archived' ? [] : [first], null) })
         ));
-        const repository = createDiscussionRepository({ scope, address, client: client({ list }) });
+        const get = vi.fn<DiscussionRepositoryClient['get']>().mockReturnValue(pending.promise);
+        const repository = createDiscussionRepository({ scope, address, client: client({ list, get }) });
         await repository.refreshList('active');
         const unmount = repository.mount();
 
@@ -1592,11 +2181,12 @@ describe('Discussion repository', () => {
 
         expect(repository.getSnapshot().lists.active).toMatchObject({
             items: [first],
-            status: 'loading',
+            status: 'ready',
         });
-        resolveRefresh({ kind: 'succeeded', value: listResult([refreshed], null) });
+        pending.resolve({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId, discussion: refreshed } });
         await vi.waitFor(() => expect(repository.getSnapshot().lists.active.items[0]?.messageSeq).toBe(2));
-        expect(list.mock.calls.filter(([input]) => input?.state === 'active')).toHaveLength(2);
+        expect(get).toHaveBeenCalledExactlyOnceWith('discussion-a', undefined);
+        expect(list.mock.calls.filter(([input]) => input?.state === 'active')).toHaveLength(1);
         unmount();
     });
 

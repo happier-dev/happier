@@ -171,6 +171,8 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
                             testID="artifact-editor:body"
                             resetKey={opening?.id ?? 'new'}
                             value={body}
+                            placeholder={t('artifacts.bodyPlaceholder')}
+                            accessibilityLabel={t('artifacts.bodyLabel')}
                             language="markdown"
                             onChange={setBody}
                             editorRef={editorRef}

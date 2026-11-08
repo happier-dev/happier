@@ -463,6 +463,14 @@ describe('one Inbox row projection', () => {
             author: resolveAccountActorPresentation({ ...committed.accountActor!, serverId: scope.serverId }, scope),
             discussion: { messageRef: message.messageRef, anchor: summary.anchor } });
         expect(mention?.pageRoute).toBe('/discussions/thread?serverId=home-b&messageId=actual-mention');
+        const namedDocSource = { ...source(), docDisplayNames: new Map([['plan-doc', 'Release guide']]) };
+        const namedDoc = buildInboxItems({ ...emptyInput, discussions: namedDocSource }, before);
+        expect(namedDoc[0]).toMatchObject({ title: 'Release guide', source: { displayName: 'Release guide' } });
+        const renamedDoc = buildInboxItems({ ...emptyInput, discussions: { ...namedDocSource,
+            docDisplayNames: new Map([['plan-doc', 'Revised release guide']]) } }, namedDoc);
+        expect(renamedDoc[0]?.title).toBe('Revised release guide');
+        expect(renamedDoc[0]).not.toBe(namedDoc[0]);
+        expect(buildInboxItems({ ...emptyInput, discussions: { ...namedDocSource, docDisplayNames: new Map() } }, namedDoc)[0]?.title).toBe('Doc review');
         expect(buildInboxItems({ ...emptyInput, discussions: source() }, before)).toBe(before);
         const editedMessage = { ...message, content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Changed excerpt' }] } };
         const edited = buildInboxItems({ ...emptyInput, discussions: source(editedMessage) }, before);

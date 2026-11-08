@@ -1,8 +1,9 @@
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { changeTextTestInstance, createDeferred, createSessionFixture, renderScreen } from '@/dev/testkit';
+import { changeTextTestInstance, createSessionFixture, renderScreen } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { t } from '@/text';
@@ -17,6 +18,7 @@ import { readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/d
 import { PluginUiJsonValueV1Schema, type PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { createComposerPresentationHostHandlers, createComposerPresentationTransactionApplier } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { ComposerReadResultV1Schema, ComposerTransactionResultV1Schema, ComposerFocusResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { applyDiscussionParticipantReference, createDiscussionParticipantQuestion, postDiscussionComposerContent } from '../../../../../packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/discussionComposer.mjs';
@@ -33,8 +35,7 @@ import { DiscussionComposer, type DiscussionComposerValue } from '@/components/d
  * The discussion composer is the one composer (`AgentInput`) hosting the human-discussion adapter:
  * Account mentions, typing presence and editability stay here, the shell is the composer's.
  * The real `AgentInput` renders here: typing, the suggestion picker, selection and Send run through
- * it. Only system boundaries are replaced: the discussion's mention-candidate read and its typing
- * presence transport (plus the testkit's platform modules).
+ * it. The page supplies its admitted roster; only typing presence and platform boundaries are replaced.
  */
 
 type CapturedAgentInputProps = Readonly<{
@@ -54,16 +55,15 @@ type CapturedAgentInputProps = Readonly<{
     messageHistory?: string;
     extraActionChips?: readonly Readonly<{ key: string }>[];
     sessionId?: string;
+    onAttachmentsAdded?: (files: readonly File[], options?: Readonly<{ sources?: readonly unknown[] }>) => unknown;
+    hasSendableAttachments?: boolean;
+    attachmentRowItems?: readonly Readonly<{ key: string; label?: string }>[];
 }>;
 
 installAgentInputCommonModuleMocks();
 vi.mock('expo-image', () => ({ Image: (props: Record<string, unknown>) => React.createElement('Image', props, null) }));
 
 const mounted = vi.hoisted(() => ({ screen: null as null | { root: { findByType: (type: unknown) => { props: Record<string, unknown> } } } }));
-const readParticipants = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/api/discussions/discussionActions', () => ({ createDiscussionClient: () => ({ participants: readParticipants }) }));
-
 const accountLifetime: ServerAccountScopeLifetime = {
     scope: { serverId: 'server-b', accountId: 'viewer-b' },
     isCurrent: () => true,
@@ -74,6 +74,16 @@ const ALICE = {
     profile: { name: 'Alice Ng', firstName: 'Alice', lastName: 'Ng', username: 'alice', avatarUrl: null },
     accessHint: 'view' as const,
 };
+type ParticipantRoster = ReturnType<typeof DiscussionParticipantsListResponseV1Schema.parse>;
+function defaultRoster(): ParticipantRoster {
+    return DiscussionParticipantsListResponseV1Schema.parse({
+        discussionId: 'discussion-1', ownerAccountId: ALICE.accountId, access: 'edit',
+        grants: [{ principal: { kind: 'account', accountId: ALICE.accountId }, accessLevel: 'edit', createdByAccountId: ALICE.accountId,
+            createdAt: 0, display: { name: ALICE.profile.name, username: ALICE.profile.username } }],
+        accountActors: [{ v: 1, accountId: ALICE.accountId, accessibility: 'current', profile: ALICE.profile }], participants: [],
+    });
+}
+let participantRoster: ParticipantRoster | null = defaultRoster();
 
 /** The props the real composer was given (for adapter facts the shell doesn't print). */
 function composer(): CapturedAgentInputProps {
@@ -89,7 +99,8 @@ async function render(element: React.ReactElement) {
 
 /** The text field itself (the deepest node carrying the composer's input id), as typing reaches it. */
 function composerInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
-    const input = screen.root.findAll((node) => node.props.testID === 'new-session-composer-input' && typeof node.props.onChangeText === 'function').at(-1);
+    const input = screen.root.findAll((node) => node.props.testID === 'new-session-composer-input'
+        && (typeof node.props.onChangeText === 'function' || typeof node.props.onComposerChange === 'function')).at(-1);
     expect(input).toBeDefined();
     return input!;
 }
@@ -107,14 +118,22 @@ function Harness(props: Readonly<{
     disabled?: boolean;
     onSend?: (content: unknown) => void;
     onValue?: (value: DiscussionComposerValue) => void;
+    roster?: ParticipantRoster | null;
+    onRefreshParticipants?: () => Promise<ParticipantRoster | null>;
 }>): React.ReactElement {
     const [value, setValue] = React.useState<DiscussionComposerValue>(props.initial ?? { text: '', mentions: [] });
+    const [refreshed, setRefreshed] = React.useState<ParticipantRoster | null | undefined>();
+    const refreshParticipants = React.useCallback(async () => {
+        if (props.onRefreshParticipants) setRefreshed(await props.onRefreshParticipants());
+    }, [props.onRefreshParticipants]);
     return (
-        <DiscussionComposer
+        <DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'draft-address' }}
             scope={accountLifetime.scope}
             accountLifetime={props.lifetime ?? accountLifetime}
             address={{ serverId: 'server-b' }}
             discussionId="discussion-1"
+            roster={props.roster === undefined ? (refreshed === undefined ? participantRoster : refreshed) : props.roster}
+            onRefreshParticipants={refreshParticipants}
             availability="available"
             value={value}
             onChange={(next) => {
@@ -130,32 +149,39 @@ function Harness(props: Readonly<{
 describe('DiscussionComposer (the one composer with the discussion adapter)', () => {
     beforeEach(() => {
         mounted.screen = null;
-        readParticipants.mockReset();
-        readParticipants.mockResolvedValue({ kind: 'succeeded', value: {
-            discussionId: 'discussion-1', ownerAccountId: ALICE.accountId, access: 'edit',
-            grants: [{ principal: { kind: 'account', accountId: ALICE.accountId }, accessLevel: 'edit', createdByAccountId: ALICE.accountId, createdAt: 0, display: { name: ALICE.profile.name, username: ALICE.profile.username } }],
-            participants: [],
-        } });
+        participantRoster = defaultRoster();
     });
 
-    it('does not read the participant roster while the picker is closed, then reads once for a demanded query', async () => {
+    it('filters the admitted page roster after ordinary edits and repeated demanded queries', async () => {
         const screen = await render(<Harness />);
         try {
-            await act(async () => { composerInput(screen).props.onFocus?.(); });
+            await act(async () => { composerInput(screen).props.onComposerFocus?.(); });
             for (let index = 0; index < 25; index += 1) {
                 await act(async () => { changeTextTestInstance(composerInput(screen), `Please review this change ${index}`); });
             }
             await settle();
-            expect(readParticipants).not.toHaveBeenCalled();
-            await composer().autocompleteSuggestions('@session:', new AbortController().signal);
-            expect(readParticipants).toHaveBeenCalledTimes(1);
-            await act(async () => { composerInput(screen).props.onBlur?.(); });
+            for (const query of ['@al', '@ali', '@alice']) {
+                expect((await composer().autocompleteSuggestions(query, new AbortController().signal)).map(row => row.label)).toEqual(['Alice Ng']);
+            }
+            await act(async () => { composerInput(screen).props.onComposerBlur?.(); });
             await settle();
-            expect(readParticipants).toHaveBeenCalledTimes(1);
         } finally { await screen.unmount(); }
     });
 
-    it('lets an external Composer host apply a participant reference to the actual Discussion input and retires it on unmount', async () => {
+    it('labels a former Account suggestion from its explicit relationship fact, never its retained profile', async () => {
+        const roster = { ...defaultRoster(), accountActors: [{ v: 1 as const, accountId: ALICE.accountId,
+            accessibility: 'former' as const, profile: ALICE.profile }] } as ParticipantRoster & {
+                accountActors: readonly [{ v: 1; accountId: string; accessibility: 'former'; profile: typeof ALICE.profile }];
+            };
+        await render(<Harness roster={roster} />);
+
+        const rows = await composer().autocompleteSuggestions('@former', new AbortController().signal);
+
+        expect(rows.map(row => row.label)).toEqual([t('message.accountActorFormerMember')]);
+        expect(rows.map(row => row.label)).not.toContain(ALICE.profile.name);
+    });
+
+    it.each(['participant', 'plugin'] as const)('lets an external Composer host apply a %s reference to the actual Discussion input and retires it on unmount', async (kind) => {
         const emittedActions: unknown[] = [];
         let sent: Promise<unknown> | undefined;
         const onSend = vi.fn((content: unknown) => {
@@ -223,13 +249,23 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
             await hostApi.watchComposer(ref, snapshot => { observations.push(snapshot); });
             const reference = { kind: MENTION_KIND_V1.session, ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'reviewer-session'),
                 label: 'Reviewer', token: '@Reviewer', start: 0, end: 9 };
-            const question = createDiscussionParticipantQuestion('reviewer-session');
+            const participantQuestion = createDiscussionParticipantQuestion('reviewer-session');
+            const pluginReference = { kind: 'happier.composerReference', ref: 'composerReference:issue-42', label: 'Issue 42',
+                composerReference: { pluginId: 'acme.issues', localId: 'issues' }, composerReferenceTrigger: '@' as const,
+                token: '[Issue 42](happier-ref:composerReference:issue-42)', start: 0,
+                end: '[Issue 42](happier-ref:composerReference:issue-42)'.length };
+            const question = kind === 'participant' ? { ...participantQuestion, reference } : {
+                draft: { text: `${pluginReference.token} Check this` }, reference: pluginReference,
+                content: { v: 1, parts: [{ t: 'reference', reference: { kind: pluginReference.kind, ref: pluginReference.ref,
+                    label: pluginReference.label, token: pluginReference.token, composerReference: pluginReference.composerReference,
+                    composerReferenceTrigger: pluginReference.composerReferenceTrigger } }, { t: 'text', text: ' Check this' }] },
+            };
             const { text } = question.draft;
             await act(async () => {
-                expect(await applyDiscussionParticipantReference(hostApi, ref, { ...question.draft, reference })).toMatchObject({ status: 'applied' });
+                expect(await applyDiscussionParticipantReference(hostApi, ref, { ...question.draft, reference: question.reference })).toMatchObject({ status: 'applied' });
             });
             expect(composerInput(screen).props.value).toBe(text);
-            expect(observations).toContainEqual(expect.objectContaining({ text, references: [expect.objectContaining(reference)] }));
+            expect(observations).toContainEqual(expect.objectContaining({ text, references: [expect.objectContaining(question.reference)] }));
             let lock: Awaited<ReturnType<typeof hostApi.acquireComposerInputLock>> | undefined;
             await act(async () => { lock = await hostApi.acquireComposerInputLock(ref, { mode: 'editAndSubmit', reason: 'Preparing review' }); });
             expect(composerInput(screen).props.editable).toBe(false);
@@ -296,13 +332,13 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
     it('offers people and admitted Session references with no agent setup chip or agent history', async () => {
         const screen = await render(<Harness />);
 
-        expect(composer().autocompleteKinds).toEqual(['accountMention', 'session']);
+        expect(composer().autocompleteKinds).toEqual(['accountMention', 'session', 'composerReference']);
         expect(composer().engineControls).toBe('none');
         // Dictation only writes words into the field; no conversational Voice is mounted here.
         expect(composer().voiceAffordance).toBe('dictation');
         expect(composer().messageHistory).toBe('none');
-        // `@` as a control is the one chip (lab T2-A); no agent, engine or session chip.
-        expect((composer().extraActionChips ?? []).map((chip) => chip.key)).toEqual(['mention']);
+        // Attach (the Session's own file intake) and `@` as a control (lab T2-A); no agent, engine or session chip.
+        expect((composer().extraActionChips ?? []).map((chip) => chip.key)).toEqual(['attachments-add', 'mention']);
         expect(composer().sessionId).toBeUndefined();
         // An empty draft stays editable; Send's emptiness is the composer's own decision.
         expect(composer().disabled).toBe(false);
@@ -314,8 +350,11 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
 
     it('writes the mention trigger after the draft when `@` is pressed, so the people suggestions open on it', async () => {
         const values: DiscussionComposerValue[] = [];
-        const screen = await render(<Harness initial={{ text: 'Can you check', mentions: [] }} onValue={(value) => values.push(value)} />);
-        await screen.pressByTestIdAsync('agent-input-mention-chip');
+        await render(<Harness initial={{ text: 'Can you check', mentions: [] }} onValue={(value) => values.push(value)} />);
+        // `@` is reached wherever the person placed it (bar or the + menu); its action writes the trigger.
+        const mention = (composer().extraActionChips ?? []).find((chip) => chip.key === 'mention') as unknown as
+            { collapsedAction: (input: { tint: string; dismiss: () => void }) => { onPress: () => void } };
+        await act(async () => { mention.collapsedAction({ tint: '#000', dismiss: () => {} }).onPress(); });
         expect(values.at(-1)?.text).toBe('Can you check @');
     });
 
@@ -344,7 +383,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
 
     it.each([undefined, 'discussion-1'])('names the real human submit action for discussion %s', async (discussionId) => {
         const onSend = vi.fn();
-        const screen = await render(<DiscussionComposer
+        const screen = await render(<DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'draft-address' }}
             scope={{ serverId: 'server-b', accountId: 'viewer-b' }}
             accountLifetime={accountLifetime}
             address={{ serverId: 'server-b' }}
@@ -364,29 +403,57 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         expect(onSend).toHaveBeenCalledWith({ v: 1, parts: [{ t: 'text', text: 'Please review this' }] });
     });
 
+    it('sends a file with no text through the shared Session intake, as an attachment part with its source', async () => {
+        const onSend = vi.fn();
+        await render(<DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'attachment-only' }}
+            scope={accountLifetime.scope} accountLifetime={accountLifetime} address={{ serverId: 'server-b' }}
+            discussionId="attachment-only" availability="available" value={{ text: '', mentions: [] }}
+            onChange={() => {}} disabled={false} onSend={onSend} />);
+        await act(async () => { composer().onAttachmentsAdded?.([], { sources: [{ kind: 'memory', name: 'notes.txt', bytes: new Uint8Array([1, 2, 3]) }] }); });
+        // The tray shows the file as a Session's does, and an empty field can still send it.
+        expect(composer().attachmentRowItems?.map(item => item.label)).toEqual(['notes.txt']);
+        expect(composer().hasSendableAttachments).toBe(true);
+        await act(async () => { composer().onSend?.(); });
+        await vi.waitFor(async () => {
+            await settle();
+            expect({ sent: onSend.mock.calls.length, tray: composer().attachmentRowItems }).toMatchObject({ sent: 1 });
+        }, { timeout: 5000 });
+        const [content, submission] = onSend.mock.calls[0]!;
+        expect(content).toMatchObject({ v: 1, parts: [{ t: 'attachment', attachment: { kind: 'file', name: 'notes.txt', file: { sizeBytes: 3 } } }] });
+        expect(submission.sources).toHaveLength(1);
+        // An observed success clears only the sent file from the tray.
+        await act(async () => { submission.settle('observed_success'); });
+        expect(composer().attachmentRowItems ?? []).toEqual([]);
+    });
+
     it('types @Ali in the real composer, picks Alice and posts her as a mention part', async () => {
         const onSend = vi.fn();
         const screen = await render(<Harness onSend={onSend} />);
 
         await act(async () => {
-            composerInput(screen).props.onFocus?.();
+            composerInput(screen).props.onComposerFocus?.();
         });
         await act(async () => {
             changeTextTestInstance(composerInput(screen), '@Ali');
         });
         await settle();
         // The picker lists who this discussion can mention; Enter picks the highlighted person.
-        expect(readParticipants).toHaveBeenCalledWith('discussion-1', expect.any(AbortSignal));
         expect(screen.getTextContent()).toContain('Alice Ng');
         await act(async () => {
-            composerInput(screen).props.onKeyPress?.({ nativeEvent: { key: 'Enter' }, preventDefault: () => undefined });
+            composerInput(screen).props.onComposerKeyPress?.({ nativeEvent: { key: 'Enter' }, preventDefault: () => undefined });
         });
         await settle();
         const token = formatInlineReferenceTokenV1({ label: 'Alice Ng', ref: 'account:account-alice' });
         expect(composerInput(screen).props.value).toBe(`${token} `);
 
         await act(async () => {
-            changeTextTestInstance(composerInput(screen), `${token} can you look?`);
+            const input = composerInput(screen);
+            const text = `${token} can you look?`;
+            // The native editor reports the retained chip on an append. A
+            // text-only synthetic event with references: [] means deletion.
+            if (typeof input.props.onChangeText === 'function') changeTextTestInstance(input, text);
+            else input.props.onComposerChange({ nativeEvent: { text, selection: { start: text.length, end: text.length },
+                eventCount: 1, references: input.props.references } });
         });
         await act(async () => {
             await screen.root.findAll((node) => node.props.testID === 'new-session-composer-send' && typeof node.props.onPress === 'function')[0]!.props.onPress();
@@ -407,16 +474,17 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         store.getState().applySessions([createSessionFixture({ id: 'invited-review-agent', serverId: 'server-b',
             metadata: { path: '/review', host: 'review-machine', machineId: 'review-machine-id', flavor: 'codex', homeDir: '/home/reviewer',
                 summary: { text: 'Review agent', updatedAt: 1 } } })]);
-        readParticipants.mockResolvedValue({ kind: 'succeeded', value: DiscussionParticipantsListResponseV1Schema.parse({
+        participantRoster = DiscussionParticipantsListResponseV1Schema.parse({
             discussionId: 'discussion-1', ownerAccountId: ALICE.accountId, access: 'edit', grants: [],
+            accountActors: [{ v: 1, accountId: ALICE.accountId, accessibility: 'current', profile: ALICE.profile }],
             participants: [{ participant: { kind: 'session', sessionId: 'invited-review-agent' },
                 answerPolicy: 'when_addressed', createdAt: 1 }],
-        }) });
+        });
         const onSend = vi.fn();
         const screen = await render(<Harness onSend={onSend} />);
         try {
             await act(async () => {
-                composerInput(screen).props.onFocus?.();
+                composerInput(screen).props.onComposerFocus?.();
                 changeTextTestInstance(composerInput(screen), '@Review');
             });
             await settle();
@@ -427,7 +495,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
                 agentId: 'codex', machineId: 'review-machine-id', serverId: 'server-b',
             } });
             await act(async () => {
-                composerInput(screen).props.onKeyPress?.({ nativeEvent: { key: 'Enter' }, preventDefault: () => undefined });
+                composerInput(screen).props.onComposerKeyPress?.({ nativeEvent: { key: 'Enter' }, preventDefault: () => undefined });
             });
             await settle();
             expect(composer().structuredInputMentions).toEqual([expect.objectContaining({
@@ -440,6 +508,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
             ] });
         } finally {
             await screen.unmount();
+            setScreenSharingPrivacyActive(false);
             store.setState(previous, true);
         }
     });
@@ -447,8 +516,11 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
     it('offers current roster Sessions and inert reserved model slots, including uncached or offline participants', async () => {
         const store = getStorage();
         const previous = store.getState();
+        const recentActivityAt = Date.now() - 180_000;
         store.getState().applySessions([
-            createSessionFixture({ id: 'invited-bot', serverId: 'server-b', active: false }),
+            createSessionFixture({ id: 'invited-bot', serverId: 'server-b', active: false,
+                meaningfulActivityAt: recentActivityAt, metadata: { path: '/review', host: 'Review machine',
+                    summary: { text: 'Review the opening plan', updatedAt: recentActivityAt } } }),
             createSessionFixture({ id: 'outsider-session', serverId: 'server-b', active: true }),
         ]);
         const launch = { executionTarget: { serverId: 'server-b', machineId: 'machine-b' },
@@ -464,15 +536,17 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
                     answerPolicy: 'when_addressed', createdAt: 3 },
             ],
         });
-        readParticipants.mockResolvedValueOnce({ kind: 'succeeded', value: response })
-            .mockResolvedValueOnce({ kind: 'succeeded', value: { ...response, participants: [] } });
-        const screen = await render(<Harness />);
+        const screen = await render(<Harness roster={response} />);
         try {
             const rows = await composer().autocompleteSuggestions('@session:', new AbortController().signal);
             const references = rows.flatMap(({ structuredInput }) => structuredInput
                 && structuredInput.kind === MENTION_KIND_V1.session && 'ref' in structuredInput
                 ? [structuredInput.ref] : []);
             expect(references.sort()).toEqual(['session:invited-bot', 'session:model-session']);
+            const named = rows.find(row => row.key === 'session-invited-bot');
+            expect(named?.label).toBe('Review the opening plan');
+            expect(named?.description).toContain(formatRelativeTimeShort(recentActivityAt, Date.now()));
+            expect(named?.description).toContain('Review machine');
             expect(rows.find(row => row.key === 'discussion-model:unbound-slot')?.structuredInput).toMatchObject({
                 kind: DISCUSSION_MODEL_SLOT_MENTION_KIND, ref: 'discussion-participant:unbound-slot',
             });
@@ -483,11 +557,21 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
                 expect(row.description).not.toContain('invited-bot');
                 expect(row.description).not.toContain('model-session');
             }
+            await act(async () => {
+                store.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-b': ['private'] } });
+                store.getState().setSessionTagAssignmentsOptimistic('server-b', 'invited-bot', ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            const privateRows = await composer().autocompleteSuggestions('@session:', new AbortController().signal);
+            expect(privateRows.map(row => row.key)).not.toContain('session-invited-bot');
+            expect(privateRows.map(row => row.key)).toContain('session-model-session');
+            await act(async () => setScreenSharingPrivacyActive(false));
+            await screen.update(<Harness roster={{ ...response, participants: [] }} />);
             const afterRemoval = await composer().autocompleteSuggestions('@session:', new AbortController().signal);
             expect(afterRemoval).toEqual([]);
-            expect(readParticipants).toHaveBeenCalledTimes(2);
         } finally {
             await screen.unmount();
+            setScreenSharingPrivacyActive(false);
             store.setState(previous, true);
         }
     });
@@ -503,7 +587,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         ]);
         const invited = { participants: [{ kind: 'session' as const, sessionId: 'invited-bot' }, { kind: 'account' as const, accountId: ALICE.accountId }],
             accounts: new Map([[ALICE.accountId, { v: 1 as const, serverId: 'server-b', accountId: ALICE.accountId, profile: ALICE.profile }]]) };
-        const screen = await render(<DiscussionComposer scope={accountLifetime.scope} accountLifetime={accountLifetime}
+        const screen = await render(<DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'draft-address' }} scope={accountLifetime.scope} accountLifetime={accountLifetime}
             address={{ serverId: 'server-b' }} availability="available" value={{ text: '', mentions: [] }}
             onChange={() => undefined} disabled={false} onSend={() => undefined} invited={invited} />);
         try {
@@ -512,16 +596,28 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
                 .toEqual(['session:invited-bot']);
             const people = await composer().autocompleteSuggestions('@', new AbortController().signal);
             expect(people.filter(row => row.kind === 'accountMention').map(row => row.key)).toEqual([ALICE.accountId]);
-            expect(readParticipants).not.toHaveBeenCalled();
+            await act(async () => {
+                store.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-b': ['private'] } });
+                store.getState().setSessionTagAssignmentsOptimistic('server-b', 'invited-bot', ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            expect(await composer().autocompleteSuggestions('@session:', new AbortController().signal)).toEqual([]);
+            await act(async () => setScreenSharingPrivacyActive(false));
+
         } finally {
             await screen.unmount();
+            setScreenSharingPrivacyActive(false);
             store.setState(previous, true);
         }
     });
 
     it.each([accountLifetime.scope.accountId, ALICE.accountId])('omits the viewer from the ordinary picker with owner %s', async (ownerAccountId) => {
-        readParticipants.mockResolvedValue({ kind: 'succeeded', value: DiscussionParticipantsListResponseV1Schema.parse({
+        participantRoster = DiscussionParticipantsListResponseV1Schema.parse({
             discussionId: 'discussion-1', ownerAccountId, access: 'edit', participants: [],
+            accountActors: [
+                { v: 1, accountId: ALICE.accountId, accessibility: 'current', profile: ALICE.profile },
+                { v: 1, accountId: accountLifetime.scope.accountId, accessibility: 'current', profile: null },
+            ],
             grants: [{ principal: { kind: 'account', accountId: ALICE.accountId }, accessLevel: 'edit',
                 createdByAccountId: accountLifetime.scope.accountId, createdAt: 1,
                 display: { name: ALICE.profile.name, username: ALICE.profile.username } },
@@ -529,34 +625,33 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
                     principal: { kind: 'account', accountId: accountLifetime.scope.accountId }, accessLevel: 'edit',
                     createdByAccountId: ownerAccountId, createdAt: 1, display: { name: null },
                 }] : [])],
-        }) });
+        });
         await render(<Harness />);
         const rows = await composer().autocompleteSuggestions('@', new AbortController().signal);
         expect(rows.filter(row => row.kind === 'accountMention').map(row => row.key)).toEqual([ALICE.accountId]);
     });
 
-    it.each(['retired', 'aborted'] as const)('does not publish a roster that arrives after the query is %s', async (reason) => {
+    it.each(['retired', 'aborted'] as const)('does not publish local suggestions after the query is %s', async (reason) => {
         const value = DiscussionParticipantsListResponseV1Schema.parse({
             discussionId: 'discussion-1', ownerAccountId: ALICE.accountId, access: 'edit', grants: [],
             participants: [{ participant: { kind: 'session', sessionId: 'late-session' },
                 answerPolicy: 'when_addressed', createdAt: 1 }],
         });
-        const pending = createDeferred<{ kind: 'succeeded'; value: typeof value }>();
-        readParticipants.mockReturnValueOnce(pending.promise);
+        participantRoster = value;
         let current = true;
         await render(<Harness lifetime={{ ...accountLifetime, isCurrent: () => current }} />);
         const query = new AbortController();
         const suggestions = composer().autocompleteSuggestions('@session:', query.signal);
         if (reason === 'retired') current = false;
         else query.abort();
-        pending.resolve({ kind: 'succeeded', value });
         expect(await suggestions).toEqual([]);
     });
 
     it('offers Retry when the people search fails, and retrying searches again', async () => {
         const { resolveComposerSuggestionKind } = await import('@/components/autocomplete/composerSuggestionKinds');
-        readParticipants.mockRejectedValueOnce(new Error('offline'));
-        await render(<Harness />);
+        participantRoster = null;
+        const refresh = vi.fn(async () => defaultRoster());
+        await render(<Harness onRefreshParticipants={refresh} />);
         const failedHandler = composer().autocompleteSuggestions;
 
         const rows = await failedHandler('@al', new AbortController().signal);
@@ -574,15 +669,17 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         expect(composer().autocompleteSuggestions).not.toBe(failedHandler);
         const retried = await composer().autocompleteSuggestions('@al', new AbortController().signal);
         expect(retried.map((row) => row.label)).toEqual(['Alice Ng']);
-        expect(readParticipants).toHaveBeenCalledTimes(2);
+        expect(refresh).toHaveBeenCalledOnce();
     });
 
     it('keeps the last picker row for "Type more to narrow" when the authorized roster has more matches', async () => {
-        readParticipants.mockResolvedValueOnce({ kind: 'succeeded', value: {
+        participantRoster = DiscussionParticipantsListResponseV1Schema.parse({
             discussionId: 'discussion-1', ownerAccountId: 'account-0', access: 'edit',
             grants: Array.from({ length: 12 }, (_, index) => ({ principal: { kind: 'account', accountId: `account-${index}` }, accessLevel: 'edit', createdByAccountId: 'viewer-b', createdAt: 0, display: { name: `Alice ${index}` } })),
+            accountActors: Array.from({ length: 12 }, (_, index) => ({ v: 1, accountId: `account-${index}`,
+                accessibility: 'current' as const, profile: { name: `Alice ${index}`, firstName: null, lastName: null, username: null, avatarUrl: null } })),
             participants: [],
-        } });
+        });
         await render(<Harness />);
 
         const rows = await composer().autocompleteSuggestions('@a', new AbortController().signal);

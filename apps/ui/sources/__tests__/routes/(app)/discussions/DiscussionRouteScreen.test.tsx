@@ -2,11 +2,11 @@ import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 
-import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { answerDiscussionThreadForTests, createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionRouteCommonModuleMocks } from '@/__tests__/routes/(app)/session/[id]/sessionRouteTestHelpers';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
@@ -24,7 +24,7 @@ let navigationBoundary: ReturnType<typeof import('@/dev/testkit/mocks/reactNavig
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ useWindowDimensions: () => viewport, Dimensions: { get: () => viewport } });
+        return createReactNativeWebMock({ Dimensions: { get: () => viewport } });
     },
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
         rt: { screen: viewport, orientation: 'landscape' },
@@ -49,6 +49,7 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItems: true }).module;
 });
 
+await prepareSessionPaneRuntimeForTests();
 const homes = createHomeGovernanceHarness();
 const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1',
     credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
@@ -91,7 +92,7 @@ function hostText(node: ReactTestInstance | string | null): string {
 }
 
 describe('DiscussionRouteScreen', () => {
-    it('loads a standalone committed thread beside the desktop column with stable external snapshots', async () => {
+    it.each([true, false])('loads the full desktop thread with column visibility %s and stable external snapshots', async (columnVisible) => {
         Object.assign(viewport, { width: 1440, height: 940 });
         const serverId = await homes.addHome({ name: 'Discussion Home', serverUrl: 'https://session-pane.test',
             serverIdentityId: runtime.serverIdentityId, accountId: runtime.accountScope!.accountId,
@@ -107,11 +108,12 @@ describe('DiscussionRouteScreen', () => {
         onTestFailed(() => console.error('Discussion snapshot phase:', phase,
             'requests:', homes.requests.map(request => request.path)));
         const errors = vi.spyOn(console, 'error');
-        const screen = await renderDiscussionRoute('discussion', true);
+        const screen = await renderDiscussionRoute('discussion', columnVisible);
         try {
             expect(screen.findByType(SurfaceStateSizeProvider).props.size).toBe('page');
             phase = 'waiting for loaded detail';
             await waitForHomeGovernance(() => expect(screen.findByTestId('session-discussion-details')).not.toBeNull());
+            expect(screen.findHostByTestId('discussion-right-sidebar-action-rail')).not.toBeNull();
             phase = 'waiting for committed message';
             await waitForHomeGovernance(() => expect(hostText(screen.findHostByTestId('session-discussion-message-content-committed-root'))).toContain('Committed conversation content'));
             expect(screen.findAllByTestId('session-discussion-details-state')).toHaveLength(0);
@@ -205,6 +207,49 @@ describe('DiscussionRouteScreen', () => {
         });
         expect(screen.findByType(DiscussionDetailsView).props.target.address).not.toHaveProperty('sessionId');
         expect(screen.findAllByTestId('session-discussion-route-loading')).toHaveLength(0);
+    });
+
+    it('keeps an edited decision sheet mounted across desktop and phone layouts', async () => {
+        const serverId = await homes.addHome({ name: 'Discussion Home', serverUrl: 'https://session-pane.test',
+            serverIdentityId: runtime.serverIdentityId, accountId: runtime.accountScope!.accountId,
+            credentials: runtime.credentials, active: false });
+        answerDiscussionThreadForTests(homes, serverId, { accountId: 'account-a', loseCreate: false, loseFirstRejoin: false });
+        const { createDiscussionClient } = await import('@/sync/api/discussions/discussionActions');
+        const client = createDiscussionClient({ scope: runtime.accountScope!, availability: 'available' });
+        const created = await client.create({ creationLocalId: 'decision-resize-create', messageLocalId: 'decision-resize-message',
+            title: 'Decision continuity', content: { v: 1, parts: [{ t: 'text', text: 'Keep the resize draft' }] } });
+        expect(created.kind).toBe('succeeded');
+        routeParams = { discussionId: 'committed-thread', serverId };
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
+        const { DiscussionRouteScreen } = await import('@/components/discussions/DiscussionRouteScreen');
+        const frame = (columnVisible: boolean) => <runtime.Wrapper>
+            <navigationBoundary.NavigationContext.Provider value={navigationBoundary.useNavigation()}>
+                <AppShellColumnContext.Provider value={{ present: columnVisible, columnVisible }}>
+                    <DiscussionRouteScreen kind="discussion" />
+                </AppShellColumnContext.Provider>
+            </navigationBoundary.NavigationContext.Provider>
+        </runtime.Wrapper>;
+        const restorePopoverWebGlobals = withPopoverWebGlobals();
+        const screen = await renderScreen(frame(true));
+        try {
+            const { DiscussionMessageMenu } = await import('@/components/discussions/DiscussionMessageMenu');
+            await waitForHomeGovernance(() => expect(screen.findByType(DiscussionMessageMenu).props.saveDecision).toBe(true));
+            await act(async () => screen.findByType(DiscussionMessageMenu).props.onSelect('saveDecision'));
+            await act(async () => screen.changeTextByTestId('save-memory-decision.text', 'Draft survives rotation'));
+
+            Object.assign(viewport, { width: 390, height: 844 });
+            await screen.update(frame(false));
+            expect(screen.findByTestId('save-memory-decision.text')?.props.value).toBe('Draft survives rotation');
+
+            Object.assign(viewport, { width: 1440, height: 940 });
+            await screen.update(frame(true));
+            expect(screen.findByTestId('save-memory-decision.text')?.props.value).toBe('Draft survives rotation');
+        } finally {
+            await act(async () => getStorage().getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'classic' }));
+            await screen.unmount();
+            restorePopoverWebGlobals();
+        }
     });
 
     it('keeps the Discussion mounted without declaring it visible when the native route loses focus', async () => {

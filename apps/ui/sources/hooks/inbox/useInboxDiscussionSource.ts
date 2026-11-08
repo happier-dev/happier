@@ -10,6 +10,7 @@ import { readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/d
 import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
+import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactTitleProjections';
 
 const emptySnapshot = () => null;
 const emptySubscribe = () => () => {};
@@ -54,8 +55,13 @@ export function useInboxDiscussionSource(serverId: string | null) {
     const sessionTitles = useSessionDisplayNameProjections(sessionAddresses, readableSessionDisplayTitle);
     const sessionDisplayNames = React.useMemo(() => new Map(sessionAddresses.map((address, index) =>
         [address.sessionId, sessionTitles[index] ?? null] as const)), [sessionAddresses, sessionTitles]);
+    const docIds = React.useMemo(() => [...new Set((attention?.discussions ?? []).flatMap(({ discussion }) =>
+        discussion.anchor?.kind === 'doc' ? [discussion.anchor.doc.ref.artifactId] : []))], [attention?.discussions]);
+    const docTitles = useArtifactTitleProjections(binding?.scope ?? null, docIds);
+    const docDisplayNames = React.useMemo(() => new Map(docIds.map((id, index) =>
+        [id, docTitles[index] ?? null] as const)), [docIds, docTitles]);
     const source = React.useMemo<InboxDiscussionSource | null>(() => attentionSource
-        ? { ...attentionSource, sessionDisplayNames } : null, [attentionSource, sessionDisplayNames]);
+        ? { ...attentionSource, sessionDisplayNames, docDisplayNames } : null, [attentionSource, sessionDisplayNames, docDisplayNames]);
     const coverage = !available || !binding || !attention ? 'unavailable' : attention.status !== 'ready' || attention.incomplete || attention.nextCursor !== null
         ? 'partial' : 'complete';
     const markOpened = React.useCallback(async (item: InboxItem) => {

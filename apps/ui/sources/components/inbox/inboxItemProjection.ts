@@ -29,6 +29,8 @@ export type InboxDiscussionSource = Readonly<{
     entries: DiscussionAttentionResultV1['discussions'];
     /** Exact-Home names from the existing batched Session title projection. */
     sessionDisplayNames?: ReadonlyMap<string, string | null>;
+    /** Names from the scoped canonical Artifact header projection. */
+    docDisplayNames?: ReadonlyMap<string, string | null>;
 }>;
 
 export type InboxItemView = InboxItemViewV1;

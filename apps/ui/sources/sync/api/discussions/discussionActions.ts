@@ -3,7 +3,7 @@ import type { DiscussionCreateResultV1 } from '@happier-dev/protocol/discussions
 import { DocCollaborationActionOutputSchemasV1, deriveDocCommentDiscussionCreationLocalIdV1,
     type DocCommentReplyInputV1, type DocEditProposeInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1, projectDiscussionCandidateSessionQueryV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { buildDiscussionAttachmentBindingsV1, buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAccessRecipientCensusResponseV1Schema, DiscussionRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/discussions/access';
 import { runResourceRecipientKeyPreparationV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
@@ -18,6 +18,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { openSessionStoredContent, sealSessionStoredContent } from '@happier-dev/sync-client';
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { DiscussionPostResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { CryptoWorkerWorkClass } from '@/sync/encryption/nativeCryptoWorker/types';
@@ -30,9 +31,9 @@ import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountC
 import { prepareDiscussionExecutableParticipantInvitation, type DiscussionExecutableParticipantInviteInput } from './executableParticipantInvitation';
 import { DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1, DiscussionSecondOpinionPreviewResponseV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { DiscussionSecondOpinionStartInputV1Schema } from '@happier-dev/protocol/discussions/secondOpinionActions';
-import { DiscussionInitialParticipantsV1Schema, type DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
+import { DiscussionInitialParticipantsV1Schema, DiscussionParticipantsListResponseV1Schema, type DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import { projectDiscussionSecondOpinionPreviewInputV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
-import { DiscussionCandidatesListInputV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { DiscussionCandidatesListInputV1Schema, DiscussionCandidatesListResultV1Schema, projectDiscussionInviteCandidatesV1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionAttentionResponseV1Schema, type DiscussionAttentionQueryV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAttentionResultV1Schema, type DiscussionAttentionResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
@@ -189,8 +190,39 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 return DiscussionAttachmentReadResultV1Schema.parse({ ...reference, bytesBase64: encodeBase64(bytes) });
             }
             if (actionId === 'discussion.candidates.list') {
+                const args = DiscussionCandidatesListInputV1Schema.parse(input);
+                if (args.source === 'sessions') {
+                    // The UI needs the ordinary opened row, not only an opaque identity. Applying
+                    // through the listing owner also gives sent mentions the same exact-Home title.
+                    const [{ fetchSessionListQueryPageForServerAccountScope }, { storage }, { readSessionListRowForServerId }] = await Promise.all([
+                        import('@/sync/domains/session/fetchSessionMetadataInventoryForServerAccountScope'),
+                        import('@/sync/domains/state/storageStore'),
+                        import('@/sync/domains/session/listing/sessionListRowStateLookup'),
+                    ]);
+                    assertCurrent();
+                    dispatched = true;
+                    const roster = args.discussionId ? DiscussionParticipantsListResponseV1Schema.parse(await readTransportJson(options,
+                        DISCUSSION_HTTP_PATHS_V1.participants.replace(':discussionId', encodeURIComponent(args.discussionId)), 'GET', undefined, signal)) : null;
+                    if (roster && roster.discussionId !== args.discussionId) throw refusal('discussion_not_found');
+                    const page = await fetchSessionListQueryPageForServerAccountScope({
+                        scope: options.scope, query: projectDiscussionCandidateSessionQueryV1(args),
+                        request: options.request, signal, isCurrent: () => { assertCurrent(); return true; },
+                    });
+                    assertCurrent();
+                    if (!page.current) return failure('canceled');
+                    const rows = storage.getState().sessionListRowsByServerId;
+                    const candidates = page.sessionIds.map(sessionId => ({ kind: 'session' as const,
+                        selection: { kind: 'session' as const, session: { serverId: options.scope.serverId, sessionId } }, label: null }));
+                    return DiscussionCandidatesListResultV1Schema.parse({ v: 1, serverId: options.scope.serverId,
+                        source: args.source, nextCursor: page.nextCursor,
+                        candidates: projectDiscussionInviteCandidatesV1({ scope: options.scope, candidates, roster,
+                            sessionAccess: new Map(page.sessionIds.map(sessionId => [sessionId,
+                                readSessionListRowForServerId(rows, options.scope.serverId, sessionId)?.access ?? null])),
+                            isSameHome: serverId => areServerProfileIdentifiersEquivalent(serverId, options.scope.serverId) }),
+                    });
+                }
                 return await readDiscussionCandidatesV1({ scope: options.scope,
-                    args: DiscussionCandidatesListInputV1Schema.parse(input), signal,
+                    args, signal,
                     isSameHome: serverId => areServerProfileIdentifiersEquivalent(serverId, options.scope.serverId),
                     request: async request => {
                         dispatched = true;
@@ -389,6 +421,9 @@ export type DiscussionExecutableParticipantInviteOutcome = Exclude<DiscussionCli
     | Readonly<{ kind: 'failed'; errorCode: string; value?: DiscussionActionResult<'discussion.invite'> }>
     | Readonly<{ kind: 'checking'; value?: DiscussionActionResult<'discussion.invite'> }>;
 
+export type DiscussionPostOutcome = Exclude<DiscussionClientOutcome<DiscussionPostResultV1>, Readonly<{ kind: 'failed' }>>
+    | Readonly<{ kind: 'failed'; errorCode: string; stage?: 'participant_invitation' }>;
+
 /** Batch codec for owner-native attention; keys and messages come in the same admitted response. */
 export async function readDiscussionAttentionPage(options: AdapterOptions, input: DiscussionAttentionQueryV1 = {}, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionAttentionResultV1>> {
     if (options.availability === 'unavailable') return { kind: 'failed', errorCode: 'unsupported_action' };
@@ -462,7 +497,7 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
     };
     const post = async (input: Omit<DiscussionActionInputV1ById['discussion.post'], 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> & {
         mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[]; attachmentSources?: readonly PreparedAttachmentSource[];
-    }, signal?: AbortSignal) => {
+    }, signal?: AbortSignal): Promise<DiscussionPostOutcome> => {
         const addressed = readDiscussionMentionedParticipantIdsV1(input.content).mentionedSessionIds;
         if (addressed.length > 0) {
             const roster = await run('discussion.participants.list', { discussionId: input.discussionId }, signal);
@@ -473,7 +508,8 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
                 if (admitted.has(sessionId)) continue;
                 const invitation = await run('discussion.invite', { discussionId: input.discussionId,
                     participant: { kind: 'session', sessionId } }, signal);
-                if (invitation.kind !== 'succeeded') return invitation;
+                if (invitation.kind !== 'succeeded') return invitation.kind === 'failed'
+                    ? { ...invitation, stage: 'participant_invitation' } : invitation;
             }
         }
         if ('kind' in input.content && input.content.kind === 'doc_passage_comment') {

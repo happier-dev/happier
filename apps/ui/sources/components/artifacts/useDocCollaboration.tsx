@@ -9,6 +9,7 @@ import { buildDiscussionRouteHref } from '@/components/discussions/discussionRou
 import { resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel } from '@/components/discussions/discussionTimelineProjection';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useDiscussionListRows } from '@/sync/ops/discussions/useDiscussionListRows';
 import { t } from '@/text';
 
 import { createArtifactActionsClient } from './artifactActionsClient';
@@ -106,6 +107,9 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
   }> | null>(null);
   const marginShown = React.useRef(false);
   const [marginShownState, setMarginShown] = React.useState(false);
+  const attentionItems = React.useMemo(() => read.threads.map(thread => thread.summary), [read.threads]);
+  const attentionRows = useDiscussionListRows(marginShownState ? scope : null, attentionItems);
+  const waitingApprovals = React.useMemo(() => new Map(attentionRows.map(row => [row.id, row.approvalArtifactIds[0] ?? null])), [attentionRows]);
   const reportShown = React.useCallback((shown: boolean) => {
     marginShown.current = shown;
     setMarginShown(shown);
@@ -361,6 +365,7 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
           docRead={docRead}
           mountThread={read.mountThread}
           viewerAccountId={scope.accountId}
+          waitingApprovalId={waitingApprovals.get(id) ?? null}
           onFocus={() => setFocusedId(id)}
           onOpen={() => open(id)}
           onOpenHistory={openHistory}
@@ -368,7 +373,7 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
         />
       );
     },
-    [artifactId, attachingId, client, docRead, focusedId, open, openHistory, paint, pendingComment, pendingId, read.mountThread, router, scope, threads],
+    [artifactId, attachingId, client, docRead, focusedId, open, openHistory, paint, pendingComment, pendingId, read.mountThread, router, scope, threads, waitingApprovals],
   );
 
   const acceptedVersions = React.useMemo(() => new Set(speakerMessages.flatMap((message) => {

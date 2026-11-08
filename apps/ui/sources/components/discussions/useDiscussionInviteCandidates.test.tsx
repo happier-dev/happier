@@ -15,7 +15,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getSessionName, getSessionWorkContext } from '@/utils/sessions/sessionUtils';
-import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readableSessionDisplayTitle, sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
@@ -42,6 +42,52 @@ async function captureHome(serverId: string) {
 }
 
 describe('Discussion Invite source composition', () => {
+    it.each(['selected', 'unselected'] as const)('loads an uncached Session title from the candidate query for both its picker and sent mention on a %s Home', async (selection) => {
+        const home = boundary.serverIds[1]!;
+        const lifetime = await captureHome(home);
+        if (selection === 'unselected') {
+            await boundary.http.selectHomes([boundary.serverIds[0]!]);
+            const { isConcurrentOrdinarySessionListHome } = await import('@/sync/runtime/orchestration/concurrentSessionCache');
+            await vi.waitFor(() => expect(isConcurrentOrdinarySessionListHome(home)).toBe(false));
+        }
+        const recentActivityAt = Date.now() - 180_000;
+        const record = createPlainSessionCurrentProjectionRecordFixture({ id: 'uncached-reviewer',
+            meaningfulActivityAt: recentActivityAt,
+            metadata: { name: 'Review the opening plan', path: '/shared-folder', host: 'review-box' } });
+        boundary.http.answer(home, '/v2/sessions/query', { body: createSessionListSourceFixture({
+            sessions: [{ ...record, viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: record.id })) }],
+            nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+        }) });
+        expect(selectSessionDisplayNameSource(storage.getState(), record.id, home)).toBeNull();
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { executeDiscussionActionInAccountContext } = await import('@/sync/api/discussions/discussionActions');
+        const { DiscussionCandidatesListResultV1Schema } = await import('@happier-dev/protocol/discussions/actions');
+        const account = await captureLazyActionAccountContext(home);
+        try {
+            const outcome = await executeDiscussionActionInAccountContext(account, 'available', {
+                actionId: 'discussion.candidates.list', input: { source: 'sessions' },
+                context: { surface: 'ui', serverId: home },
+            });
+            expect(outcome).not.toMatchObject({ ok: false });
+            const result = DiscussionCandidatesListResultV1Schema.parse(outcome);
+            expect(result.candidates).toContainEqual(expect.objectContaining({ kind: 'session',
+                selection: { kind: 'session', session: { serverId: home, sessionId: record.id } } }));
+            const { readComposerSessionSuggestionDisplay } = await import('@/sync/domains/input/suggestionSession');
+            const { discussionSessionLabel } = await import('./discussionSessionLabel');
+            const display = readComposerSessionSuggestionDisplay({ serverId: home, sessionId: record.id });
+            expect(display?.title).toBe('Review the opening plan');
+            const { getSuggestions } = await import('@/components/autocomplete/suggestions');
+            const suggestions = await getSuggestions(null, '@session:', { kinds: ['session'],
+                catalogs: { sessions: display ? [display] : [] }, signal: new AbortController().signal });
+            expect(suggestions[0]?.label).toBe('Review the opening plan');
+            expect(suggestions[0]?.description).toContain(formatRelativeTimeShort(recentActivityAt, Date.now()));
+            expect(suggestions[0]?.description).toContain('review-box');
+            expect(discussionSessionLabel(selectSessionDisplayNameSource(storage.getState(), record.id, home)))
+                .toBe('Review the opening plan');
+            expect(lifetime.isCurrent()).toBe(true);
+            expect(boundary.http.requests.filter(request => request.serverId === home && request.path === '/v2/sessions/query')).toHaveLength(1);
+        } finally { account.dispose(); }
+    });
     it('projects Bot identity from the one Session inventory and regroups promotion without another read', async () => {
         const home = boundary.serverIds[1]!;
         const accountLifetime = await captureHome(home);
@@ -347,6 +393,7 @@ describe('Discussion Invite source composition', () => {
         await vi.waitFor(() => expect(hook.getCurrent().sections.flatMap(section => section.kind === 'static' ? section.options : [])
             .some(option => option.id === 'session:same-id')).toBe(true));
         const session = createSessionFixture({ id: 'same-id', serverId: home, encryptionMode: 'e2ee', metadataLayoutVersion: 1,
+            meaningfulActivityAt: Date.now() - 180_000,
             metadata: parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1),
             ownerMetadataView: { name: 'Release review', host: 'review-box', path: '/release' } });
         const row = buildSessionListRenderableFromSession(session);
@@ -362,6 +409,7 @@ describe('Discussion Invite source composition', () => {
         expect(option.label).toBe('Release review');
         expect(option.subtitle).toContain('Codex');
         expect(option.subtitle).toContain('review-box');
+        expect(option.subtitle).toContain(formatRelativeTimeShort(session.meaningfulActivityAt!, Date.now()));
         // How a session takes part is said once, beside the section title, not repeated on every row.
         expect(option.subtitle).not.toContain('Answers with its own setup');
         // The row leads with the Agent's own mark, the identity its byline names, not a generic robot.
@@ -379,7 +427,7 @@ describe('Discussion Invite source composition', () => {
         } })); });
         const unnamedOption = hook.getCurrent().sections.flatMap(section => section.kind === 'static' ? section.options : [])
             .find(option => option.id === 'session:same-id')!;
-        expect(unnamedOption.subtitle).toContain(formatAsOfTime(activityAt));
+        expect(unnamedOption.subtitle).toContain(formatRelativeTimeShort(activityAt, Date.now()));
         expect(unnamedOption.subtitle).not.toContain('review-box');
         // Without a recorded Agent it keeps the Agent catalog's own neutral mark, not a hand-picked glyph.
         expect((unnamedOption.icon as React.ReactElement<{ agentId?: string | null }>).props.agentId).toBeNull();

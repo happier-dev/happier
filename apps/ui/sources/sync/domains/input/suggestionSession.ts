@@ -7,7 +7,10 @@ import { resolveServerIdForSessionIdFromLocalState } from '@/sync/runtime/orches
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { getSessionName, getSessionWorkContextParts } from '@/utils/sessions/sessionUtils';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { t } from '@/text';
+import { ALL_SESSIONS_RECORDING_VISIBLE, type SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 /**
  * The `@session` picker's candidate source (D-7).
@@ -38,6 +41,8 @@ export type ComposerSessionSuggestionItem = Readonly<{
     machineId: string | null;
     /** The exact server scope this row was projected for. */
     serverId: string;
+    /** Public list recency, separate from the persisted reference's title. */
+    lastActivityAt?: number | null;
     updatedAt: number;
     active: boolean;
 }>;
@@ -52,8 +57,12 @@ export type ComposerSessionSuggestionDisplay = Omit<ComposerSessionSuggestionIte
 export function readComposerSessionSuggestionDisplay(address: Readonly<{
     sessionId: string; serverId: string;
 }>): ComposerSessionSuggestionDisplay | null {
-    const source = selectSessionDisplayNameSource(storage.getState(), address.sessionId, address.serverId);
+    const state = storage.getState();
+    const source = selectSessionDisplayNameSource(state, address.sessionId, address.serverId);
     if (!source) return null;
+    // The title selector admitted this exact Home's row or hydrated record.
+    const session = readSessionListRowForServerId(state.sessionListRowsByServerId, address.serverId, address.sessionId)
+        ?? state.sessions[address.sessionId];
     const context = getSessionWorkContextParts(source, address.serverId);
     return {
         id: address.sessionId,
@@ -63,6 +72,7 @@ export function readComposerSessionSuggestionDisplay(address: Readonly<{
         agentId: context.agentId,
         machineId: context.machineId,
         serverId: address.serverId,
+        lastActivityAt: session ? resolveSessionListRenderableMeaningfulActivityAt(session) : null,
     };
 }
 
@@ -128,6 +138,7 @@ function projectSession(
             metadata: readSessionListRenderableSharedMetadata(session) }),
         machineId: normalizeTrimmed(metadata?.machineId),
         serverId,
+        lastActivityAt: resolveSessionListRenderableMeaningfulActivityAt(session),
         updatedAt: typeof session.updatedAt === 'number' ? session.updatedAt : 0,
         active: session.active === true,
     };
@@ -142,6 +153,7 @@ function projectSession(
 export function projectComposerSessionSuggestionItems(
     state: ComposerSessionSuggestionState,
     scope: ComposerSessionSuggestionScope,
+    isSessionVisible: SessionRecordingVisibility = ALL_SESSIONS_RECORDING_VISIBLE,
 ): readonly ComposerSessionSuggestionItem[] {
     const currentSessionId = normalizeTrimmed(scope.currentSessionId);
 
@@ -164,6 +176,7 @@ export function projectComposerSessionSuggestionItems(
         if (!id || id === currentSessionId || seen.has(id)) continue;
         if (candidateSessionId && id !== candidateSessionId) continue;
         if (session.archivedAt != null || !isUserFacingSession(session)) continue;
+        if (!isSessionVisible({ sessionId: id, serverId })) continue;
         seen.add(id);
         projected.push(projectSession(session, serverId));
     }
@@ -173,6 +186,7 @@ export function projectComposerSessionSuggestionItems(
 
 export function readComposerSessionSuggestionItems(
     scope: ComposerSessionSuggestionScope,
+    isSessionVisible: SessionRecordingVisibility,
 ): readonly ComposerSessionSuggestionItem[] {
     const state = storage.getState();
     return projectComposerSessionSuggestionItems(
@@ -182,6 +196,7 @@ export function readComposerSessionSuggestionItems(
             sessionListRowsByServerId: state.sessionListRowsByServerId,
         },
         scope,
+        isSessionVisible,
     );
 }
 

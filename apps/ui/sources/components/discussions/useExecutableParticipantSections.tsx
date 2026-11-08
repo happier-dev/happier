@@ -26,7 +26,7 @@ import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachabilit
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
-import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
 import { projectModelParticipantCandidates } from './modelParticipantCandidates';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -173,7 +173,8 @@ export function useExecutableParticipantSections(
         id: `session:${candidate.selection.session.sessionId}`,
         testID: `discussion-invite-session-${candidate.selection.session.sessionId}`,
         label: candidate.label ?? t('session.collaboration.discussion.participants.session'),
-        subtitle: readinessSubtitle(candidate.readiness, candidate.contextLabel ?? (candidate.lastActivityAt == null ? '' : formatAsOfTime(candidate.lastActivityAt))),
+        subtitle: readinessSubtitle(candidate.readiness, [candidate.lastActivityAt == null ? null
+          : formatRelativeTimeShort(candidate.lastActivityAt, Date.now()), candidate.contextLabel].filter(Boolean).join(' · ')),
         icon: sessionMark(candidate.agentId),
         ...(candidate.bot ? { titleAccessory: (
           <StatusPill variant="neutral" hideDot labelVariant="phrase" label={t('sessionsList.conditionBot')} />

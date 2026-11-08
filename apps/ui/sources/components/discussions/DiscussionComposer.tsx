@@ -291,6 +291,7 @@ export function DiscussionComposer(props: Readonly<{
                 agentLabel: display?.agentLabel ?? neutralLabel,
                 agentId: display?.agentId ?? null,
                 machineId: display?.machineId ?? null,
+                lastActivityAt: display?.lastActivityAt ?? null,
             });
         }
         const accountMentions: ComposerAccountMentionSource = {

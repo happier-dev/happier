@@ -288,14 +288,16 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
     if (input.discussions) {
         const { scope } = input.discussions;
         for (const { discussion, message, type } of admittedInboxDiscussionOccurrences(input.discussions)) {
+            const title = (discussion.anchor?.kind === 'doc'
+                ? input.discussions.docDisplayNames?.get(discussion.anchor.doc.ref.artifactId) : null) || discussion.title;
             const producerName = message.producerV1?.kind === 'agent'
                 ? input.discussions.sessionDisplayNames?.get(message.producerV1.sessionId) : null;
             const focus = { kind: 'discussion', serverId: scope.serverId, id: discussion.id, messageId: message.id } as const;
             rows.push({ key: `discussion:${scope.serverId}:${discussion.id}:${message.id}`, producer: 'live',
-                type, view: inboxItemView(type), title: discussion.title ?? discussion.id, context: null,
+                type, view: inboxItemView(type), title: title ?? discussion.id, context: null,
                 createdAt: message.createdAt, read: discussion.lastReadSeq !== null && message.seq <= discussion.lastReadSeq,
                 focus, pageRoute: resolveInboxItemPageRoute(focus),
-                source: { kind: 'discussion', id: discussion.id, serverId: scope.serverId, displayName: discussion.title },
+                source: { kind: 'discussion', id: discussion.id, serverId: scope.serverId, displayName: title },
                 author: message.producerV1 ? producerName ? { name: producerName } : null
                     : message.accountActor && message.accountActor.accountId === message.authorAccountId
                         ? resolveAccountActorPresentation({ ...message.accountActor, serverId: scope.serverId }, scope) : null,

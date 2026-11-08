@@ -2259,8 +2259,13 @@ describe('DiscussionDetailsView selection', () => {
       await act(async () => {
         getStorage().setState({
           sessions: {
-            [participant.id]: { ...namedParticipant, serverId: 'server-a' },
+            [participant.id]: namedParticipant,
           },
+          sessionListRowsByServerId: { 'server-a': {
+            [participant.id]: buildSessionListRenderableFromSession({ ...namedParticipant, serverId: 'server-a',
+              metadata: { ...namedParticipant.metadata!, name: undefined, path: '/same-folder',
+                summary: { text: 'Review agent', updatedAt: 1 } } }),
+          } },
         });
       });
       expect(

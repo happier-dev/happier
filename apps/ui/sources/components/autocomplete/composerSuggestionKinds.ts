@@ -30,6 +30,7 @@ import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/inp
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import type {
     PluginContributedActionDescriptor,
     PluginContributedActionOpenOutcome,
@@ -365,8 +366,9 @@ async function resolveSessionSuggestions(
             key: `session-${item.id}`,
             text: selection.token,
             label: item.title,
-            // A row's second line names where the session works; never its raw id.
-            description: item.workspaceLabel ?? item.agentLabel ?? t('composerReferences.kindSession'),
+            // Age distinguishes Sessions sharing a workspace; context stays secondary to their title.
+            description: [item.lastActivityAt == null ? null : formatRelativeTimeShort(item.lastActivityAt, Date.now()),
+                item.workspaceLabel ?? item.agentLabel ?? t('composerReferences.kindSession')].filter(Boolean).join(' · '),
             // Which agent is running in a session is what a user scans this list for, so the
             // row carries that session's machine-qualified catalog mark rather than the kind's
             // shared glyph. The projection carries the exact declared identity (external plugin

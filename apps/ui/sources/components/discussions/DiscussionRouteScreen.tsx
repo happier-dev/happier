@@ -37,7 +37,7 @@ import { randomUUID } from '@/platform/randomUUID';
 const NO_SERVER_IDS: readonly string[] = Object.freeze([]);
 
 const styles = StyleSheet.create((theme) => ({
-    root: { flex: 1, backgroundColor: theme.colors.surface.base },
+    root: { flex: 1 },
     // The index page's invitation sits in the middle of the page (lab T2-E).
     indexPage: { flex: 1, justifyContent: 'center' },
     headerButton: { minWidth: HAPPIER_PAGE_METRICS.controlHeightPx, minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, alignItems: 'center', justifyContent: 'center' },
@@ -140,7 +140,7 @@ export function DiscussionRouteScreen(props: Readonly<{
     // Beside the column the page carries its own header band. On a phone a Discussion folds its header into
     // its own navigation band (lab T2-Ap), so only the new page keeps the navigation bar.
     const columnVisible = useAppShellColumn().columnVisible;
-    // The phone bar's own decision (MobileBottomChromeHost): a cockpit phone shows the rail's tabs as surfaces.
+    // The mounted Discussion lends this presentation to both phone chrome presenters.
     const deviceType = useDeviceType();
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const phoneSurfaces = !columnVisible && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience });
@@ -157,8 +157,7 @@ export function DiscussionRouteScreen(props: Readonly<{
     return (
         <View style={styles.root}>
             <Stack.Screen options={screenOptions} />
-            {/* Beside the column the Discussion is a page; without it (a phone) it takes the phone step. */}
-            <SurfaceStateSizeProvider size={columnVisible ? 'page' : 'phone'}>
+            <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : 'page'}>
             {!address || (props.kind === 'new' && (anchor === null || draftId === null)) || (props.kind === 'discussion' && !discussionId) ? (
                 <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />
             ) : props.kind === 'list' ? (
@@ -170,7 +169,9 @@ export function DiscussionRouteScreen(props: Readonly<{
             ) : props.kind === 'discussion' ? (
                 // One retained host owns the Discussion across responsive presentation changes. Beside the
                 // column it exposes the page rail/pane; a cockpit phone presents those tabs as surfaces.
-                <DiscussionPaneHost paneEnabled={columnVisible} phoneSurface={phoneSurfaces ? mobileSurface : null}
+                <DiscussionPaneHost discussionId={discussionId!} scope={binding?.scope ?? null}
+                    paneEnabled={deviceType !== 'phone'} phoneSurface={phoneSurfaces ? mobileSurface : null}
+                    onSurfaceChange={surface => router.setParams({ mobileSurface: surface === 'chat' ? undefined : surface })}
                     onBackToThread={() => router.setParams({ mobileSurface: undefined })}
                     main={<DiscussionDetailsView
                         target={{ kind: 'discussion', address, discussionId: discussionId!, ...(messageId ? { messageId } : {}) }}

@@ -8,6 +8,8 @@ import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testk
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { DocPassageMarginThread } from './docPassageMargin';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit');
@@ -24,7 +26,8 @@ const { ArtifactPassageThreadCard } = await import('./ArtifactPassageThreadCard'
 afterEach(() => standardCleanup());
 
 const ref = { kind: 'doc' as const, artifactId: 'runbook', serverId: 'home' };
-const firstPassage: DocPassageRefV1 = { ref, revision: { headerVersion: 1, bodyVersion: 2 }, range: { start: 0, end: 11 }, quote: 'Up to 5 tries' };
+const firstQuote = 'Up to 5 tries';
+const firstPassage: DocPassageRefV1 = { ref, revision: { headerVersion: 1, bodyVersion: 2 }, range: { start: 0, end: firstQuote.length }, quote: firstQuote };
 const laterPassage: DocPassageRefV1 = { ref, revision: { headerVersion: 1, bodyVersion: 5 }, range: { start: 4, end: 20 }, quote: 'Up to 3 attempts' };
 const root: DiscussionOpenedMessageV1 = {
   id: 'm1', discussionId: 'thread-1', seq: 1, authorAccountId: 'ben', accountActor: null, createdAt: 1,
@@ -51,6 +54,15 @@ async function mount(input: Readonly<{ thread: DocPassageMarginThread<Discussion
 const id = 'artifact:passage-thread:thread-1';
 
 describe('ArtifactPassageThreadCard re-attachment', () => {
+  it('keeps the same person avatar identity in the Doc root and latest reply as in the Discussion', async () => {
+    const source = thread({ state: 'exact', range: firstPassage.range });
+    const actor = { v: 1 as const, accountId: 'ben', profile: { name: 'Ben', avatarUrl: null } };
+    const message = { ...root, accountActor: actor };
+    const view = await mount({ thread: { ...source, root: message, replies: [{ ...message, id: 'reply', seq: 2 }] } });
+    const expected = resolveAccountActorPresentation({ ...actor, serverId: 'home' }, { serverId: 'home', accountId: 'alice' }).avatar;
+    expect(view.screen.findAllByType(Avatar).map(node => node.props.id)).toEqual([expected.id, expected.id]);
+  });
+
   it('renders typed Discussion mentions through the shared chips beside the Doc passage', async () => {
     const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
     const view = await mount({ thread: { ...source, root: { ...source.root, content: {
@@ -74,6 +86,23 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
     expect(runs[0]?.props.markdown).toBe('1. **Choose names** that describe intent.');
     expect(view.screen.getTextContent()).toContain('const activeUsers = users.filter(isActive);');
     expect(view.screen.getTextContent()).not.toContain('```');
+  });
+
+  it('keeps a sent Session mention named beside its Doc passage even before that Session answers', async () => {
+    const previousState = storage.getState();
+    try {
+      const session = createSessionFixture({ id: 'runbook-agent', serverId: 'home', metadataLayoutVersion: 1,
+        metadata: { path: '', host: '' }, ownerMetadataView: { name: 'Support runbook', host: 'box', path: '/runbook' } });
+      await act(async () => storage.setState({ sessionListRowsByServerId: { home: { 'runbook-agent': buildSessionListRenderableFromSession(session) } } }));
+      const source = thread({ state: 'exact', range: firstPassage.range });
+      const view = await mount({ thread: { ...source, root: { ...source.root, content: {
+        v: 1, parts: [{ t: 'text', text: 'Ask ' }, { t: 'mention', participant: { kind: 'session', sessionId: 'runbook-agent' } }],
+      } } } });
+      expect(view.screen.findAllByType('EnrichedMarkdownText')[0]?.props.markdown)
+        .toBe('Ask [Support runbook](happier-ref:session:runbook-agent)');
+    } finally {
+      await act(async () => storage.setState(previousState));
+    }
   });
 
   it('offers to attach a changed passage to new text, beside its revision, and asks for the selection while attaching', async () => {

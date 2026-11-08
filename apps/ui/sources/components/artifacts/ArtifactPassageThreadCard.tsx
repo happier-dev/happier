@@ -3,6 +3,7 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierThreadMessage } from '@happier-dev/plugin-ui/components';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
+import { readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/discussions/content';
 
 import { DiscussionMessageContent } from '@/components/discussions/DiscussionMessageContent';
 import { resolveDiscussionMessageAuthorLabel, resolveDiscussionMessageSpeakerLabel } from '@/components/discussions/discussionTimelineProjection';
@@ -13,15 +14,18 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
-import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
+import { useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { useDiscussionSessionLabelProjection } from '@/components/discussions/discussionSessionLabel';
+import { DiscussionWaitingApprovalCard } from '@/components/discussions/DiscussionWaitingApprovalCard';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
+import { ArtifactPassageThreadReply } from './ArtifactPassageThreadReply';
 
 import type { ArtifactActionsClient } from './artifactActionsClient';
 import { ArtifactEditProposal, type AdmittedDocRead } from './ArtifactEditProposal';
 import { readDocPassageThreadQuote, type DocPassageMarginThread } from './docPassageMargin';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-
-const NO_SESSION_LABEL = () => null;
+import { artifactViewRoute } from './artifactBrowserModel';
 
 /**
  * One passage thread beside its passage in the Doc (C5 lab K1-A/R/ST): the passage it is about, the
@@ -46,6 +50,7 @@ export function ArtifactPassageThreadCard(
     onCancelReattach: () => void;
     /** The Doc's body shows this thread's suggestion in place; its card then carries no diff. */
     diffInBody?: boolean;
+    waitingApprovalId?: string | null;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
@@ -86,6 +91,11 @@ export function ArtifactPassageThreadCard(
   // A Workflow Run is neither; it can't be asked to redo, so it names no proposer to address.
   // An agent's message speaks as its Session (C7), in the latest-reply line as in the proposal title.
   const serverId = root.messageRef.discussion.serverId;
+  const viewerScope = { serverId, accountId: props.viewerAccountId };
+  const rootAvatar = root.accountActor?.accountId === root.authorAccountId
+    ? resolveAccountActorPresentation({ ...root.accountActor, serverId }, viewerScope).avatar : null;
+  const replyAvatar = latestReply?.accountActor?.accountId === latestReply?.authorAccountId && latestReply?.accountActor
+    ? resolveAccountActorPresentation({ ...latestReply.accountActor, serverId }, viewerScope).avatar : null;
   const speakerMessages = React.useMemo(
     () => [root, ...thread.replies],
     [root, thread.replies],
@@ -94,9 +104,8 @@ export function ArtifactPassageThreadCard(
     () => [
       ...new Set(
         speakerMessages.flatMap((message) =>
-          message.producerV1?.kind === 'agent'
-            ? [message.producerV1.sessionId]
-            : [],
+          [...(message.producerV1?.kind === 'agent' ? [message.producerV1.sessionId] : []),
+            ...(message.content ? readDiscussionMentionedParticipantIdsV1(message.content).mentionedSessionIds : [])],
         ),
       ),
     ],
@@ -106,19 +115,20 @@ export function ArtifactPassageThreadCard(
     () => speakerSessionIds.map((sessionId) => ({ serverId, sessionId })),
     [serverId, speakerSessionIds],
   );
-  const producerTitles = useSessionDisplayTitles(producerAddresses);
+  const producerTitles = useSessionDisplayNameProjections(producerAddresses, useDiscussionSessionLabelProjection());
   const producerLabels = React.useMemo(
     () => new Map(speakerSessionIds.map((sessionId, index) => [sessionId, producerTitles[index] ?? null])),
     [producerTitles, speakerSessionIds],
   );
+  const resolveSessionLabel = React.useCallback((sessionId: string) => producerLabels.get(sessionId) ?? null, [producerLabels]);
   const resolveSpeakerLabel = React.useCallback(
     (message: DiscussionOpenedMessageV1) =>
       resolveDiscussionMessageSpeakerLabel(message, {
         account: resolveAccountLabel,
-        session: (sessionId) => producerLabels.get(sessionId) ?? null,
+        session: resolveSessionLabel,
         workflowRun: () => null,
       }),
-    [producerLabels, resolveAccountLabel],
+    [resolveSessionLabel, resolveAccountLabel],
   );
   const proposer = React.useMemo(() => {
     const message = thread.proposal;
@@ -206,8 +216,8 @@ export function ArtifactPassageThreadCard(
         face={
           root.authorAccountId ? (
             <Avatar
-              id={root.authorAccountId}
-              imageUrl={root.accountActor?.profile?.avatarUrl ?? null}
+              id={rootAvatar?.id ?? root.authorAccountId}
+              imageUrl={rootAvatar?.imageUrl ?? null}
               size={24}
             />
           ) : null
@@ -226,7 +236,7 @@ export function ArtifactPassageThreadCard(
         }
       >
         <DiscussionMessageContent message={root} serverId={root.messageRef.discussion.serverId}
-          resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={NO_SESSION_LABEL} textStyle={styles.text} />
+          resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} textStyle={styles.text} />
       </HappierThreadMessage>
       </Pressable>
       {latestReply ? (
@@ -237,8 +247,8 @@ export function ArtifactPassageThreadCard(
         >
           {latestReply.authorAccountId ? (
             <Avatar
-              id={latestReply.authorAccountId}
-              imageUrl={latestReply.accountActor?.profile?.avatarUrl ?? null}
+              id={replyAvatar?.id ?? latestReply.authorAccountId}
+              imageUrl={replyAvatar?.imageUrl ?? null}
               size={16}
             />
           ) : null}
@@ -251,6 +261,10 @@ export function ArtifactPassageThreadCard(
           </Text>
         </Pressable>
       ) : null}
+      {props.waitingApprovalId ? <DiscussionWaitingApprovalCard approvalId={props.waitingApprovalId} serverId={serverId}
+        returnHref={artifactViewRoute(thread.passage.ref.artifactId)} /> : null}
+      {props.focused ? <ArtifactPassageThreadReply serverId={serverId} discussionId={thread.discussionId}
+        resolveAccountLabel={resolveAccountLabel} resolveSessionLabel={resolveSessionLabel} onOpen={props.onOpen} /> : null}
       {detached ? (
         <View testID={`${testID}.detached`} style={styles.notice}>
           <View style={styles.noticeLine}>

@@ -6,18 +6,27 @@ import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { deriveDocCommentDiscussionCreationLocalIdV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { DiscussionMessageContentV1StoredSchema } from '@happier-dev/protocol/discussions/content';
+import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { MENTION_KIND_V1, buildMentionRefForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { answerDiscussionThreadForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string | string[] | undefined> }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
     pathname: '/discussions/new', params: () => route.params,
 }).module);
-// This native SDK is imported by route siblings, but a new-draft route never renders Markdown.
+// The browser Markdown adapter is an external SDK boundary in the native host harness.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
-    splitStreamingRevealTextParts: () => { throw new Error('Markdown rendering is outside the new-draft route'); },
+    splitStreamingRevealTextParts: (text: string) => [{ text, reveal: false }],
 }));
+// The host renderer has no native viewport. Substitute only the recycler SDK so real message rows render.
+vi.mock('@legendapp/list/react-native', async importOriginal =>
+    (await import('@/dev/testkit/mocks/legendList')).createCapturingLegendListMock({
+        original: await importOriginal<Record<string, unknown>>(), renderItems: true,
+    }).module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -25,6 +34,7 @@ installDisconnectedServerSocketBoundary();
 const { createArtifactActionsClient } = await import('./artifactActionsClient');
 const { ArtifactPassageQuote } = await import('./ArtifactPassageQuote');
 const { DiscussionRouteScreen } = await import('@/components/discussions/DiscussionRouteScreen');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { createDiscussionClient } = await import('@/sync/api/discussions/discussionActions');
 const { createDiscussionRepository } = await import('@/sync/ops/discussions/discussionRepository');
 const { getDiscussionRepository, clearDiscussionRepositoryRegistryForTests } = await import('@/sync/ops/discussions/discussionRepositoryRegistry');
@@ -33,11 +43,143 @@ const { getSessionDraftSnapshot, resetSessionDraftRepositoryForTests, writeDiscu
 const { buildDiscussionRouteHref, readDiscussionRouteDraftId } = await import('@/components/discussions/discussionRoutes');
 const { createInboxItemRoute, readInboxItemFocus, resolveInboxItemPageRoute } = await import('@/components/inbox/inboxItemFocus');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { buildDiscussionContent } = await import('@/components/discussions/discussionComposerDocument');
+const { useArtifactTitleProjections } = await import('./useArtifactTitleProjections');
+const { storage } = await import('@/sync/domains/state/storageStore');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 beforeEach(async () => { route.params = {}; await homes.reset(); });
-afterEach(async () => { clearDiscussionRepositoryRegistryForTests(); resetSessionDraftRepositoryForTests(); standardCleanup(); await homes.reset(); });
+afterEach(async () => { clearDiscussionRepositoryRegistryForTests(); resetSessionDraftRepositoryForTests(); standardCleanup();
+    await connection?.dispose(); connection = undefined; await homes.reset(); });
 
 describe('Doc collaboration data through the real Actions and Discussion repository', () => {
+    it('opens missing Doc labels through exact headers without fetching bodies or rereading at idle', async () => {
+        const serverId = await homes.addHome({ name: 'Review Home', serverUrl: 'https://doc-labels.test', accountId: 'alice', currentAccount: true });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://doc-labels.test', accountId: 'alice', request: homes.request });
+        const scope = { serverId, accountId: 'alice' };
+        expect(storage.getState().profileScope).toEqual(scope);
+        const created = await createArtifactActionsClient(scope).createArtifact({ header: { kind: 'artifact.legacy', title: 'Release notes' }, body: 'Private body' });
+        if (!('ok' in created) || !created.ok) throw new Error('Expected Doc');
+        const artifactId = created.value.artifactId;
+        storage.getState().deleteArtifact(artifactId);
+        const artifactIds = [artifactId];
+        const before = homes.requests.length;
+        const renders = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(renders);
+            return useArtifactTitleProjections(scope, artifactIds);
+        });
+        await vi.waitFor(() => expect(hook.getCurrent()).toEqual(['Release notes']));
+        expect(storage.getState().artifacts[artifactId]?.body).toBeUndefined();
+        const reads = homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read');
+        expect(reads.map(request => request.input)).toEqual([{ artifactIds, projection: 'headers' }]);
+        renders.reset();
+        await act(async () => {
+            for (let index = 0; index < 20; index++) storage.setState({ artifacts: { ...storage.getState().artifacts } });
+        });
+        expect(hook.getCurrent()).toEqual(['Release notes']);
+        expect(renders.read()).toEqual({ renders: 0, commits: 0 });
+        expect(homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read')).toHaveLength(1);
+        const row = storage.getState().artifacts[artifactId]!;
+        await act(async () => storage.getState().applyArtifacts([{ ...row, title: 'Published notes', headerVersion: row.headerVersion + 1 }]));
+        expect(hook.getCurrent()).toEqual(['Published notes']);
+        expect(renders.read()).toEqual({ renders: 1, commits: 1 });
+        await act(async () => storage.setState({ profileScope: { serverId: 'other-home', accountId: 'alice' } }));
+        expect(hook.getCurrent()).toEqual([null]);
+        await hook.unmount();
+    });
+
+    it.each(['redo', 'reattach', 'redo-refused', 'retained-redo'] as const)('sends the prepared %s through the real Discussion composer and Doc/Discussion Actions', async kind => {
+        const serverId = await homes.addHome({ name: 'Recovery Home', serverUrl: `https://doc-recovery-${kind}.test`, accountId: 'alice', currentAccount: true });
+        const scope = { serverId, accountId: 'alice' };
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { session: { enabled: true } } } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const artifacts = createArtifactActionsClient(scope);
+        const source = 'Original passage.';
+        const created = await artifacts.createArtifact({ header: { kind: 'artifact.legacy', title: 'Recovery notes' }, body: source });
+        if (!('ok' in created) || !created.ok) throw new Error('Expected Doc');
+        const doc = await artifacts.readDoc({ ref: { kind: 'doc', serverId, artifactId: created.value.artifactId } });
+        if (!doc.ok) throw new Error('Expected admitted Doc');
+        const passage = captureDocPassageV1({ ref: doc.value.ref, revision: doc.value.artifact.revision, source, range: { start: 0, end: source.length } });
+        const network = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+        const root = await artifacts.replyToPassage({ target: passage, localId: 'root', content: { v: 1, parts: [{ t: 'text', text: 'Review this.' }] } });
+        if (!('ok' in root) || !root.ok) throw new Error(JSON.stringify(root));
+        const discussionRef = root.value.message.messageRef.discussion;
+        const proposed = await artifacts.proposeEdit({ discussionRef, target: passage, baseRevision: passage.revision,
+            before: passage.quote, after: 'Suggested passage.', reason: 'Clarify.', localId: 'proposal', replyTo: root.value.message.messageRef });
+        if (!('ok' in proposed) || !proposed.ok) throw new Error(JSON.stringify(proposed));
+        const proposalRef = proposed.value.message.messageRef;
+        expect(proposed.value.message.replyTarget).toEqual({ kind: 'message', messageId: root.value.message.messageRef.messageId });
+        homes.answer(serverId, `/v1/discussions/${discussionRef.discussionId}/participants`, { body: DiscussionParticipantsListResponseV1Schema.parse({
+            discussionId: discussionRef.discussionId, ownerAccountId: 'alice', access: 'owner', grants: [],
+            participants: [{ participant: { kind: 'session', sessionId: 'proposer' }, answerPolicy: 'when_addressed', createdAt: 1 }],
+        }) });
+        const address = { kind: 'discussion' as const, discussionId: discussionRef.discussionId };
+        const updated = await artifacts.updateArtifact({ artifactId: doc.value.ref.artifactId, expectedRevision: passage.revision,
+            header: doc.value.artifact.header, body: 'Fresh passage.' });
+        if (!('ok' in updated) || !updated.ok) throw new Error(JSON.stringify(updated));
+        let expectedPassage = passage;
+        const reference = { kind: MENTION_KIND_V1.session, ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'proposer'), label: 'Proposal Agent' };
+        const mention = formatInlineReferenceTokenV1(reference);
+        const redoText = `${mention} Please redo this proposal.`;
+        if (kind === 'reattach') {
+            expectedPassage = captureDocPassageV1({ ref: doc.value.ref, revision: updated.value.revision, source: 'Fresh passage.', range: { start: 0, end: 14 } });
+            writeDiscussionSessionDraft({ scope, address, patch: { text: 'My retained recovery comment', replyTarget: { kind: 'message', messageId: proposalRef.messageId } } });
+            artifacts.beginPassageReattach({ discussionId: discussionRef.discussionId, passage: expectedPassage });
+        } else {
+            artifacts.beginProposalReply({ proposalRef, text: redoText,
+                mentions: [{ ...reference, start: 0, end: mention.length, tokenText: mention }] });
+        }
+        if (kind === 'redo-refused') {
+            // HTTP is the boundary; all draft, composer, Action and codec owners remain real.
+            homes.answer(serverId, `POST /v1/discussions/${discussionRef.discussionId}/messages`, {
+                status: 409, body: { error: 'discussion_invalid_reply_target' },
+            });
+        }
+        const repository = getDiscussionRepository({ scope, address: { serverId }, client: createDiscussionClient({ scope, availability: 'available' }) });
+        if (kind === 'retained-redo') {
+            // Captured pre-fix producer shape: an already-submitted reply wrongly wrapped as a passage comment.
+            // Keep its exact old identity/content; recovery must release that refusal, not rewrite an uncertain send.
+            const draft = await renderHook(() => useDiscussionDraft({ scope, address }));
+            const content = { kind: 'doc_passage_comment' as const, passage,
+                content: buildDiscussionContent(draft.getCurrent().text, draft.getCurrent().mentions) };
+            const replyTarget = { kind: 'message' as const, messageId: proposalRef.messageId };
+            await act(async () => {
+                const draftSubmission = draft.getCurrent().captureSubmittedCurrentness({ kind: 'post',
+                    discussionId: discussionRef.discussionId, localId: 'retained-redo', replyTarget }, { content });
+                expect(await repository.post({ discussionId: discussionRef.discussionId, localId: 'retained-redo',
+                    content, replyTarget, draftSubmission })).toEqual({ kind: 'failed', errorCode: 'doc_passage_mismatch' });
+            });
+            expect(repository.getSnapshot().mutations['retained-redo']).toMatchObject({ status: 'failed', recovery: 'dismiss' });
+            await draft.unmount();
+        }
+        route.params = { serverId, discussionId: discussionRef.discussionId, messageId: proposalRef.messageId };
+        const screen = await renderScreen(createElement(AppPaneProvider, null, createElement(DiscussionRouteScreen, { kind: 'discussion' })));
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-composer-send')).not.toBeNull());
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        if (kind === 'redo-refused') {
+            await vi.waitFor(() => expect(Object.values(repository.getSnapshot().mutations)).toEqual([
+                expect.objectContaining({ status: 'failed', errorCode: 'discussion_invalid_reply_target', recovery: 'dismiss' }),
+            ]));
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('discussion_invalid_reply_target'));
+            expect(network.messages).toHaveLength(2);
+            const draft = await renderHook(() => useDiscussionDraft({ scope, address }));
+            expect(draft.getCurrent()).toMatchObject({ text: redoText, replyTarget: { kind: 'message', messageId: proposalRef.messageId } });
+            await draft.unmount();
+            await screen.unmount();
+            return;
+        }
+        await vi.waitFor(() => expect(network.messages, JSON.stringify(repository.getSnapshot().mutations)).toHaveLength(3));
+        expect(network.messages[2]).toMatchObject(kind !== 'reattach'
+            ? { replyTarget: { kind: 'message', messageId: proposalRef.messageId }, content: { t: 'plain', v: { v: 1, parts: [
+                { t: 'mention', participant: { kind: 'session', sessionId: 'proposer' } }, { t: 'text', text: ' Please redo this proposal.' },
+            ] } } }
+            : { replyTarget: { kind: 'doc_passage', doc: { ref: expectedPassage.ref, revision: expectedPassage.revision } },
+                content: { t: 'plain', v: { kind: 'doc_passage_comment', passage: expectedPassage, content: { v: 1, parts: [{ t: 'text', text: 'My retained recovery comment' }] } } } });
+        await screen.unmount();
+    });
     it('mounts the keyed New Discussion rather than the unrelated singleton draft', async () => {
         const serverId = await homes.addHome({ name: 'Draft Route Home', serverUrl: 'https://doc-passage-draft-route.test', accountId: 'alice', currentAccount: true });
         const scope = { serverId, accountId: 'alice' };
@@ -131,17 +273,40 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         const passage = captureDocPassageV1({ ref: { kind: 'doc', serverId, artifactId: 'notes' },
             revision: { headerVersion: 1, bodyVersion: 4 }, source: 'A reworded sentence.', range: { start: 0, end: 20 } });
         writeDiscussionSessionDraft({ scope, address: { kind: 'discussion', discussionId: 'other-thread' }, patch: { text: 'Keep this' } });
+        writeDiscussionSessionDraft({ scope, address: { kind: 'discussion', discussionId: 'thread-1' },
+            patch: { text: 'My retained comment', replyTarget: { kind: 'message', messageId: 'old-basis-comment' } } });
         const href = client.beginPassageReattach({ discussionId: 'thread-1', passage, returnArtifactId: 'notes' });
         expect(href).toBe(buildDiscussionRouteHref({ target: { kind: 'discussion', address: { serverId }, discussionId: 'thread-1' },
             returnArtifactId: 'notes' }));
         const reattached = await renderHook(() => useDiscussionDraft({ scope, address: { kind: 'discussion', discussionId: 'thread-1' } }));
         expect(reattached.getCurrent().passage).toEqual(passage);
-        expect(reattached.getCurrent().text).toBe('');
+        expect(reattached.getCurrent().text).toBe('My retained comment');
+        expect(reattached.getCurrent().replyTarget).toBeNull();
         const other = await renderHook(() => useDiscussionDraft({ scope, address: { kind: 'discussion', discussionId: 'other-thread' } }));
         expect(other.getCurrent().passage).toBeNull();
         expect(other.getCurrent().text).toBe('Keep this');
         await reattached.unmount();
         await other.unmount();
+    });
+    it.each(['', 'My own redo request'])('prepares the exact proposal reply atomically while preserving existing words (%s)', async retainedText => {
+        const serverId = await homes.addHome({ name: 'Redo Home', serverUrl: 'https://doc-redo-draft.test', accountId: 'alice', currentAccount: true });
+        const scope = { serverId, accountId: 'alice' };
+        const address = { kind: 'discussion' as const, discussionId: 'thread-1' };
+        const passage = captureDocPassageV1({ ref: { kind: 'doc', serverId, artifactId: 'notes' },
+            revision: { headerVersion: 1, bodyVersion: 1 }, source: 'Old basis.', range: { start: 0, end: 10 } });
+        writeDiscussionSessionDraft({ scope, address, patch: { text: retainedText, passage,
+            replyTarget: { kind: 'message', messageId: 'unrelated-parent' } } });
+        const draft = await renderHook(() => useDiscussionDraft({ scope, address }));
+        const observed: unknown[] = [];
+        const { subscribeSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const unsubscribe = subscribeSessionDraft(scope, address, () => observed.push(getSessionDraftSnapshot(scope, address)?.document));
+        await act(async () => { createArtifactActionsClient(scope).beginProposalReply({ proposalRef: { kind: 'discussion',
+            discussion: { serverId, discussionId: address.discussionId }, messageId: 'exact-proposal' }, text: 'Please redo this proposal.', mentions: [] }); });
+        expect(draft.getCurrent()).toMatchObject({ text: retainedText || 'Please redo this proposal.',
+            replyTarget: { kind: 'message', messageId: 'exact-proposal' }, passage: null });
+        expect(observed).toHaveLength(1);
+        unsubscribe();
+        await draft.unmount();
     });
     it('refuses initial participants at the Doc-comment delegation before writing and preserves participant-free comments', async () => {
         const serverId = await homes.addHome({ name: 'Saved Doc', serverUrl: 'https://doc-comment-audience.test', accountId: 'alice', currentAccount: true });

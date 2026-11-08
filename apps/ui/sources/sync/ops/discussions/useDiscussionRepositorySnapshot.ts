@@ -20,6 +20,35 @@ type DiscussionDocSnapshot = Readonly<{
     }> | undefined>>;
 }>;
 
+type DiscussionComposerSnapshot = Readonly<{
+    thread: DiscussionRepositoryThreadSnapshot | null;
+    mutations: DiscussionRepositorySnapshot['mutations'];
+}>;
+
+/** A mounted inline composer reads only its thread and posts, never unrelated Home arrivals. */
+export function useDiscussionComposerSnapshot(repository: DiscussionRepository, discussionId: string): DiscussionComposerSnapshot {
+    const source = React.useMemo(() => {
+        let previous: DiscussionComposerSnapshot | null = null;
+        let mutationSource: DiscussionRepositorySnapshot['mutations'] | null = null;
+        const read = () => {
+            const snapshot = repository.getSnapshot();
+            const thread = snapshot.threads[discussionId] ?? null;
+            let mutations = previous?.mutations ?? {};
+            if (mutationSource !== snapshot.mutations) {
+                const next = Object.fromEntries(Object.entries(snapshot.mutations)
+                    .filter(([, mutation]) => mutation.kind === 'post' && mutation.discussionId === discussionId));
+                if (Object.keys(next).length !== Object.keys(mutations).length
+                    || Object.entries(next).some(([key, mutation]) => mutations[key] !== mutation)) mutations = next;
+                mutationSource = snapshot.mutations;
+            }
+            if (!previous || previous.thread !== thread || previous.mutations !== mutations) previous = { thread, mutations };
+            return previous;
+        };
+        return { read, subscribe: repository.subscribe };
+    }, [discussionId, repository]);
+    return React.useSyncExternalStore(source.subscribe, source.read, source.read);
+}
+
 /** A Doc consumes only its admitted query and the thread facts that its passage projection reads. */
 export function useDiscussionDocSnapshot(repository: DiscussionRepository | null, artifactId: string): DiscussionDocSnapshot | null {
     const source = React.useMemo(() => {

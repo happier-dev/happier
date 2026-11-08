@@ -48,6 +48,7 @@ import { ReplyQuote } from '@/components/ui/text/ReplyQuote';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import { ArtifactPassageQuote } from '@/components/artifacts/ArtifactPassageQuote';
+import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactTitleProjections';
 import { ArtifactEditProposal, type AdmittedDocRead } from '@/components/artifacts/ArtifactEditProposal';
 import { createArtifactActionsClient, type ArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { buildDiscussionRouteHref } from './discussionRoutes';
@@ -58,7 +59,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
-import { getStorage, selectSessionDisplayNameSource, useSessionDisplayNameProjections, useArtifact, useDiscussionRequesterApprovals, type SessionDisplayNameSource } from '@/sync/domains/state/storage';
+import { getStorage, selectSessionDisplayNameSource, useSessionDisplayNameProjections, useDiscussionRequesterApprovals, type SessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { ApprovalRequesterThreadCard } from '@/components/approvals/ApprovalRequesterThreadCard';
 import { DiscussionWaitingApprovalCard } from './DiscussionWaitingApprovalCard';
 import { DiscussionParticipantRequestLine } from '@/components/discussions/DiscussionParticipantRequestLine';
@@ -98,7 +99,7 @@ import { registerDiscussionHumanPresence } from '@/sync/domains/session/humanPre
 import { useSetting } from '@/sync/domains/state/storage';
 import { appendSessionDraftText } from '@/components/sessions/composer/sessionDraftAppendAction';
 import type { DiscussionRepository, DiscussionRepositoryMutation } from '@/sync/ops/discussions/discussionRepository';
-import { discussionMutationBlocksComposer } from '@/sync/ops/discussions/discussionRepository';
+import { useDiscussionPost } from './useDiscussionPost';
 import { selectDiscussionThreadAccessState } from '@/sync/ops/discussions/discussionRepository';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -142,7 +143,6 @@ import { isSelectableDiscussionMessage, prepareDiscussionSelectionHandoff, proje
 import { sendDiscussionSelectionToSession } from '@/components/discussions/sendDiscussionSelectionToSession';
 import { DiscussionComposer } from '@/components/discussions/DiscussionComposer';
 import { DiscussionProposalDocRead, LOADING_PROPOSAL_DOC, type ReportProposalDocRead } from '@/components/discussions/DiscussionProposalDocRead';
-import { useDiscussionAttachmentSettlement, type DiscussionAttachmentSendSubmission } from '@/components/discussions/useDiscussionAttachmentDrafts';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { DiscussionMessageAttachments, type DiscussionAttachmentReader } from '@/components/discussions/DiscussionMessageAttachments';
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
@@ -650,7 +650,8 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
     const anchorTitle = useSessionDisplayNameProjections(anchorAddresses, readVisibleAnchorTitle)[0] ?? null;
     const anchorPending = props.active && (!props.source || props.source.contentPending);
     const anchorDocId = discussion?.anchor?.kind === 'doc' ? discussion.anchor.doc.ref.artifactId : null;
-    const anchorDoc = useArtifact(anchorDocId ?? '');
+    const anchorDocIds = React.useMemo(() => anchorDocId ? [anchorDocId] : [], [anchorDocId]);
+    const anchorDocTitle = useArtifactTitleProjections(props.scope, anchorDocIds, props.active)[0] ?? null;
     // Retained source identity is not source readability. Tasks has not supplied the configured read/open
     // target for an identity-only anchor; never infer a connection or expose its raw id as a title.
     const anchorFact = React.useMemo<DetailsTabHeaderMetaFact | null>(() => {
@@ -670,14 +671,14 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                 } };
         }
         if (anchor.kind === 'doc') {
-            const name = anchorDoc?.title || t('artifacts.browser.kindOne.document');
+            const name = anchorDocTitle || t('artifacts.browser.kindOne.document');
             return { key: 'anchor', text: name, icon: 'file-text', testID: 'session-discussion-anchor',
                 accessibilityLabel: t('session.collaboration.discussion.openAnchor', { name }),
                 onPress: () => router.push(artifactViewRoute(anchor.doc.ref.artifactId) as Href) };
         }
         return { key: 'anchor', text: t('session.collaboration.discussion.quote.unavailable'), icon: 'check-square',
             tone: 'muted', testID: 'session-discussion-anchor' };
-    }, [anchorDoc, anchorPending, anchorTitle, discussion?.anchor, props.accountLifetime, props.scope.serverId, router]);
+    }, [anchorDocTitle, anchorPending, anchorTitle, discussion?.anchor, props.accountLifetime, props.scope.serverId, router]);
     // A private draft or request waiting on this viewer (lab T2-ST "Drafts for approval"): the same Inbox
     // approval owner the column's Needs you reads. Reviewing it (Post or Decline) stays that owner's page.
     const attentionItems = React.useMemo(() => discussion ? [discussion] : [], [discussion]);
@@ -736,16 +737,6 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                 return selected ? prepareSelection([selected]) : null;
             }} />;
     }, [anchorTitle, prepareSelection, props.scope, props.target.discussionId, replySendSessionId, selectableMessages]);
-    const [localId, setLocalId] = React.useState<string | null>(null);
-    const clearingLocalId = React.useRef<string | null>(null);
-    const recoveredPostMutation = Object.values(snapshot.mutations).find((item) => item.kind === 'post' && item.discussionId === props.target.discussionId) ?? null;
-    const restoredPostAttempt = draft.pendingMutationAttempt?.kind === 'post'
-        && draft.pendingMutationAttempt.discussionId === props.target.discussionId
-        ? draft.pendingMutationAttempt
-        : null;
-    const activePostLocalId = recoveredPostMutation?.localId ?? localId;
-    const mutation = activePostLocalId ? snapshot.mutations[activePostLocalId] ?? null : null;
-    const composerBlocked = discussionMutationBlocksComposer(mutation);
     const draftUnavailable = draft.status === 'offline' || draft.status === 'error' || draft.status === 'conflict';
     const threadUnavailable = thread?.status === 'offline' || thread?.status === 'locked' || thread?.status === 'error';
     const mutationsDisabled = draftUnavailable || threadUnavailable;
@@ -825,57 +816,9 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         return items;
     }, [clearReplyTarget, draftPassage, openQuotedMessage, postable, replyMessageId, resolveAccountLabel, resolveSessionLabel,
         router, setDraftPassage, sourceRefused, threadRoot, viewer]);
-    React.useEffect(() => {
-        if (!restoredPostAttempt || snapshot.mutations[restoredPostAttempt.localId]) return;
-        if (draft.submitted?.attemptLocalId !== restoredPostAttempt.localId) return;
-        const content = draft.submitted.content;
-        repository.adoptPendingIntent({
-            kind: 'post',
-            discussionId: props.target.discussionId,
-            localId: restoredPostAttempt.localId,
-            content,
-            ...readDiscussionMentionedParticipantIdsV1(content),
-            ...(restoredPostAttempt.replyTarget ? { replyTarget: restoredPostAttempt.replyTarget } : {}),
-            draftSubmission: { scope: props.scope, address: draftAddress, currentness: restoredPostAttempt.currentness },
-        });
-        setLocalId(restoredPostAttempt.localId);
-    }, [draft.submitted, draftAddress, props.scope, props.target.discussionId, repository, restoredPostAttempt, snapshot.mutations]);
-    React.useEffect(() => {
-        if (!activePostLocalId || mutation?.status !== 'observed_success' || !messages.some((item) => item.localId === activePostLocalId) || clearingLocalId.current === activePostLocalId) return;
-        clearingLocalId.current = activePostLocalId;
-        void (async () => {
-            try {
-                await draft.clearAfterObservedSuccess(mutation.draftSubmission);
-                repository.acknowledgeObservedSuccess(activePostLocalId);
-                setLocalId(null);
-            } catch {
-                // Keep the observed-success mutation so a remount can retry the
-                // same V2 draft-currentness contraction without resending.
-            } finally {
-                if (clearingLocalId.current === activePostLocalId) clearingLocalId.current = null;
-            }
-        })();
-    }, [activePostLocalId, draft, messages, mutation, repository]);
-    const dismissRefusal = React.useCallback(() => {
-        if (mutation?.status !== 'failed') return;
-        draft.releaseSubmittedAttempt();
-        repository.dismissFailure(mutation.localId);
-        setLocalId(null);
-    }, [draft, mutation, repository]);
-    const trackAttachments = useDiscussionAttachmentSettlement(snapshot.mutations);
-    const send = React.useCallback(async (textContent: DiscussionMessageContentV1, attachments?: DiscussionAttachmentSendSubmission) => {
-        if (!discussion?.capabilities.postMessages || composerBlocked) { attachments?.settle('failed', 'canceled'); return; }
-        const replyTarget = draft.replyTarget ?? undefined;
-        const content = recipientSelection.prepareContent(textContent, { replyTarget });
-        if (!content) { attachments?.settle('failed', 'canceled'); return; }
-        if (mutation) dismissRefusal();
-        const id = randomUUID();
-        const draftSubmission = draft.captureSubmittedCurrentness({ kind: 'post', discussionId: props.target.discussionId, localId: id, ...(replyTarget ? { replyTarget } : {}) }, { content });
-        setLocalId(id);
-        const posted = repository.post({ discussionId: props.target.discussionId, localId: id, content, ...readDiscussionMentionedParticipantIdsV1(content), ...(replyTarget ? { replyTarget } : {}), draftSubmission,
-            ...(attachments ? { attachmentSources: attachments.sources } : {}) });
-        await (attachments ? trackAttachments(id, attachments, posted) : posted);
-    }, [composerBlocked, discussion?.capabilities.postMessages, dismissRefusal, draft, mutation, props.target.discussionId, recipientSelection, repository, trackAttachments]);
+    const { mutation, composerBlocked, dismissRefusal, send } = useDiscussionPost({ scope: props.scope,
+        discussionId: props.target.discussionId, repository, mutations: snapshot.mutations, messages, draft, draftAddress,
+        canPost: discussion?.capabilities.postMessages === true, recipientSelection });
     const discussionAddress = React.useMemo(() => ({ serverId: props.target.address.serverId, discussionId: props.target.discussionId }), [props.target.address.serverId, props.target.discussionId]);
     const managedRuns = useDiscussionManagedWorkflowRuns({ discussion: discussionAddress, accountLifetime: props.accountLifetime,
         enabled: props.active && !accessRevoked });
