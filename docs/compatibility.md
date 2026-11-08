@@ -2,6 +2,32 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Session Action cause continuity (unreleased 0.3)
+
+The closed `SessionActionRpcOriginV1` adds optional canonical
+`actionRequestAttributionV1`, including its closed requester, persona and source
+message objects. The installed Session host derives that cause from authenticated
+input admission; its existing signature and Home binding carry it to socket RPC
+and external Action receivers. It grants no execution or approval authority.
+Unknown people remain unknown; malformed cause is rejected at the signed Session
+boundary. The closed private Account invocation also retains the existing cause
+for a host caller authenticated as the same qualified requester Account and Home.
+Unknown requesters remain null. A different requester or Home, terminal or
+API-token credential, Session or Workflow origin, or Plugin caller is refused;
+the carrier cannot name another person. Mixed-person requester approvals retain
+the original-Session decision route rather than this own-Account host projection.
+
+New readers accept earlier origins without the field. A retained approval whose
+stored cause differs from its signed Session origin is stale, including an older
+origin that omitted an otherwise stored cause; request approval again after reload.
+Older strict development
+readers reject the added field, so Protocol, Home, UI, CLI/daemon, native Session
+hosts and the SDK type projection reload together under the unpublished 0.3 direct cut.
+The wire epoch, package version and persisted approval format do not change.
+The inspected `../0.2` frontier `d370a14c49f3383ca145938462bdfb257f6e453c`,
+including scoped staged and unstaged paths, has no Session Action origin or
+request-attribution contract; no predecessor adapter is introduced.
+
 ## Availability Machine declaration demand (unreleased 0.3)
 
 The Availability V1 list retains each Machine's closed identity, installation and
@@ -5002,8 +5028,20 @@ paid amounts from versioned, dated list prices; absence is not a zero cost or an
 inferred payment.
 
 In development UI source, a requested refresh does not start a follow-up quota
-poll. The current server's `provider-account-usage` push invalidates the admitted
-read when the producer settles, including an unchanged-material write that clears
+poll. Material writes publish the existing `provider-account-usage` Account key
+and an additional `provider-account-usage-record:<recordId>` key in the same
+transaction. The global row's advisory hint names its paired record. The Changes
+Protocol leaf owns these identities and reads the consumed page's record scope;
+coalesced record rows retain changes to several sources. A complete pair lets the
+UI reread only sources admitted to those records, retaining the other sources.
+A legacy/unscoped key, an incomplete pair, unknown scope, snapshot, foreground
+or explicit recovery keeps the full reread. New UI with an old server therefore
+retains its previous behavior; old UI with a new server still consumes the global
+key. Replacing a source's record binding publishes the existing Connected Service
+change fact so readers admitted to the previous record resolve the new binding.
+This additive development contract changes no request/response envelope,
+wire epoch or authority. A server reload is needed to publish the new identities.
+The push invalidates the admitted read when the producer settles, including an unchanged-material write that clears
 `refreshRequestedAt` without advancing the snapshot timestamp. Removing that
 producer fact settles the local refresh indicator. The negotiated predecessor
 quota transport retains a healthy re-read only for a positive producer-supplied
@@ -5388,10 +5426,18 @@ IndexedDB, outside Web Storage's small synchronous quota. Native clients retain 
 startup prepares drafts before restoring Sync or rendering draft consumers; a failed preparation
 uses the existing app recovery boundary rather than treating saved drafts as absent.
 
-The draft repository writes a compact local v2 envelope and reads both v1 and v2. Equal base/local
-documents and pending fields are stored once and reconstructed on read; independent conflict
-values are retained. This does not change the synchronized draft document or server wire format.
-Older UI binaries cannot read this local v2 representation.
+The 0.3 development draft repository stores one local record per draft, keyed
+`<scope record key>/<canonical draft address>`, so an edit rewrites only its own draft and
+autosave cost does not grow with the number of drafts an Account holds. The scope record itself
+keeps only opaque envelope fields (`v: 3`, such as 0.2's `ordinaryEntryDraftId`) and is absent when
+there are none. Each draft record uses the compact v2 replica form: equal base/local documents and
+pending fields are stored once and reconstructed on read; independent conflict values are retained.
+A whole-scope `v: 1`/`v: 2` record written by 0.2 or an earlier build is moved into per-draft
+records on first read, with each draft's bytes unchanged and envelope fields kept; browser startup
+does this in one IndexedDB transaction per scope, and native/in-memory storage on first scope load.
+An existing draft record that differs from the one being migrated is not overwritten: migration
+fails and both copies stay stored. This does not change the synchronized draft document or server
+wire format. 0.2 and older UI binaries cannot read the per-draft layout.
 
 Legacy browser values are removed only after their IndexedDB transaction commits. Migration
 preserves conflicting copies and reports a failure instead of silently choosing one. Reload older
@@ -5402,8 +5448,9 @@ outbox operations await local transaction completion before reporting local cust
 acknowledgements cannot retire a concurrently recorded cancellation.
 
 Draft autosaves retain failed writes in memory, expose the existing error status, and retry through
-the repository's flush owner. Browser draft updates preserve unrelated replicas written by another
-tab and reject conflicting changes to the same replica. IndexedDB still has browser/disk limits:
+the repository's flush owner. One autosave commits its changed draft records in one IndexedDB
+transaction; drafts written by another tab are untouched, and a change to a draft that another tab
+changed since this tab last read it is rejected (both copies preserved) and commits nothing. IndexedDB still has browser/disk limits:
 an error is not permission to discard drafts or pending messages, and unsaved in-memory edits must
 be preserved before reloading. These device-local stores are not substitutes for server acknowledgement.
 

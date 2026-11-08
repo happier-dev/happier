@@ -4125,6 +4125,11 @@
       "types": "./dist/changes/pluginDomain.d.ts",
       "default": "./dist/changes/pluginDomain.js"
     },
+    "./changes/providerAccountUsage": {
+      "happier-source": "./src/changes/providerAccountUsage.ts",
+      "types": "./dist/changes/providerAccountUsage.d.ts",
+      "default": "./dist/changes/providerAccountUsage.js"
+    },
     "./changes/readRequest": {
       "happier-source": "./src/changes/readRequest.ts",
       "types": "./dist/changes/readRequest.d.ts",
@@ -8455,6 +8460,11 @@
       "types": "./dist/plugins/data/collectionQueryWireV1.d.ts",
       "default": "./dist/plugins/data/collectionQueryWireV1.js"
     },
+    "./plugins/data/collectionSchemaEquivalence": {
+      "happier-source": "./src/plugins/data/collectionSchemaEquivalence.ts",
+      "types": "./dist/plugins/data/collectionSchemaEquivalence.d.ts",
+      "default": "./dist/plugins/data/collectionSchemaEquivalence.js"
+    },
     "./plugins/data/collectionSharingClientV1": {
       "happier-source": "./src/plugins/data/collectionSharingClientV1.ts",
       "types": "./dist/plugins/data/collectionSharingClientV1.d.ts",
@@ -10800,6 +10810,11 @@
       "types": "./dist/scm/remoteResponse.d.ts",
       "default": "./dist/scm/remoteResponse.js"
     },
+    "./scm/remoteWebUrl": {
+      "happier-source": "./src/scm/remoteWebUrl.ts",
+      "types": "./dist/scm/remoteWebUrl.d.ts",
+      "default": "./dist/scm/remoteWebUrl.js"
+    },
     "./scm/repositoryClone": {
       "happier-source": "./src/scm/repositoryClone.ts",
       "types": "./dist/scm/repositoryClone.d.ts",
@@ -11494,6 +11509,11 @@
       "happier-source": "./src/sessions/creation/sessionCreateOriginV1.ts",
       "types": "./dist/sessions/creation/sessionCreateOriginV1.d.ts",
       "default": "./dist/sessions/creation/sessionCreateOriginV1.js"
+    },
+    "./sessions/creation/sessionCreationActionIdsV1": {
+      "happier-source": "./src/sessions/creation/sessionCreationActionIdsV1.ts",
+      "types": "./dist/sessions/creation/sessionCreationActionIdsV1.d.ts",
+      "default": "./dist/sessions/creation/sessionCreationActionIdsV1.js"
     },
     "./sessions/creation/sessionCreationAuthorizationV1": {
       "happier-source": "./src/sessions/creation/sessionCreationAuthorizationV1.ts",
@@ -13280,6 +13300,11 @@
       "happier-source": "./src/teams/credentials/directMaterialReconcileV1.ts",
       "types": "./dist/teams/credentials/directMaterialReconcileV1.d.ts",
       "default": "./dist/teams/credentials/directMaterialReconcileV1.js"
+    },
+    "./teams/credentials/directMaterialUseV1": {
+      "happier-source": "./src/teams/credentials/directMaterialUseV1.ts",
+      "types": "./dist/teams/credentials/directMaterialUseV1.d.ts",
+      "default": "./dist/teams/credentials/directMaterialUseV1.js"
     },
     "./teams/credentials/directMaterialV1": {
       "happier-source": "./src/teams/credentials/directMaterialV1.ts",

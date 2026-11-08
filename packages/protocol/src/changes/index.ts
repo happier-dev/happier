@@ -188,8 +188,7 @@ export function readConnectedServicesAccountChangeV1(
     ? { scope: 'service', ref: parsed.data.hint.connectedServiceRef } : { scope: 'all' };
 }
 
-/** Content-free invalidation for accepted material Provider Account allowance observations. */
-export const PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'provider-account-usage' as const;
+export { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from './providerAccountUsage.js';
 /** Advisory refresh routing on the existing Account feed; never credential authority. */
 export const ProviderAccountUsageRefreshChangeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('account'),

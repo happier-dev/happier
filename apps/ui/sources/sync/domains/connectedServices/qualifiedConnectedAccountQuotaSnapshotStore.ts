@@ -1,8 +1,10 @@
 import type {
-    ProviderAccountUsageRecordId,
-    QualifiedConnectedAccountRef,
+    ProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import type {
+    QualifiedConnectedAccountRef} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type {
     QualifiedConnectedAccountQuotaSnapshotV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { t } from '@/text';
 import { isProviderAccountUsageIdentityMatch, type ProviderAccountUsageOrganizationContext } from '@happier-dev/protocol/connect/accountUsage';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -122,7 +124,7 @@ function ensureProfileChanges(): void {
             publish(key, entry);
             entry.observation?.invalidate();
         }
-    });
+    }, { profile: true });
 }
 
 export function buildQualifiedQuotaSnapshotScopeKey(
@@ -210,6 +212,7 @@ function reconcilePolling(key: string, initialReadCompleted = false): void {
     if (!entry.observation) entry.observation = observeUsageProjection({
         serverId: context.serverBasis.serverId,
         initialReadCompleted,
+        readRecordId: () => entry.usageRecordId,
         read: () => { entry.loadAttempted = true; return runLoad(key, context); },
         busy: () => Boolean(entry.loadPromise || entry.refreshPromise),
         nextReadAtMs: () => entry.nextFetchAtMs,
@@ -306,9 +309,10 @@ async function runLoad(
             if (snapshot) entry.supported = true;
             entry.error = null;
             if (read?.status === 'error') {
-                // Provider messages/headers stay diagnostic-only, never user-facing copy.
-                const error = `${t('connectedServices.errors.quotaRefreshFailed')}${diagnostic?.status ? ` (HTTP ${diagnostic.status})` : ''}`;
-                entry.error = typeof diagnostic?.retryAtMs === 'number'
+                // Provider messages, headers and status codes stay diagnostic-only, never user-facing copy.
+                const error = t('connectedServices.errors.quotaRefreshFailed');
+                // A retry time already past is no guidance; the next read says what is true then.
+                entry.error = typeof diagnostic?.retryAtMs === 'number' && diagnostic.retryAtMs > Date.now()
                     ? t('connectedServices.errors.quotaRefreshRetryAt', {
                         error,
                         time: new Date(diagnostic.retryAtMs).toLocaleString(),

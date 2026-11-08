@@ -57,6 +57,7 @@ it('retains accounting for catalog, allowance and managed-policy inputs on mixed
         ...catalogs.map(key => row(buildConnectedAccountCatalogPhysicalKeyV1(key), { connectedAccountCatalog: true, key, revision: 5363 })),
         row('fixture-managed-policy', { managedMachinePolicy: true, machineId: machine.entityId }),
         row(PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        row('provider-account-usage-record:paug_v1_abcdefgh'),
         { ...buildConnectedServicesAccountChangeV1(), cursor: 12, changedAt: 1 },
     ];
     for (const change of irrelevant) {
@@ -716,6 +717,7 @@ describe('planSyncActionsFromChanges', () => {
         expect(plannedChangesAffectUsageQuery(planSyncActionsFromChanges([machine]))).toBe(false);
         for (const change of [
             buildChange({ cursor: 2, kind: 'account', entityId: 'provider-account-usage' }),
+            buildChange({ cursor: 2, kind: 'account', entityId: 'provider-account-usage-record:paug_v1_abcdefgh' }),
             buildChange({ cursor: 3, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 } }),
             buildChange({ cursor: 4, kind: 'session', entityId: 'session-a' }),
         ]) expect(plannedChangesAffectUsageQuery(planSyncActionsFromChanges([machine, change]))).toBe(true);
@@ -1140,6 +1142,20 @@ describe('planSyncActionsFromChanges', () => {
             minSeq: 10,
             messageIds: ['m10', 'm15'],
             messageSeqs: { m10: 10, m15: 15 },
+        }]);
+    });
+
+    it('carries the latest committed revision per message and drops it once any hint for that message lacks one', () => {
+        const hint = (cursor: number, messageId: string, updatedMessageUpdatedAt?: number) => buildChange({
+            cursor, kind: 'session', entityId: 's1',
+            hint: { updatedMessageSeq: cursor, updatedMessageId: messageId,
+                ...(updatedMessageUpdatedAt === undefined ? {} : { updatedMessageUpdatedAt }) },
+        });
+        const planned = planSyncActionsFromChanges([hint(1, 'm1', 200), hint(2, 'm1', 100), hint(3, 'm2', 300), hint(4, 'm2')]);
+
+        expect(planned.sessionTranscriptRepairs).toEqual([{
+            sessionId: 's1', minSeq: 1, messageIds: ['m1', 'm2'], messageSeqs: { m1: 2, m2: 4 },
+            messageUpdatedAts: { m1: 200 },
         }]);
     });
 

@@ -1,5 +1,6 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import {
     ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     ChangeKindSchema,
@@ -7,7 +8,6 @@ import {
     isAccountCurrentnessChangeV1,
     readAccountSettingsVersionChangeV1,
     isMachineProjectionChangeKindV1,
-    PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     SessionOrganizationChangeHintSchema,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1,
@@ -749,12 +749,12 @@ export function planSyncActionsFromChanges(
                 change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
                 || change.entityId === TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1
                 || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
-                || change.entityId === PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1
+                || isProviderAccountUsageChangeEntityIdV1(change.entityId)
             ) {
                 // Scoped snapshot materialization consumes these stable entity
                 // IDs before the cursor advances. Usage observations likewise
                 // wake Usage, not Account profile or encrypted Settings readers.
-                if (change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) {
+                if (!isProviderAccountUsageChangeEntityIdV1(change.entityId)) {
                     machineResourcesAffect = true;
                     managedMachineInventoryAffect = true;
                 }
@@ -1212,7 +1212,7 @@ export function plannedChangesAffectUsageAccounting(planned: PlannedChangeAction
         // These canonical rows contain service configuration, allowances or
         // Machine policy, not UsageEvents, message counts or entered prices.
         // Other self changes and unknown Account rows remain conservative.
-        return change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1
+        return !isProviderAccountUsageChangeEntityIdV1(change.entityId)
             && (change.entityId === 'self' || readConnectedServicesAccountChangeV1(change) === null)
             && parseConnectedAccountCatalogPhysicalKeyV1(change.entityId) === null
             && !ManagedMachinePolicyChangeHintV1Schema.safeParse(change.hint).success;

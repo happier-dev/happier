@@ -12,6 +12,7 @@ import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } 
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { EMPTY_PROJECT_AUTHORING_SESSION_INPUTS } from '@/sync/store/domains/projectAuthoringSessions';
+import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import {
     publishHomeAccountChange,
     publishHomeAccountChangeWake,
@@ -12869,6 +12870,19 @@ class Sync {
               this.sessionReceivedMessages, repair.sessionId, messageId, repair.messageUpdatedAts?.[messageId],
           ));
           if (messageIds.length === 0) return;
+          // Delivery follows consumption: a retained transcript nobody is viewing (Home shows only
+          // its row) records the revision as stale, exactly as a hidden live edit does, and the
+          // Session open repairs it once (`repairStaleTranscriptIfNeeded`).
+          if (!resolveSessionLiveConsumption(repair.sessionId).isFullContentConsumer) {
+              for (const messageId of messageIds) {
+                  this.markSessionTranscriptStale(repair.sessionId, {
+                      updateType: 'message-updated',
+                      seq: repair.messageSeqs?.[messageId] ?? repair.minSeq,
+                      messageId,
+                  });
+              }
+              return;
+          }
           const minSeq = messageIds.length === repair.messageIds.length
               ? repair.minSeq
               : Math.min(...messageIds.map((messageId) => repair.messageSeqs?.[messageId] ?? repair.minSeq));
@@ -13358,6 +13372,7 @@ class Sync {
                                     accountSettingsAffects: materialization?.workflowRunsMaterialized ? false : publishedPlan.invalidate.settings || publishedPlan.unsupportedChanges.length > 0,
                                     usageQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageQuery(publishedPlan),
                                     usageAccountingAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageAccounting(publishedPlan),
+                                    providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes),
                                 });
                             }
                             publishActivePluginCollectionUiQueryChanges(changes);

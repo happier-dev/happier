@@ -10,6 +10,9 @@ import { db } from "@/storage/db";
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { connectRoutes } from "./connectRoutes";
 import {
@@ -169,6 +172,14 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
             accountId: account.id, kind: 'account', entityId: 'provider-account-usage',
         } })).cursor;
         await write(first);
+        const materialChanges = await db.accountChange.findMany({ where: { accountId: account.id, kind: 'account',
+            entityId: { startsWith: 'provider-account-usage' } } });
+        expect(materialChanges.map(change => change.entityId).sort()).toEqual([
+            'provider-account-usage', `provider-account-usage-record:${first.recordId}`,
+        ].sort());
+        expect(materialChanges.find(change => change.entityId === 'provider-account-usage')?.hint)
+            .toEqual({ providerAccountUsageRecordId: first.recordId });
+        expect(readProviderAccountUsageChangedRecordIdsV1(materialChanges)).toEqual([first.recordId]);
         let previousCursor = await cursor();
         let extraMaterialPublications = 0;
         let refreshed = first;
@@ -187,15 +198,15 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         const changed = { ...refreshed, fetchedAtMs: refreshed.fetchedAtMs + 1000, observedAtMs: refreshed.observedAtMs + 1000,
             meters: refreshed.meters.map(meter => ({ ...meter, used: 83 })) };
         await write(changed);
-        expect(await cursor()).toBe(previousCursor + 1);
+        expect(await cursor()).toBe(previousCursor + 2);
         previousCursor = await cursor();
         await write({ ...changed, fetchedAtMs: changed.fetchedAtMs + 1, observedAtMs: changed.observedAtMs + 1 }, 'error');
-        expect(await cursor()).toBe(previousCursor + 1);
+        expect(await cursor()).toBe(previousCursor + 2);
         previousCursor = await cursor();
         const renewalChanged = { ...changed, fetchedAtMs: changed.fetchedAtMs + 2, observedAtMs: changed.observedAtMs + 2,
             subscription: { ...changed.subscription, renewal: 'off' as const, observedAtMs: changed.fetchedAtMs + 2 } };
         await write(renewalChanged, 'error');
-        expect(await cursor()).toBe(previousCursor + 1);
+        expect(await cursor()).toBe(previousCursor + 2);
         const refresh = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage/record/refresh',
             headers, payload: { recordId: first.recordId } });
         expect(refresh.statusCode, refresh.body).toBe(200);
@@ -207,6 +218,16 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         expect(await cursor()).toBe(refreshCursor + 1);
         await write(completed, 'error');
         expect(await cursor()).toBe(refreshCursor + 1);
+        // A retained source can legally move to another quota record without
+        // replacing its credential. Its readers still know the previous ID.
+        const beforeRemap = (await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq;
+        const remappedKey = { ...completed.recordKey, quotaScopeId: 'replacement-scope' };
+        const remapped = { ...completed, recordKey: remappedKey, recordId: buildProviderAccountUsageRecordId(remappedKey) };
+        await write(remapped, 'error');
+        const remapChanges = await db.accountChange.findMany({ where: { accountId: account.id, cursor: { gt: beforeRemap } } });
+        expect(remapChanges.some(change => readConnectedServicesAccountChangeV1(change) !== null),
+            'A changed source binding must wake readers admitted to its previous record').toBe(true);
+        expect(readProviderAccountUsageChangedRecordIdsV1(remapChanges)).toBeUndefined();
     });
 
     it("resolves a V4 qualified usage source without exposing its snapshot payload", async () => {

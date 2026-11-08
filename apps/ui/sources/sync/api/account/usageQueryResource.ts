@@ -65,7 +65,7 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries } from './usageQueryInvalidation';
+import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries } from './usageQueryInvalidation';
 import type { ProviderAccountUsageProjectionDocuments } from './apiProviderAccountUsage';
 import { createUsageQueryResourceContent, encodeUsageQueryResource } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -422,7 +422,7 @@ function readOpenedQuotaHistoryScope(context: UsageQueryAccountContext) {
 
 async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods: readonly NonNullable<UsageAccountingSourceSnapshot['period']>[], nowMs: number, signal?: AbortSignal,
     onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
-    opened: OpenedQuotaRead = readOpenedQuota(context, previous)): Promise<OpenedQuotaRead> {
+    opened: OpenedQuotaRead = readOpenedQuota(context, previous), changedRecordIds?: readonly string[]): Promise<OpenedQuotaRead> {
     const scope = readOpenedQuotaHistoryScope(context);
     if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
@@ -440,6 +440,8 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
         if (!observed?.current || observed.current.recordId === value.current?.recordId) retainedBySource.set(key, value);
     }
     const progressValues = scope.sources.map(({ source }) => retainedBySource.get(createCanonicalJsonSigningInput(source)) ?? null);
+    const requestedIndices = scope.sources.flatMap(({ key }, index) => usageQuotaRecordChangeAffects(
+        getQualifiedQuotaSnapshotEntry(key).usageRecordId ?? progressValues[index]?.current?.recordId, changedRecordIds) ? [index] : []);
     // Account reads settle independently. Keep their qualified identity even
     // when a failed read has no current facts to disclose.
     const settledBySource = new Map(opened.sources
@@ -486,7 +488,8 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
     // The batch has one captured Home/Account lifetime. Share its existing
     // mode promise and live catalog reads instead of recapturing per source.
     try {
-        await withUiConnectedServiceReader(context, signal, async read => Promise.all(scope.sources.map(async ({ source }, index) => {
+        await withUiConnectedServiceReader(context, signal, async read => Promise.all(requestedIndices.map(async index => {
+            const { source } = scope.sources[index]!;
             try {
                 const accepted = await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
                 acceptedBySource.set(index, accepted);
@@ -501,7 +504,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext, periods
     } catch (error) {
         // A failure capturing the common Account applies to every source;
         // an individual provider refusal above still settles independently.
-        scope.sources.forEach((_source, index) => failSource(index, error));
+        requestedIndices.forEach(index => failSource(index, error));
     }
     requireCurrent(context, signal);
     return projectQuota(failures.size === 0 ? 'available' : progressValues.every(value => value !== null) ? 'stale'
@@ -1198,6 +1201,8 @@ export async function readUiUsageQueryBatch(
         readUnconvertedHistory?: boolean;
         /** A wake of another Usage input does not demand replacement allowance acquisition. */
         retainAllowance?: boolean;
+        /** Undefined retains full acquisition for legacy and recovery demand. */
+        allowanceRecordIds?: readonly string[];
     }>,
 ): Promise<UsageQueryBatchResult> {
     requireCurrent(context, signal);
@@ -1437,7 +1442,7 @@ export async function readUiUsageQueryBatch(
             // its retained observation is complete, stale, unavailable or failed.
             if (!options?.retainAllowance) {
                 const settled = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuotaHistory).map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal,
-                    value => { quota = value; publish(); }, previous, quota);
+                    value => { quota = value; publish(); }, previous, quota, options?.allowanceRecordIds);
                 if (settled !== quota) { quota = settled; publish(); }
             }
         })(),
@@ -1464,6 +1469,7 @@ export async function readUiUsageQueryBatch(
 type UsageQueryInvalidation = HomeAccountChangeEvent | 'session-evidence' | 'quota-inputs' | 'projection-inputs';
 type UsageQueryReadDemand = Readonly<{
     allowance: boolean | undefined;
+    allowanceRecordIds?: readonly string[];
     projectionOnly: boolean;
     authorityChanged: boolean;
     /** Nothing reached this watch since its previous read, whose bytes are therefore still current. */
@@ -2020,9 +2026,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 try {
                     // Keep the progressive typed producer. A direct command
                     // enters Action admission once and consumes these same facts.
+                    const allowanceDemands = readDemand.filter(demand => demand.allowance !== false);
                     const read = async () => await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
+                            allowanceRecordIds: allowanceDemands.length > 0 && allowanceDemands.every(demand => demand.allowanceRecordIds !== undefined)
+                                ? [...new Set(allowanceDemands.flatMap(demand => demand.allowanceRecordIds!))] : undefined,
                             onProgress: project => {
                                 reproject = project;
                                 queuedProgress = project;
@@ -2073,8 +2082,18 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 }
                 const queries = reference.hostRead === 'usage.query' ? normalizeUsageQueryBatchInput(reference.input).queries : [];
                 const allowanceOnly = reference.hostRead === 'usage.query' && queries.every(query => !query.includeAccounting);
+                const quotaSourceKey = reference.hostRead === 'connectedServices.quota.get'
+                    ? createCanonicalJsonSigningInput(ConnectedServiceQuotaGetInputV1Schema.parse(reference.input).source) : undefined;
+                const readQuotaRecordIds = () => {
+                    const records = readOpenedQuotaScope(sharedContext)?.sources
+                        .filter(({ source }) => quotaSourceKey === undefined || createCanonicalJsonSigningInput(source) === quotaSourceKey)
+                        .map(({ key, source }) => getQualifiedQuotaSnapshotEntry(key).usageRecordId
+                            ?? allowance?.quota?.find(read => createCanonicalJsonSigningInput(read.source) === createCanonicalJsonSigningInput(source))?.current?.recordId);
+                    return records?.length ? records : [undefined];
+                };
                 const privateEvidence = queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence);
                 let allowanceReadDemand: boolean | undefined;
+                let allowanceRecordIds: readonly string[] | undefined;
                 // Keep the demand already taken by the active read; retained B
                 // can stay available while its real replacement is outstanding.
                 let activeReadDemand: UsageQueryReadDemand | undefined;
@@ -2110,12 +2129,19 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Session/accounting evidence does not change Capacity.
                     // Material Profile/Settings/Machine inputs still invalidate
                     // through their existing state subscription below.
-                    if (!accountModeChanged && allowanceOnly && (change === 'session-evidence'
-                        || typeof change === 'object' && !isUsageProjectionHomeAccountChange(change, true))) return;
+                    if (!accountModeChanged && (allowanceOnly || quotaSourceKey !== undefined) && (change === 'session-evidence'
+                        || typeof change === 'object' && !isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds()))) return;
                     // Keep acquisition demand with the existing watch record until
                     // its next read. Only this input's own changes demand quota.
-                    allowanceReadDemand = allowanceReadDemand === true || accountModeChanged || change === undefined
-                        || change === 'quota-inputs' || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true);
+                    const allowanceChanged = accountModeChanged || change === undefined || change === 'quota-inputs'
+                        || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds());
+                    if (allowanceChanged) {
+                        const changedIds = !accountModeChanged && typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined;
+                        allowanceRecordIds = allowanceReadDemand === true
+                            ? allowanceRecordIds === undefined || changedIds === undefined ? undefined : [...new Set([...allowanceRecordIds, ...changedIds])]
+                            : changedIds;
+                    }
+                    allowanceReadDemand = allowanceReadDemand === true || allowanceChanged;
                     projectionOnly = projectionOnly !== false && !accountModeChanged && change === 'projection-inputs';
                     woken = true;
                     // Presentation inputs keep the admitted source facts fresh.
@@ -2143,7 +2169,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 };
                 listeners.set(observe, {
                     reference,
-                    requestAllowanceRead() { allowanceReadDemand = true; projectionOnly = false; woken = true; },
+                    requestAllowanceRead() { allowanceReadDemand = true; allowanceRecordIds = undefined; projectionOnly = false; woken = true; },
                     isAllowanceReadPending() {
                         return allowanceReadDemand === true || activeReadDemand !== undefined
                             && !activeReadDemand.unchanged && !activeReadDemand.projectionOnly && activeReadDemand.allowance !== false;
@@ -2154,11 +2180,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const authorityChanged = takeAccountModeChange();
                         const witness = accountModeCurrentness;
                         const demand: UsageQueryReadDemand = { allowance: authorityChanged ? true : allowanceReadDemand,
+                            allowanceRecordIds: authorityChanged ? undefined : allowanceRecordIds,
                             projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
                             unchanged: !authorityChanged && !woken, isCurrent: witness.isCurrent,
                             finish() { if (activeReadDemand === demand) activeReadDemand = undefined; } };
                         activeReadDemand = demand;
                         allowanceReadDemand = undefined;
+                        allowanceRecordIds = undefined;
                         projectionOnly = undefined;
                         woken = false;
                         return demand;
@@ -2210,7 +2238,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             // A replacement demanded by this wake must not join pre-wake accounting.
             // Existing borrowers retain their own publication and Account fences.
             // Session, quota-input and projection wakes change no server answer.
-            if (homeChange === undefined || typeof homeChange === 'object' && !isUsagePresentationHomeAccountChange(homeChange)) {
+            const quotaChange = typeof homeChange === 'object' && (isUsageQuotaHomeAccountChange(homeChange)
+                || homeChange.usageAccountingAffects === false && isUsageProjectionHomeAccountChange(homeChange, true));
+            if (homeChange === undefined || typeof homeChange === 'object' && !quotaChange && !isUsagePresentationHomeAccountChange(homeChange)) {
                 const change = typeof homeChange === 'object' ? readUsageAccountingChangeScope(homeChange) : undefined;
                 if (!change) replaceAccounting();
                 else {
@@ -2244,7 +2274,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     accountingReads.invalidate(affected);
                 }
             } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
-            else if (typeof homeChange === 'string') resourceInputs = {};
+            else if (quotaChange || typeof homeChange === 'string') resourceInputs = {};
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange);
         },
     };
@@ -2299,7 +2329,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             const accountingUnchanged = event.usageAccountingAffects === false
                 && event.source !== 'snapshot' && !event.usageAccountingChange;
             owner.invalidate(isUsageQuotaHomeAccountChange(event)
-                || accountingUnchanged && isUsageProjectionHomeAccountChange(event, true) ? 'quota-inputs'
+                || accountingUnchanged && isUsageProjectionHomeAccountChange(event, true) ? event
                 : accountingUnchanged ? 'session-evidence' : event);
         }
     }, { reconnect: 'refresh' });

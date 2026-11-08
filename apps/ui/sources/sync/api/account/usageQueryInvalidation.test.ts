@@ -62,6 +62,32 @@ it('honors a positive predecessor acquisition deadline without adding a local fl
     } finally { observation.dispose(); vi.useRealTimers(); }
 });
 
+it('routes material allowance pushes to their admitted records and keeps recovery full', async () => {
+    vi.useFakeTimers();
+    const serverId = 'scoped-quota-currentness.test';
+    const recordIds = ['paug_v1_abcdefgh', 'paug_v1_ijklmnop'];
+    const reads = [0, 0];
+    const observers = recordIds.map((id, index) => observeUsageProjection({ serverId, initialReadCompleted: true,
+        readRecordId: () => id, busy: () => false, read: async () => { reads[index]++; },
+        nextReadAtMs: () => Number.POSITIVE_INFINITY }));
+    try {
+        publishHomeAccountChange(serverId, ['provider-account-usage', `provider-account-usage-record:${recordIds[0]}`],
+            { changeKinds: ['account'], providerAccountUsageRecordIds: [recordIds[0]!] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toEqual([1, 0]);
+        for (let arrival = 0; arrival < 30; arrival++) publishHomeAccountChange(serverId, ['unrelated-session'],
+            { changeKinds: ['session'], usageQueryAffects: false });
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(reads).toEqual([1, 0]);
+        publishHomeAccountChange(serverId, ['provider-account-usage'], { changeKinds: ['account'] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toEqual([2, 1]);
+        publishHomeAccountChange(serverId, undefined, { source: 'snapshot' });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toEqual([3, 2]);
+    } finally { observers.forEach(observer => observer.dispose()); vi.useRealTimers(); }
+});
+
 it('refreshes quota acquisition for connected-service entities and the legacy broad signal', async () => {
     vi.useFakeTimers();
     let reads = 0;

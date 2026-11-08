@@ -39,7 +39,7 @@ import type {
     ProviderAccountUsageRecordId,
     ProviderAccountUsageSnapshotV1,
     ProviderAccountUsageStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/account-usage-primitives';
 import { useCredentialScopedAccountModeResolver, type CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
 
 export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
@@ -130,6 +130,7 @@ function createUsageRowObserver(input: Readonly<{
         const current = () => !disposed && input.isCurrent();
         const observation = observeUsageProjection({
             serverId: input.serverBasis.serverId,
+            readRecordId: () => recordId,
             busy: () => reading !== null || !current(),
             nextReadAtMs: () => readEntry()?.nextFetchAtMs ?? Number.POSITIVE_INFINITY,
             presentationDeadlineMs: () => {

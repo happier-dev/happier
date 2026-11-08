@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { buildProviderAccountUsageRefreshChangeV1 } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefreshChangeV1 } from '@happier-dev/protocol/changes';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
 
 import { isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
@@ -769,7 +769,7 @@ async function upsertQualifiedSourceInTx(
     };
     const obsolete = await tx.connectedServiceUsageSource.findFirst({ where: obsoleteWhere, select: { id: true } });
     const linkChanged = !existing || existing.providerAccountUsageRecordId !== params.providerAccountUsageRecordId;
-    if (!linkChanged && !obsolete) return;
+    if (!linkChanged && !obsolete) return false;
     await params.beforeWrite?.();
     if (linkChanged) {
         await tx.connectedServiceUsageSource.upsert({
@@ -826,6 +826,7 @@ async function upsertQualifiedSourceInTx(
         });
     }
     if (obsolete) await tx.connectedServiceUsageSource.deleteMany({ where: obsoleteWhere });
+    return existing !== null && linkChanged;
 }
 
 type QualifiedProviderAccountUsageWriteParams =
@@ -863,13 +864,19 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
     });
     let sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
     try {
-        await upsertQualifiedSourceInTx(tx, {
+        const sourceReplaced = await upsertQualifiedSourceInTx(tx, {
             accountId: params.accountId,
             providerAccountUsageRecordId: params.recordId,
             source,
             allowLegacyUnfencedCredential,
             beforeWrite: params.beforeWrite,
         });
+        if (sourceReplaced) {
+            await markAccountChanged(tx, {
+                accountId: params.accountId,
+                ...buildConnectedServicesAccountChangeV1(source.ref.service),
+            });
+        }
         sourceOutcome = { status: "linked" };
     } catch (error) {
         if (

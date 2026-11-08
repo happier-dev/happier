@@ -3,7 +3,8 @@ import { readRegisteredStorageState, subscribeRegisteredStorageState, subscribeR
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1, readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
+import { readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
+import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
@@ -26,8 +27,19 @@ export function isUsageQuotaHomeAccountChange(event: HomeAccountChangeEvent): bo
     return event.source !== 'snapshot' && event.usageAccountingChange === undefined
         && event.changeKinds?.length === 1 && event.changeKinds[0] === 'account'
         && event.entityIds !== undefined && event.entityIds.length > 0
-        && event.entityIds.every(id => id === PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1
+        && event.entityIds.every(id => isProviderAccountUsageChangeEntityIdV1(id)
             || readConnectedServicesAccountChangeV1({ kind: 'account', entityId: id }) !== null);
+}
+
+/** Recovery and unknown source/credential changes retain the incumbent full read. */
+export function readUsageQuotaChangedRecordIds(event: HomeAccountChangeEvent): readonly string[] | undefined {
+    return event.source !== 'snapshot' && event.source !== 'connected'
+        && event.providerAccountUsageRecordIds?.length ? event.providerAccountUsageRecordIds : undefined;
+}
+
+/** An unresolved source still needs acquisition; admitted sources consume only their record changes. */
+export function usageQuotaRecordChangeAffects(recordId: string | null | undefined, changedRecordIds: readonly string[] | undefined): boolean {
+    return changedRecordIds === undefined || recordId == null || changedRecordIds.includes(recordId);
 }
 
 type UsageAccountingChangeScope = Readonly<{ sessionIds: readonly string[]; observedFromMs?: number }>;
@@ -62,12 +74,14 @@ export function getUsageProjectionNextReadAtMs(input: Readonly<{
 }
 
 /** Detailed Profile/Settings and Machine changes arrive through their material-input subscriptions. */
-export function isUsageProjectionHomeAccountChange(event: HomeAccountChangeEvent, observesMaterialInputs = false): boolean {
+export function isUsageProjectionHomeAccountChange(event: HomeAccountChangeEvent, observesMaterialInputs = false,
+    recordIds?: readonly (string | null | undefined)[]): boolean {
     // A mounted Usage owner already observes its material inputs and the
     // focused durable catch-up. A secondary socket reconnect changes neither.
     // An actual snapshot/reset cannot name changes and still demands once.
+    if (recordIds !== undefined && !recordIds.some(id => usageQuotaRecordChangeAffects(id, readUsageQuotaChangedRecordIds(event)))) return false;
     return event.source === 'snapshot' || !observesMaterialInputs && event.source === 'connected' || event.usageQueryAffects !== false
-        && ((!observesMaterialInputs && event.entityIds === undefined) || event.entityIds?.includes(PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
+        && ((!observesMaterialInputs && event.entityIds === undefined) || event.entityIds?.some(isProviderAccountUsageChangeEntityIdV1) === true
             || (event.changeKinds === undefined || event.changeKinds.includes('account'))
                 && event.entityIds?.some(entityId => readConnectedServicesAccountChangeV1({ kind: 'account', entityId }) !== null) === true
             || !observesMaterialInputs && event.changeKinds === undefined && event.entityIds?.includes('self') === true);
@@ -82,6 +96,7 @@ export function observeUsageProjection(input: Readonly<{
     serverId: string;
     /** The caller already awaited an admitted read before attaching this observation. */
     initialReadCompleted?: boolean;
+    readRecordId?(): string | null | undefined;
     read(): Promise<unknown>;
     busy(): boolean;
     nextReadAtMs(): number;
@@ -117,7 +132,7 @@ export function observeUsageProjection(input: Readonly<{
     function invalidate(): void { pending = true; reconcile(); }
     const detachHome = subscribeHomeAccountChange(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, input.serverId)) return;
-        if (isUsageProjectionHomeAccountChange(event)) invalidate();
+        if (isUsageProjectionHomeAccountChange(event, false, input.readRecordId ? [input.readRecordId()] : undefined)) invalidate();
     }, { reconnect: 'refresh' });
     const detachRuntime = subscribeToRuntimeActiveChange(() => {
         const nextActive = isRuntimeActive();
@@ -175,15 +190,6 @@ function selectUsagePoolMachine(facts: ReturnType<typeof readUsageMachineFacts>,
 export function getUsageQueryPoolMachineSelection(machines: Readonly<Record<string, Machine>>, machineIds: readonly string[],
     scope: ServerAccountScope, nowMs = Date.now()) {
     return selectUsagePoolMachine(readUsageMachineFacts(machines, nowMs, scope), machineIds);
-}
-
-/**
- * The Machines a pool's switching order could be read on for this Machines filter. Each keeps its own order,
- * so when there are several the read is `unknown` and a person chooses one; this never picks for them.
- */
-export function listUsagePoolSelectorMachineIds(machines: Readonly<Record<string, Machine>>, machineIds: readonly string[],
-    scope: ServerAccountScope, nowMs = Date.now()): string[] {
-    return readUsagePoolSelectorMachines(readUsageMachineFacts(machines, nowMs, scope), machineIds).map(machine => machine.id);
 }
 
 function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers): string {

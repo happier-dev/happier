@@ -1,9 +1,10 @@
 import type { ConnectedServiceUsageSourceV1, SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { getProviderAccountUsageRefreshErrorAt } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
-import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
 import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationAtOrBeforeNow } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
@@ -57,14 +58,6 @@ type ProviderAccountUsageWritePolicyOverrides = Partial<Omit<ProviderAccountUsag
 
 function normalizeFingerprint(value: string | undefined): string | undefined {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function shouldClearRefreshRequest(refreshRequestedAt: number | undefined, fetchedAt: number): boolean {
-    return refreshRequestedAt !== undefined && fetchedAt >= refreshRequestedAt;
-}
-
-function shouldPreserveRefreshRequest(refreshRequestedAt: number | undefined, fetchedAt: number): boolean {
-    return refreshRequestedAt !== undefined && fetchedAt < refreshRequestedAt;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -154,6 +147,12 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
     if (!isConnectedServiceQuotaObservationAtOrBeforeNow({ observedAtMs: params.fetchedAt, nowMs })) {
         throw new ProviderAccountUsagePayloadInvariantError("Provider account usage observation time must not be in the future");
     }
+    const refreshErrorAt = params.status === "error"
+        ? params.snapshot ? getProviderAccountUsageRefreshErrorAt(params.snapshot) : params.sealedPayload?.refreshErrorAt
+        : undefined;
+    if (refreshErrorAt !== undefined && (!Number.isSafeInteger(refreshErrorAt) || refreshErrorAt < 0 || refreshErrorAt > nowMs)) {
+        throw new ProviderAccountUsagePayloadInvariantError("Provider account usage failure time must be at or before now");
+    }
     // The passed-client path may be ReadCommitted. Stabilize Account authority
     // before the mode read, then let the usage owner enforce its row CAS.
     await acquireAccountChangePublicationLocksInTx(params.client, [params.accountId], { includeSingleAccount: true, intent: "content" });
@@ -207,7 +206,9 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 );
                 if (!await createProviderAccountUsageRecordIfAbsent(initialWrite, params.client)) continue;
                 await retainProviderAccountUsageHistory(initialWrite, params.client);
-                await markAccountChanged(params.client, { accountId: params.accountId, kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+                for (const change of buildProviderAccountUsageMaterialChangesV1(params.recordId)) {
+                    await markAccountChanged(params.client, { accountId: params.accountId, ...change });
+                }
                 return "written";
             } catch (error) {
                 if (isUniqueConstraintError(error)) continue;
@@ -224,8 +225,19 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             incomingObservedAtMs: params.fetchedAt,
             nowMs,
         }) === "incoming_newer";
-        const clearsRefreshRequest = shouldClearRefreshRequest(existing.refreshRequestedAt, params.fetchedAt);
-        const preservesRefreshRequest = shouldPreserveRefreshRequest(existing.refreshRequestedAt, params.fetchedAt);
+        const existingErrorAt = existing.status === "error"
+            ? existing.snapshot ? getProviderAccountUsageRefreshErrorAt(existing.snapshot) : existing.sealedPayload?.refreshErrorAt
+            : undefined;
+        const advancesFailure = refreshErrorAt !== undefined
+            && (refreshErrorAt > (existingFetchedAt ?? 0)
+                || (refreshErrorAt === existingFetchedAt && params.fetchedAt === existingFetchedAt))
+            && (existingErrorAt === undefined || refreshErrorAt > existingErrorAt);
+        const nextFetchedAt = isNewer ? params.fetchedAt : (existingFetchedAt ?? params.fetchedAt);
+        const nextErrorAt = advancesFailure ? refreshErrorAt
+            : existingErrorAt !== undefined && existingErrorAt > nextFetchedAt ? existingErrorAt : undefined;
+        const clearsRefreshRequest = existing.refreshRequestedAt !== undefined
+            && Math.max(nextFetchedAt, nextErrorAt ?? -1) >= existing.refreshRequestedAt;
+        const preservesRefreshRequest = existing.refreshRequestedAt !== undefined && !clearsRefreshRequest;
         const previousSubscription = existing.snapshot?.subscription;
         const incomingSubscription = params.snapshot?.subscription;
         const mergedSubscription = mergeProviderAccountSubscription(previousSubscription, incomingSubscription);
@@ -257,77 +269,37 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 existingLegacyQuotaProjections,
                 nextLegacyQuotaProjections,
             );
-        let nextWrite: UpsertProviderAccountUsageRecordParams;
-        let result: "written" | "noop" | "stale";
-        if (!incomingFingerprint) {
-            if (!isNewer && !subscriptionAdvanced) return "stale";
-            nextWrite = buildWriteParams(params, {
-                legacyQuotaCompatibilityProjections:
-                    nextLegacyQuotaProjections,
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
-        } else if (existingFingerprint === incomingFingerprint) {
-            if (
-                !isNewer
-                && !clearsRefreshRequest
-                && !compatibilityProjectionChanged
-                && !subscriptionAdvanced
-            ) return "noop";
-            const preservedStatus = existing.status === "refresh_requested" ? params.status : existing.status;
-            nextWrite = buildWriteParams(params, {
-                status: isNewer ? params.status : preservedStatus,
-                fetchedAt: isNewer ? params.fetchedAt : (existing.fetchedAt ?? params.fetchedAt),
-                staleAfterMs: isNewer ? params.staleAfterMs : (existing.staleAfterMs ?? params.staleAfterMs),
-                snapshot: params.payloadMode === "plain_json_v1"
-                    ? (isNewer ? params.snapshot : existing.snapshot)
-                    : undefined,
-                sealedPayload: params.payloadMode === "sealed_account_scoped_v1"
-                    ? (isNewer ? params.sealedPayload : existing.sealedPayload)
-                    : undefined,
-                materialFingerprint: incomingFingerprint,
-                legacyQuotaCompatibilityProjections:
-                    nextLegacyQuotaProjections,
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
-        } else {
-            if (!isNewer && !subscriptionAdvanced) return "stale";
-            nextWrite = buildWriteParams(params, {
-                materialFingerprint: incomingFingerprint,
-                legacyQuotaCompatibilityProjections:
-                    nextLegacyQuotaProjections,
-                ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
-            });
-            result = "written";
+        const sameFingerprint = incomingFingerprint !== undefined && existingFingerprint === incomingFingerprint;
+        if (!isNewer && !subscriptionAdvanced && !advancesFailure && !clearsRefreshRequest
+            && !(sameFingerprint && compatibilityProjectionChanged)) {
+            return sameFingerprint ? "noop" : "stale";
         }
-
-        if (params.payloadMode === "plain_json_v1" && mergedSubscription) {
-            const baseSnapshot = isNewer ? params.snapshot : existing.snapshot;
-            nextWrite = {
-                ...nextWrite,
-                snapshot: baseSnapshot ? { ...baseSnapshot, subscription: mergedSubscription } : undefined,
-                ...(!isNewer ? {
-                    fetchedAt: existing.fetchedAt ?? params.fetchedAt,
-                    staleAfterMs: existing.staleAfterMs ?? params.staleAfterMs,
-                    status: existing.status === "refresh_requested" ? params.status : existing.status,
+        // Recency chooses the observation once. A failure or independent facet
+        // can advance without replacing newer provider data or its clocks.
+        const baseSnapshot = isNewer ? params.snapshot : existing.snapshot;
+        const errorSnapshot = advancesFailure ? params.snapshot : existing.snapshot;
+        const acceptsIncomingPayload = isNewer || (advancesFailure && params.fetchedAt === existingFetchedAt);
+        const basePayload = acceptsIncomingPayload ? params.sealedPayload : existing.sealedPayload;
+        let nextWrite: UpsertProviderAccountUsageRecordParams = buildWriteParams(params, {
+            status: nextErrorAt !== undefined ? "error"
+                : isNewer || existing.status === "refresh_requested" ? params.status : existing.status,
+            fetchedAt: nextFetchedAt,
+            staleAfterMs: isNewer ? params.staleAfterMs : (existing.staleAfterMs ?? params.staleAfterMs),
+            snapshot: baseSnapshot ? {
+                ...baseSnapshot,
+                ...(mergedSubscription ? { subscription: mergedSubscription } : {}),
+                ...(nextErrorAt !== undefined && errorSnapshot ? {
+                    state: "error_last_known_good" as const, diagnostics: errorSnapshot.diagnostics,
                 } : {}),
-            };
-        }
-        if (params.payloadMode === "sealed_account_scoped_v1" && mergedSealedSubscription) {
-            const basePayload = isNewer ? params.sealedPayload : existing.sealedPayload;
-            nextWrite = {
-                ...nextWrite,
-                sealedPayload: basePayload
-                    ? { ...basePayload, subscription: mergedSealedSubscription }
-                    : undefined,
-                ...(!isNewer ? {
-                    fetchedAt: existing.fetchedAt ?? params.fetchedAt,
-                    staleAfterMs: existing.staleAfterMs ?? params.staleAfterMs,
-                    status: existing.status === "refresh_requested" ? params.status : existing.status,
-                } : {}),
-            };
-        }
+            } : undefined,
+            sealedPayload: basePayload ? {
+                ...basePayload, refreshErrorAt: nextErrorAt,
+                ...(mergedSealedSubscription ? { subscription: mergedSealedSubscription } : {}),
+            } : undefined,
+            materialFingerprint: acceptsIncomingPayload ? incomingFingerprint : existingFingerprint,
+            legacyQuotaCompatibilityProjections: nextLegacyQuotaProjections,
+            ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
+        });
 
         if (existing.metadata?.pageProjection) nextWrite = { ...nextWrite,
             metadata: { ...nextWrite.metadata, pageProjection: existing.metadata.pageProjection } };
@@ -346,10 +318,12 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             // it preserves quota reset phases and excludes observation clocks.
             // Opaque writers without a fingerprint remain conservative.
             if (historyChanged || nextWrite.status !== existing.status
-                || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest) {
-                await markAccountChanged(params.client, { accountId: params.accountId, kind: 'account', entityId: PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+                || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest || advancesFailure) {
+                for (const change of buildProviderAccountUsageMaterialChangesV1(params.recordId)) {
+                    await markAccountChanged(params.client, { accountId: params.accountId, ...change });
+                }
             }
-            return result;
+            return "written";
         }
     }
 

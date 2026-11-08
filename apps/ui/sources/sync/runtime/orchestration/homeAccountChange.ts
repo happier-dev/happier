@@ -105,6 +105,8 @@ export type HomeAccountChangeEvent = Readonly<{
     savedSecretCatalogAffects?: boolean;
     /** Machine-only focused pages are covered by the Usage store's material-input subscription. */
     usageQueryAffects?: boolean;
+    /** Exact material record scope from a consumed page; absence retains full quota recovery. */
+    providerAccountUsageRecordIds?: readonly string[];
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
     /** Producer-selected accounting scope; missing/native facts remain conservative. */
@@ -150,6 +152,7 @@ type HomeAccountChangeDetails = Readonly<{
     discussionAffects?: boolean;
     savedSecretCatalogAffects?: boolean;
     usageQueryAffects?: boolean;
+    providerAccountUsageRecordIds?: readonly string[];
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
     usageAccountingChange?: Extract<EphemeralUpdate, { type: 'usage' }>['accountingChange'];
@@ -543,6 +546,8 @@ export function publishHomeAccountChangeForRouting(
             : workflowRunOnly ? { discussionAffects: false } : {}),
         ...(details?.savedSecretCatalogAffects !== undefined ? { savedSecretCatalogAffects: details.savedSecretCatalogAffects } : {}),
         ...(!coarse && usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
+        ...(!coarse && details?.providerAccountUsageRecordIds !== undefined
+            ? { providerAccountUsageRecordIds: Object.freeze([...details.providerAccountUsageRecordIds]) } : {}),
         ...(usageAccountingAffects !== undefined ? { usageAccountingAffects } : {}),
         ...(details?.usageAccountingChange !== undefined
             ? { usageAccountingChange: Object.freeze({ ...details.usageAccountingChange }) } : {}),

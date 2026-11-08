@@ -3320,6 +3320,99 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); clock.mockRestore(); }
   });
 
+  it('reads only the changed allowance record and keeps unscoped recovery full', async () => {
+    const now = Date.now();
+    let changes: ApiChangeEntry[] = [];
+    let cursor = 0;
+    const refs = ['one', 'two', 'three'].map(accountId => ({
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId }));
+    const sources = refs.map(ref => ({ bindingKind: 'account' as const, ref }));
+    const snapshots = refs.map(ref => {
+      const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      return ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+        staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'session', label: 'Session', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
+          unit: 'requests', status: 'ok', resetsAt: now + 1800_000, details: {} }] });
+    });
+    const captured = await context(async request => {
+      if (request.path === '/v2/changes') return Response.json({ changes: changes.filter(row => row.cursor > Number(request.url.searchParams.get('after'))), nextCursor: cursor });
+      if (request.path === '/v2/cursor') return Response.json({ cursor, changesFloor: 0 });
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        const source = JSON.parse(request.url.searchParams.get('source')!);
+        const index = refs.findIndex(ref => ref.accountId === source.ref.accountId);
+        return Response.json({ source: sources[index], recordId: snapshots[index]!.recordId,
+          providerAccountId: refs[index]!.accountId, fetchedAt: now, staleAfterMs: 600_000 });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+        const index = snapshots.findIndex(snapshot => snapshot.recordId === request.url.searchParams.get('recordId'));
+        return Response.json({ content: { t: 'plain', v: snapshots[index] },
+          metadata: { fetchedAt: now, staleAfterMs: 600_000, status: 'ok' }, sources: [sources[index]] });
+      }
+      return undefined;
+    }, { connectedAccountsV4: refs.map(ref => ({ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] })) });
+    const { sync } = await import('@/sync/sync');
+    await sync.resumeSync('manual');
+    await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+    const query = normalizeUsageQuery({ includeQuotaHistory: false, includeAccounting: false,
+      includeSessionEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const counts = () => refs.map((ref, index) => ({
+      resolves: home!.requests.filter(request => request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve'
+        && JSON.parse(request.url.searchParams.get('source')!).ref.accountId === ref.accountId).length,
+      records: home!.requests.filter(request => request.path === '/v4/connect/qualified/provider-account-usage/record'
+        && request.url.searchParams.get('recordId') === snapshots[index]!.recordId).length,
+    }));
+    const quota = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota!;
+    try {
+      await entry.refresh();
+      await flushHookEffects({ cycles: 20 });
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      let before = counts();
+      snapshots[1] = { ...snapshots[1]!, meters: snapshots[1]!.meters.map(meter => ({ ...meter, used: 30, remaining: 70, utilizationPct: 30 })) };
+      changes = [
+        { kind: 'account', entityId: 'provider-account-usage', cursor: ++cursor, changedAt: now,
+          hint: { providerAccountUsageRecordId: snapshots[1]!.recordId } },
+        { kind: 'account', entityId: `provider-account-usage-record:${snapshots[1]!.recordId}`, cursor: ++cursor, changedAt: now },
+      ];
+      await sync.resumeSync('socket-reconnect');
+      await expect.poll(() => quota().find(row => row.source.bindingKind === 'account' && row.source.ref.accountId === 'two')?.current?.meters[0]?.used).toBe(30);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves + (index === 1 ? 1 : 0), records: count.records + (index === 1 ? 1 : 0) })));
+      expect(quota()).toHaveLength(3);
+      before = counts();
+      for (const index of [0, 2]) snapshots[index] = { ...snapshots[index]!,
+        meters: snapshots[index]!.meters.map(meter => ({ ...meter, used: 50, remaining: 50, utilizationPct: 50 })) };
+      // The global row coalesces to the latest write; both record rows survive.
+      changes = [
+        { kind: 'account', entityId: `provider-account-usage-record:${snapshots[0]!.recordId}`, cursor: ++cursor, changedAt: now },
+        { kind: 'account', entityId: 'provider-account-usage', cursor: ++cursor, changedAt: now,
+          hint: { providerAccountUsageRecordId: snapshots[2]!.recordId } },
+        { kind: 'account', entityId: `provider-account-usage-record:${snapshots[2]!.recordId}`, cursor: ++cursor, changedAt: now },
+      ];
+      await sync.resumeSync('socket-reconnect');
+      await expect.poll(() => quota().filter(row => row.current?.meters[0]?.used === 50).length).toBe(2);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves + (index !== 1 ? 1 : 0), records: count.records + (index !== 1 ? 1 : 0) })));
+      before = counts();
+      for (let arrival = 0; arrival < 30; arrival++) publishHomeAccountChange(captured.accountLifetime.scope.serverId,
+        ['unrelated-session'], { changeKinds: ['session'], usageAccountingAffects: false });
+      await flushHookEffects({ cycles: 20 });
+      expect(counts()).toEqual(before);
+      for (const recovery of ['legacy', 'snapshot'] as const) {
+        before = counts();
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, recovery === 'legacy' ? ['provider-account-usage'] : undefined,
+          recovery === 'legacy' ? { changeKinds: ['account'] } : { source: 'snapshot' });
+        await expect.poll(() => counts()).toEqual(before.map(count => ({ resolves: count.resolves + 1, records: count.records + 1 })));
+        await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      }
+    } finally { release(); }
+  });
+
   it('keeps one Capacity and Usage allowance timeline across arrivals, navigation, rereads and failure', async () => {
     const { readPlanAccountsStatement, readPendingPlanAccountCount } = await import('@/components/settings/usage/widgets/plans/UsagePlanParts');
     const { useUsagePlans } = await import('@/components/settings/usage/widgets/plans/useUsagePlans');
