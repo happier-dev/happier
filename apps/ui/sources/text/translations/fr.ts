@@ -2286,6 +2286,7 @@ export const fr: TranslationStructure = {
     },
     runDetails: {
       failedToLoad: "Échec du chargement du run",
+      failedWithoutCause: "Cette exécution s’est arrêtée sur une erreur.",
       latestToolResultTitle: "Dernier résultat d’outil",
       latestToolResultRaw: "Charge brute",
       cancelTurn: 'Annuler la réponse',

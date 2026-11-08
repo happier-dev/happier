@@ -2146,6 +2146,7 @@ export const de: TranslationStructure = {
         },
         runDetails: {
             failedToLoad: 'Run konnte nicht geladen werden',
+            failedWithoutCause: "Dieser Lauf wurde mit einem Fehler beendet.",
             latestToolResultTitle: 'Letztes Tool-Ergebnis',
             latestToolResultRaw: 'Rohdaten',
             cancelTurn: 'Antwort abbrechen',

@@ -122,6 +122,28 @@ export function presentSessionStartupFailureCause(code: unknown, issue?: Session
         ? `${presented}\n${t('session.startFailure.requestId', { id: preparationCause.requestId })}` : presented;
 }
 
+/**
+ * A failed Run's one sentence: its typed runtime issue when it carries one, else the cause its typed
+ * error code names, else a plain "stopped with an error" with that code. A failed Run never shows nothing.
+ */
+export function presentExecutionRunFailure(error: Readonly<{ code: string; runtimeIssueV1?: SessionRuntimeIssueV1 }> | null | undefined): Readonly<{
+    message: string;
+    reset: string | null;
+    recovery: string | null;
+}> | null {
+    if (!error) return null;
+    if (error.runtimeIssueV1) {
+        const issue = presentSessionRuntimeIssue(error.runtimeIssueV1);
+        if (issue.message) return { message: issue.message, reset: issue.reset, recovery: issue.recovery };
+    }
+    return {
+        message: presentSessionStartupFailureCause(error.code)
+            ?? t('errors.errorWithCode', { message: t('runs.runDetails.failedWithoutCause'), code: error.code }),
+        reset: null,
+        recovery: null,
+    };
+}
+
 /** The one next step for queued input whose Session's Agent account refused it; both reuse existing recovery owners. */
 export type SessionActivationFailureRecovery = 'sign_in_again' | 'choose_account';
 

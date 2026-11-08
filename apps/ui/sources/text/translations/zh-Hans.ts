@@ -2263,6 +2263,7 @@ export const zhHans: TranslationStructure = {
     },
     runDetails: {
       failedToLoad: "加载运行失败",
+      failedWithoutCause: "此运行因错误而停止。",
       latestToolResultTitle: "最新工具结果",
       latestToolResultRaw: "原始负载",
       cancelTurn: '取消回复',

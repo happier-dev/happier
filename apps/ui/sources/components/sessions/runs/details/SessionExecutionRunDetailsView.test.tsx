@@ -736,6 +736,15 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         const { router } = await import('expo-router');
         expect(vi.mocked(router.push)).toHaveBeenCalledWith('/(app)/settings/connected-services');
     });
+    it.each([
+        ['provider_authorization_changed', 'settingsProviders.errors'],
+        ['mystery_runner_code', 'runs.runDetails.failedWithoutCause'],
+    ])('never leaves a failed Run without a sentence when it recorded only a code (%s)', async (code, expected) => {
+        runState = createRun({ status: 'failed', finishedAtMs: 2, error: { code, message: code } });
+        await mount(); await loaded();
+        expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(expected);
+    });
     it('mounts the exact retained Run composer before any tool marker, with canonical queue/steer controls', async () => {
         runState = liveRun();
         await mount({ retryInputLocalId: 'first-input-1' }); await loaded();

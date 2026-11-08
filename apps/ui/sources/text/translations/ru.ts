@@ -2291,6 +2291,7 @@ export const ru: TranslationStructure = {
     },
     runDetails: {
       failedToLoad: "Не удалось загрузить запуск",
+      failedWithoutCause: "Этот запуск остановился с ошибкой.",
       latestToolResultTitle: "Последний результат инструмента",
       latestToolResultRaw: "Сырые данные",
       cancelTurn: 'Отменить ответ',

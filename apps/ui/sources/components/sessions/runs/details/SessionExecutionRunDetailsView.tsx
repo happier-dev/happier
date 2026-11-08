@@ -98,7 +98,7 @@ import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/inp
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 type LoadState =
@@ -837,9 +837,9 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     const failedTurn = state.status === 'loaded' && state.run.status === 'running' && !state.run.inputTurns?.current && state.run.inputTurns?.last?.state === 'failed'
         ? state.run.inputTurns.last : null;
     // A failed Run says its typed cause the same way a failed turn does: one line and its account action.
-    const turnIssue = failedTurn?.error?.runtimeIssueV1
-        ?? (state.status === 'loaded' && state.run.status === 'failed' ? state.run.error?.runtimeIssueV1 : undefined);
-    const turnFailure = turnIssue ? presentSessionRuntimeIssue(turnIssue) : null;
+    const runError = failedTurn?.error ?? (state.status === 'loaded' && state.run.status === 'failed' ? state.run.error : undefined);
+    const turnIssue = runError?.runtimeIssueV1;
+    const turnFailure = presentExecutionRunFailure(runError);
     // The failure text a Run also returned as its latest result is that failure, already said above.
     const latestResultIsFailure = turnIssue !== undefined && state.status === 'loaded' && typeof state.latestToolResult === 'string'
         && (state.latestToolResult === turnIssue.sanitizedPreview || state.latestToolResult === state.run.error?.message);

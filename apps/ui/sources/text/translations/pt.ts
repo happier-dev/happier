@@ -2489,6 +2489,7 @@ export const pt: TranslationStructure = {
       resumeRun: 'Retomar conversa',
       controlFailed: 'Não foi possível atualizar esta conversa',
       failedToLoad: "Falha ao carregar a execução",
+      failedWithoutCause: "Esta execução parou com um erro.",
       latestToolResultTitle: "Último resultado da ferramenta",
       latestToolResultRaw: "Carga bruta",
       a11y: {

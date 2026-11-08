@@ -2454,6 +2454,7 @@ export const es: TranslationStructure = {
       resumeRun: 'Reanudar conversación',
       controlFailed: 'No se pudo actualizar esta conversación',
       failedToLoad: "No se pudo cargar la ejecución",
+      failedWithoutCause: "Esta ejecución se detuvo con un error.",
       latestToolResultTitle: "Último resultado de la herramienta",
       latestToolResultRaw: "Carga sin procesar",
       a11y: {

@@ -2334,6 +2334,7 @@ const enRuns = {
   },
   runDetails: {
     failedToLoad: 'Failed to load run',
+    failedWithoutCause: "This run stopped with an error.",
     latestToolResultTitle: 'Latest tool result',
     latestToolResultRaw: 'Raw payload',
     cancelTurn: 'Cancel response',

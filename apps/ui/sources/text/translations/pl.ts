@@ -2290,6 +2290,7 @@ export const pl: TranslationStructure = {
         },
         runDetails: {
           failedToLoad: "Nie udało się wczytać uruchomienia",
+          failedWithoutCause: "To uruchomienie zatrzymało się z błędem.",
           latestToolResultTitle: "Ostatni wynik narzędzia",
           latestToolResultRaw: "Surowe dane",
           cancelTurn: 'Anuluj odpowiedź',
