@@ -155,7 +155,8 @@ function createDeterministicBackend(label: string, options: Readonly<{
         if (result) return result;
       }
       else {
-        publish({ kind: 'message-delta', turnId, channel: 'assistant', text: `${label}:${prompt}` });
+        // Capture prompts separately; echoing their action examples fabricates malformed provider output.
+        publish({ kind: 'message-delta', turnId, channel: 'assistant', text: `${label}:response` });
         publish({ kind: 'turn-complete', turnId });
       }
       return { status: 'admitted' as const };
@@ -376,7 +377,6 @@ function createMultiDeltaBackend(label: string, deltas: string[]): ExecutionRunH
 function createDelayedCompletionBackend(
   label: string,
 ): VoiceTestRuntime<{ completeCurrentResponse: () => void; appendDelta: (text: string) => void; hasCurrentResponse: () => boolean }> {
-  let lastPrompt = '';
   let turnId: string | undefined;
   let resolveCurrent: (() => void) | null = null;
   let currentResponseDone: Promise<void> | null = null;
@@ -384,11 +384,10 @@ function createDelayedCompletionBackend(
 
   const runtime = createDeterministicBackend(label, {
     onSend(request, publish) {
-      lastPrompt = request.input.text;
       turnId = request.delivery.turnId;
       currentResponseDone = new Promise<void>((resolve) => {
         resolveCurrent = () => {
-          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: `${label}:${lastPrompt}` });
+          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: `${label}:response` });
           publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
           resolve();
           resolveCurrent = null;
@@ -1045,11 +1044,17 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it.each(['READY', 'unexpected response'])(
-    'reports bootstrap activity and settlement for %s',
-    async (responseText) => {
+  it.each([
+    { label: 'READY', responseText: 'READY' },
+    { label: 'nonliteral completion', responseText: 'unexpected response' },
+    { label: 'native delivery failure', responseText: null },
+  ])(
+    'reports bootstrap activity and settlement for $label',
+    async ({ responseText }) => {
       const { VoiceAgentManager } = await import('./VoiceAgentManager');
-      const backend = createStaticResponseBackend('bootstrap', responseText);
+      const backend = responseText === null
+        ? createDeterministicBackend('bootstrap', { onSend() { throw new Error('Provider bootstrap delivery failed'); } })
+        : createStaticResponseBackend('bootstrap', responseText);
       const activity: Array<{ voiceAgentId: string; active: boolean }> = [];
       const manager = new VoiceAgentManager({
         createBackend: () => backend,
@@ -1062,12 +1067,13 @@ describe('VoiceAgentManager', () => {
           permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: 'CTX',
           bootstrapMode: 'ready_handshake',
         }, { signal: request.signal });
-        if (responseText === 'READY') {
+        if (responseText === null) {
+          await expect(start).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+        } else {
           const started = await start;
           request.abort();
           expect(manager.readCurrentRuntimeOccurrence(started.voiceAgentId)).not.toBeNull();
         }
-        else await expect(start).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
         expect(activity.map(({ active }) => active)).toEqual([true, false]);
         expect(manager.isTurnInFlight(activity[0]!.voiceAgentId)).toBe(false);
       } finally {
@@ -1729,14 +1735,13 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED' });
   });
 
-  it('removes the voice-agent registry entry when READY bootstrap fails', async () => {
+  it('removes the voice-agent registry entry when native bootstrap delivery fails', async () => {
 
     const dispose = vi.fn(async () => {});
     const backend = createDeterministicBackend('bootstrap-fail', {
       onDispose: dispose,
-      onSend(request, publish) {
-        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'NOT_READY' });
-        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      onSend() {
+        throw new Error('Provider bootstrap delivery failed');
       },
     });
     const manager = new VoiceAgentManager({ createBackend: () => backend });
@@ -2439,7 +2444,7 @@ describe('VoiceAgentManager', () => {
       return result;
     });
 
-    await Promise.resolve();
+    await vi.waitFor(() => expect(chatBackend.hasCurrentResponse()).toBe(true));
     expect(resolved).toBe(false);
 
     chatBackend.completeCurrentResponse();
@@ -2473,7 +2478,7 @@ describe('VoiceAgentManager', () => {
       return result;
     });
 
-    await Promise.resolve();
+    await vi.waitFor(() => expect(commitBackend.hasCurrentResponse()).toBe(true));
     expect(resolved).toBe(false);
 
     commitBackend.completeCurrentResponse();
@@ -3323,13 +3328,14 @@ describe('VoiceAgentManager', () => {
   });
 
   it.each([
-    { label: 'multilingual bytes', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
-    { label: 'multilingual text with normalized action preamble', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true, sendMessage: true },
-    { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 1, incomplete: true },
+    { label: 'multilingual bytes beyond the retired payload quota', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: false },
+    { label: 'multilingual text beyond the final wire envelope', text: '你好🙂'.repeat(25_000), actionCount: 1, incomplete: true },
+    { label: 'multilingual text with normalized action preamble', text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: false, sendMessage: true },
+    { label: 'serialized JSON escaping', text: '\u0001'.repeat(60_000), actionCount: 1, incomplete: false },
     { label: 'valid action event overhead', text: 'word '.repeat(9_000), actionCount: 230, incomplete: false },
-    { label: 'action event overflow', text: 'word '.repeat(9_000), actionCount: 300, incomplete: true },
+    { label: 'action events beyond the retired cumulative quota', text: 'word '.repeat(9_000), actionCount: 300, incomplete: false },
     { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
-  ])('keeps $label inside the Protocol budget including actions and the repeated terminal final', async ({ text, actionCount, incomplete, sendMessage }) => {
+  ])('preserves $label within the receiving wire envelope', async ({ text, actionCount, incomplete, sendMessage }) => {
     const action = sendMessage
       ? { t: 'sendSessionMessage', args: { message: 'Do X.' } }
       : { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
@@ -3383,7 +3389,7 @@ describe('VoiceAgentManager', () => {
     }
     expect(state.terminal).toBe('final');
     expect(finalText).toBe(persistedText);
-    expect(finalText?.startsWith(spokenText.trimEnd())).toBe(true);
+    if (!sendMessage) expect(finalText?.startsWith(spokenText.trimEnd())).toBe(true);
     expect(spokenText.length).toBeGreaterThan(text.length / 4);
     expect(text.startsWith(spokenText)).toBe(true);
     expect(spokenText).not.toMatch(/[\uD800-\uDBFF]$/u);
@@ -3391,7 +3397,9 @@ describe('VoiceAgentManager', () => {
     expect(events.some((event) => event.t === 'error')).toBe(false);
     if (!incomplete) {
       expect(spokenText).toBe(text);
-      expect(finalText).toBe(text.trimEnd());
+      expect(finalText).toBe(sendMessage
+        ? 'I sent that to the coding assistant and am waiting for its update.'
+        : text.trimEnd());
       expect(events.filter((event) => event.t === 'voice_output' && event.output.kind === 'side_effect')).toHaveLength(actionCount);
     }
   });
