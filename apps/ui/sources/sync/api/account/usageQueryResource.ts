@@ -1972,14 +1972,17 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 let progressContent: Promise<void> | null = null;
                 const drainProgress = (): void => {
                     if (progressContent) return;
-                    progressContent = (async () => {
+                    // Sibling results from one delivered stream chunk settle in
+                    // the same microtask turn. Consume their latest projection
+                    // after those completions, before encoding any partial copy.
+                    progressContent = Promise.resolve().then(async () => {
                         while (queuedProgress) {
                             const project = queuedProgress;
                             queuedProgress = null;
                             const content = await contentFor(project(options?.signal));
                             options?.onProgress?.(content);
                         }
-                    })().finally(() => {
+                    }).finally(() => {
                         progressContent = null;
                         // A phase can arrive after the loop observes an empty
                         // queue but before this promise releases the drain.

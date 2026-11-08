@@ -116,7 +116,7 @@ it('composes only consumed Resource revisions when eight completed detail result
         expect(burst.metadataReads, 'coalescing must happen before Machine traversal and projection')
             .toBeLessThanOrEqual(single.metadataReads + 2 * Object.keys(machines).length);
         expect(burst.resourceCompositions).toBeLessThanOrEqual(single.resourceCompositions + 1);
-        expect(burst.resourceCompositions, 'eight delivered results compose at most the in-flight revision and its latest successor').toBeLessThanOrEqual(2);
+        expect(burst.resourceCompositions, 'one stream chunk composes its complete admitted answer once, after all sibling completions').toBe(1);
     } finally { released.resolve(); }
 });
 
