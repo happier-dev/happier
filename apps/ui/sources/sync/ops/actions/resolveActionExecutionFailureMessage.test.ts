@@ -5,6 +5,14 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('offers safe repetition for busy reads and idempotent writes without asserting rollback', () => {
+        for (const errorCode of ['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']) {
+            expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Fallback', { safeToRetry: true }))
+                .toBe(t('approvals.transientFailureTitle'));
+        }
+        expect(resolveActionExecutionErrorMessage({ code: 'outcome_unknown' }, 'Fallback', { safeToRetry: true }))
+            .toBe(t('errors.tryAgain'));
+    });
     it('names a typed busy-server refusal through thrown and returned adapters', () => {
         const refused = { ok: false, errorCode: 'database_transaction_conflict_exhausted', error: 'private transport detail' };
         for (const result of [refused, { ok: true, result: refused }, { ok: true, result: { results: [refused] } }]) {

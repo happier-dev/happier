@@ -490,6 +490,21 @@ describe('ArtifactEditProposal', () => {
     expect(screen.findByTestId('proposal.movedOn')).not.toBeNull();
   });
 
+  it('preserves a busy cause when accepting a suggestion has an uncertain outcome', async () => {
+    const door = frontDoor({
+      'doc.read': docRead(base),
+      'doc.edit.accept': () => ({ ok: false, errorCode: 'outcome_uncertain', failureCause: {
+        errorCode: 'database_transaction_timeout', errorClass: 'Error', phase: 'doc.edit.accept', httpStatus: 503,
+      } }),
+    });
+    const screen = await render(door.client);
+    await act(async () => { await screen.pressByTestIdAsync('proposal.accept'); });
+    await flushHookEffects();
+    expect(screen.getTextContent()).toContain(t('toolView.pending.unknownDescription'));
+    expect(screen.findByTestId('proposal.accepted')).toBeNull();
+    expect(screen.findByTestId('proposal.accept')).not.toBeNull();
+  });
+
   it('undoes an accepted edit as a restore against the accepted revision, and refuses after a later edit', async () => {
     const accepted = { headerVersion: 3, bodyVersion: 15 };
     const door = frontDoor({

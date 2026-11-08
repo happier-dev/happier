@@ -32,10 +32,11 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { readViewportClass } from '@/utils/platform/useViewportClass';
-import type { ArtifactActionsClient } from './artifactActionsClient';
+import type { ArtifactActionFailure, ArtifactActionsClient } from './artifactActionsClient';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 import {
   admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation,
@@ -46,7 +47,8 @@ type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 type Currency = 'unknown' | 'current' | 'movedOn';
 type Busy = 'accept' | 'decline' | 'undo' | null;
 type UndoOutcome = Readonly<{ state: 'done'; revision: Revision }>
-  | Readonly<{ state: 'conflict' | 'failed' }>;
+  | Readonly<{ state: 'conflict' }>
+  | Readonly<{ state: 'failed'; failure: ArtifactActionFailure }>;
 type DocReadValue = Extract<Awaited<ReturnType<ArtifactActionsClient['readDoc']>>, { ok: true }>['value'];
 export type AdmittedDocRead = Readonly<{ status: 'loading' | 'unavailable' }>
   | Readonly<{ status: 'ready'; value: DocReadValue }>;
@@ -97,7 +99,7 @@ function DocEditApprovalContinuation(props: Readonly<{
   heldKind: DocEditOperationKind;
   heldApprovalId: string;
   settleDecision: (decided: DocEditProposalDispositionV1) => void;
-  refuseDecision: (code: string) => void;
+  refuseDecision: (failure: string | ArtifactActionFailure) => void;
   settleUndo: (outcome: UndoOutcome) => void;
 }>): null {
   const settlement = React.useRef({
@@ -141,7 +143,7 @@ function DocEditApprovalContinuation(props: Readonly<{
         // A refused or canceled request changes nothing: the card shows what it showed before it.
         if (code === 'approval_rejected' || code === 'approval_canceled') return;
         if (props.heldKind === 'undo') {
-          settlement.current.settleUndo({ state: reason === VERSION_MISMATCH ? 'conflict' : 'failed' });
+          settlement.current.settleUndo(reason === VERSION_MISMATCH ? { state: 'conflict' } : { state: 'failed', failure: { code: reason } });
         } else {
           settlement.current.refuseDecision(reason);
         }
@@ -216,7 +218,7 @@ export function ArtifactEditProposal(
       ? docRead.value.artifact : null;
   const currentRevision = freshestRevision(admitted?.revision ?? null, storedRevision);
   const [refusal, setRefusal] = React.useState<
-    'movedOn' | 'cantEdit' | 'failed' | null
+    'movedOn' | 'cantEdit' | ArtifactActionFailure | null
   >(null);
   const [busy, setBusy] = React.useState<Busy>(null);
   const currency: Currency = refusal === 'movedOn' ? 'movedOn'
@@ -262,9 +264,11 @@ export function ArtifactEditProposal(
     if (decided.state === 'accepted' && readViewportClass() === 'compact' && operationKey)
       announceAccepted(client, artifactId, base.bodyVersion, decided.acceptedRevision, operationKey, openApproval);
   }, [artifactId, base.bodyVersion, client, openApproval, operationKey]);
-  const refuseDecision = React.useCallback((code: string) => {
+  const refuseDecision = React.useCallback((failure: string | ArtifactActionFailure) => {
+    const value = typeof failure === 'string' ? { code: failure } : failure;
+    const code = value.code;
     if (code === VERSION_MISMATCH) setRefusal('movedOn');
-    else setRefusal(code === 'doc_edit_proposal_edit_access_required' ? 'cantEdit' : 'failed');
+    else setRefusal(code === 'doc_edit_proposal_edit_access_required' ? 'cantEdit' : value);
   }, []);
 
   const decide = React.useCallback(
@@ -284,7 +288,7 @@ export function ArtifactEditProposal(
       }
       releaseDocEditOperation(operationKey);
       if (outcome.ok) settleDecision(outcome.value.docEditProposalDispositionV1);
-      else refuseDecision(outcome.failure.code);
+      else refuseDecision(outcome.failure);
     },
     [base, busy, client, proposalRef, operationKey, openApproval, settleDecision, refuseDecision],
   );
@@ -310,12 +314,14 @@ export function ArtifactEditProposal(
         ? { state: 'done', revision: outcome.value.revision }
         : outcome.failure.code === VERSION_MISMATCH
           ? { state: 'conflict' }
-          : { state: 'failed' },
+          : { state: 'failed', failure: outcome.failure },
     );
   }, [artifactId, base.bodyVersion, busy, client, disposition, operationKey]);
 
   const docTitle = typeof admitted?.header.title === 'string' ? admitted.header.title : null;
   const readOnly = refusal === 'cantEdit' || admitted?.access === 'view';
+  const refusalMessage = refusal && typeof refusal === 'object'
+    ? resolveActionExecutionErrorMessage(refusal, t('artifacts.browser.proposal.failed')) : null;
   // History is the one place to pick a version. Compare opens it on the version the suggestion was
   // reviewed against, beside the current text; a refused Undo opens it as it is.
   const openHistory = React.useCallback((compareFromBodyVersion?: number) => showArtifactHistorySheet({
@@ -373,7 +379,7 @@ export function ArtifactEditProposal(
         action: { label: t('artifacts.browser.proposal.openHistory'), onPress: () => openHistory(), testID: `${testID}.undoConflict.open` },
       });
       if (undo?.state === 'failed') lines.push({
-        testID: `${testID}.undoFailed`, mark: 'failed', tone: 'danger', text: t('artifacts.browser.proposal.failed'),
+        testID: `${testID}.undoFailed`, mark: 'failed', tone: 'danger', text: resolveActionExecutionErrorMessage(undo.failure, t('artifacts.browser.proposal.failed')),
       });
       return {
         state: 'settled',
@@ -429,7 +435,7 @@ export function ArtifactEditProposal(
         kind: 'stale',
         line: {
           testID: `${testID}.movedOn`, mark: 'warning', tone: 'warning',
-          text: refusal === 'failed' ? t('artifacts.browser.proposal.failed') : t('artifacts.browser.proposal.movedOn'),
+          text: refusalMessage ?? t('artifacts.browser.proposal.movedOn'),
         },
         compare: { testID: `${testID}.compare`, label: t('artifacts.browser.proposal.compare'), onPress: compare },
         decline: decline && !readOnly ? { ...decline, busy: busy === 'decline' } : undefined,
@@ -449,7 +455,7 @@ export function ArtifactEditProposal(
       kind: 'decide',
       status: busy === 'accept' || busy === 'decline'
         ? { indicator: 'busy', text: busy === 'accept' ? t('artifacts.browser.proposal.accepting') : t('artifacts.browser.proposal.declining') }
-        : refusal === 'failed' ? { text: t('artifacts.browser.proposal.failed') }
+        : refusalMessage ? { text: refusalMessage }
           : currency === 'current'
             ? { indicator: 'current', testID: `${testID}.current`, text: t('artifacts.browser.proposal.current', { n: base.bodyVersion }) }
             : undefined,
@@ -633,7 +639,7 @@ export function announceAccepted(
           publishPresentationNotice(outcome.ok
             ? { key: ACCEPTED_NOTICE_KEY, severity: 'info', message: t('artifacts.browser.proposal.undone', { n: outcome.value.revision.bodyVersion }) }
             : { key: ACCEPTED_NOTICE_KEY, severity: 'warning', message: outcome.failure.code === VERSION_MISMATCH
-              ? t('artifacts.browser.proposal.undoConflict') : t('artifacts.browser.proposal.failed') });
+              ? t('artifacts.browser.proposal.undoConflict') : resolveActionExecutionErrorMessage(outcome.failure, t('artifacts.browser.proposal.failed')) });
         });
       },
     },

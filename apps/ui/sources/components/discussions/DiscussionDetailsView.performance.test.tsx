@@ -216,6 +216,59 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void,
         setArchived: (value: boolean) => { archived = value; } };
 }
 
+it('names a busy Discussion read and retries the same conversation', async () => {
+    const { serverId, fixture, repository } = await prepareLongDiscussion();
+    let busy = true;
+    homes.answer(serverId, 'GET /v1/discussions/committed-thread/messages', { select: () => busy
+        ? { status: 503, body: { error: 'database_transaction_timeout' } }
+        : { body: { messages: fixture.messages, hasMoreOlder: false, messageSeq: fixture.messages.length } } });
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active /></AppPaneProvider>);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Server busy'));
+    expect(screen.findByTestId('session-discussion-thread-state')).not.toBeNull();
+    busy = false;
+    await screen.pressByTestIdAsync('session-discussion-thread-state-action');
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Root'));
+    expect(screen.findByTestId('session-discussion-thread-state')).toBeNull();
+    busy = true;
+    await act(async () => { await repository.refreshDiscussion('committed-thread'); });
+    await vi.waitFor(() => expect(screen.findByTestId('session-discussion-freshness')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('Server busy');
+    expect(screen.getTextContent()).toContain('Root');
+    busy = false;
+    await screen.pressByTestIdAsync('session-discussion-freshness-action');
+    await vi.waitFor(() => expect(screen.findByTestId('session-discussion-freshness')).toBeNull());
+    await screen.unmount();
+});
+
+it('retains a busy post cause through the real Action and retries the same message', async () => {
+    const { DiscussionPostRequestV1Schema } = await import('@happier-dev/protocol/discussions/api');
+    const { serverId, fixture, repository } = await prepareLongDiscussion();
+    fixture.messages.splice(1);
+    let busy = true;
+    const bodies: unknown[] = [];
+    homes.answer(serverId, 'POST /v1/discussions/committed-thread/messages', { select: input => {
+        bodies.push(input);
+        if (busy) return { status: 503, body: { error: 'database_transaction_timeout' } };
+        const request = DiscussionPostRequestV1Schema.parse(input);
+        const message = { ...fixture.messages[0]!, id: 'retried-message', localId: request.localId, seq: 2, content: request.content };
+        return { body: { message, messageSeq: 2 } };
+    } });
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active /></AppPaneProvider>);
+    await vi.waitFor(() => expect(screen.root.findAllByType(DiscussionComposer)).toHaveLength(1));
+    await act(async () => screen.root.findByType(DiscussionComposer).props.onSend({ v: 1, parts: [{ t: 'text', text: 'Keep this question' }] }));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Server busy'));
+    expect(Object.values(repository.getSnapshot().mutations)).toEqual([expect.objectContaining({
+        failureCause: expect.objectContaining({ errorCode: 'database_transaction_timeout' }),
+    })]);
+    busy = false;
+    await screen.pressByTestIdAsync('session-discussion-mutation-retry');
+    await vi.waitFor(() => expect(Object.values(repository.getSnapshot().mutations).every(mutation => mutation.status === 'observed_success')).toBe(true));
+    expect(bodies.at(-1)).toEqual(bodies[0]);
+    await screen.unmount();
+});
+
 it('loads one-round Debate facts for Agent returns on a cold Discussion and folds around the digest', async () => {
     const { serverId, fixture, newMessage, workflowRows } = await prepareLongDiscussion();
     const root = fixture.messages[0]!;

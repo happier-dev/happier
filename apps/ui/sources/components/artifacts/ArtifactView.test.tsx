@@ -131,6 +131,23 @@ describe('Artifact composed view reads', () => {
             await screen.unmount();
         }
     });
+    it.each([false, true])('names a busy body read and safely retries without an inventory reload (edit=%s)', async edit => {
+        let busy = true;
+        const { served } = await setup('document', undefined, false, request => request.path === '/v1/artifacts/document' && busy
+            ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined);
+        const screen = await renderScreen(<OpenView id="document" edit={edit} />);
+        const failedId = edit ? 'artifact-editor:failed' : 'artifact:bodyFailed';
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId(failedId)).not.toBeNull(), { timeout: 10_000 });
+            expect(screen.getTextContent()).toContain('approvals.transientFailureTitle');
+            busy = false;
+            await screen.pressByTestIdAsync(`${failedId}-action`);
+            await vi.waitFor(() => edit
+                ? expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('The garden keeps one cedar tree.')
+                : expect(screen.getTextContent()).toContain('The garden keeps one cedar tree.'));
+            expect(served.requests.filter(request => request.path === '/v1/artifacts')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it('keeps one cold edit body read when its inventory header arrives during the opening read', async () => {
         const pending = createDeferred<Response>();
         const { served, head, row } = await setup('document', undefined, false,

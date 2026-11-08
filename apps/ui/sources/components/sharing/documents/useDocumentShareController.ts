@@ -12,6 +12,7 @@ import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
 import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
@@ -56,7 +57,7 @@ function readFailureCode(result: unknown): string {
 }
 
 /** One message per Artifact grant failure; codes stay the host's, words stay here. */
-function presentDocumentShareFailure(code: string): ShareUiError {
+function presentDocumentShareFailure(code: string, failure?: unknown): ShareUiError {
     switch (code) {
         case 'unsupported_action':
         case 'artifact_access_unavailable':
@@ -74,7 +75,7 @@ function presentDocumentShareFailure(code: string): ShareUiError {
         case 'artifact_owner_grant_invalid':
             return { code, message: t('shareSheet.documents.errors.subjectUnavailable'), retryable: false };
         default:
-            return { code, message: t('shareSheet.documents.errors.failed'), retryable: true };
+            return { code, message: resolveActionExecutionErrorMessage(failure ?? { code }, t('shareSheet.documents.errors.failed'), { safeToRetry: true }), retryable: true };
     }
 }
 
@@ -83,6 +84,21 @@ function presentDocumentShareFailure(code: string): ShareUiError {
  * `artifact.access.grants.*` Actions. The Action host validates the kind and ownership; every
  * acknowledged response replaces the roster, so the sheet never shows a guess.
  */
+/**
+ * What removing one grant takes away, from the roster this sheet already holds (plan 12 §2, lab
+ * p-overview SHARED). The roster has no per-member preview, so a removal that another grant may still
+ * cover says that access stays instead of claiming everyone loses it.
+ */
+function removalConsequences(removed: PrincipalRefV1, name: string, grants: readonly ArtifactAccessGrantRowV1[], dashboard: boolean): readonly string[] {
+    const others = grants.filter(row => sessionAccessSubjectKey(row.principal) !== sessionAccessSubjectKey(removed));
+    const coveredElsewhere = removed.kind === 'account' ? others.some(row => row.principal.kind !== 'account') : others.length > 0;
+    return [
+        removed.kind === 'account' ? t('shareSheet.removeLosesPerson', { name }) : t('shareSheet.removeLosesMembers', { name }),
+        ...(coveredElsewhere ? [t('shareSheet.removeKeepsOtherAccess')] : []),
+        ...(dashboard ? [t('shareSheet.removeKeepsTheirWork')] : []),
+    ];
+}
+
 export function useDocumentShareController(input: Readonly<{ artifactId: string; kind?: DocumentShareKind; scope: ServerAccountScope }>): Readonly<{
     model: ShareSheetModel;
     actions: ShareSheetActions;
@@ -194,7 +210,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         const parsed = result?.ok ? ArtifactAccessGrantsListResponseV1Schema.safeParse(result.result) : null;
         setState((previous) => parsed?.success
             ? { ...previous, phase: 'ready', response: parsed.data, issue: undefined }
-            : { ...previous, phase: 'error', issue: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed') });
+            : { ...previous, phase: 'error', issue: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result) });
     }, [artifactId, execute, identity, scope.serverId, scope.accountId]);
     React.useEffect(() => { void load(); void loadReview(); }, [load, loadReview]);
 
@@ -224,7 +240,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
                 return { ...previous, phase: 'ready', response: { ...response, access }, operations, issue: undefined };
             }
             return { ...previous,
-                operations: { ...operations, [key]: { kind: 'error', error: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed') } } };
+                operations: { ...operations, [key]: { kind: 'error', error: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result) } } };
         });
         setRevision((value) => value + 1);
     }, [artifactId, execute, identity, scope.serverId, scope.accountId]);
@@ -256,7 +272,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         } else {
             setReview(previous => fresh.phase === 'ready' ? fresh : { ...fresh, choices: previous.choices });
             setRepairs(previous => ({ ...previous, [choice.id]: { kind: 'error', error:
-                presentDocumentShareFailure(result ? readFailureCode(result) : unchanged ? 'widget_repair_failed' : 'widget_instance_changed') } }));
+                presentDocumentShareFailure(result ? readFailureCode(result) : unchanged ? 'widget_repair_failed' : 'widget_instance_changed', result) } }));
         }
     }, [editable, execute, identity, loadReview, readDashboard, scope.serverId, scope.accountId]);
     const privateChoices = React.useMemo<readonly DocumentPrivateChoice[]>(() => review.choices.map(choice => {
@@ -277,10 +293,10 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
             principal,
             level: { kind: 'editable', value: row.accessLevel, options: isOwner ? ['view', 'edit', 'admin'] : ['view', 'edit'] },
             removal: state.confirmingRemoval === principal.key
-                ? { kind: 'confirming', consequences: [] } : { kind: 'allowed' },
+                ? { kind: 'confirming', consequences: removalConsequences(row.principal, principal.displayName, grants, dashboard) } : { kind: 'allowed' },
             operation,
         };
-    }), [grants, isOwner, state.operations, state.confirmingRemoval, scope.accountId, viewerProfile]);
+    }), [grants, isOwner, state.operations, state.confirmingRemoval, scope.accountId, viewerProfile, dashboard]);
     const owner = response && response.ownerAccountId === scope.accountId ? { principal: presentSharePrincipal({
         ref: { kind: 'account', accountId: response.ownerAccountId },
         profile: viewerProfile, viewerAccountId: scope.accountId,

@@ -25,9 +25,10 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
-import { createArtifactActionsClient, type ArtifactActionsClient } from './artifactActionsClient';
+import { createArtifactActionsClient, type ArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
 import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
@@ -56,7 +57,7 @@ type HistoryState = Readonly<{
     artifactId: string;
     data: HistoryData | null;
     loading: boolean;
-    failed: boolean;
+    failure: ArtifactActionFailure | null;
 }>;
 type HistorySelection = Readonly<{ client: ArtifactActionsClient; artifactId: string; bodyVersion: number }>;
 type HistoryArtifact = Pick<DecryptedArtifact, 'id' | 'title' | 'headerVersion' | 'bodyVersion' | 'body' | 'updatedAt' | 'provenance' | 'seq' | 'access'>;
@@ -145,7 +146,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const [state, setState] = React.useState<HistoryState | null>(null);
     const [selection, setSelection] = React.useState<HistorySelection | null>(null);
     const [restoring, setRestoring] = React.useState(false);
-    const [restoreFailed, setRestoreFailed] = React.useState(false);
+    const [restoreFailure, setRestoreFailure] = React.useState<ArtifactActionFailure | null>(null);
     const [refreshIntent, requestRefresh] = React.useReducer((intent: number) => intent + 1, 0);
     const artifactId = props.artifactId;
     const current = artifact?.bodyVersion;
@@ -157,15 +158,15 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
         let active = true;
         setState(previous => ({ client, artifactId,
             data: previous?.client === client && previous.artifactId === artifactId ? previous.data : null,
-            loading: true, failed: false }));
+            loading: true, failure: null }));
         void client.listRevisions(artifactId).then(outcome => {
             if (!active) return;
             if (!outcome.ok) {
-                setState(previous => previous ? { ...previous, loading: false, failed: true } : previous);
+                setState(previous => previous ? { ...previous, loading: false, failure: outcome.failure } : previous);
                 return;
             }
             const revisions = [...outcome.value.revisions].sort((a, b) => b.bodyVersion - a.bodyVersion);
-            setState({ client, artifactId, data: { revisions, retentionCount: outcome.value.retentionCount }, loading: false, failed: false });
+            setState({ client, artifactId, data: { revisions, retentionCount: outcome.value.retentionCount }, loading: false, failure: null });
             const earlier = revisions.filter(revision => revision.bodyVersion !== current);
             setSelection(previous => {
                 if (previous?.client === client && previous.artifactId === artifactId
@@ -182,7 +183,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const restore = React.useCallback(async (bodyVersion: number) => {
         if (!artifact || artifact.bodyVersion === undefined) return;
         setRestoring(true);
-        setRestoreFailed(false);
+        setRestoreFailure(null);
         const outcome = await client.restoreRevision({
             artifactId: props.artifactId,
             bodyVersion,
@@ -199,16 +200,16 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
             return;
         }
         setRestoring(false);
-        setRestoreFailed(true);
+        setRestoreFailure(outcome.failure);
     }, [artifact, client, props, router, scope]);
 
-    if (!history?.data && history?.failed) {
+    if (!history?.data && history?.failure) {
         return (
             <View style={styles.root} testID="artifact-history" onLayout={measureBody}>
                 <SurfaceStateCard
                     testID="artifact-history:failed"
                     kind="error"
-                    title={t('artifacts.browser.history.loadFailed')}
+                    title={resolveActionExecutionFailureTitle(history.failure, t('artifacts.browser.history.loadFailed'))}
                     action={{ label: t('common.retry'), onPress: requestRefresh }}
                     accessibilitySemantics="alert"
                 />
@@ -287,13 +288,13 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
 
     return (
         <View style={styles.root} testID="artifact-history" onLayout={measureBody}>
-            {history.loading || history.failed ? (
+            {history.loading || history.failure ? (
                 <SurfaceFreshnessLine
                     testID={history.loading ? 'artifact-history:refreshing' : 'artifact-history:stale'}
-                    reason={history.loading ? t('common.loading') : t('artifacts.browser.history.loadFailed')}
+                    reason={history.loading ? t('common.loading') : resolveActionExecutionErrorMessage(history.failure, t('artifacts.browser.history.loadFailed'), { safeToRetry: true })}
                     busy={history.loading}
-                    tone={history.failed ? 'warning' : 'neutral'}
-                    action={history.failed ? { label: t('common.retry'), onPress: requestRefresh } : undefined}
+                    tone={history.failure ? 'warning' : 'neutral'}
+                    action={history.failure ? { label: t('common.retry'), onPress: requestRefresh } : undefined}
                 />
             ) : null}
             {compareUnavailableReason ? (
@@ -313,8 +314,8 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
             </View>
             {chosen && props.canRestore ? (
                 <View style={[styles.footer, !sideBySide ? styles.footerStacked : null]}>
-                    <Text style={[styles.note, !sideBySide ? styles.noteStacked : null, restoreFailed ? styles.noteFailed : null]}>
-                        {restoreFailed ? t('artifacts.browser.history.restoreFailed') : t('artifacts.browser.history.restoreNote')}
+                    <Text style={[styles.note, !sideBySide ? styles.noteStacked : null, restoreFailure ? styles.noteFailed : null]}>
+                        {restoreFailure ? resolveActionExecutionErrorMessage(restoreFailure, t('artifacts.browser.history.restoreFailed')) : t('artifacts.browser.history.restoreNote')}
                     </Text>
                     <RoundButton
                         testID="artifact-history:restore"

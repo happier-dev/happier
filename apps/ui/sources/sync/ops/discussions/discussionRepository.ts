@@ -15,6 +15,7 @@ import type {
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { createDiscussionClient, DiscussionClientOutcome, DiscussionPostOutcome } from '@/sync/api/discussions/discussionActions';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { watchMountedDiscussions, type MountedDiscussionChangeWatch } from '@/sync/domains/discussions/discussionChangeWatch';
 import type { DiscussionAnchorV1, DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionCreateInputV1 } from '@happier-dev/protocol/discussions/actions';
@@ -93,6 +94,7 @@ export type DiscussionRepositoryMutation = Readonly<{
     status: DiscussionMutationStatus;
     artifactId?: string;
     errorCode?: string;
+    failureCause?: ActionFailureCauseV1;
     recovery?: DiscussionMutationRecovery;
     content: DiscussionMessageContentV1;
     mentionedAccountIds?: readonly string[];
@@ -515,7 +517,7 @@ export function createDiscussionRepository(options: Readonly<{
     const markMutationObservedSuccess = (localId: string) => {
         const current = snapshot.mutations[localId];
         if (!current) return;
-        const { artifactId: _artifactId, errorCode: _errorCode, recovery: _recovery, ...retained } = current;
+        const { artifactId: _artifactId, errorCode: _errorCode, failureCause: _failureCause, recovery: _recovery, ...retained } = current;
         updateMutation(localId, { ...retained, status: 'observed_success' });
     };
     const updateArchivedExistence = (value: DiscussionArchivedExistence, anchorSessionId?: ListAnchor) => {
@@ -1045,7 +1047,7 @@ export function createDiscussionRepository(options: Readonly<{
         });
     };
 
-    const recordMutation = (intent: MutationIntent, status: DiscussionMutationStatus, detail?: Readonly<{ artifactId?: string; errorCode?: string; recovery?: DiscussionMutationRecovery }>) => {
+    const recordMutation = (intent: MutationIntent, status: DiscussionMutationStatus, detail?: Pick<DiscussionRepositoryMutation, 'artifactId' | 'errorCode' | 'failureCause' | 'recovery'>) => {
         const localId = intent.kind === 'create' ? intent.creationLocalId : intent.localId;
         intents.set(localId, intent);
         updateMutation(localId, {
@@ -1205,7 +1207,7 @@ export function createDiscussionRepository(options: Readonly<{
 
         const retained = snapshot.mutations[localId];
         if (retained?.status === 'checking' || retained?.status === 'outcome_unknown') {
-            recordMutation(intent, 'outcome_unknown', { errorCode: 'outcome_unknown' });
+            recordMutation(intent, 'outcome_unknown', { errorCode: 'outcome_unknown', failureCause: retained.failureCause });
         }
         return false;
     };
@@ -1231,13 +1233,13 @@ export function createDiscussionRepository(options: Readonly<{
             return { kind: 'approval_request_created', artifactId: outcome.artifactId };
         }
         if (outcome.errorCode === 'outcome_unknown') {
-            recordMutation(intent, 'checking');
+            recordMutation(intent, 'checking', { failureCause: outcome.failureCause });
             void reconcileRecordedIntent(intent, signal);
             return { kind: 'checking' };
         }
         // This proposed resource/participant set can be refused without losing
         // Account-wide access. Home retirement belongs to the lifetime owner.
-        recordMutation(intent, 'failed', { errorCode: outcome.errorCode, recovery: recoveryForFailure(outcome.errorCode) });
+        recordMutation(intent, 'failed', { errorCode: outcome.errorCode, failureCause: outcome.failureCause, recovery: recoveryForFailure(outcome.errorCode) });
         return outcome;
     };
 
@@ -1255,14 +1257,14 @@ export function createDiscussionRepository(options: Readonly<{
             return { kind: 'approval_request_created', artifactId: outcome.artifactId };
         }
         if (outcome.errorCode === 'outcome_unknown') {
-            recordMutation(intent, 'checking');
+            recordMutation(intent, 'checking', { failureCause: outcome.failureCause });
             void reconcileRecordedIntent(intent, signal);
             return { kind: 'checking' };
         }
         // An invitation refusal denies the proposed participant, not the loaded
         // thread. Retain the submitted draft and its definite failed attempt.
         if (outcome.stage !== 'participant_invitation' && isExplicitAccessLoss(outcome.errorCode)) purgeDiscussion(intent.discussionId, outcome.errorCode);
-        else recordMutation(intent, 'failed', { errorCode: outcome.errorCode, recovery: recoveryForFailure(outcome.errorCode) });
+        else recordMutation(intent, 'failed', { errorCode: outcome.errorCode, failureCause: outcome.failureCause, recovery: recoveryForFailure(outcome.errorCode) });
         return outcome;
     };
 

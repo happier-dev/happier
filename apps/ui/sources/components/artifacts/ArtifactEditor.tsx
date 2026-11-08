@@ -15,6 +15,7 @@ import { Modal } from '@/modal';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { runUnsavedChangesGuard, type ActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
@@ -87,15 +88,16 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
             if (!outcome.ok) {
                 if (outcome.failure.quota) { setQuota(outcome.failure.quota); return false; }
                 if (outcome.failure.code === 'version_mismatch') { setConflict(true); return false; }
-                throw new Error(outcome.failure.code);
+                throw outcome.failure;
             }
             ignoreRef.current = true;
             isDirtyRef.current = false;
             if (mode === 'new') router.replace(artifactViewRoute(outcome.value.artifactId) as never);
             else safeRouterBack({ router, fallbackHref: '/artifacts' });
             return true;
-        } catch {
-            await Modal.alert(t('common.error'), mode === 'new' ? t('artifacts.createError') : t('artifacts.updateError'));
+        } catch (failure) {
+            await Modal.alert(resolveActionExecutionFailureTitle(failure, t('common.error')),
+                resolveActionExecutionErrorMessage(failure, mode === 'new' ? t('artifacts.createError') : t('artifacts.updateError')));
             return false;
         } finally {
             setSaving(false);

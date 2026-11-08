@@ -2,7 +2,7 @@ import type { z } from 'zod/mini';
 import type { DiscussionCreateResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { DocCollaborationActionOutputSchemasV1, deriveDocCommentDiscussionCreationLocalIdV1,
     type DocCommentReplyInputV1, type DocEditProposeInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1, projectDiscussionCandidateSessionQueryV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { buildDiscussionAttachmentBindingsV1, buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAccessRecipientCensusResponseV1Schema, DiscussionRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/discussions/access';
@@ -88,7 +88,8 @@ async function readTransportJson(options: AdapterOptions, path: string, method: 
     if (!response.ok) {
         const parsed = DiscussionErrorResponseV1Schema.safeParse(payload);
         const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
-        throw refusal(transient?.code ?? (parsed.success ? parsed.data.error : response.status === 404 ? 'unsupported_action' : 'outcome_unknown'));
+        throw Object.assign(refusal(transient?.code ?? (parsed.success ? parsed.data.error : response.status === 404 ? 'unsupported_action' : 'outcome_unknown')),
+            { status: response.status });
     }
     return payload;
 }
@@ -392,7 +393,7 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
             const retiredEffect = dispatched && isActionEffectResult(getActionSpec(actionId).sideEffectClass) && isActionAccountScopeChangedError(error);
             const code = preparingRecipients || retiredEffect ? 'outcome_unknown' : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code
                 : dispatched ? 'outcome_unknown' : signal?.aborted ? 'canceled' : 'discussion_invalid_content';
-            return failure(code);
+            return { ...failure(code), failureCause: projectActionFailureCauseV1(error, actionId) };
         }
     };
 }
@@ -430,14 +431,14 @@ export async function executeDiscussionActionInAccountContext(account: LazyActio
 export type DiscussionClientOutcome<T> =
     | Readonly<{ kind: 'succeeded'; value: T }>
     | Readonly<{ kind: 'approval_request_created'; artifactId: string; actionId: string }>
-    | Readonly<{ kind: 'failed'; errorCode: string }>;
+    | Readonly<{ kind: 'failed'; errorCode: string; failureCause?: ActionFailureCauseV1 }>;
 
 export type DiscussionExecutableParticipantInviteOutcome = Exclude<DiscussionClientOutcome<DiscussionActionResult<'discussion.invite'>>, Readonly<{ kind: 'failed' }>>
-    | Readonly<{ kind: 'failed'; errorCode: string; value?: DiscussionActionResult<'discussion.invite'> }>
+    | Readonly<{ kind: 'failed'; errorCode: string; failureCause?: ActionFailureCauseV1; value?: DiscussionActionResult<'discussion.invite'> }>
     | Readonly<{ kind: 'checking'; value?: DiscussionActionResult<'discussion.invite'> }>;
 
 export type DiscussionPostOutcome = Exclude<DiscussionClientOutcome<DiscussionPostResultV1>, Readonly<{ kind: 'failed' }>>
-    | Readonly<{ kind: 'failed'; errorCode: string; stage?: 'participant_invitation' }>;
+    | Readonly<{ kind: 'failed'; errorCode: string; failureCause?: ActionFailureCauseV1; stage?: 'participant_invitation' }>;
 
 /** Batch codec for owner-native attention; keys and messages come in the same admitted response. */
 export async function readDiscussionAttentionPage(options: AdapterOptions, input: DiscussionAttentionQueryV1 = {}, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionAttentionResultV1>> {
@@ -484,7 +485,8 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             expectedAccountId: options.scope.accountId,
             ...(onSessionTargetsResolved ? { onSessionTargetsResolved } : {}),
             ...(signal ? { signal } : {}) });
-        if (!result.ok) return { kind: 'failed', errorCode: result.errorCode };
+        if (!result.ok) return { kind: 'failed', errorCode: result.errorCode,
+            ...(result.failureCause ? { failureCause: result.failureCause } : {}) };
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (approval.success) {
             continuation?.onPending(createActionApprovalContinuation<ClientActionResult<T>, T>({

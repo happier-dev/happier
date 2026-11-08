@@ -425,6 +425,19 @@ describe('ArtifactEditor', () => {
         await screen.unmount();
     });
 
+    it('retains the busy cause through the Doc save client and canonical presenter', async () => {
+        const serverId = await restoreEditorHome('https://artifact-editor-busy.test');
+        homes.answer(serverId, 'POST /v1/artifacts', { status: 503, body: { error: 'database_transaction_timeout' } });
+        const { createArtifactActionsClient } = await import('./artifactActionsClient');
+        const { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+        const client = createArtifactActionsClient({ serverId, accountId: 'owner' });
+        const outcome = await client.createArtifact({ header: { title: 'Kept draft' }, body: 'Kept draft' });
+        expect(homes.requestsFor('/v1/artifacts').some(request => request.method === 'POST')).toBe(true);
+        if (!('ok' in outcome) || outcome.ok) throw new Error('Expected the Doc save refusal');
+        expect(outcome.failure.code).toBe('database_transaction_timeout');
+        expect(resolveActionExecutionFailureTitle(outcome.failure, 'common.error')).toBe('approvals.transientFailureTitle');
+        expect(resolveActionExecutionErrorMessage(outcome.failure, 'artifacts.createError')).toBe('toolView.pending.unknownDescription');
+    });
     it('keeps the draft and reports the named budget when the create Action refuses quota', async () => {
         const serverId = await restoreEditorHome('https://artifact-editor-quota.test');
         homes.answer(serverId, 'POST /v1/artifacts', { status: 413,

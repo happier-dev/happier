@@ -9,6 +9,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export function EditArtifactScreen(): React.ReactElement {
     const { id } = useLocalSearchParams<{ id: string }>();
@@ -36,6 +37,7 @@ function EditDocument(props: Readonly<{ id: string; artifact: DecryptedArtifact 
                 testID="artifact-editor:failed"
                 kind="error"
                 title={t('artifacts.error')}
+                reason={resolveActionExecutionErrorMessage(body.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
                 action={{ label: t('common.retry'), onPress: body.retry }}
                 accessibilitySemantics="alert"
             />

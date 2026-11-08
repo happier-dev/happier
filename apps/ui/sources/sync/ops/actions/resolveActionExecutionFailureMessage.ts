@@ -67,12 +67,14 @@ export function describeMachineNativeFailureCode(code: unknown): string | null {
     }
 }
 
-function readFailureMessage(value: unknown): string | null {
+type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean }>;
+
+function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
     if (!record) return null;
     const code = record.errorCode ?? record.code;
-    const transient = readTransientFailure(record);
-    if (transient) return transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
+    const transient = readTransientFailure(record, options);
+    if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
@@ -92,7 +94,7 @@ function readFailureMessage(value: unknown): string | null {
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
     // Sent, with no answer back: it may or may not have landed.
-    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t('entityDragDrop.preview.unknownDetail');
+    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
     const widgetRefusal = readWidgetRefusalMessage(code, record.details);
     if (widgetRefusal) return widgetRefusal;
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
@@ -104,14 +106,14 @@ function readFailureMessage(value: unknown): string | null {
     return null;
 }
 
-function readTransientFailure(record: Record<string, unknown> | null) {
-    return readTransientAvailabilityFailure(record?.errorCode ?? record?.code)
-        ?? readTransientAvailabilityFailure(asRecord(record?.failureCause)?.errorCode);
+function readTransientFailure(record: Record<string, unknown> | null, options?: FailurePresentationOptions) {
+    return readTransientAvailabilityFailure(record?.errorCode ?? record?.code, options)
+        ?? readTransientAvailabilityFailure(asRecord(record?.failureCause)?.errorCode, options);
 }
 
 /** Thrown adapters retain the same typed failure copy as Action result envelopes. */
-export function resolveActionExecutionErrorMessage(error: unknown, fallbackMessage: string): string {
-    return readFailureMessage(error) ?? fallbackMessage;
+export function resolveActionExecutionErrorMessage(error: unknown, fallbackMessage: string, options?: FailurePresentationOptions): string {
+    return readFailureMessage(error, options) ?? fallbackMessage;
 }
 
 function isFailedResult(value: unknown): boolean {
@@ -137,8 +139,9 @@ function readFailureRecord(value: unknown): Record<string, unknown> | null {
 export function resolveActionExecutionFailureMessage(
     result: unknown,
     fallbackMessage: string,
+    options?: FailurePresentationOptions,
 ): string | null {
     if (!asRecord(result)) return fallbackMessage;
     const failure = readFailureRecord(result);
-    return failure ? readFailureMessage(failure) ?? fallbackMessage : null;
+    return failure ? readFailureMessage(failure, options) ?? fallbackMessage : null;
 }

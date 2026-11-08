@@ -3,6 +3,9 @@ import { t } from '@/text';
 import { discussionFailureLabel } from './discussionFailureLabel';
 
 describe('discussionFailureLabel', () => {
+    it.each(['database_connection_unavailable', 'database_transaction_timeout', 'database_transaction_conflict_exhausted'])('names %s on a safely repeatable Discussion operation', code => {
+        expect(discussionFailureLabel(code)).toBe(t('approvals.transientFailureTitle'));
+    });
     it('presents an access refusal as permission denied', () => {
         expect(discussionFailureLabel('discussion_access_forbidden')).toBe(t('errors.permissionDenied'));
     });

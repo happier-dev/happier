@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { DiscussionAccessGrantsListResponseV1 } from '@happier-dev/protocol/discussions/access';
 import type { DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import type { SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
@@ -23,7 +25,6 @@ import type {
 } from '@/components/sharing/shareSheetTypes';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -47,6 +48,8 @@ import { Typography } from '@/constants/Typography';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { useExecutableParticipantSections } from './useExecutableParticipantSections';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 
 type Mutation =
   | Readonly<{
@@ -63,12 +66,33 @@ type State = Readonly<{
   operations: Readonly<Record<string, ShareOperationModel>>;
 }>;
 
-const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 const IDLE: ShareOperationModel = { kind: 'idle' };
 const NO_TEAM_CONTEXTS: readonly [] = [];
 
+/** Discussion relationship facts outrank retained grant display facts. */
+export function presentDiscussionAccessPrincipal(input: Readonly<{
+  ref: PrincipalRefV1;
+  actor?: SessionMessageAccountActorV1 | null;
+  display?: Readonly<{ name: string | null; username?: string | null }>;
+  scope: ServerAccountScope;
+  viewerProfile: ReturnType<typeof useShareViewerProfile>;
+}>): SharePrincipalPresentation {
+  if (input.ref.kind !== 'account' || !input.actor) {
+    return presentSharePrincipal({ ref: input.ref, name: input.display?.name, username: input.display?.username,
+      viewerAccountId: input.scope.accountId,
+      ...(input.ref.kind === 'account' && input.ref.accountId === input.scope.accountId ? { profile: input.viewerProfile } : {}) });
+  }
+  const actor = { ...input.actor, serverId: input.scope.serverId };
+  const classification = classifyAccountActorLabelV1(actor, actor.accountId === input.scope.accountId);
+  const presentation = resolveAccountActorPresentation(actor, input.scope);
+  const profile = classification.kind === 'former' || classification.kind === 'unnamed' ? null : actor.profile;
+  return presentSharePrincipal({ ref: input.ref, name: presentation.name,
+    username: classification.kind === 'profile' ? actor.profile?.username ?? null : null,
+    profile, avatarUrl: presentation.avatar.imageUrl, viewerAccountId: input.scope.accountId });
+}
+
 /** One message per Discussion grant refusal; codes stay the Action host's, words stay here. */
-function presentDiscussionInviteFailure(code: string): ShareUiError {
+function presentDiscussionInviteFailure(code: string, failure?: unknown): ShareUiError {
   switch (code) {
     case 'discussion_manage_denied':
       return {
@@ -85,7 +109,7 @@ function presentDiscussionInviteFailure(code: string): ShareUiError {
     default:
       return {
         code,
-        message: t('session.collaboration.discussion.invite.failed'),
+        message: resolveActionExecutionErrorMessage(failure ?? { code }, t('session.collaboration.discussion.invite.failed'), { safeToRetry: true }),
         retryable: true,
       };
   }
@@ -155,6 +179,7 @@ function useDiscussionInviteController(
             phase: 'error',
             issue: presentDiscussionInviteFailure(
               outcome?.kind === 'failed' ? outcome.errorCode : 'failed',
+              outcome,
             ),
           },
     );
@@ -213,6 +238,7 @@ function useDiscussionInviteController(
               kind: 'error',
               error: presentDiscussionInviteFailure(
                 outcome?.kind === 'failed' ? outcome.errorCode : 'failed',
+                outcome,
               ),
             },
           },
@@ -225,22 +251,14 @@ function useDiscussionInviteController(
   );
 
   const response = state.response;
+  const accountActors = React.useMemo(() => new Map((response?.accountActors ?? []).map(actor => [actor.accountId, actor])), [response?.accountActors]);
   const isOwner = response?.access === 'owner';
   const editable = isOwner || response?.access === 'admin';
   const grants = React.useMemo<readonly ShareGrantRowModel[]>(
     () =>
       (response?.grants ?? []).map((row) => {
-        const principal = presentSharePrincipal({
-          ref: row.principal,
-          name: row.display.name,
-          username: row.display.username,
-          viewerAccountId: scope.accountId,
-          profile:
-            row.principal.kind === 'account' &&
-            row.principal.accountId === scope.accountId
-              ? viewerProfile
-              : null,
-        });
+        const principal = presentDiscussionAccessPrincipal({ ref: row.principal, display: row.display, scope, viewerProfile,
+          actor: row.principal.kind === 'account' ? accountActors.get(row.principal.accountId) : null });
         return {
           grant: row.principal,
           principal,
@@ -255,6 +273,7 @@ function useDiscussionInviteController(
       }),
     [
       isOwner,
+      accountActors,
       response?.grants,
       scope.accountId,
       state.operations,
@@ -263,12 +282,9 @@ function useDiscussionInviteController(
   );
   const owner = response
     ? {
-        principal: presentSharePrincipal({
+        principal: presentDiscussionAccessPrincipal({
           ref: { kind: 'account', accountId: response.ownerAccountId },
-          ...(response.ownerAccountId === scope.accountId
-            ? { profile: viewerProfile }
-            : {}),
-          viewerAccountId: scope.accountId,
+          actor: accountActors.get(response.ownerAccountId), scope, viewerProfile,
         }),
       }
     : null;
@@ -483,7 +499,7 @@ function DiscussionInviteSheetWithAgents(
     (selection: ExecutableParticipantSelectionV1) => { void inviteExecutable(selection); },
     [inviteExecutable],
   );
-  const { sections: agentSections } = useExecutableParticipantSections({
+  const { sections: agentSections, recipeEditor } = useExecutableParticipantSections({
     accountLifetime: props.accountLifetime,
     roster: props.roster,
     busy: operation.kind === 'working',
@@ -495,7 +511,7 @@ function DiscussionInviteSheetWithAgents(
     query: props.controller.model.directory.query,
   });
   const { accountLifetime: _lifetime, management: _management, roster: _roster, ...shared } = props;
-  return <DiscussionInviteShareSheet {...shared} agentSections={agentSections} />;
+  return recipeEditor ?? <DiscussionInviteShareSheet {...shared} agentSections={agentSections} />;
 }
 
 function DiscussionInviteShareSheet(
@@ -546,6 +562,8 @@ export function DiscussionParticipantsSheet(
     notes: readonly string[];
     onChanged?: () => void;
     onRequestClose: () => void;
+    /** A pane's measured height: the roster list scrolls within it instead of running past the pane's foot. */
+    maxHeight?: number;
   }>,
 ) {
   const noteKey = props.notes.join('\n');
@@ -565,6 +583,7 @@ export function DiscussionParticipantsSheet(
       onRequestClose={props.onRequestClose}
       presentation="inline"
       composition={composition}
+      {...(props.maxHeight === undefined ? {} : { maxHeight: props.maxHeight })}
     />
   );
 }
@@ -778,7 +797,6 @@ export const DiscussionInviteButton = React.memo(
               accessibilityLabel={t('session.collaboration.discussion.invite.button')}
               expanded={open}
               hasPopup="dialog"
-              minimumInteractiveTargetSize={minimumInteractiveTargetSize}
               onPress={() => setOpen((value) => !value)}
             />
           ) : (

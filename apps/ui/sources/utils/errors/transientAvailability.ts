@@ -10,7 +10,7 @@ const TRANSIENT_AVAILABILITY_CODES = [
 export type TransientAvailabilityCode = typeof TRANSIENT_AVAILABILITY_CODES[number];
 
 /** Neither connection loss nor deadline expiry alone establishes rollback. */
-export function readTransientAvailabilityFailure(code: unknown): Readonly<{
+export function readTransientAvailabilityFailure(code: unknown, options?: Readonly<{ safeToRetry?: boolean }>): Readonly<{
     code: TransientAvailabilityCode;
     title: string;
     message: string;
@@ -22,7 +22,9 @@ export function readTransientAvailabilityFailure(code: unknown): Readonly<{
     return {
         code: knownCode,
         title: t('approvals.transientFailureTitle'),
-        message: t('approvals.transientFailure'),
+        // An idempotent operation can be repeated even if its acknowledgement was
+        // lost. Name the cause without claiming its previous effect rolled back.
+        message: t(options?.safeToRetry ? 'approvals.transientFailureTitle' : 'approvals.transientFailure'),
         effectMayHaveApplied,
     };
 }

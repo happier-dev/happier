@@ -122,6 +122,21 @@ describe('Discussion key-opening demand', () => {
         expect(await execute({ actionId: 'discussion.get', input: { discussionId: 'discussion-a' }, context }))
             .toMatchObject({ ok: false, errorCode: error });
     });
+    it('retains the busy cause when recipient preparation follows a committed Discussion create', async () => {
+        const transport = http('e2ee');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const ownerContentPublicKeyFingerprint = createAccountScopedCryptoMaterialSnapshotV1({
+            accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+        }).contentPublicKeyFingerprint;
+        const execute = createDiscussionActionAdapter({ scope, encryption, accountMode: 'e2ee', ownerContentPublicKeyFingerprint,
+            availability: 'available', request: (path, init) => path.endsWith('/data-key/recipients')
+                ? Promise.resolve(json({ error: 'database_transaction_timeout' }, 503)) : transport.request(path, init) });
+        expect(await execute({ actionId: 'discussion.create', input: { ...input,
+            participants: [{ kind: 'account', accountId: 'account-b' }] }, context })).toMatchObject({
+            ok: false, errorCode: 'outcome_unknown', failureCause: { errorCode: 'database_transaction_timeout', httpStatus: 503 },
+        });
+        expect(transport.messages).toHaveLength(1);
+    });
     it.each(['discussion.get', 'discussion.read', 'discussion.list'] as const)(
         'routes %s keys by exact demand while preserving readable E2EE content', async actionId => {
             const transport = http('e2ee');

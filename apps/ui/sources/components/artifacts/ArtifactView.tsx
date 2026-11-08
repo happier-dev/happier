@@ -15,6 +15,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
     artifactViewRoute,
@@ -109,7 +110,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
             testID="artifact:bodyFailed"
             kind="error"
             title={t('artifacts.error')}
-            reason={t('artifacts.browser.loadFailedBody')}
+            reason={resolveActionExecutionErrorMessage(body.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
             action={{ label: t('common.retry'), onPress: body.retry }}
             accessibilitySemantics="alert"
         />

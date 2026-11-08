@@ -1,6 +1,7 @@
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { DiscussionPhonePageStrip } from '@/components/navigation/mobile/chrome/bars/DiscussionCockpitTabBar';
 import * as React from 'react';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { projectDiscussionMessageReferences } from './discussionTimelineProjection';
 import { projectDiscussionMessageLabels, EMPTY_DISCUSSION_MESSAGE_LABELS, type DiscussionMessageLabelProjection } from './discussionTimelineProjection';
 import { prepareDiscussionContentForPassage, readDiscussionContentPassage } from './discussionComposerDocument';
@@ -235,15 +236,13 @@ function discussionLifecycleFailureLabel(
     if (outcome.kind === 'approval_request_created') return t('approvals.status.open');
     if (outcome.kind === 'checking') return t(operation === 'invite'
         ? 'session.collaboration.discussion.manage.checking' : 'session.collaboration.discussion.deliveryUnknown');
-    return outcome.kind === 'failed' && outcome.errorCode === 'outcome_unknown'
-        ? t('session.collaboration.discussion.deliveryUnknown')
-        : discussionFailureLabel(outcome.kind === 'failed' ? outcome.errorCode : undefined);
+    return resolveActionExecutionErrorMessage(outcome, discussionFailureLabel(outcome.errorCode), { safeToRetry: true });
 }
 
-function mutationStatusLabel(mutation: Pick<DiscussionRepositoryMutation, 'status' | 'errorCode'>): string | null {
+function mutationStatusLabel(mutation: Pick<DiscussionRepositoryMutation, 'status' | 'errorCode' | 'failureCause'>): string | null {
     if (mutation.status === 'observed_success') return null;
-    if (mutation.status === 'outcome_unknown') return t('session.collaboration.discussion.deliveryUnknown');
-    if (mutation.status === 'failed') return discussionFailureLabel(mutation.errorCode);
+    if (mutation.status === 'outcome_unknown' || mutation.status === 'failed')
+        return resolveActionExecutionErrorMessage(mutation, discussionFailureLabel(mutation.errorCode), { safeToRetry: true });
     if (mutation.status === 'approval_pending') return t('approvals.status.open');
     if (mutation.status === 'sending') return t('session.planOutput.sending');
     return t('session.collaboration.discussion.checking');
@@ -473,8 +472,9 @@ function threadReadFailureCard(
         return { kind: 'error', title: t('sessionConversation.discussion.lockedTitle'),
             reason: t('sessionConversation.discussion.lockedReason'), action, diagnosticCode: thread.errorCode ?? 'locked' } as const;
     }
-    return { kind: 'error', title: t('sessionConversation.discussion.errorTitle'),
-        reason: t('sessionConversation.discussion.errorReason'), action, diagnosticCode: thread.errorCode ?? null } as const;
+    const failure = { code: thread.errorCode };
+    return { kind: 'error', title: resolveActionExecutionFailureTitle(failure, t('sessionConversation.discussion.errorTitle')),
+        reason: resolveActionExecutionErrorMessage(failure, t('sessionConversation.discussion.errorReason'), { safeToRetry: true }), action, diagnosticCode: thread.errorCode ?? null } as const;
 }
 function readDiscussionSessionAgentId(source: SessionDisplayNameSource | null): string | null {
     return source ? readSessionPresentationAgentId(source) : null;
@@ -1188,9 +1188,10 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         ? t('session.collaboration.discussion.offline')
         : thread.status === 'locked'
             ? t('session.access.preparing')
-            : thread.status === 'error' || (managedRuns.refreshFailed && managedRuns.phase !== 'failed')
-                ? t('session.collaboration.discussion.loadError')
-                : null;
+            : thread.status === 'error'
+                ? threadReadFailureCard(thread, retryAction).reason
+                : managedRuns.refreshFailed && managedRuns.phase !== 'failed'
+                    ? t('session.collaboration.discussion.loadError') : null;
     const operationNotice = lifecycleFailure
         ? discussionLifecycleFailureLabel(lifecycleFailure.outcome, lifecycleFailure.operation)
         : threadStaleLabel === null && draft.status === 'offline'

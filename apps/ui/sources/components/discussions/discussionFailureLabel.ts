@@ -1,11 +1,14 @@
 import { t } from '@/text';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 /**
  * One presenter for the typed refusal vocabulary the repository already
  * classifies: the reason a person can act on, not a generic "Failed".
  */
 export function discussionFailureLabel(errorCode: string | undefined): string {
+    const transient = readTransientAvailabilityFailure(errorCode, { safeToRetry: true });
+    if (transient) return transient.message;
     switch (errorCode) {
         case 'outcome_unknown': return t('session.collaboration.discussion.deliveryUnknown');
         // A file the send could not read stays in the tray with its reason, as in a Session.

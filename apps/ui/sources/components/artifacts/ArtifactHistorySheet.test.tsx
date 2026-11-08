@@ -321,11 +321,12 @@ describe('Artifact History continuity', () => {
         await flushHookEffects();
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.findByTestId('artifact-history:refreshing')).not.toBeNull();
-        refresh.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+        refresh.resolve(Response.json({ error: 'database_transaction_timeout' }, { status: 503 }));
         await flushHookEffects();
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Notes 1');
         expect(screen.findByTestId('artifact-history:stale')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('approvals.transientFailureTitle');
         response = Promise.resolve(Response.json(revisions));
         await screen.pressByTestIdAsync('artifact-history:stale-action');
         await flushHookEffects();
@@ -381,11 +382,21 @@ describe('Artifact History continuity', () => {
             : request.path.endsWith('/restore') ? Response.json({ success: false, error: 'version-mismatch' }) : undefined);
         await screen.pressByTestIdAsync('artifact-history:version:1');
         await screen.pressByTestIdAsync('artifact-history:restore');
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('artifacts.browser.history.restoreFailed'));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('artifacts.browser.conflict.title'));
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Notes 1');
-        expect(screen.getTextContent()).toContain('artifacts.browser.history.restoreFailed');
+        expect(screen.getTextContent()).toContain('artifacts.browser.conflict.title');
         expect(screen.findByType(HappierArtifactRevisionList).props.selectedVersion).toBe(1);
         expect(getStorage().getState().artifacts.document?.bodyVersion).toBe(3);
+    });
+
+    it('retains the selected revision when a restore times out without claiming rollback', async () => {
+        const { screen } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions)
+            : request.path.endsWith('/restore') ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined);
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        await screen.pressByTestIdAsync('artifact-history:restore');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('toolView.pending.unknownDescription'));
+        expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
+        expect(screen.findByType(HappierArtifactRevisionList).props.selectedVersion).toBe(1);
     });
 });

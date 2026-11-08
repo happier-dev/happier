@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { v5 as uuidv5 } from 'uuid';
 import type { z } from 'zod/mini';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactActionOutputSchemasV1, type ArtifactActionInputV1, type ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DocCollaborationActionInputSchemasV1, DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactAccessActionOutputSchemasV1, type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -28,6 +28,7 @@ export type ArtifactQuota = Readonly<{ budget: 'document' | 'account'; limitByte
 
 export type ArtifactActionFailure = Readonly<{
     code: string;
+    failureCause?: ActionFailureCauseV1;
     /** Present when a write was refused for an operator budget (`quota_exceeded`). */
     quota?: ArtifactQuota;
 }>;
@@ -51,14 +52,16 @@ export function readArtifactActionFailure(result: unknown): ArtifactActionFailur
     const record = readRecord(result);
     const code = typeof record.errorCode === 'string' ? record.errorCode
         : typeof record.error === 'string' ? record.error : 'artifact_action_failed';
-    if (code !== 'quota_exceeded') return { code };
+    const cause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
+    const failure = { code, ...(cause.success ? { failureCause: cause.data } : {}) };
+    if (code !== 'quota_exceeded') return failure;
     const details = readRecord(record.details);
     const budget = details.budget === 'document' || details.budget === 'account' ? details.budget : null;
     const limitBytes = typeof details.limitBytes === 'number' ? details.limitBytes : null;
     const usedBytes = typeof details.usedBytes === 'number' ? details.usedBytes : null;
     return budget !== null && limitBytes !== null && usedBytes !== null
-        ? { code, quota: { budget, limitBytes, usedBytes } }
-        : { code };
+        ? { ...failure, quota: { budget, limitBytes, usedBytes } }
+        : failure;
 }
 
 /** Keep Artifact clients on the existing mounted invocation and its exact approval recipient. */

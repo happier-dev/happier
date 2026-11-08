@@ -3,7 +3,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
-import { AccountProfileSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, PluginProjectionV2Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -12,6 +15,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { DocumentShareSheet } from './DocumentShareSheet';
+import { showDocumentShareSheet } from './showDocumentShareSheet';
 import { artifactHtmlBundleFromBodyV1, ARTIFACT_HTML_BUNDLE_MIME_V1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { encodeBase64 } from '@/encryption/base64';
@@ -20,8 +24,11 @@ import { useProjectDashboardDocument } from '@/components/widgets/area/useProjec
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { StoredContentPublicShareCreateRequestV1Schema } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
+import { projectBotTemplateArtifactHeaderV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { useDocumentPublicLinkController } from './useDocumentPublicLinkController';
-import { buildWidgetDefinitionArtifactHeaderV1, buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema, WidgetDefinitionV1Schema, type WidgetDefinitionV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { buildWidgetDefinitionArtifactHeaderV1, buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema, WidgetAreaLayoutV1StoredSchema, WidgetDefinitionV1Schema, type WidgetDefinitionV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import { widgetInstalledPackage, widgetProjectionEntry } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
@@ -72,13 +79,14 @@ const host = vi.hoisted(() => ({
     serverId: '',
     /** Grant requests the Home received: `GET`, or the mutation with its body. */
     requests: [] as Array<Readonly<{ method: string; body?: Record<string, unknown> }>>,
-    access: 'owner' as import('@happier-dev/protocol').ArtifactCallerAccessV1 | null,
+    access: 'owner' as import('@happier-dev/protocol/artifacts/artifactAccessV1').ArtifactCallerAccessV1 | null,
     ownerAccountId: 'owner',
     revokeOnRemove: false,
     grants: [] as any[],
     grantStatus: 200,
+    grantError: 'not_found',
     document: { header: {} as Record<string, unknown>, body: '' },
-    publicShare: null as import('@happier-dev/protocol').StoredContentPublicShareV1 | null,
+    publicShare: null as import('@happier-dev/protocol/sharing/storedContentPublicShareV1').StoredContentPublicShareV1 | null,
     publicRequests: [] as Array<Readonly<{ method: string; body?: unknown }>>,
     publicCreateError: null as string | null,
     networkAtPublicCreate: [] as unknown[],
@@ -193,7 +201,7 @@ async function serveHome(): Promise<void> {
                 return Response.json(host.access === null || !layout.success ? []
                     : [storedArtifact(buildWidgetSurfaceArtifactIdV1(layout.data.surface))]);
             }
-            if (request.path.startsWith('/v1/public-shares')) {
+            if (request.path.startsWith('/v1/public-shares') || request.path.startsWith('/v1/artifact-signed-in-links')) {
                 host.publicRequests.push({ method: request.method, ...(request.body ? { body: request.body } : {}) });
                 if (request.path.endsWith('/access-log')) return Response.json({ accessLog: [{ id: 'visit-1',
                     accessedAt: 1780000000000, ipAddress: '192.0.2.1', userAgent: 'Browser' }] });
@@ -204,10 +212,16 @@ async function serveHome(): Promise<void> {
                         host.networkAtPublicCreate.push(JSON.parse(host.document.body).networkOverride);
                     }
                     if (host.publicCreateError) return Response.json({ error: host.publicCreateError }, { status: 503 });
-                    const input = request.body as import('@happier-dev/protocol').StoredContentPublicShareCreateRequestV1;
+                    const signed = request.path.startsWith('/v1/artifact-signed-in-links');
+                    const signedInput = signed ? ArtifactSignedInLinkCreateRequestV1Schema.parse(request.body) : null;
+                    const input = StoredContentPublicShareCreateRequestV1Schema.parse(signedInput ? {
+                        subject: { kind: 'artifact', id: signedInput.artifactId }, lookupId: signedInput.lookupId,
+                        keyDerivation: 'fragment_v1',
+                    } : request.body);
                     host.publicShare = { id: 'share-1', subject: input.subject, expiresAt: input.expiresAt ?? null,
                         maxUses: input.maxUses ?? null, useCount: 0, isConsentRequired: input.isConsentRequired ?? false,
-                        networkOff: input.networkOff ?? false, createdAt: 1, updatedAt: 1, keyDerivation: input.keyDerivation };
+                        networkOff: input.networkOff ?? false, createdAt: 1, updatedAt: 1, keyDerivation: input.keyDerivation,
+                        ...(signed ? { audience: 'signed_in' as const } : {}) };
                     return Response.json({ publicShare: host.publicShare, viewerOrigin: 'https://document-share-sheet.test' });
                 }
                 if (request.method === 'DELETE') {
@@ -245,6 +259,14 @@ async function serveHome(): Promise<void> {
                     ...(update.header === undefined ? {} : { header: update.header }),
                     ...(update.body === undefined ? {} : { body: update.body }) });
             }
+            // Only the named document fixtures exist before an approval is created. In particular,
+            // the real approval owner must observe a miss for its fresh exact-id existence read.
+            // Stored layouts may contain additive fields; retain the raw response for private-choice review.
+            const layout = host.document.header.kind === 'widget-area-layout.v1'
+                ? WidgetAreaLayoutV1StoredSchema.safeParse(JSON.parse(host.document.body)) : null;
+            const documentIds = layout?.success ? [buildWidgetSurfaceArtifactIdV1(layout.data.surface)]
+                : ['wf-1', 'visual', 'profile-1', 'invalid-document'];
+            if (!documentIds.includes(artifactId)) return Response.json({ error: 'not_found' }, { status: 404 });
             if (route[2] !== '/access/grants') {
                 if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
                 if (request.method === 'POST') {
@@ -276,7 +298,7 @@ async function serveHome(): Promise<void> {
             }
             const input = request.body as any;
             host.requests.push({ method: request.method, ...(input ? { body: input } : {}) });
-            if (host.grantStatus !== 200) return Response.json({ error: 'not_found' }, { status: host.grantStatus });
+            if (host.grantStatus !== 200) return Response.json({ error: host.grantError }, { status: host.grantStatus });
             if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
             const same = (row: any) => JSON.stringify(row.principal) === JSON.stringify(input.principal);
             if (request.method === 'PUT') {
@@ -349,7 +371,7 @@ async function readStoredApproval(artifactId: string) {
     if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
         throw new Error('Expected the persisted approval request content');
     }
-    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+    const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
     return ApprovalRequestV2Schema.parse(JSON.parse(content.body));
 }
 
@@ -402,6 +424,23 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('DocumentShareSheet', () => {
+    it.each(['database_transaction_conflict_exhausted', 'database_transaction_timeout'])('keeps %s visible and retries an idempotent grant change', async code => {
+        const hook = await renderHook(() => useDocumentShareController({ artifactId: 'wf-1', scope: { serverId: host.serverId, accountId: 'owner' } }));
+        await settle();
+        host.grantStatus = 503;
+        host.grantError = code;
+        const principal = { kind: 'account' as const, accountId: 'ana' };
+        await React.act(async () => { hook.getCurrent().actions.setAccessLevel(principal, 'view'); });
+        await settle();
+        const row = () => hook.getCurrent().model.grants.find(row => row.principal.ref.kind === 'account' && row.principal.ref.accountId === 'ana');
+        expect(row()?.operation).toMatchObject({ kind: 'error', error: { code, message: t('approvals.transientFailureTitle'), retryable: true } });
+        host.grantStatus = 200;
+        await React.act(async () => { hook.getCurrent().actions.retryMutation(principal); });
+        await settle();
+        expect(row()?.level).toMatchObject({ value: 'view' });
+        expect(row()?.operation.kind).toBe('idle');
+        await hook.unmount();
+    });
     beforeEach(async () => {
         host.requests = [];
         host.access = 'owner';
@@ -409,6 +448,7 @@ describe('DocumentShareSheet', () => {
         host.revokeOnRemove = false;
         host.grants = [ana, studio];
         host.grantStatus = 200;
+        host.grantError = 'not_found';
         host.document = WORKFLOW_DOCUMENT;
         host.publicShare = null;
         host.publicRequests = [];
@@ -533,6 +573,11 @@ describe('DocumentShareSheet', () => {
         expect(host.grants).toEqual([ana, studio]);
         expect(host.requests.filter(request => request.method !== 'GET')).toEqual([]);
         expect(screen.findByTestId('document-share-remove-confirm:team:studio')).not.toBeNull();
+        // The confirmation says what the removal takes away, from the roster it holds (lab p-overview SHARED):
+        // Ana's own grant may still cover Studio members, so it never claims everyone loses the dashboard.
+        expect(screen.findAllHostsByTestId('document-share-remove-consequence:team:studio').map(node => node.props.children)).toEqual([
+            t('shareSheet.removeLosesMembers', { name: 'Studio' }), t('shareSheet.removeKeepsOtherAccess'), t('shareSheet.removeKeepsTheirWork'),
+        ]);
         await screen.pressByTestIdAsync('document-share-remove-cancel:team:studio');
         expect(screen.findByTestId('document-share-remove-confirm:team:studio')).toBeNull();
         expect(host.grants).toEqual([ana, studio]);
@@ -578,6 +623,7 @@ describe('DocumentShareSheet', () => {
         const hook = await renderHook(() => useDocumentShareController({ artifactId: dashboard.artifactId,
             kind: 'widget-area-layout.v1', scope: { serverId: host.serverId, accountId: 'owner' } }));
         await settle();
+        expect({ loading: hook.getCurrent().loading, issue: hook.getCurrent().issue }).toEqual({ loading: false, issue: undefined });
         expect(hook.getCurrent().privateChoices).toHaveLength(2);
         expect(hook.getCurrent().privateChoices.map(choice => choice.widget).sort()).toEqual(['Metric', 'Metrics']);
         expect(hook.getCurrent().privateChoices.filter(choice => choice.removeChoice)).toHaveLength(1);
@@ -603,7 +649,10 @@ describe('DocumentShareSheet', () => {
         const remove = renderedTestIds(screen, 'document-share-private-remove:');
         expect(remove).toHaveLength(1);
         await screen.pressByTestIdAsync(remove[0]!);
-        await settle();
+        await waitForHomeGovernance(async () => {
+            await settle();
+            expect(renderedTestIds(screen, 'document-share-private-choice-')).toEqual([]);
+        });
         expect([...host.approvalArtifacts.values()]).toEqual([]);
         expect(renderedTestIds(screen, 'document-share-private-choice-')).toEqual([]);
         expect(JSON.parse(host.document.body).items[0].instance.bindings).toEqual({ label: { kind: 'value', value: 'Keep this' } });
@@ -629,7 +678,10 @@ describe('DocumentShareSheet', () => {
             kind: 'widget-area-layout.v1', scope: { serverId: host.serverId, accountId: 'owner' } }));
         await settle();
         await React.act(async () => { hook.getCurrent().privateChoices[0]?.removeChoice?.(); });
-        await settle();
+        await waitForHomeGovernance(async () => {
+            await settle();
+            expect(host.approvalArtifacts.size).toBe(1);
+        });
         expect(hook.getCurrent().privateChoices).toHaveLength(1);
         expect(host.documentUpdates).toEqual([]);
         expect(host.document).toEqual(dashboard.document);
@@ -715,7 +767,10 @@ describe('DocumentShareSheet', () => {
         await settle();
         expect(hook.getCurrent().privateChoices[0]?.letViewersPick).toEqual(expect.any(Function));
         await React.act(async () => { hook.getCurrent().privateChoices[0]?.letViewersPick?.(); });
-        await settle();
+        await waitForHomeGovernance(async () => {
+            await settle();
+            expect(hook.getCurrent().privateChoices).toEqual([]);
+        });
         expect(hook.getCurrent().privateChoices).toEqual([]);
         expect(JSON.parse(host.document.body).items[0].instance.bindings).toEqual({ connection: { kind: 'viewer', purpose: 'read' },
             label: { kind: 'value', value: 'Keep this' } });
@@ -764,6 +819,57 @@ describe('DocumentShareSheet', () => {
         await hook.unmount();
     });
 
+    it.each([
+        { kind: 'bot_template.v1', kindLabel: 'Owner-defined template', expected: 'Owner-defined template' },
+        { kind: null, expected: 'Document' },
+        { kind: 'prompt_doc.v2', expected: 'Prompt' },
+        { kind: 'workflow-definition.v1', expected: 'Workflow' },
+    ])('uses the item owner label when opening $kind sharing', ({ kind, expected, ...identity }) => {
+        showDocumentShareSheet({ artifactId: 'item', kind, name: 'Item', subtitle: 'v1.2', ...identity });
+        const chrome = vi.mocked(renderedModalHost.show).mock.calls.at(-1)?.[0].chrome;
+        expect(chrome?.kind === 'card' ? chrome.subtitle : undefined).toBe(`${expected} · v1.2`);
+    });
+
+    it('stages a signed-in template link until the reviewed Share is submitted', async () => {
+        const submit = vi.fn(async () => {});
+        const screen = await renderScreen(<DocumentShareSheet artifactId="released-template" kind="bot_template.v1"
+            reviewedSelection={{ onSubmit: submit }} />);
+        await settle();
+        expect(host.requests).toEqual([]);
+        expect(host.publicRequests).toEqual([]);
+        await screen.pressByTestIdAsync('document-share-public-link');
+        const toggle = screen.find(node => node.props.testID === 'document-share-signed-in-link' && typeof node.props.onValueChange === 'function');
+        await act(async () => { toggle.props.onValueChange(true); });
+        expect(submit).not.toHaveBeenCalled();
+        expect(host.publicRequests).toEqual([]);
+        await screen.pressByTestIdAsync('document-share-submit');
+        expect(submit).toHaveBeenCalledWith({ recipients: [], signedInLink: true });
+        expect(host.requests).toEqual([]);
+        expect(host.publicRequests).toEqual([]);
+    });
+
+    it('manages a released template link through signed-in create and revoke without anonymous options', async () => {
+        const release = { v: 1 as const, state: 'released' as const, release: { v: 1 as const, version: '1.0.0', releasedAtMs: 1,
+            changelog: '', content: { v: 1 as const, identity: { name: 'Garden', description: 'Garden advice' },
+                instructions: { markdown: 'Grow herbs' }, skills: [], memoryRules: [],
+                needs: { software: [], connectedAccounts: [], mcpServers: [] } } } };
+        host.document = { header: projectBotTemplateArtifactHeaderV1(release), body: JSON.stringify(release) };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="bot_template.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        const toggle = () => screen.find(node => node.props.testID === 'document-share-signed-in-link' && typeof node.props.onValueChange === 'function');
+        await act(async () => { await toggle().props.onValueChange(true); });
+        await settle();
+        const creates = host.publicRequests.filter(request => request.method === 'POST');
+        expect(creates).toHaveLength(1);
+        expect(creates[0]?.body).toEqual({ artifactId: 'wf-1', lookupId: expect.any(String) });
+        expect(screen.getTextContent()).toContain('/share/artifact/');
+        await act(async () => { await toggle().props.onValueChange(false); });
+        await settle();
+        expect(host.publicRequests.filter(request => request.method === 'DELETE')).toHaveLength(1);
+        expect(host.publicShare).toBeNull();
+    });
+
     it('lists a workflow\'s grants with the document labels and the Team-run rule', async () => {
         const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
         await settle();
@@ -775,7 +881,10 @@ describe('DocumentShareSheet', () => {
         expect(text).toContain('Can edit');
         expect(text).toContain('Can use');
         expect(text).not.toContain('Can steer');
-        expect(text).toContain('The team sees every run');
+        // The sharing rules sit behind the sheet's Details row, never as a legend trailing the list.
+        expect(text).not.toContain('The team sees every run');
+        await screen.pressByTestIdAsync('document-share-help');
+        expect(screen.getTextContent()).toContain('The team sees every run');
     });
 
     it('changes, adds and removes access only through the Artifact grant Actions', async () => {
@@ -827,6 +936,10 @@ describe('DocumentShareSheet', () => {
         expect(host.requests.at(-1)).toEqual({ method: 'PUT',
             body: { artifactId: 'wf-1', principal: { kind: 'account', accountId: 'ana' }, accessLevel: 'view' } });
 
+        await waitForHomeGovernance(async () => {
+            await settle();
+            expect(screen.findByTestId('document-share-candidate-team:payments')).not.toBeNull();
+        });
         await screen.pressByTestIdAsync('document-share-candidate-team:payments');
         await settle();
         expect(screen.findByTestId('document-share-grant-team:payments')).not.toBeNull();
@@ -1001,7 +1114,10 @@ describe('DocumentShareSheet', () => {
 
         confirmAction.mockClear();
         await screen.pressByTestIdAsync('session-public-link-turn-off');
-        await settle();
+        await waitForHomeGovernance(async () => {
+            await settle();
+            expect(host.publicShare).toBeNull();
+        });
         await waitForHomeGovernance(() => expect(confirmAction).toHaveBeenCalledTimes(1));
         await waitForHomeGovernance(() => expect(host.publicShare).toBeNull());
         await settle();
@@ -1010,7 +1126,7 @@ describe('DocumentShareSheet', () => {
         expect(host.publicRequests.some(request => request.method === 'DELETE')).toBe(true);
     });
 
-    it.each(['text', 'binary'] as const)('narrows the saved %s HTML copy before confirmed public issuance and retains the copy when issuance fails', async (storage) => {
+    it.each(['text', 'binary'] as const)('restricts the public link for saved %s HTML without changing the document when issuance fails', async (storage) => {
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
         host.publicCreateError = 'public_share_failed';
@@ -1023,18 +1139,18 @@ describe('DocumentShareSheet', () => {
         expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
         await act(async () => { screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
         await screen.pressByTestIdAsync('session-public-link-options-create');
-        await vi.waitFor(() => expect(host.documentUpdates).toHaveLength(1));
+        await vi.waitFor(() => expect(host.publicRequests.some(request => request.method === 'POST')).toBe(true));
         await settle();
-        expect(JSON.parse(host.document.body).requestedCapabilities, JSON.stringify(host.documentUpdates)).toEqual({ network: 'none' });
-        expect(host.documentUpdates).toHaveLength(1);
-        expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }]);
+        expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
+        expect(host.documentUpdates).toEqual([]);
+        expect(host.publicRequests.find(request => request.method === 'POST')?.body).toMatchObject({ networkOff: true });
         expect(host.publicShare).toBeNull();
         expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull();
         expect(JSON.parse(host.document.body).files['index.html']).toBeDefined();
         await screen.pressByTestIdAsync('session-public-link-options-create');
         await settle();
-        expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }, { network: 'none' }]);
-        expect(host.documentUpdates).toHaveLength(1);
+        expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(2);
+        expect(host.documentUpdates).toEqual([]);
     });
 
     it('refreshes a changed saved network consequence and requires another user confirmation before issuance', async () => {
@@ -1075,22 +1191,6 @@ describe('DocumentShareSheet', () => {
         expect(host.networkAtPublicCreate).toEqual([{ networkOrigins: ['https://two.example.test', 'https://one.example.test'] }]);
     });
 
-    it('refuses network-off issuance if another writer widens the saved copy after the off update', async () => {
-        host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
-            body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
-        host.rewidenAfterNetworkUpdate = true;
-        const screen = await renderScreen(<DocumentShareSheet artifactId="visual" kind="html" />);
-        await settle();
-        await screen.pressByTestIdAsync('document-share-public-link');
-        await screen.pressByTestIdAsync('session-public-link-create');
-        await act(async () => { screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
-        await screen.pressByTestIdAsync('session-public-link-options-create');
-        await settle();
-        expect(host.documentUpdates).toHaveLength(1);
-        expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
-        expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull();
-    });
-
     it('does not offer issuance as no-network when the saved binary HTML bytes are unavailable', async () => {
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
@@ -1104,7 +1204,11 @@ describe('DocumentShareSheet', () => {
         expect(host.documentUpdates).toEqual([]);
     });
 
-    it('does not issue a public link while saved-copy network narrowing awaits its write receipt', async () => {
+    it('the Share confirmation restricts the link without invoking the saved-copy update Action', async () => {
+        host.settings.actionsSettingsV1 = { v: 1, actions: {
+            'artifact.update': { approvalRequiredSurfaces: ['ui'] },
+        } };
+        await activateWidgetHome();
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
         let acknowledge: (() => void) | undefined;
@@ -1116,29 +1220,13 @@ describe('DocumentShareSheet', () => {
             await screen.pressByTestIdAsync('session-public-link-create');
             await act(async () => { screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
             await screen.pressByTestIdAsync('session-public-link-options-create');
-            await vi.waitFor(() => expect(host.documentUpdates).toHaveLength(1));
-            expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
-            expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
-            await act(async () => { acknowledge?.(); });
             await vi.waitFor(() => expect(host.publicShare).not.toBeNull());
-            expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }]);
+            expect(host.publicShare?.networkOff).toBe(true);
+            expect(host.documentUpdates).toEqual([]);
+            expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
+            expect(host.approvalArtifacts.size).toBe(0);
+            expect(confirmAction).not.toHaveBeenCalled();
         } finally { acknowledge?.(); await screen.unmount(); }
-    });
-
-    it('retains the saved policy and does not issue when network narrowing is refused', async () => {
-        host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
-            body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
-        host.documentUpdateError = 'artifact_access_denied';
-        const screen = await renderScreen(<DocumentShareSheet artifactId="visual" kind="html" />);
-        await settle();
-        await screen.pressByTestIdAsync('document-share-public-link');
-        await screen.pressByTestIdAsync('session-public-link-create');
-        await act(async () => { screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
-        await screen.pressByTestIdAsync('session-public-link-options-create');
-        await vi.waitFor(() => expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull());
-        expect(host.documentUpdates).toHaveLength(1);
-        expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
-        expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
     });
 
     it('blocks network-on confirmation after saved binary networking becomes unavailable and cannot fake an off preparation', async () => {
@@ -1170,7 +1258,7 @@ describe('DocumentShareSheet', () => {
         expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
     });
 
-    it('generic Artifact approval narrows the saved binary copy before the one original replay and retains it after link refusal', async () => {
+    it('generic Artifact approval issues the restricted link once and preserves binary content after refusal', async () => {
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { networkOrigins: ['https://api.example.test'] } }) };
         host.binaryHtml = true;
@@ -1185,12 +1273,9 @@ describe('DocumentShareSheet', () => {
             expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
             await act(async () => { decision.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
             await decision.screen.pressByTestIdAsync('public-link-network-confirm');
-            await vi.waitFor(() => expect(host.documentUpdates).toHaveLength(1));
-            expect((await readStoredApproval(artifactId)).status).toBe('open');
-            expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
-            await act(async () => { acknowledge?.(); });
-            await expect(decision.decision).rejects.toMatchObject({ code: 'public_share_request_failed' });
-            expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }]);
+            await expect(decision.decision).rejects.toMatchObject({ code: 'public_share_failed' });
+            expect(host.publicRequests.find(request => request.method === 'POST')?.body).toMatchObject({ networkOff: true });
+            expect(host.documentUpdates).toEqual([]);
             expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(1);
             expect(host.publicShare).toBeNull();
             expect((await readStoredApproval(artifactId)).status).not.toBe('open');
@@ -1205,31 +1290,25 @@ describe('DocumentShareSheet', () => {
             try {
                 await act(async () => { retry.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
                 await retry.screen.pressByTestIdAsync('public-link-network-confirm');
-                await expect(retry.decision).rejects.toMatchObject({ code: 'public_share_request_failed' });
-                expect(host.documentUpdates).toHaveLength(1);
+                await expect(retry.decision).rejects.toMatchObject({ code: 'public_share_failed' });
+                expect(host.documentUpdates).toEqual([]);
                 expect([...host.approvalArtifacts.values()]).toHaveLength(1);
-                // A failed original approval retains its recorded outcome; another human press
-                // cannot reissue its outward effect or repeat the already committed off write.
+                // A failed original approval retains its outcome; another human press cannot reissue it.
                 expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(1);
-                expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }]);
+                expect(host.networkAtPublicCreate).toEqual([{ networkOrigins: ['https://api.example.test'] }]);
             } finally { await retry.screen.unmount(); await retry.hook.unmount(); }
         } finally { acknowledge?.(); await decision.screen.unmount(); await decision.hook.unmount(); }
     });
 
-    it.each(['changed', 'off-update'] as const)('generic Artifact approval refuses a stale network consequence at %s', async window => {
+    it('generic Artifact approval refuses an unreviewed widening of the network consequence', async () => {
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'),
-                requestedCapabilities: { network: window === 'changed' ? 'none' : 'open' } }) };
+                requestedCapabilities: { network: 'none' } }) };
         const artifactId = await createGenericArtifactApproval();
         const decision = await startGenericArtifactDecision(artifactId);
         try {
-            if (window === 'changed') {
-                host.document = { ...host.document, body: JSON.stringify({ ...JSON.parse(host.document.body), requestedCapabilities: { network: 'open' } }) };
-                host.documentVersion += 1;
-            } else {
-                host.rewidenAfterNetworkUpdate = true;
-                await act(async () => { decision.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
-            }
+            host.document = { ...host.document, body: JSON.stringify({ ...JSON.parse(host.document.body), requestedCapabilities: { network: 'open' } }) };
+            host.documentVersion += 1;
             await decision.screen.pressByTestIdAsync('public-link-network-confirm');
             await expect(decision.decision).rejects.toMatchObject({ code: 'approval_stale' });
             expect((await readStoredApproval(artifactId)).status).toBe('open');
@@ -1238,7 +1317,25 @@ describe('DocumentShareSheet', () => {
         } finally { await decision.screen.unmount(); await decision.hook.unmount(); }
     });
 
-    it('generic Artifact approval remains open without issuance while the ordinary network update awaits approval', async () => {
+    it('a waived public-link Action does not acquire an unrelated document-update approval', async () => {
+        host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
+            body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
+        host.settings.actionsSettingsV1 = { v: 1, actions: {
+            'artifact.update': { approvalRequiredSurfaces: ['agent'] },
+        }, approvalWaivedSurfaces: { 'artifact.public_link.create': ['agent'] } };
+        await activateWidgetHome();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('artifact.public_link.create', {
+            artifactId: 'visual', networkOff: true,
+        }, { surface: 'agent', serverId: host.serverId, expectedAccountId: 'owner', actionRequestId: 'waived-agent-share' });
+        expect(host.approvalArtifacts.size).toBe(0);
+        expect(result).toMatchObject({ ok: true, result: { publicShare: { networkOff: true } } });
+        expect(host.documentUpdates).toEqual([]);
+        expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(1);
+        expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
+    });
+
+    it('generic Artifact approval restricts the public link and publishes once without a document update', async () => {
         host.document = { header: { kind: 'html', title: 'Saved visual', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 },
             body: JSON.stringify({ ...artifactHtmlBundleFromBodyV1('<p>Saved visual</p>'), requestedCapabilities: { network: 'open' } }) };
         const artifactId = await createGenericArtifactApproval(true);
@@ -1247,14 +1344,15 @@ describe('DocumentShareSheet', () => {
             await act(async () => { decision.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
             await decision.screen.pressByTestIdAsync('public-link-network-confirm');
             await expect(decision.decision).resolves.toBe(true);
-            expect((await readStoredApproval(artifactId)).status).toBe('open');
+            expect(host.approvalArtifacts.size).toBe(1);
+            expect((await readStoredApproval(artifactId)).status).not.toBe('open');
             expect(host.documentUpdates).toEqual([]);
-            expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
+            expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(1);
             expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
-            expect(host.approvalArtifacts.size).toBe(2);
-            const updateId = [...host.approvalArtifacts.keys()].find(id => id !== artifactId)!;
-            expect(await readStoredApproval(updateId)).toMatchObject({ status: 'open', actionId: 'artifact.update' });
-            expect(host.approvalUpdateIds).toEqual([]);
+            expect(host.publicShare?.networkOff).toBe(true);
+            expect(host.publicShare).not.toBeNull();
+            expect(host.approvalUpdateIds.every(id => id === artifactId)).toBe(true);
+            expect(confirmAction).not.toHaveBeenCalled();
         } finally { await decision.screen.unmount(); await decision.hook.unmount(); }
     });
 
@@ -1271,21 +1369,26 @@ describe('DocumentShareSheet', () => {
                 await expect(decision.decision).resolves.toBe(true);
                 expect(host.documentUpdates).toEqual([]);
             } else {
-                host.documentUpdateError = 'artifact_access_denied';
+                host.publicCreateError = 'public_share_failed';
                 await act(async () => { decision.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
                 await decision.screen.pressByTestIdAsync('public-link-network-confirm');
                 await expect(decision.decision).rejects.toBeInstanceOf(Error);
-                expect(host.documentUpdates).toHaveLength(1);
+                expect(host.documentUpdates).toEqual([]);
             }
-            expect((await readStoredApproval(artifactId)).status).toBe('open');
-            expect(host.approvalUpdateIds).toEqual([]);
-            expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
+            if (outcome === 'cancel') {
+                expect((await readStoredApproval(artifactId)).status).toBe('open');
+                expect(host.approvalUpdateIds).toEqual([]);
+            } else {
+                expect((await readStoredApproval(artifactId)).status).not.toBe('open');
+                expect(host.approvalUpdateIds.every(id => id === artifactId)).toBe(true);
+            }
+            expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(outcome === 'cancel' ? 0 : 1);
             expect(JSON.parse(host.document.body).requestedCapabilities).toEqual({ network: 'open' });
             expect(host.approvalArtifacts.size).toBe(1);
         } finally { await decision.screen.unmount(); await decision.hook.unmount(); }
     });
 
-    it.each([false, true])('narrows a saved typed visual copy (additive fields: %s) before confirmed public issuance without losing its definition', async additive => {
+    it.each([false, true])('restricts a saved typed visual public link (additive fields: %s) without changing its definition', async additive => {
         const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'visual', name: 'Metric',
             sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, networkOverride: { network: 'open' },
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Metric' } } },
@@ -1294,18 +1397,18 @@ describe('DocumentShareSheet', () => {
             ? { ...definition, futureDisplayField: 1, provenance: { ...definition.provenance, futureDisplayField: 1 },
                 sizeDeclaration: { ...definition.sizeDeclaration, futureDisplayField: 1 } }
             : definition) };
+        const originalBody = host.document.body;
         const screen = await renderScreen(<DocumentShareSheet artifactId="visual" kind="widget-definition.v1" />);
         await settle();
         await screen.pressByTestIdAsync('document-share-public-link');
         await screen.pressByTestIdAsync('session-public-link-create');
         await act(async () => { screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
         await screen.pressByTestIdAsync('session-public-link-options-create');
-        await vi.waitFor(() => expect(host.documentUpdates, screen.getTextContent()).toHaveLength(1));
+        await vi.waitFor(() => expect(host.publicShare).not.toBeNull());
         await settle();
-        expect(JSON.parse(host.document.body)).toEqual({ ...definition, networkOverride: { network: 'none' } });
-        expect(host.networkAtPublicCreate).toEqual([{ network: 'none' }]);
-        expect(host.documentUpdates).toHaveLength(1);
-        expect(host.publicShare).not.toBeNull();
+        expect(host.document.body).toBe(originalBody);
+        expect(host.documentUpdates).toEqual([]);
+        expect(host.publicShare?.networkOff).toBe(true);
     });
 
     it.each(['root', 'body'] as const)('refuses network-off preparation before washing a private saved definition selection at %s', async position => {
@@ -1397,6 +1500,7 @@ describe('DocumentShareSheet', () => {
         await settle();
 
         expect(host.requests[0]).toEqual({ method: 'GET' });
+        await screen.pressByTestIdAsync('document-share-help');
         expect(screen.getTextContent()).toContain('Profiles refer to Saved Secrets; their values never travel.');
     });
 
@@ -1410,23 +1514,4 @@ describe('DocumentShareSheet', () => {
         expect(screen.findByTestId('document-share-candidate-team:payments')).toBeNull();
         expect(screen.findByTestId('document-share-editor:list:document-share:option:issue')).not.toBeNull();
     });
-    it('stages a signed-in template link until the reviewed Share is submitted', async () => {
-        const submit = vi.fn(async () => {});
-        const screen = await renderScreen(<DocumentShareSheet artifactId="released-template" kind="bot_template.v1"
-            reviewedSelection={{ onSubmit: submit }} />);
-        await settle();
-        expect(host.requests).toEqual([]);
-        expect(host.publicRequests).toEqual([]);
-        await screen.pressByTestIdAsync('document-share-public-link');
-        const toggle = screen.find(node => node.props.testID === 'document-share-signed-in-link' && typeof node.props.onValueChange === 'function');
-        await act(async () => { toggle.props.onValueChange(true); });
-        expect(submit).not.toHaveBeenCalled();
-        expect(host.publicRequests).toEqual([]);
-        await screen.pressByTestIdAsync('document-share-submit');
-        expect(submit).toHaveBeenCalledWith({ recipients: [], signedInLink: true });
-        expect(host.requests).toEqual([]);
-        expect(host.publicRequests).toEqual([]);
-    });
-
-
 });
