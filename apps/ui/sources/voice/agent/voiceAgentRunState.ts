@@ -1,9 +1,10 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { storage } from '@/sync/domains/state/storage';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineReachable, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -31,6 +32,7 @@ export type VoiceAgentSessionState = Readonly<{
     id?: string;
     serverId?: string;
     active?: boolean;
+    activeAt?: number;
     presence?: string | number | null;
     modelMode?: unknown;
     metadataLayoutVersion?: number;
@@ -52,13 +54,13 @@ export function resolveVoiceAgentSessionFromState(target: SessionAddress | strin
     if (!address) return null;
 
     const listSession = findSessionListLookupSession(state, address)?.session;
-    if (listSession) return listSession as VoiceAgentSessionState;
+    if (listSession) return readSessionRuntimeObservation({ ...listSession, id: address.sessionId, serverId: address.serverId });
 
     const directSession = state.sessions?.[address.sessionId] as VoiceAgentSessionState | null | undefined;
     if (!directSession) return null;
     const directServerId = directSession.serverId ?? getActiveServerSnapshot().serverId;
     return areServerProfileIdentifiersEquivalent(directServerId, address.serverId)
-        ? directSession
+        ? readSessionRuntimeObservation({ ...directSession, id: address.sessionId, serverId: address.serverId })
         : null;
 }
 

@@ -6,7 +6,7 @@ import type { VoiceGuidanceAvailability } from '@happier-dev/protocol/actions/ac
 
 export type VoicePromptActionSpec = Pick<
   ActionSpec,
-  'id' | 'title' | 'description' | 'bindings' | 'examples' | 'inputHints' | 'prompting'
+  'id' | 'title' | 'description' | 'bindings' | 'examples' | 'inputHints' | 'prompting' | 'surfaceBindings'
 >;
 
 const VOICE_TOOL_NAME_BY_ACTION_ID = new Map(
@@ -76,7 +76,9 @@ function formatToolDocumentation(
     lines.push(`  Use: ${workflowNotes.join(' ')}`);
   }
 
-  const fields = Array.isArray(spec.inputHints?.fields) ? (spec.inputHints?.fields as ActionInputFieldHint[]) : [];
+  const inputHints = spec.surfaceBindings?.voice?.inputHints ?? spec.inputHints;
+  if (inputHints?.description && inputHints !== spec.inputHints) lines.push(`  Use: ${inputHints.description}`);
+  const fields = Array.isArray(inputHints?.fields) ? (inputHints.fields as ActionInputFieldHint[]) : [];
   const fieldLines = fields.map((field) => formatFieldSummary(spec, field, availability)).filter(Boolean) as string[];
   if (fieldLines.length > 0) {
     lines.push('  Fields:');

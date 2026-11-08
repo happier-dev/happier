@@ -7,7 +7,7 @@ import {
   isVoicePromptHotPathSpec,
   isVoiceSdkSafeActionSpec,
   listVoiceToolActionSpecs,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionSpecs';
 
 import { storage } from '@/sync/domains/state/storage';
 import { resolveEnabledVoiceToolActionSpecsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
@@ -187,6 +187,9 @@ describe('bundled Conversation runtime host tool projection', () => {
       expect(nonHotPath).toBeDefined();
       const names = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
         .map((tool) => tool.name);
+      const listTool = lease.host.getRealtimeClientToolDefinitions({ effectCalls: 'stable_ids', exposure: 'voice_assistant' })
+        .find((tool) => tool.name === 'listSessions');
+      expect(Object.keys(listTool?.parameters.properties ?? {}).sort()).toEqual(['cursor', 'limit']);
       expect(names).toContain('action_execute');
       expect(names).toEqual(expect.arrayContaining(['searchActionSpecs', 'getActionSpec']));
       expect(names).not.toContain(nonHotPath?.bindings?.voiceClientToolName);

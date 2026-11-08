@@ -15,6 +15,7 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
 const { assertActiveDaemonTargetSession, resolveVoiceAgentSessionFromState } = await import('./voiceAgentRunState');
+const { sessionRuntimeObservations } = await import('@/sync/domains/session/sessionRuntimeObservation');
 
 function seedTargetSession(overrides: Parameters<typeof createSessionFixture>[0] = {}) {
     const session = createSessionFixture({
@@ -30,6 +31,7 @@ function seedTargetSession(overrides: Parameters<typeof createSessionFixture>[0]
 
 describe('assertActiveDaemonTargetSession', () => {
     beforeEach(async () => {
+        sessionRuntimeObservations.clear();
         network.resetRequests();
         targetHome = await network.addHome('https://voice-target.example.test', 'account-a');
         focusedHome = await network.addHome('https://voice-focused.example.test', 'account-a');
@@ -75,6 +77,22 @@ describe('assertActiveDaemonTargetSession', () => {
         seedTargetSession({ serverId: focusedHome.id });
         storage.setState({ sessionListIndexByServerId: {} });
         expect(resolveVoiceAgentSessionFromState({ serverId: targetHome.id, sessionId: 'target-1' })).toBeNull();
+    });
+
+    it('does not borrow online presence from another Home or admit a newer offline observation', async () => {
+        const session = seedTargetSession({ presence: undefined, activeAt: 100 });
+        sessionRuntimeObservations.observe({ serverId: focusedHome.id, sessionId: session.id },
+            { active: true, activeAt: 200, presence: 'online' });
+        await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: session.id }))
+            .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_OFFLINE' });
+        sessionRuntimeObservations.observe({ serverId: targetHome.id, sessionId: session.id },
+            { active: true, activeAt: 200, presence: 'online' });
+        await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: session.id }))
+            .resolves.toBeUndefined();
+        sessionRuntimeObservations.observe({ serverId: targetHome.id, sessionId: session.id },
+            { active: false, activeAt: 201, presence: 201 });
+        await expect(assertActiveDaemonTargetSession({ serverId: targetHome.id, sessionId: session.id }))
+            .rejects.toMatchObject({ code: 'VOICE_AGENT_TARGET_SESSION_INACTIVE' });
     });
 
     it('fails closed when a bare Session ID is present on more than one Home', () => {

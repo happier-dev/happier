@@ -63,6 +63,7 @@ export const ActionSurfaceBindingTransformSchema = lazyZodSchema(() => z.custom<
 ));
 
 export const ActionSpecSurfaceBindingsSchema = lazyZodSchema(() => z.strictObject({
+  voice: z.optional(z.strictObject({ inputSchema: ZodSchemaLike, inputHints: z.optional(ActionInputHintsSchema) })),
   agent: z.optional(z.strictObject({ inputSchema: ZodSchemaLike, inputHints: z.optional(ActionInputHintsSchema) })),
   mcp: z.optional(z.strictObject({ inputSchema: ZodSchemaLike, inputHints: z.optional(ActionInputHintsSchema) })),
   api: z.optional(z.strictObject({

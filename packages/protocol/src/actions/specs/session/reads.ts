@@ -458,7 +458,19 @@ function createSessionDiscoveryActionSpecs() {
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listSessions', mcpToolName: 'session_list' },
     examples: {
-      voice: { argsExample: '{"limit":20,"cursor":null}' },
+      voice: { argsExample: '{}' },
+    },
+    surfaceBindings: {
+      voice: {
+        inputSchema: lazyZodSchema(() => z.strictObject({
+          limit: SessionListActionInputV1Schema.shape.limit,
+          cursor: SessionListActionInputV1Schema.shape.cursor,
+        })),
+        inputHints: {
+          description: 'Call with {} to see recent sessions in the bound Home. Use the returned sessionId for that Home. Optional limit and cursor page the same list.',
+          fields: [],
+        },
+      },
     },
     surfaces: {
       ui: true,

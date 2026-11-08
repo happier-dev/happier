@@ -2324,6 +2324,24 @@ describe('voice tool handlers', () => {
 
   });
 
+  it('resolves another Session through minimal Voice discovery before sending to its qualified target', async () => {
+    const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
+    const discovery = JSON.parse(await tools.getActionSpec({ id: 'session.list' }));
+    expect(discovery.ok, JSON.stringify(discovery)).toBe(true);
+    expect(Object.keys(discovery.actionSpec.inputSchema.properties).sort()).toEqual(['cursor', 'limit']);
+    expect(discovery.actionSpec.inputSchema.required ?? []).toEqual([]);
+
+    const listed = JSON.parse(await tools.listSessions({}));
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    const target = listed.sessions.find((session: { sessionId: string }) => session.sessionId === 's2');
+    expect(target, JSON.stringify(listed)).toMatchObject({ sessionId: 's2' });
+    const sent = JSON.parse(await tools.sendSessionMessage({ sessionId: target.sessionId, message: 'MAPLE', reply: 'none' },
+      { serverId: homeA, effectId: 'run97-other-session' }));
+    expect(sent).toMatchObject({ ok: true });
+    expectVoicePendingInput('s2', 'MAPLE');
+    expect(pendingEnqueue.mock.calls.every(([request]) => request.sessionId === 's2')).toBe(true);
+  });
+
   it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');

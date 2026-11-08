@@ -16,6 +16,24 @@ await prepareStandaloneVoicePolicyHarness();
 await import('@/voice/adapters/localConversation/localConversationAdapter');
 
 describe('real Local Voice Agent activation', () => {
+    it('reacquires Voice when online activity precedes first Session hydration', async () => {
+        const daemon = await createRetainedVoiceAgentRpcBoundary();
+        const fixture = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch: daemon.dispatch });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { sessionRuntimeObservations } = await import('@/sync/domains/session/sessionRuntimeObservation');
+        const { createVoiceExecutionTransport } = await import('./VoiceExecutionTransport');
+        const transport = createVoiceExecutionTransport();
+        const address = { serverId: fixture.handle.accountLifetime.scope.serverId, sessionId: fixture.sessionId };
+        try {
+            expect(sessionRuntimeObservations.read(address)?.presence).toBe('online');
+            // Activity can arrive before the first full document. Retain its
+            // genuine scoped observation, with no hydrated carrier to copy it from.
+            storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+            await expect(transport.ensureRunning(fixture.sessionId)).resolves.toBeUndefined();
+            expect(transport.isActive(fixture.sessionId)).toBe(true);
+        } finally { await transport.stop(fixture.sessionId); await fixture.dispose(); }
+    });
+
     it.each(['stopped', 'terminal'] as const)('keeps the primary Run %s when optional cleanup inventory is unavailable', async primary => {
         const daemon = await createRetainedVoiceAgentRpcBoundary();
         let inventoryUnavailable = false;

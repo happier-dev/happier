@@ -11,6 +11,7 @@ import type {
 } from './bundledConversationRuntimeContract';
 import { AgentSessionRealtimeInspectResultV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
 import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
+import { resolveActionCatalogSurfaceProjection } from '@happier-dev/protocol/actions/actionCatalog';
 import { isVoiceSdkSafeActionSpec, isVoicePromptHotPathSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveVoiceActionExecution, VoiceActionExecuteInputSchema, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
@@ -655,7 +656,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         return [Object.freeze({
           name,
           description: describeActionForVoiceTool(spec),
-          parameters: createRealtimeClientToolParameters(spec.inputSchema),
+          parameters: createRealtimeClientToolParameters(resolveActionCatalogSurfaceProjection(spec, 'voice').inputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
             if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId, scope)) {

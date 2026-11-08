@@ -147,7 +147,7 @@ type ActionCatalogSurfaceParams = Readonly<{
   includeOutputSchema?: boolean;
 }>;
 
-function resolveActionCatalogSurfaceProjection(
+export function resolveActionCatalogSurfaceProjection(
   spec: ActionSpec,
   surface: keyof ActionSurfaces | null | undefined,
 ): Readonly<{
@@ -156,7 +156,7 @@ function resolveActionCatalogSurfaceProjection(
   outputSchema: ActionSpec['outputSchema'];
 }> {
   const apiBinding = surface === 'api' ? spec.surfaceBindings?.api : undefined;
-  const toolBinding = surface === 'agent' || surface === 'mcp' ? spec.surfaceBindings?.[surface] : undefined;
+  const toolBinding = surface === 'voice' || surface === 'agent' || surface === 'mcp' ? spec.surfaceBindings?.[surface] : undefined;
   return {
     inputSchema: toolBinding?.inputSchema ?? apiBinding?.inputSchema ?? spec.inputSchema,
     inputHints: toolBinding?.inputHints ?? apiBinding?.inputHints ?? spec.inputHints,
