@@ -13,6 +13,14 @@ import type { ActionId } from './actionIds.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { ActionDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
+import {
+  buildMachineSetupTargetApplyInput,
+  machineSetupApplyTargetFromPlanV1,
+  MachineSetupPlanResultV1Schema,
+  SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1,
+} from '../machines/managed/actionsV1.js';
+import { SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 const parent = { actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'machine' } };
 const child = { action: { pluginId: 'acme.fixture', localId: 'inspect' }, role: 'inspect',
@@ -26,6 +34,74 @@ const context: ActionExecutorContext = { surface: 'cli', authority: 'present_use
   } }) };
 
 describe('generic reviewed host children', () => {
+  it.each([true, false])('folds genuine new-session software setup into one native review without approval Artifacts (accept=%s)', async accept => {
+    const setup = { homeId: 'home', machineId: 'machine' };
+    const softwarePlan = MachineSetupPlanResultV1Schema.parse({
+      desiredRevision: 0,
+      sources: [{ kind: 'direct', setup: { scripts: [{ body: 'echo reviewed software' }] } }],
+      exclusions: [], support: [], recipePlans: [],
+    });
+    const applyInput = buildMachineSetupTargetApplyInput(machineSetupApplyTargetFromPlanV1(setup, softwarePlan));
+    const spawnInput = SessionSpawnNewActionInputV2Schema.parse({
+      creationKey: 'reviewed-software-session', executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/repo' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } },
+      machineSetupPlanInput: setup,
+    });
+    const reviews: { actionId: ActionId; preview?: unknown }[] = [];
+    const effects: string[] = [];
+    let artifacts = 0;
+    const executor = createActionExecutor({
+      // Native dialogs, Machine setup, and the spawn transport are external boundaries.
+      // Declaration-owned children, their policy, and their admission remain real.
+      presentUserActionConfirmation: async ({ actionId, preview }) => {
+        reviews.push({ actionId, preview });
+        return accept;
+      },
+      approvalsCreate: async () => { artifacts++; return { artifactId: 'must-not-create' }; },
+      machineSetupPlan: async () => softwarePlan,
+      machineSetupApply: async ({ input }) => {
+        expect(input).toEqual(applyInput);
+        effects.push('setup');
+        return { operationId: 'software-operation' };
+      },
+      sessionSpawnNew: async ({ context: childContext, machineSetupPlanInput }) => {
+        expect(machineSetupPlanInput).toEqual(setup);
+        const children = SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1;
+        const planned = await childContext!.hostReviewedChild!.invoke({ ...children.plan,
+          input: projectNativeJsonValueForTransport({ ...machineSetupPlanInput, mode: 'effects' }) });
+        expect(planned).toMatchObject({ ok: true });
+        if (!planned.ok) throw new Error('Declared software planning child was refused');
+        const plan = MachineSetupPlanResultV1Schema.parse(planned.result);
+        const applied = await childContext!.hostReviewedChild!.invoke({ ...children.apply,
+          input: projectNativeJsonValueForTransport(buildMachineSetupTargetApplyInput(machineSetupApplyTargetFromPlanV1(setup, plan))) });
+        expect(applied).toMatchObject({ ok: true, result: { operationId: 'software-operation' } });
+        if (!applied.ok) throw new Error('Declared software apply child was refused');
+        effects.push('spawn');
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+      },
+    });
+    const ownUi: ActionExecutorContext = { ...context, surface: 'ui',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+    const direct = await executor.execute('machines.setup.apply', applyInput, { ...ownUi, actionRequestId: 'direct-software' });
+    expect(direct).toMatchObject(accept ? { ok: true } : { ok: false, errorCode: 'approval_canceled' });
+    expect(reviews.map(review => review.actionId)).toEqual(['machines.setup.apply']);
+    expect(effects).toEqual(accept ? ['setup'] : []);
+    const directReviewCount = reviews.length;
+    reviews.length = 0;
+    effects.length = 0;
+
+    const spawned = await executor.execute('session.spawn_new', spawnInput, { ...ownUi, actionRequestId: 'spawn-with-software' });
+    expect(spawned).toMatchObject(accept ? { ok: true, result: { type: 'pending' } }
+      : { ok: false, errorCode: 'approval_canceled' });
+    expect(reviews).toHaveLength(directReviewCount);
+    expect(reviews).toEqual([{ actionId: 'session.spawn_new', preview: expect.objectContaining({
+      hostReviewedContent: expect.objectContaining({ machineSetup: softwarePlan }),
+    }) }]);
+    expect(effects).toEqual(accept ? ['setup', 'spawn'] : []);
+    expect(artifacts).toBe(0);
+  });
+
   it('restores only an exact verified signed leaf without inventing parent or credential consent', async () => {
     const input = { homeId: 'home', machineId: 'machine' };
     const child = { actionId: 'machines.setup.apply' as const, role: 'session_spawn_setup_apply',

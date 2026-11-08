@@ -60,6 +60,10 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   approvalScope?: ActionApprovalScopeV1;
   context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfileChange'> | null;
   requiredByPolicy?: boolean;
+  /** Explicit Artifact creation requests approval, independently of target execution defaults. */
+  explicitApprovalRequest?: true;
+  /** Prepared child review belongs to this parent; a parent waiver does not answer it. */
+  childReviewRequired?: boolean;
   /** The executor's exact admitted review answers this operation's approval. Never caller input. */
   reviewAdmitted?: boolean;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
@@ -258,17 +262,14 @@ export function readExplicitActionApprovalPreferenceV1(
   }
   const surface = resolveApprovalSurface(ctx);
   const rawSurface = ctx?.surface;
-  // Account Ask governs requests made for the person. Their own app interaction
-  // already supplies admission; the Action's designed local confirmation remains.
-  const ownUi = isOwnUiInvocation(actionId, ctx);
   const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
   if (surface.kind !== 'ambiguous') {
-    if (!ownUi && scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
+    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
     if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
   }
   const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
   const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
-  if (!ownUi && typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
+  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
   const builtIn = ActionIdSchema.safeParse(actionId);
   if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
   const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
@@ -299,14 +300,16 @@ function resolveUnwiredApprovalDefault(
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
   const policy = args.spec.approvalPolicy;
   const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
+  const explicitPreference = ownUiInvocation && args.settings ? readExplicitActionApprovalPreferenceV1(
+    args.profileActionId ?? args.actionId, args.settings, args.context, args.approvalScope) : undefined;
   const uiConfirmationRequired = !args.reviewAdmitted && !args.context?.bypassApprovals
     && ownUiInvocation
     && args.context?.presentUserConfirmation?.actionId !== args.actionId
-    && !(args.settings && readExplicitActionApprovalPreferenceV1(args.actionId, args.settings, args.context, args.approvalScope) === false)
-    && ((args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
+    && (args.childReviewRequired || explicitPreference !== false
+    && (explicitPreference === true || (args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
       ?? (policy?.uiConfirmation === 'policy'
         || policy?.uiConfirmation !== 'direct' && args.spec.irreversible === true))
-      || args.defaultSafety === 'danger' || args.defaultConfirmation === true);
+      || args.defaultSafety === 'danger' || args.defaultConfirmation === true));
   const presentUserRequest = defaultsPersonClassActionToAsk(args.context, args.spec, args.input);
   const computerAction = args.spec.approvalPolicy?.computerConsent === true;
   const computerConsent = computerAction && args.computerConsentGranted === true
@@ -400,7 +403,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && !(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource);
   const retainsLiveInvocation = custodyStaysOnLiveInvocation || retainPluginSettingsFieldIntent
     || args.retainHostOperationApproval === true && !retainedNativeRead;
-  const flow = required ? retainsLiveInvocation ? 'blocking' : 'deferred'
+  const flow = required || args.explicitApprovalRequest ? retainsLiveInvocation ? 'blocking' : 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
 
   return {

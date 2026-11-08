@@ -1079,6 +1079,10 @@ UI host presents them without creating an approval Artifact. This retains the
 existing irreversible product-confirmation default unless the declaration is
 `direct`. Missing UI presentation refuses the review instead of producing an
 agent-approval card.
+A saved Ask-on-UI preference requests this same local confirmation, including
+when the Action's default is direct. A scoped choice takes precedence over the
+global preference. Prepared children's required reviews fold into the parent's
+confirmation and preview; waiving the parent cannot waive a child's review.
 A completed confirmation for that exact Action consumes this default once.
 A present-user UI press keeps this same default on the executor that Home
 admitted that exact Account press for (the signed binding names the Action and
@@ -1274,7 +1278,11 @@ later; a run-now caller that uses it creates an approval Artifact instead of the
 Withdrawal before dispatch is the context `signal`. Agent, MCP, CLI and plugin callers never
 receive this confirmation. Account Ask settings govern requests made for the person;
 the person's own verified UI interaction does not create a self-approval request.
+An explicit Ask-on-UI choice still presents local confirmation before execution.
 Home admission owns cross-person authority; “own UI” skips only self-approval in the invoking Account.
+Explicit `approval.request.create` records the requested approval's deferred flow
+even on own UI; declared live-only result custody retains blocking flow. Its
+recorded invocation authority and origin stay unchanged.
 
 Source-control writes follow the same rule, and the Action policy is the one confirmation owner
 (a caller-owned dialog would double up with the executor's designed confirmation).
@@ -1308,7 +1316,7 @@ other direct SCM caller (commit, stage, revert, stash, pull-request compose) tre
 waiting result with `isScmActionNotRun` instead of an alert. Settings → Actions
 reads the same resolver, so a `Default` pull or push row says it asks because of the Source Control
 preference. Account Ask does not turn the person's own press into an approval
-request. Not confirmations of the write itself, and so
+request; an explicit Ask-on-UI choice uses local confirmation. Not confirmations of the write itself, and so
 not covered: index-lock recovery, the stash-overwrite choice, the push-rejected fetch offer and the
 default-branch remediation are offers or choices the app makes after a failure or before a distinct
 decision.
@@ -8797,7 +8805,8 @@ known no-effect failure before reaching control or CDP effects.
 
 In 0.3 development, a trusted present person's own UI interaction supplies their
 admission. Account Ask settings and approval-profile Ask or Require do not create
-a self-approval request. The Action's designed local confirmation and
+a self-approval request. Explicit Ask-on-UI preferences use native confirmation.
+The Action's designed local confirmation and
 host-discovered consequences still apply, including irreversible effects unless
 the declaration chooses direct execution. Agent, Session, plugin and other-person
 requests retain their approval policy. Home's signed admission preserves the

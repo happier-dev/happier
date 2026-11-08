@@ -3129,6 +3129,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         context,
         settings: context.actionsSettings,
         reviewAdmitted: reviewAdmitted && !childReviewRequired,
+        childReviewRequired,
         ...(approvalScope ? { approvalScope } : {}),
         ...(approvedOperation ? { approvedOperation } : {}),
         ...(sharedRequesterEffect ? { defaultConfirmation: true } : {}),
@@ -3261,7 +3262,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { surface: widgetTarget, instanceId: added.instance.id }, added.instance, ctx);
           if (refusal && !isWidgetAdmissionUndecidableHereV1(refusal)) return refusal;
         }
-        if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting && !childReviewRequired
+        if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting
           && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
           && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {
           const confirmedContext = { ...ctx, presentUserConfirmation: { actionId } };
@@ -3273,9 +3274,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
             }, async () => {
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-              const policyReview = (actionId === 'projects.sources.moveToTeam' || actionId === 'machines.reboot' || actionId === 'providers.connections.endpoint.set'
+              const policyReview = (childReviewRequired || actionId === 'projects.sources.moveToTeam' || actionId === 'machines.reboot' || actionId === 'providers.connections.endpoint.set'
                 || actionId === 'providers.connections.secrets.bind' || actionId === 'providers.connections.create_contribution')
-                ? await prepareApprovalRequest({ deps, actionId, input: admittedInput, actionArgs: admittedInput, context: ctx }) : null;
+                ? await prepareApprovalRequest({ deps, actionId, input: admittedInput, actionArgs: admittedInput, context: ctx,
+                  ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
+                  ...(hostReviewedChildren ? { hostReviewedChildren } : {}) }) : null;
               if (policyReview && 'ok' in policyReview) return policyReview;
               const confirmationInput = policyReview?.actionArgs ?? admittedInput;
               const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx,
@@ -6474,6 +6477,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           input: approvalActionArgs,
           context: { surface: ctx.surface, authority: resolveHostStampedAuthority(ctx), actionCaller: ctx.actionCaller },
           requiredByPolicy: true,
+          explicitApprovalRequest: true,
         });
         const request: ApprovalRequestV2 = {
           v: 2,

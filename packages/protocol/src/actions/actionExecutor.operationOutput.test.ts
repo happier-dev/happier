@@ -46,7 +46,7 @@ describe('operation and retained output Actions', () => {
           actionId, surface: 'ui', approvalRequired });
         const configured = resolveActionApprovalRouting({ actionId, spec, context, settings });
         expect(configured.required, actionId).toBe(false);
-        expect(configured.uiConfirmationRequired === true, actionId).toBe(consequence && approvalRequired);
+        expect(configured.uiConfirmationRequired === true, actionId).toBe(approvalRequired);
       }
     }
   });

@@ -20,7 +20,8 @@ const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind
 const automationContext = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
 
 describe('Provider Settings Actions', () => {
-  it.each(['ui', 'agent', 'mcp'] as const)('keeps %s custom Provider creation in its own approval class', async surface => {
+  it.each(['ui', 'ui-ask', 'agent', 'mcp'] as const)('keeps %s custom Provider creation in its own approval class', async origin => {
+    const surface = origin === 'ui-ask' ? 'ui' : origin;
     const approvals: ApprovalRequestV2[] = [];
     let writes = 0;
     let confirmations = 0;
@@ -46,11 +47,13 @@ describe('Provider Settings Actions', () => {
           statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
         catalog: { source: 'manual', manualModelPolicy: 'allowed' } }, manualModels: [],
     }, { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation',
-      actionCaller: { kind: 'host' }, serverId: 'test-home', actionRequestId: 'custom-provider-request' });
+      actionCaller: { kind: 'host' }, serverId: 'test-home', actionRequestId: 'custom-provider-request',
+      ...(origin === 'ui-ask' ? { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'providers.connections.create_custom': { approvalRequiredSurfaces: ['ui'] } } }) } : {}) });
     if (surface === 'ui') {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { action: 'createCustom' } });
       expect(approvals).toHaveLength(0);
-      expect(confirmations).toBe(0);
+      expect(confirmations).toBe(origin === 'ui-ask' ? 1 : 0);
       expect(writes).toBe(1);
       return;
     }

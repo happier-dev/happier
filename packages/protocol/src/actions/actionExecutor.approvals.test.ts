@@ -3416,6 +3416,39 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it.each(['ui', 'agent', 'mcp'] as const)(
+    'keeps explicit %s approval creation deferred while retaining live-only result custody (F4)', async surface => {
+      const requests: ApprovalRequestV2[] = [];
+      // Artifact persistence is the boundary; request admission, origin and
+      // approval flow resolution run through the real executor and schema.
+      const executor = createActionExecutor({
+        approvalsCreate: async ({ request }) => {
+          requests.push(ApprovalRequestV2Schema.parse(request));
+          return { artifactId: 'explicit-approval' };
+        },
+      });
+      const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
+        actionCaller: { kind: 'host' as const }, serverId: 'server-1', actionRequestId: 'explicit-request' };
+      for (const target of [
+        { actionId: 'agents.backends.list', actionArgs: {}, flow: 'deferred' },
+        { actionId: 'connectedServices.authentication.beginConnect', actionArgs: {
+          machineId: 'machine-1', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
+        }, flow: 'blocking' },
+      ] as const) {
+        expect(await executor.execute('approval.request.create', {
+          actionId: target.actionId, actionArgs: target.actionArgs,
+          summary: 'Review requested action', createdBy: { surface: 'system' },
+        }, context)).toEqual({ ok: true, result: { artifactId: 'explicit-approval' } });
+        expect(requests.at(-1)).toMatchObject({
+          status: 'open', actionId: target.actionId, actionArgs: target.actionArgs,
+          executionOriginV1: { surface, authority: context.authority, caller: { kind: 'host' } },
+          approval: { flow: target.flow, result: 'required' },
+        });
+      }
+      expect(requests).toHaveLength(2);
+    },
+  );
+
   it.each(['cli', 'agent'] as const)('executes an approved %s session delete at the deciding app after its originating Session is stopped', async (surface) => {
     let storedRequest: ApprovalRequest | null = null;
     const homeDomainAction = vi.fn(async () => ({ success: true as const }));

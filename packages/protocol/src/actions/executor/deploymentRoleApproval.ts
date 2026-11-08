@@ -31,16 +31,19 @@ export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlan
   const candidateIds: readonly ActionSettingsActionId[] = typeof child.action === 'string'
     ? [child.action] : ['action.invoke', formatQualifiedPluginActionId(child.action)];
   return { action: child.action, role: child.role, surface: surface.surface,
-    requiredActionIds: candidateIds.filter(id => typeof child.action === 'string'
+    requiredActionIds: candidateIds.filter(id => {
+      const routing = typeof child.action === 'string'
       ? resolveActionApprovalRouting({ actionId: child.action, spec: getActionSpec(child.action),
         input: child.input === undefined ? child.scopeInput : child.input,
-        context: { ...context, bypassApprovals: false }, settings, reviewAdmitted, ...(approvalScope ? { approvalScope } : {}) }).required
+        context: { ...context, bypassApprovals: false }, settings, reviewAdmitted, ...(approvalScope ? { approvalScope } : {}) })
       : resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: id, spec: getActionSpec('action.invoke'),
         ...(defaultSafety ? { defaultSafety } : {}),
         input: child.input === undefined ? child.scopeInput : child.input,
         context: { ...context, bypassApprovals: false }, settings, reviewAdmitted,
         requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, settings, context, approvalScope) === true,
-        ...(approvalScope ? { approvalScope } : {}) }).required) };
+        ...(approvalScope ? { approvalScope } : {}) });
+      return routing.required || routing.uiConfirmationRequired === true;
+    }) };
 }
 
 /** Prepare demanded effects once; prepared dispatch retains this exact admission. */

@@ -517,13 +517,16 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(isApprovalRequiredByActionsSettings('session.archive', EMPTY_SETTINGS, { surface: 'agent' })).toBe(false);
   });
 
-  it('keeps owner-confirmed Voice operations direct only for the present UI user under Account Ask while retaining Agent danger', () => {
+  it('keeps Voice operations direct by default and honors native UI Ask while retaining Agent danger', () => {
     const input = { anchor: 'voicePrivacy.forgetVoiceAgentMemory' };
     const ui = { surface: 'ui' as const, authority: 'present_user' as const };
     expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS, ui, undefined, undefined, input)).toBe(false);
-    expect(isApprovalRequiredByActionsSettings('settings.invoke', normalizeActionsSettingsV1({ v: 1,
+    const explicitAsk = normalizeActionsSettingsV1({ v: 1,
       actions: { 'settings.invoke': { approvalRequiredSurfaces: ['ui'] } },
-    }), ui, undefined, undefined, input)).toBe(false);
+    });
+    expect(isApprovalRequiredByActionsSettings('settings.invoke', explicitAsk, ui, undefined, undefined, input)).toBe(true);
+    expectOwnUiReview(resolveActionApprovalRouting({ actionId: 'settings.invoke', spec: getActionSpec('settings.invoke'),
+      settings: explicitAsk, context: ui, input }), true);
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       expect(isApprovalRequiredByActionsSettings('settings.invoke', EMPTY_SETTINGS,
         { surface, authority: 'account_automation' }, undefined, undefined, input)).toBe(true);
@@ -545,8 +548,11 @@ describe('isApprovalRequiredByActionsSettings', () => {
       expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
         actions: {}, approvalWaivedSurfaces: { [actionId]: [surface] } }), { surface, authority: 'account_automation' })).toBe(false);
     }
-    expect(isApprovalRequiredByActionsSettings(actionId, normalizeActionsSettingsV1({ v: 1,
-      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }), { surface: 'ui', authority: 'present_user' })).toBe(false);
+    const explicitAsk = normalizeActionsSettingsV1({ v: 1,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
+    const ui = { surface: 'ui', authority: 'present_user' } as const;
+    expect(isApprovalRequiredByActionsSettings(actionId, explicitAsk, ui)).toBe(true);
+    expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings: explicitAsk, context: ui }), true);
   });
   it.each(['daemon.filesystem.download', 'daemon.filesystem.upload'] as const)(
     'admits %s directly only for the present UI user',
@@ -581,7 +587,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
           surface: 'ui',
           authority: 'present_user',
         }),
-      ).toBe(false);
+      ).toBe(true);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings: explicitAsk,
+        context: { surface: 'ui', authority: 'present_user' } }), true);
     },
   );
 
@@ -1441,7 +1449,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           v: 1,
           actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
         }),
-      }), required);
+      }), true);
     },
   );
 
@@ -1720,7 +1728,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         input,
         context,
         settings: ask,
-      }), false);
+      }), true);
       expectOwnUiReview(resolveActionApprovalRouting({
         actionId,
         spec,
@@ -1926,7 +1934,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           v: 1,
           actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
         }),
-      }), required);
+      }), true);
       for (const malformed of [undefined, null, { ...input, unknown: true }]) {
         expectOwnUiReview(resolveActionApprovalRouting({
           actionId,
@@ -2805,7 +2813,8 @@ describe('isApprovalRequiredByActionsSettings', () => {
     });
     expect(
       isApprovalRequiredByActionsSettings(actionId, required, context),
-    ).toBe(false);
+    ).toBe(true);
+    expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings: required, context }), true);
   });
   it('retains the declared UI clear-index confirmation and the automated approval default', () => {
     const actionId = 'memory.clear_index' as const;
@@ -3012,17 +3021,15 @@ describe('isApprovalRequiredByActionsSettings', () => {
       actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
       approvalWaivedSurfaces: { [actionId]: ['ui'] },
     });
-    expect(
-      resolveActionApprovalRouting({
-        ...args,
-        defaultSafety: 'safe',
-        settings: required,
-      }).required,
-    ).toBe(false);
+    expectOwnUiReview(resolveActionApprovalRouting({
+      ...args,
+      defaultSafety: 'safe',
+      settings: required,
+    }), true);
     // A direct press does not add a second card from the declaration alone.
     expect(resolveActionApprovalRouting(args).required).toBe(false);
   });
-  it('admits direct notice and document edits while retaining automation Ask', () => {
+  it('admits direct notice and document edits while honoring explicit Ask on UI and automation', () => {
     const actionId = 'artifact.update' as const;
     const spec = getActionSpec(actionId);
     const context = {
@@ -3085,15 +3092,13 @@ describe('isApprovalRequiredByActionsSettings', () => {
       v: 1,
       actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
     });
-    expect(
-      resolveActionApprovalRouting({
-        actionId,
-        spec,
-        context,
-        settings: required,
-        input: { ...base, header: { ...notice, readAt: 1 } },
-      }).required,
-    ).toBe(false);
+    expectOwnUiReview(resolveActionApprovalRouting({
+      actionId,
+      spec,
+      context,
+      settings: required,
+      input: { ...base, header: { ...notice, readAt: 1 } },
+    }), true);
     expect(resolveActionApprovalRouting({ actionId, spec, settings: required,
       context: { surface: 'agent', authority: 'account_automation' },
       input: { ...base, header: { ...notice, readAt: 1 } } }).required).toBe(true);
@@ -3651,7 +3656,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         input,
         context,
         settings: ask,
-      }), required);
+      }), true);
     }
   });
 
@@ -3686,7 +3691,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(
       resolveActionApprovalRouting({ ...args, settings: ask }).required,
     ).toBe(false);
-    expectOwnUiReview(resolveActionApprovalRouting({ ...args, settings: ask }), false);
+    expectOwnUiReview(resolveActionApprovalRouting({ ...args, settings: ask }), true);
   });
 
   it('keeps widget exposure review native while retaining automated approval', () => {
@@ -4345,7 +4350,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
       });
       expect(
         isApprovalRequiredByActionsSettings(actionId, required, completed),
-      ).toBe(false);
+      ).toBe(true);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context }), true);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context: completed }), false);
     },
   );
 
@@ -4473,7 +4480,13 @@ describe('isApprovalRequiredByActionsSettings', () => {
           authority: 'present_user',
           presentUserConfirmation: { actionId },
         }),
-      ).toBe(surface !== 'ui');
+      ).toBe(true);
+      if (surface === 'ui') expectOwnUiReview(resolveActionApprovalRouting({
+        actionId,
+        spec: getActionSpec(actionId),
+        settings: required,
+        context: { surface, authority: 'present_user', presentUserConfirmation: { actionId } },
+      }), false);
 
       const waived = normalizeActionsSettingsV1({
         v: 1,
@@ -4489,7 +4502,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     },
   );
 
-  it('uses the person’s UI admission under Account Ask while retaining other callers’ custody', () => {
+  it('uses native confirmation for the person’s explicit UI Ask while retaining other callers’ custody', () => {
     const settings = normalizeActionsSettingsV1({
       v: 1,
       actions: {
@@ -4502,7 +4515,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings,
         { surface: 'ui', authority: 'present_user' } as any,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       resolveActionApprovalRouting({
         actionId: 'teams.invitations.create' as any,
@@ -4510,7 +4523,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings,
         context: { surface: 'ui', authority: 'present_user' } as any,
       }),
-    ).toMatchObject({ required: false });
+    ).toMatchObject({ required: false, uiConfirmationRequired: true });
 
     // One-time invitation bearers have live-only result custody: the exact
     // mounted UI invocation waits, while CLI requests defer and collect
