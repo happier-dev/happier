@@ -62,6 +62,66 @@ afterEach(() => {
 });
 
 describe('stored manifest Account Availability read', () => {
+    it('admits a manifest revision once at ingress and zero times across availability publications and view reads', async () => {
+        const response = intentRead();
+        if (!response.release) throw new Error('Missing fixture release');
+        let manifest = response.release.normalizedManifest;
+        let revision = 1;
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => jsonResponse(path === materializationsPath
+                ? { availabilityCursor: revision, snapshots: [{ serverIdentityId: 'srv_identity', machineId: 'machine-a',
+                    materializations: [{ serverIdentityId: 'srv_identity', machineId: 'machine-a',
+                        materializationId: 'installed-a', pluginId, version: '1.0.0', sourceClass: 'registryPackage',
+                        portableRelease: true, enabled: true, trustState: 'trusted', observedAt: revision,
+                        uiArtifacts: [], declaredManifest: manifest }] }] }
+                : { availabilityCursor: revision, pluginIds: [], failedPluginIds: [], intentReads: [] }) }),
+        });
+        const store = createPluginAccountAvailabilityReaderStore();
+        const fullParses = vi.spyOn(PluginManifestV2Schema, 'safeParse');
+        try {
+            const first = await hydrator.refresh();
+            if (!first) throw new Error('Availability did not publish');
+            expect(fullParses).toHaveBeenCalledTimes(1);
+            // New observation/cursor carriers exercise real publications while the
+            // admitted manifest revision stays unchanged. Rebinding/reading is the
+            // consumer path used when a retained view becomes presented again.
+            for (let publication = 0; publication < 12; publication += 1) {
+                store.replace({ scope, snapshot: { ...first.snapshot, availabilityCursor: publication + 1,
+                    materializations: first.snapshot.materializations.map(row => ({ ...row, observedAt: publication + 1 })),
+                    snapshots: first.snapshot.snapshots.map(snapshot => ({ ...snapshot,
+                        materializations: snapshot.materializations.map(row => ({ ...row, observedAt: publication + 1 })),
+                    })),
+                } });
+                const reader = store.bind(scope);
+                expect(reader.readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{ pluginId,
+                    installations: [{ declaration: { displayName: 'Stored plugin' } }],
+                }] });
+                reader.readUiProjectionInputs();
+                reader.readAccountUiProjection();
+                reader.readCurrentAccountExecutionDeclarations();
+                expect(fullParses).toHaveBeenCalledTimes(1);
+            }
+            // A real new declaration reaches the same ingress and the consumer;
+            // avoiding admission must never swallow changed plugin facts.
+            manifest = { ...manifest, displayName: 'Updated plugin' };
+            revision += 1;
+            const changed = await hydrator.refresh();
+            if (!changed) throw new Error('Changed availability did not publish');
+            expect(fullParses).toHaveBeenCalledTimes(2);
+            store.replace(changed);
+            expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{ pluginId,
+                installations: [{ declaration: { displayName: 'Updated plugin' } }],
+            }] });
+            expect(fullParses).toHaveBeenCalledTimes(2);
+            manifest = { ...manifest, version: 'invalid-semver' };
+            revision += 1;
+            await expect(hydrator.refresh()).rejects.toMatchObject({ code: 'plugin_availability_invalid_response' });
+            expect(fullParses).toHaveBeenCalledTimes(3);
+        } finally { fullParses.mockRestore(); }
+    });
+
     it('validates each wire manifest once and carries admitted declarations through publication without another full parse', async () => {
         const response = intentRead();
         if (!response.release) throw new Error('Missing fixture release');
