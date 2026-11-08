@@ -52,6 +52,41 @@ function harness(mode: 'plain' | 'e2ee' = 'plain') {
 }
 
 describe('Project Account row sync owner', () => {
+    it('settles an acknowledged Workspace wait through its exact pushed row, cancellation, absence or failed materialization', async () => {
+        const h = harness('plain');
+        await h.owner.refresh();
+        const address = { serverId: 'home', machineId: 'machine', workspaceId: 'new-ref', rootPath: '/new-repo' };
+        const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };
+        const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
+        const waiting = h.owner.waitForWorkspaceRef(address);
+        let settled = false;
+        void waiting.then(() => { settled = true; }, () => { settled = true; });
+        await h.owner.refresh();
+        expect(settled).toBe(false); // A census can predate the acknowledged producer's change hint.
+        const ref = { id: address.workspaceId, serverId: address.serverId, machineId: address.machineId, rootPath: address.rootPath, createdAtMs: 1 };
+        h.rows.set(physicalKey, { key, revision: 0, content: h.cipher.seal({ key, value: ref }) });
+        await h.owner.refreshKeys([physicalKey]);
+        expect(await waiting).toEqual(ref);
+        expect(await h.owner.waitForWorkspaceRef(address)).toEqual(ref);
+
+        const missing = { ...address, workspaceId: 'missing' };
+        const missingKey = buildProjectAccountRowPhysicalKeyV1({ ...key, id: missing.workspaceId });
+        const absent = expect(h.owner.waitForWorkspaceRef(missing)).rejects.toMatchObject({ code: 'workspace_ref_not_found' });
+        await h.owner.refreshKeys([missingKey]);
+        await absent;
+
+        const cancelled = new AbortController();
+        const cancelledWait = expect(h.owner.waitForWorkspaceRef(missing, cancelled.signal)).rejects.toMatchObject({ name: 'AbortError' });
+        cancelled.abort();
+        await cancelledWait;
+
+        const error = new Error('row transport failed');
+        const failedWait = expect(h.owner.waitForWorkspaceRef(missing)).rejects.toBe(error);
+        h.transport.read = async () => { throw error; };
+        await h.owner.refreshKeys([missingKey]);
+        await failedWait;
+    });
+
     it.each(['plain', 'e2ee'] as const)('opens only changed row content across refresh and one-row commits in %s', async mode => {
         const h = harness(mode);
         for (let i = 0; i < 32; i += 1) {

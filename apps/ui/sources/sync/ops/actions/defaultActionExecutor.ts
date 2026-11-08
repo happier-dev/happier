@@ -143,7 +143,7 @@ import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PendingResetStartWaitingReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
@@ -199,7 +199,7 @@ import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { ApiTokenDeploymentAuthoringHost } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { completeUiProjectOpenResult } from './projectOpenResult';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { createUiLanguageIntelligenceApplyAction, createUiWorkspaceFileReplaceAction } from './workspaceFileReplaceAction';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
@@ -1016,7 +1016,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         : {}),
       authority: context.authority, signal: context.signal,
       ...(context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}) });
-    return execution.ok ? execution.result : execution;
+    return execution.ok ? args.actionId === 'projects.open'
+      ? await completeUiProjectOpenResult(accountContext, execution.result, context.signal)
+      : execution.result : execution;
   };
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
   const resolveNativeInventoryProbeTarget = async (args: Readonly<{
@@ -3353,9 +3355,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertResultCurrent(getActionSpec('projects.open').sideEffectClass);
         if (execution) {
           if (!execution.ok) return execution;
-          const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
-          if (approval.success && approval.data.actionId === 'projects.open') return approval.data;
-          return OpenProjectResultV1Schema.parse(execution.result);
+          return await completeUiProjectOpenResult(accountContext, execution.result, context.signal);
         }
       }
       try {
@@ -3369,9 +3369,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           signal: context.signal,
           operationTimeoutMs: null,
         });
-        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(response);
-        if (approval.success && approval.data.actionId === 'projects.open') return approval.data;
-        return OpenProjectResultV1Schema.parse(response);
+        return await completeUiProjectOpenResult(accountContext, response, context.signal);
       } catch (error) {
         if (readRpcRequestDisposition(error) === 'notSent') return { kind: 'refused', code: 'machine_unreachable' };
         throw error;

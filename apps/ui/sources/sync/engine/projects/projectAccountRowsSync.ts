@@ -39,6 +39,10 @@ export function createProjectAccountRowsSync(options: Readonly<{
     // Last disclosed snapshot once a census admitted the topology; exact change hints keep it current.
     let held: ProjectAccountRowsSnapshot | null = null;
     let censused = false;
+    const materializationWaiters = new Set<(error?: unknown, physicalKey?: string) => void>();
+    function notifyMaterialization(error?: unknown, physicalKey?: string) {
+        for (const waiter of materializationWaiters) waiter(error, physicalKey);
+    }
     function disclose(snapshot: ProjectAccountRowsSnapshot, source: 'census' | 'projection', materialization?: ProjectAccountRowsMaterialization) {
         held = snapshot; if (source === 'census') censused = true;
         options.apply(snapshot, source, materialization);
@@ -94,7 +98,13 @@ export function createProjectAccountRowsSync(options: Readonly<{
         }
         const next = [...merged.values()];
         const snapshot = project(next); // Validate the complete admitted topology before disclosing any row.
-        assertCurrent(); opened = next; disclose(snapshot, source, materialization); return snapshot;
+        assertCurrent(); opened = next; disclose(snapshot, source, materialization);
+        if (source === 'census') notifyMaterialization();
+        else {
+            for (const key of seen) notifyMaterialization(undefined, key);
+            for (const key of materialization?.absentPhysicalKeys ?? []) notifyMaterialization(undefined, key);
+        }
+        return snapshot;
     }
     async function refresh(signal?: AbortSignal): Promise<ProjectAccountRowsSnapshot> {
         signal?.throwIfAborted();
@@ -108,6 +118,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         refreshInFlight = task;
         try { return await task; }
         catch (error: unknown) {
+            notifyMaterialization(error);
             if (options.isCurrent()) options.onRefreshFailure?.(error);
             throw error;
         } finally { if (refreshInFlight === task) refreshInFlight = null; }
@@ -117,17 +128,51 @@ export function createProjectAccountRowsSync(options: Readonly<{
         signal?.throwIfAborted(); assertCurrent();
         return censused && held ? held : await refresh(signal);
     }
+    /** An Open ACK commits a ref; its existing change hint completes the app's materialization. */
+    async function waitForWorkspaceRef(address: WorkspaceAddressV1, signal?: AbortSignal): Promise<WorkspaceRefV1> {
+        await read(signal);
+        signal?.throwIfAborted(); assertCurrent();
+        const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };
+        const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
+        return await new Promise<WorkspaceRefV1>((resolve, reject) => {
+            const finish = (error?: unknown, ref?: WorkspaceRefV1) => {
+                materializationWaiters.delete(observeMaterialization);
+                signal?.removeEventListener('abort', abort);
+                if (error !== undefined) reject(error); else resolve(ref!);
+            };
+            const abort = () => finish(signal?.reason ?? failure('cancelled'));
+            const observeMaterialization = (error?: unknown, changedKey?: string) => {
+                if (changedKey !== undefined && changedKey !== physicalKey) return;
+                try {
+                    assertCurrent(); signal?.throwIfAborted();
+                    if (error !== undefined) { finish(error); return; }
+                    const resolved = resolveWorkspaceRefByAddress(held?.workspaceRefs ?? [], address);
+                    if (resolved.kind === 'resolved') { finish(undefined, resolved.ref); return; }
+                    if (changedKey === physicalKey || rowFor(key)?.row.content === null)
+                        finish(failure('workspace_ref_not_found'));
+                } catch (error: unknown) { finish(error); }
+            };
+            materializationWaiters.add(observeMaterialization);
+            signal?.addEventListener('abort', abort, { once: true });
+            observeMaterialization();
+        });
+    }
     /** Exact change hints patch the admitted census; failed keys never become checkpoint proof. */
     async function refreshKeys(physicalKeys: readonly string[], signal?: AbortSignal): Promise<ReadonlySet<string>> {
         assertCurrent(); signal?.throwIfAborted();
         const results = await Promise.allSettled([...new Set(physicalKeys)].map(async physicalKey => {
-            const key = parseProjectAccountRowPhysicalKeyV1(physicalKey);
-            if (!key) throw failure('project_account_row_invalid');
-            const result = await options.transport.read(key, { signal });
-            if (result.status === 'present') return { physicalKey, row: result.row };
-            if (result.status === 'deleted') return { physicalKey, row: { key, revision: result.revision, content: null } };
-            if (result.status === 'absent') return { physicalKey, row: null };
-            throw failure(`project_account_rows_${result.status}`);
+            try {
+                const key = parseProjectAccountRowPhysicalKeyV1(physicalKey);
+                if (!key) throw failure('project_account_row_invalid');
+                const result = await options.transport.read(key, { signal });
+                if (result.status === 'present') return { physicalKey, row: result.row };
+                if (result.status === 'deleted') return { physicalKey, row: { key, revision: result.revision, content: null } };
+                if (result.status === 'absent') return { physicalKey, row: null };
+                throw failure(`project_account_rows_${result.status}`);
+            } catch (error: unknown) {
+                notifyMaterialization(error, physicalKey);
+                throw error;
+            }
         }));
         assertCurrent(); signal?.throwIfAborted();
         const completed = new Set<string>();
@@ -150,6 +195,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         try {
             observe(rows, 'projection', { absentPhysicalKeys, refreshSucceeded: !failed });
         } catch (error: unknown) {
+            notifyMaterialization(error);
             if (options.isCurrent()) options.onRefreshFailure?.(error);
             throw error;
         }
@@ -328,7 +374,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
         }
     }
-    return { read, refresh, refreshKeys, mutateRef, mutateWorkspaceMetadata,
+    return { read, refresh, refreshKeys, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
         recordWorkspaceSource: (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>

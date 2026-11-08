@@ -67,6 +67,12 @@ export function createUiProjectAccountRowsClient(account: Account) {
   };
   return {
     read,
+    waitForWorkspaceRef: async (address: WorkspaceAddressV1, signal?: AbortSignal) => {
+      // Only the app retains a hint-maintained projection. Finite foreign-Home readers
+      // take their census at their next Action and have no pending push to await.
+      const app = appOwner();
+      if (app) await (await app).waitForWorkspaceRef(address, signal);
+    },
     readProjectReference: async (project: QualifiedProjectKeyV1, signal?: AbortSignal, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context) || !areServerProfileIdentifiersEquivalent(project.serverId, account.serverId))
         throw Object.assign(new Error('project_account_access_denied'), { code: 'project_account_access_denied' });

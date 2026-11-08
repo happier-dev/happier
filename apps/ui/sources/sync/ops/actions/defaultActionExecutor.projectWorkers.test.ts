@@ -40,6 +40,99 @@ beforeEach(async () => {
 afterEach(async () => { await homes.reset(); });
 
 describe('worker Actions through the captured UI Home', () => {
+  it('opens a Workspace through its pushed row before the first Sync create admission', async () => {
+    const { sync } = await import('@/sync/sync');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createProjectAccountRowsSync } = await import('@/sync/engine/projects/projectAccountRowsSync');
+    const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+    const { buildProjectAccountRowPhysicalKeyV1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+    const homeId = 'srv_worker_actions';
+    const scope = { serverId, accountId: 'owner' };
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
+    const source = { ...createPlainMachineRowFixture({ id: 'source-machine', accountId: 'owner' }),
+      installationId: 'source-installation', installationPublicKey: encodeBase64(installation.publicKey) };
+    homes.answer(serverId, '/v1/machines', { body: [source] });
+    homes.answer(serverId, `/v1/machines/${source.id}`, { body: { machine: source } });
+    const key = { kind: 'workspace-ref' as const, serverId: homeId, id: 'just-opened' };
+    const workspace = { serverId: homeId, machineId: source.id, workspaceId: key.id, rootPath: '/source' };
+    const row = ProjectAccountRowV1Schema.parse({ key, revision: 1, content: { t: 'plain', v: { key,
+      value: { id: key.id, serverId: homeId, machineId: source.id, rootPath: workspace.rootPath, createdAtMs: 1 } } } });
+    // The daemon has committed this row, but the UI's existing change pipeline has not delivered it.
+    const owner = createProjectAccountRowsSync({ scope,
+      cipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }),
+      transport: { list: async () => ({ status: 'listed', coverage: 'complete', rows: [] }),
+        read: async () => ({ status: 'present', row }), mutate: async () => { throw new Error('unexpected mutation'); } },
+      isCurrent: () => true, apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
+    await owner.refresh();
+    // Hydrate the real app composition with that Account's real held owner, without mocking internal decisions.
+    const priorScope = Reflect.get(sync, 'pendingSettingsScope');
+    const priorOwner = Reflect.get(sync, 'projectAccountRowsRuntime');
+    Reflect.set(sync, 'pendingSettingsScope', scope);
+    Reflect.set(sync, 'projectAccountRowsRuntime', Promise.resolve(owner));
+    try {
+      let openAcknowledged = false;
+      homes.answer(serverId, '/v1/actions/projects.open/execution-authorization', { select: body => {
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'source-open-root', binding: {
+          accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+          machineId: source.id, installationId: source.installationId, custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+          actionId: 'projects.open', requestId: request.envelope.requestId, target: request.envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        } }) };
+      } });
+      homes.answer(serverId, '/v1/actions/projects.open', { select: body => {
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        openAcknowledged = true;
+        return { body: { v: 1, actionId: 'projects.open', requestId: request.envelope.requestId,
+          execution: { ok: true, result: { kind: 'opened', workspace, directory: workspace.rootPath, setup: 'notRequired' } } } };
+      } });
+      const executor = createDefaultActionExecutor();
+      const context = { serverId, expectedAccountId: 'owner', surface: 'ui' as const, authority: 'present_user' as const,
+        executionRunTargetMachineId: source.id };
+      const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+      const create = () => executor.execute('workspace.sync.relationship.create', { v: 1, sourceWorkspaceRefId: key.id,
+        targetMachineId: 'worker-machine', targetPath: '/worker-copy', mode: 'keep_synced',
+        destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } }, context);
+      let opened = false;
+      const opening = executor.executeConfirmed('projects.open', { serverId: homeId, machineId: source.id,
+        source: { kind: 'folder', path: workspace.rootPath }, materialization: { kind: 'attach' } }, context)
+        .then(result => { opened = true; return result; });
+      await vi.waitFor(async () => {
+        if (opened) expect(await opening).toMatchObject({ ok: true, result: { kind: 'opened' } });
+        expect(openAcknowledged).toBe(true);
+      });
+      // Let the acknowledged Action settle; a ready result must still wait for the producer's row.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      // Reproduce the live caller: if Open already reported success, issue its first create now.
+      // A corrected Open stays pending, so that same first create follows the pushed completion below.
+      const prematureCreate = opened ? await create() : null;
+      await owner.refreshKeys([buildProjectAccountRowPhysicalKeyV1(key)]);
+      expect(await opening).toMatchObject({ ok: true, result: { kind: 'opened', workspace } });
+      // A real create enters source admission exactly once after Open, with no user retry.
+      homes.answer(serverId, '/v1/actions/workspace.sync.relationship.create/execution-authorization', { select: body => {
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'source-home-root', binding: {
+          accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+          machineId: source.id, installationId: 'source-installation', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+          actionId: 'workspace.sync.relationship.create', requestId: request.envelope.requestId, target: request.envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        } }) };
+      } });
+      homes.answer(serverId, '/v1/actions/workspace.sync.relationship.create', { select: body => {
+        const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        return { body: { v: 1, actionId: 'workspace.sync.relationship.create', requestId: request.envelope.requestId,
+          execution: { ok: true, result: { kind: 'approval_request_created', actionId: 'workspace.sync.relationship.create', artifactId: 'create-admitted' } } } };
+      } });
+      const firstCreate = prematureCreate ?? await create();
+      expect(firstCreate, JSON.stringify(firstCreate))
+        .toMatchObject({ ok: true, result: { artifactId: 'create-admitted' } });
+    } finally {
+      Reflect.set(sync, 'pendingSettingsScope', priorScope);
+      Reflect.set(sync, 'projectAccountRowsRuntime', priorOwner);
+    }
+  });
+
   it.each(['workspace.sync.relationship.create', 'workspace.sync.relationship.replace'] as const)(
     'admits %s at the source Home before Ask and retains the UI requester for a shared target', async actionId => {
       await homes.requireUiApproval(serverId, actionId);
