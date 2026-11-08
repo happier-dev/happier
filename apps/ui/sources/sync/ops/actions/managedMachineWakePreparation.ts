@@ -19,7 +19,7 @@ export async function prepareUiManagedMachineWake(
     account: LazyActionAccountContext | undefined,
 ) {
     if (!request.machineRuntimeDemand) return null;
-    if (!account?.serverIdentityId) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    if (!account) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     return prepareManagedMachineWakeChildren(request, createUiManagedMachineWakeReads(account),
         execution => executeUiManagedMachineRuntimeDemand(execution, account));
 }
@@ -68,6 +68,9 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
             }
         },
         readManagedMachine: async (target, context) => {
+            // Only a managed Machine is Home-identity scoped; an ordinary Machine of a Home that
+            // publishes no portable identity (a manually added Home) never reaches this read.
+            if (!account.serverIdentityId) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             try {
                 const result = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', target,
                     { signal: context.signal });

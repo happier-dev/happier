@@ -156,6 +156,38 @@ describe('managed explicit execution readiness', () => {
         } finally { account.dispose(); await homes.dispose(); }
     });
 
+    it('spawns on an ordinary Machine of a Home that publishes no portable identity', async () => {
+        // A manually added Home has no server identity. Only a managed wake is identity-scoped.
+        const machine = createMachineFixture({ id: 'ordinary', active: true, managedMachineRef: null });
+        const homes = await serveAccountHomes({ homes: [
+            { key: 'a', serverUrl: 'https://identityless-spawn.test', accountId: 'owner' },
+        ], route: () => undefined });
+        const account = await captureLazyActionAccountContext(homes.homes.a!.id);
+        let spawns = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            isActionApprovalRequired: () => false,
+            prepareHostReviewedChildren: request => prepareUiManagedMachineWake(request, account),
+            sessionSpawnNew: async () => {
+                spawns++;
+                return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+            },
+        }));
+        try {
+            expect(account.serverIdentityId).toBeUndefined();
+            storage.getState().applyMachines([machine], false,
+                { sourceServerId: account.serverId, sourceAccountId: account.accountId });
+            observeMachinePresenceForTest(account.accountLifetime.scope, ['ordinary']);
+            const result = await executor.execute('session.spawn_new', {
+                creationKey: 'identityless-spawn', executionTarget: { serverId: account.serverId, machineId: 'ordinary' },
+                directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                serverId: account.serverId, runtimeAccountId: account.accountId });
+            expect(result).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+            expect(spawns).toBe(1);
+        } finally { account.dispose(); await homes.dispose(); }
+    });
+
     it.each(['session.open', 'session.spawn_new', 'machines.terminal.open', 'execution.run.start'] as const)(
         'runs admitted %s on the exactly enrolled connected guest when native Inspect is unavailable', async actionId => {
         const managed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_wake_unavailable', custodianAccountId: 'owner', enrolledMachineId: 'guest',
