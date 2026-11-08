@@ -181,6 +181,15 @@ test('native sync check accepts a healthy session from the real Mutagen public t
     assert.equal(await readFile(join(beta, 'healthy.txt'), 'utf8'), content);
   }
 
+  // An already synchronized session must acknowledge a fresh demand even
+  // when neither endpoint has changed since the previous successful barrier.
+  const idleFlush = spawnSync(controlExecutable, [
+    '--sync-flush', sessionName, '--', 'mutagen', 'sync', 'flush', sessionName,
+  ], { env, encoding: 'utf8' });
+  assert.ifError(idleFlush.error);
+  assert.equal(idleFlush.status, 0, idleFlush.stderr);
+  assert.equal(await readFile(join(beta, 'healthy.txt'), 'utf8'), 'newer demand after the previous success\n');
+
   runMutagen(['sync', 'pause', sessionName], env);
   const pausedPublicJsonStatus = runMutagen([
     'sync', 'list', sessionName,
