@@ -105,7 +105,11 @@ it('summarizes a Health Event list trigger without a display label using its dec
     }
 });
 
-it.each([false, true])('configures a prebound guided deployment only when its controller declares the Event (declared=%s)', async (declared) => {
+it.each([
+    { declared: false, catalogEvent: true },
+    { declared: true, catalogEvent: false },
+    { declared: true, catalogEvent: true },
+])('settles prebound guided deployment setup (declared=$declared, catalogEvent=$catalogEvent)', async ({ declared, catalogEvent }) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor, InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
     const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
@@ -161,7 +165,7 @@ it.each([false, true])('configures a prebound guided deployment only when its co
     rpc.respond = request => {
         requestedMethods.push(request.method);
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
-            return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+            return { protocolVersion: 1, projection, automationEligibleEvents: catalogEvent ? [event] : [] };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
             return { ok: true, inputSchema: event.setupAction.inputSchema };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
@@ -198,11 +202,16 @@ it.each([false, true])('configures a prebound guided deployment only when its co
         expect(screen.findAllHostsByTestId('automation-event-watcher-picker')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
         expect(screen.findAllByType(TextInput)).toHaveLength(0);
-        if (!declared) {
+        if (!declared || !catalogEvent) {
             await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.eventCatalogStatus).toBe('ready'));
             const model = screen.findByType(InlinePluginEventEditor).props.model;
             expect.soft(model.watcherCandidates).toEqual([]);
             expect.soft(model.selectedWatcherOrigin).toBeNull();
+            expect.soft(model.sourceStatus).toBe('unavailable');
+            expect.soft(model.sourceFailure).toMatchObject({
+                code: catalogEvent ? 'event_observer_unavailable' : 'event_contribution_not_current', retryable: false });
+            expect.soft(screen.getTextContent()).toContain('automations.form.trigger.sourceUnavailable');
+            expect.soft(screen.getTextContent()).not.toContain('common.loading');
             expect(submitted).toEqual([]);
             return;
         }

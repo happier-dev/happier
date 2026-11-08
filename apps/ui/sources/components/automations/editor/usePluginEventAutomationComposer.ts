@@ -26,7 +26,7 @@ import {
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
+import { readGuidedPluginEventAutomationSetupFailure, readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
     type PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -496,6 +496,20 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         }
         return { watcherFailures, selectableWatchers };
     }, [selectedEvent, watcherCandidates]);
+
+    // Guided setup hides the watcher picker. A settled empty selection cannot
+    // wait for a choice the person has no control to make. Only the projection
+    // owner's explicit establishing target represents pending discovery.
+    const guidedSetupFailure = React.useMemo(() => params.guidedPreset ? readGuidedPluginEventAutomationSetupFailure({
+        catalogReady: eventCatalogStatus === 'ready',
+        event: selectedEvent,
+        selectableWatchers,
+        watcherFailures,
+        discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
+            target.machineId === params.initialSetupSeed?.monitoringMachineId
+            && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
+    }) : null, [eventCatalogStatus, params.guidedPreset, params.initialSetupSeed?.monitoringMachineId,
+        params.serverId, selectedEvent, selectableWatchers, suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
     const payloadBrowser = React.useMemo(
         () => buildPluginEventAutomationPayloadBrowser(selectedEvent?.event.payloadSchema),
@@ -1067,8 +1081,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         selectEvent: chooseEvent,
         getPluginPresentation,
         getEventPresentation,
-        sourceStatus,
-        sourceFailure,
+        sourceStatus: guidedSetupFailure ? 'unavailable' : sourceStatus,
+        sourceFailure: guidedSetupFailure ?? sourceFailure,
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
@@ -1133,6 +1147,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         sourceInstanceId,
         sourceStatus,
         sourceFailure,
+        guidedSetupFailure,
         setFilterClauseField,
         setFilterClauseOperator,
         setFilterClauseValueText,
