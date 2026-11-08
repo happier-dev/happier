@@ -14,6 +14,18 @@ const baseIssue = {
 } as const;
 
 describe('ConnectedServiceRecoveryPolicy', () => {
+  it.each(['plan', 'validation', 'usage_limit', 'rate_limit'] as const)(
+    'leaves model-scoped %s failures to model recovery, for profiles and groups', (kind) => {
+      for (const selection of [
+        { kind: 'profile', serviceId: baseIssue.serviceId, profileId: 'primary' },
+        { kind: 'group', serviceId: baseIssue.serviceId, groupId: 'main', activeProfileId: 'primary' },
+      ] as const) {
+        expect(decideConnectedServiceRecovery({ actor: 'automatic', selection,
+          issue: { ...baseIssue, kind, quotaScope: 'model', providerLimitId: 'gpt-6.1-sol' },
+        })).toEqual({ action: 'no_op', reason: 'model_recovery_required' });
+      }
+    },
+  );
   it('preserves a novel qualified service identity through account-scoped group recovery', () => {
     const service = {
       pluginId: 'acme.connected-accounts',

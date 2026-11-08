@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleConnectedServiceRuntimeAuthFailure } from './handleConnectedServiceRuntimeAuthFailure';
 
 describe('handleConnectedServiceRuntimeAuthFailure', () => {
+    it.each(['plan', 'usage_limit', 'rate_limit'] as const)('leaves model-scoped %s to model recovery', async kind => {
+        expect(await handleConnectedServiceRuntimeAuthFailure({
+            classification: { kind, serviceId: 'happier.agent.codex/openai-codex', profileId: 'primary',
+                groupId: 'pool', quotaScope: 'model', resetsAtMs: null, planType: null,
+                rateLimits: null, source: 'structured_provider_error' },
+            selection: { kind: 'group', serviceId: 'happier.agent.codex/openai-codex', groupId: 'pool', activeProfileId: 'primary' },
+            switchesThisTurn: 0,
+            switchCoordinator: null,
+        })).toEqual({ status: 'not_classified' });
+    });
     it('requires profile action for a single connected profile selection instead of attempting a group switch', async () => {
         const switchAfterClassifiedFailure = vi.fn();
 
@@ -105,7 +115,6 @@ describe('handleConnectedServiceRuntimeAuthFailure', () => {
                 source: 'structured_provider_error',
                 recoveryAction: { kind: 'provider_state_sharing_required' },
             },
-            switchesThisTurn: 1,
             switchCoordinator: { switchAfterClassifiedFailure },
         })).resolves.toEqual({
             status: 'switch_attempted',
@@ -128,7 +137,6 @@ describe('handleConnectedServiceRuntimeAuthFailure', () => {
             providerLimitId: 'weekly',
             action: null,
             planType: null,
-            switchesThisTurn: 1,
         });
     });
 
@@ -179,7 +187,6 @@ describe('handleConnectedServiceRuntimeAuthFailure', () => {
             providerLimitId: 'weekly',
             action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
             planType: null,
-            switchesThisTurn: 1,
         });
     });
 

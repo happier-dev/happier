@@ -1,3 +1,5 @@
+import { isConnectedServiceAccountRecoveryApplicable } from '@/daemon/connectedServices/runtimeAuth/ConnectedServiceRecoveryPolicy';
+
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -11,6 +13,7 @@ function readString(value: unknown): string | null {
 export function hasConnectedServiceRuntimeAuthRecoveryContext(classification: unknown): boolean {
   const record = readRecord(classification);
   if (!record) return false;
+  if (!isConnectedServiceAccountRecoveryApplicable(record)) return false;
 
   const recovery = readString(record.connectedServiceRecovery);
   if (recovery === 'unavailable') return false;

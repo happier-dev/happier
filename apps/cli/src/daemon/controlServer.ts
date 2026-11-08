@@ -47,6 +47,7 @@ import {
 import { getDaemonAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema, DaemonAgentInstallListRequestSchema, DaemonAgentInstallListResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { isUnattestedPublicV1RunnerRolloutMutation } from './plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
+import { isConnectedServiceAccountRecoveryApplicable } from './connectedServices/runtimeAuth/ConnectedServiceRecoveryPolicy';
 import { SESSION_RUNNER_RESTART_ADMISSION_CURRENT_PATH, SessionRunnerRestartAdmissionIdentitySchema,
   SessionRunnerRestartAdmissionCurrentSchema } from './plannedRunnerRestart/sessionRunnerRestartAdmission';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
@@ -2157,6 +2158,9 @@ export function createDaemonControlApp({
         ok: false as const,
         errorCode: 'connected_service_runtime_auth_invalid_classification' as const,
       };
+    }
+    if (!isConnectedServiceAccountRecoveryApplicable(classification)) {
+      return { ok: true as const, result: { status: 'not_classified' as const } };
     }
     if (admissionDrain.isPublicationQuiescing()) {
       return {

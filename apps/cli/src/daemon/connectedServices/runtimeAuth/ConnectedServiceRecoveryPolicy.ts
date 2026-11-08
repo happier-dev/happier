@@ -53,7 +53,7 @@ export type ConnectedServiceRecoveryPolicyDecision<
 > =
   | Readonly<{
       action: 'no_op';
-      reason: 'no_issue' | 'soft_limit_no_safe_candidate' | 'live_provider_evidence_supersedes_cached_health';
+      reason: 'no_issue' | 'model_recovery_required' | 'soft_limit_no_safe_candidate' | 'live_provider_evidence_supersedes_cached_health';
       healthConvergence?: Readonly<{
         serviceId: TServiceIdentity;
         profileId: string;
@@ -193,11 +193,21 @@ function isSwitchableGroupSelection<TServiceIdentity>(
   return selection?.kind === 'group' && isSwitchableGroupIssue(issue.kind);
 }
 
+/** Model failures require changing the model, not repairing or retrying an Account. */
+export function isConnectedServiceAccountRecoveryApplicable(
+  issue: Readonly<{ kind?: unknown; quotaScope?: unknown }>,
+): boolean {
+  return issue.quotaScope !== 'model';
+}
+
 export function decideConnectedServiceRecovery<TServiceIdentity = string>(
   input: DecideConnectedServiceRecoveryInput<TServiceIdentity>,
 ): ConnectedServiceRecoveryPolicyDecision<TServiceIdentity> {
   const issue = input.issue;
   if (!issue) return { action: 'no_op', reason: 'no_issue' };
+  if (!isConnectedServiceAccountRecoveryApplicable(issue)) {
+    return { action: 'no_op', reason: 'model_recovery_required' };
+  }
 
   const profileId = issueProfileId(issue, input.selection);
   const groupId = issueGroupId(issue, input.selection);

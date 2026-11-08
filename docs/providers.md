@@ -2425,6 +2425,13 @@ choice; for example, Codex omits unsupported inherited effort at startup.
 
 ## Session lifecycle
 
+In 0.3 development, a model-scoped failure (`quotaScope: model`) stays a model
+problem, including model availability, plan restrictions and model usage limits.
+Connected Services recovery does not mark an account as needing attention,
+switch accounts or schedule account retries for it. The Session retains the
+typed model failure so the person can choose another model. Account-scoped
+authentication, credit and usage-limit failures retain account recovery.
+
 In 0.3 development, Codex app-server turns bound to a Provider connection map
 structured upstream HTTP 401 evidence to `provider_endpoint_unauthorized`.
 The native turn diagnostic carries the existing `ProviderErrorV1` with the

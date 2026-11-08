@@ -8,17 +8,12 @@ function readNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function formatProfileSuffix(action: Record<string, unknown>): string {
-  const profileId = readNonEmptyString(action.profileId);
-  return profileId ? ` (${profileId})` : '';
-}
-
 export type ConnectedServiceRuntimeAuthFailureStatusNote = Readonly<{
   code: string;
-  message: string;
+  message: string | null;
 }>;
 
-function toStatusNote(code: string, message: string): ConnectedServiceRuntimeAuthFailureStatusNote {
+function toStatusNote(code: string, message: string | null): ConnectedServiceRuntimeAuthFailureStatusNote {
   return { code, message };
 }
 
@@ -59,16 +54,18 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   }
   if (outerResult?.status === 'recovery_action_required') {
     const action = readRecord(outerResult.action);
+    // Typed Session issues and recovery state already present account attention.
+    // Keep delivery acknowledgement without duplicating it as an anonymous transcript row.
     if (action?.kind === 'reconnect_profile') {
       return toStatusNote(
         'recovery_action_reconnect_profile',
-        `Connected-service profile${formatProfileSuffix(action)} needs reconnect before this session can continue.`,
+        null,
       );
     }
     if (action?.kind === 'profile_action_required') {
       return toStatusNote(
         'recovery_action_profile_action_required',
-        `Connected-service profile${formatProfileSuffix(action)} needs attention before this session can continue.`,
+        null,
       );
     }
     if (action?.kind === 'provider_state_sharing_required') {
@@ -151,49 +148,39 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   }
   if (outerResult?.status !== 'switch_attempted') return null;
   const switchResult = readRecord(outerResult.result);
+  if (switchResult?.status === 'quota_proof_unavailable') {
+    return toStatusNote(
+      'switch_attempted_quota_proof_unavailable',
+      'Connected-service current account quota is not yet verified; retry scheduled.',
+    );
+  }
   if (switchResult?.status === 'no_eligible_member') {
     return toStatusNote(
       'switch_attempted_no_eligible_member',
       'Connected-service account group has no eligible fallback account; waiting for group recovery.',
     );
   }
-  if (switchResult?.status === 'switch_limit_reached') {
-    return toStatusNote(
-      'switch_attempted_switch_limit_reached',
-      'Connected-service account switch limit reached; waiting before trying another account.',
-    );
-  }
   if (switchResult?.status === 'generation_apply_failed') {
-    const activeProfileId = readNonEmptyString(switchResult.activeProfileId);
     const errorCode = readNonEmptyString(switchResult.errorCode) || 'unknown';
     if (errorCode === 'provider_account_adoption_mismatch') {
       return toStatusNote(
         'switch_attempted_provider_account_adoption_mismatch',
-        activeProfileId
-          ? `Connected-service provider did not adopt account ${activeProfileId}; retrying verification.`
-          : 'Connected-service provider did not adopt the selected account; retrying verification.',
+        'Connected-service provider did not adopt the selected account; retrying verification.',
       );
     }
     if (errorCode === 'post_switch_verification_failed') {
       return toStatusNote(
         'switch_attempted_post_switch_verification_failed',
-        activeProfileId
-          ? `Connected-service provider account ${activeProfileId} could not verify after switching.`
-          : 'Connected-service provider account could not verify after switching.',
+        'Connected-service provider account could not verify after switching.',
       );
     }
     return toStatusNote(
       'switch_attempted_generation_apply_failed',
-      activeProfileId
-        ? `Connected-service account switch to ${activeProfileId} could not be applied: ${errorCode}.`
-        : `Connected-service account switch could not be applied: ${errorCode}.`,
+      `Connected-service account switch could not be applied: ${errorCode}.`,
     );
   }
   if (switchResult?.status !== 'switched') return null;
-  const activeProfileId = readNonEmptyString(switchResult.activeProfileId);
-  const switchedAccount = activeProfileId
-    ? `Connected-service account switched to ${activeProfileId}`
-    : 'Connected-service account switched';
+  const switchedAccount = 'Connected-service account switched';
   const mode = readNonEmptyString(switchResult.mode);
   const message = mode === 'restart_resume'
     ? `${switchedAccount}; restarting session.`

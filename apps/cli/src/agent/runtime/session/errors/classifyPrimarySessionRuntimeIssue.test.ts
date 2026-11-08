@@ -1,4 +1,3 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from './classifyPrimarySessionRuntimeIssue';
@@ -10,8 +9,79 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
 import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each(['codex', 'claude', 'opencode'] as const)('keeps %s model refusal out of account recovery metadata', (provider) => {
+    const issue = classifyPrimarySessionRuntimeIssue({ provider, cause: 'session_error', occurredAt: 1_000,
+      error: { code: 'provider_model_not_found', details: { v: 1, source: 'agent_status_error',
+        runtimeAuthClassification: { kind: 'plan', serviceId: 'happier.agent.codex/openai-codex',
+          profileId: '705530f2-81e8-4ba2-bc7b-7929a4b95b5a', groupId: 'pool',
+          quotaScope: 'model', providerLimitId: 'gpt-6.1-sol', limitCategory: 'plan_invalid',
+          connectedServiceRecovery: 'available', resetsAtMs: null, rateLimits: null,
+          source: 'structured_provider_error' },
+      } },
+    });
+    expect(issue.code).toBe('provider_model_not_found');
+    expect(issue.usageLimit?.connectedService).toBeUndefined();
+    expect(issue.usageLimit?.recoverability).not.toBe('switch_account');
+  });
+  it.each(['agent_startup_transport_failed', 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT'])(
+    'retains a sanitized native startup reason for %s through issue republication', code => {
+      const failureCause = { code, phase: 'client_start', failureReason: 'unclassified_provider_error',
+        providerErrorMessage: 'agent_launch_failed stage=exec errno=EACCES; Bearer synthetic-private-token' };
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+        error: { code, message: 'PRIVATE_OUTER_MESSAGE', details: { v: 1, source: 'agent_session_error', failureCause } } });
+      expect(issue.sanitizedPreview).toContain('stage=exec errno=EACCES');
+      expect(issue.sanitizedPreview).not.toContain('synthetic-private-token');
+      expect(issue.sanitizedPreview).not.toContain('PRIVATE_OUTER_MESSAGE');
+      const published = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+        error: { code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
+      expect(published.sanitizedPreview).toBe(issue.sanitizedPreview);
+    },
+  );
+
+  it.each([new Error('PRIVATE_PREPARATION_DETAILS'), new StructuredInputComposerAttachmentUnavailableError()])(
+    'keeps a failed host preparation out of Provider outage classification', (error) => {
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
+        error, beforeProviderDispatch: true, occurredAt: 100 });
+      expect(issue).toMatchObject({ code: 'preparation_pending', source: 'dependency_failure' });
+      expect(issue.sanitizedPreview).toMatch(/prompt.*prepared/iu);
+      expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
+      const published = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
+        error: { code: issue.code, details: { v: 1, source: issue.source } }, occurredAt: 100 });
+      expect(published).toEqual(issue);
+    },
+  );
+  it('preserves an actual Provider refusal and an unlocated native failure', () => {
+    const error = createProviderErrorV1('provider_endpoint_rate_limited');
+    const base = { cause: 'session_error' as const, provider: 'codex', occurredAt: 100 };
+    expect(classifyPrimarySessionRuntimeIssue({ ...base, error, beforeProviderDispatch: true }))
+      .toEqual(classifyPrimarySessionRuntimeIssue({ ...base, error }));
+    expect(classifyPrimarySessionRuntimeIssue({ ...base, error: new Error('PRIVATE_NATIVE_DETAILS') }))
+      .toMatchObject({ code: 'agent_session_error', source: 'agent_session_error' });
+  });
+  it('uses the structured-input owner retryability for a definitive attachment refusal', () => {
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
+      error: new StructuredInputComposerAttachmentResolutionError('composer_attachment_resolution_invalid', false, 'PRIVATE_INPUT') });
+    expect(issue).toMatchObject({ code: 'attachment_unavailable', source: 'dependency_failure' });
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_INPUT');
+  });
+  it('retains the safe attachment subcause through runtime diagnostic publication', () => {
+    const preparationCause = { code: 'triage_account_storage_unavailable', stage: 'dispatch' as const };
+    const input = { cause: 'session_error' as const, provider: 'codex', occurredAt: 100 };
+    const issue = classifyPrimarySessionRuntimeIssue({ ...input,
+      error: new StructuredInputComposerAttachmentResolutionError('composer_attachment_resolution_failed', true,
+        'PRIVATE_ATTACHMENT_AND_CREDENTIAL', preparationCause) });
+    expect(issue).toMatchObject({ code: 'preparation_pending', source: 'dependency_failure',
+      failureCause: { phase: 'turn_start', failureReason: 'unknown', preparationCause } });
+    const published = classifyPrimarySessionRuntimeIssue({ ...input, error: {
+      code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause },
+    } });
+    expect(published).toEqual(issue);
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
+  });
   it('retains the closed isolation refusal as the startup cause with visible owner remediation', () => {
     const error = new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
       message: 'PRIVATE_MACHINE_DETAILS' });
@@ -23,8 +93,83 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     expect(issue.sanitizedPreview).toContain('machine owner');
     expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
   });
+  it('keeps the closed startup auth recovery through a retained failure diagnostic', () => {
+    const input = { cause: 'session_error' as const, provider: 'codex', occurredAt: 100 };
+    const original = classifyPrimarySessionRuntimeIssue({ ...input, error: new PluginError({
+      code: 'codex_refresh_free_auth_unsupported', retryable: false,
+      details: { reason: 'workspace_incompatible', failureCause: { phase: 'authentication', failureReason: 'unknown', reason: 'workspace_incompatible' } },
+    }) });
+    expect(original.failureCause).toMatchObject({ reason: 'workspace_incompatible' });
+    const retained = classifyPrimarySessionRuntimeIssue({ ...input, error: {
+      code: original.code, severity: 'error',
+      details: { v: 1, source: original.source, failureCause: original.failureCause },
+    } });
+    expect(retained).toEqual(original);
+    expect(retained.sanitizedPreview).toContain('workspace');
+  });
+  it.each([
+    ['project_requester_credentials_unavailable', 'ingress_missing'],
+    ['project_finite_execution_unavailable', 'finite_runtime_unavailable'],
+  ])('retains the closed Plugin Exec refusal reason for %s without plugin payloads or accessor reads', (code, reason) => {
+    const failure = new PluginError({ code,
+      message: 'PRIVATE_PLUGIN_MESSAGE', retryable: false,
+      details: { cause: { code: reason, stage: 'dispatch' }, private: 'PRIVATE_PLUGIN_DETAILS' } });
+    expect(readSessionPreparationFailureDiagnostic(failure)).toEqual({
+      originalCode: failure.code, reason, contextSource: 'unknown',
+    });
+    for (const cause of [undefined, null, 'PRIVATE_PLUGIN_DETAILS',
+      Object.assign([], { code: 'ingress_missing' }), { code: 'PRIVATE_PLUGIN_REASON' },
+      Object.defineProperty({}, 'code', { get() { throw new Error('Unexpected cause getter'); } })]) {
+      const opaque = new PluginError({ code: failure.code, retryable: false });
+      Object.defineProperty(opaque, 'details', { value: { cause } });
+      expect(readSessionPreparationFailureDiagnostic(opaque)).toEqual({
+        originalCode: failure.code, reason: 'unknown', contextSource: 'unknown',
+      });
+    }
+    const accessor = Object.defineProperty(new PluginError({ code: failure.code, retryable: false }),
+      'details', { get() { throw new Error('Unexpected plugin details getter'); } });
+    expect(readSessionPreparationFailureDiagnostic(accessor)).toEqual({
+      originalCode: failure.code, reason: 'unknown', contextSource: 'unknown',
+    });
+    const causeAccessor = new PluginError({ code: failure.code, retryable: false });
+    Object.defineProperty(causeAccessor, 'details', { value: Object.defineProperty({}, 'cause', {
+      get() { throw new Error('Unexpected details cause getter'); },
+    }) });
+    expect(readSessionPreparationFailureDiagnostic(causeAccessor)).toEqual({
+      originalCode: failure.code, reason: 'unknown', contextSource: 'unknown',
+    });
+    expect(readSessionPreparationFailureDiagnostic(new PluginError({ code: 'PRIVATE_PLUGIN_CODE',
+      retryable: false, details: { cause: { code: 'ingress_missing', stage: 'dispatch' } } }))).toEqual({
+      originalCode: 'unknown', reason: 'unknown', contextSource: 'unknown',
+    });
+    expect(readSessionPreparationFailureDiagnostic(new PluginError({ code: 'provider_connection_not_found',
+      retryable: false, details: { cause: { code: reason, stage: 'dispatch' } } }))).toEqual({
+      originalCode: 'provider_connection_not_found', reason: 'provider_connection_not_found', contextSource: 'unknown',
+    });
+    expect(readSessionPreparationFailureDiagnostic(Object.assign(failure, { reason: 'not-current' }))).toEqual({
+      originalCode: failure.code, reason: 'not-current', contextSource: 'unknown',
+    });
+  });
+  it('keeps native sign-in guidance distinct from Provider credential guidance through issue republication', () => {
+    const diagnostic = { code: 'provider_endpoint_auth_required', severity: 'error', message: 'PRIVATE_BODY',
+      details: { v: 1, source: 'auth_error' } };
+    const native = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', error: diagnostic, occurredAt: 100 });
+    expect(native).toMatchObject({ code: diagnostic.code, source: 'auth_error',
+      sanitizedPreview: 'Sign in to Codex or choose a Codex account.' });
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+      error: Object.assign(new Error('PRIVATE_UPSTREAM_BODY'), { diagnostic }) })).toEqual(native);
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+      error: { code: native.code, details: { v: 1, source: native.source } } })).toEqual(native);
+    const provider = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', occurredAt: 100,
+      error: createProviderErrorV1('provider_endpoint_auth_required') });
+    expect(provider).toMatchObject({ code: diagnostic.code, source: 'agent_session_error',
+      sanitizedPreview: expect.stringContaining('The Provider endpoint requires a credential.') });
+    expect(provider.sanitizedPreview).toContain('Add a Saved Secret to the Provider connection.');
+    expect(JSON.stringify(native)).not.toContain('PRIVATE_');
+  });
   it.each(['plugin_mcp_preparation_unavailable', 'agent_runtime_daemon_service_generation_not_current',
-    'native_agent_privileged_effect_authority_unavailable', 'native_agent_privileged_effect_outcome_unknown', 'skills_unavailable'])(
+    'native_agent_privileged_effect_authority_unavailable', 'native_agent_privileged_effect_outcome_unknown', 'skills_unavailable',
+    'agent_startup_model_reconciliation_failed'])(
     'publishes the closed preparation refusal %s without private plugin data', code => {
       const error = Object.assign(new Error('PRIVATE_BODY'), { code, details: { secret: 'PRIVATE_TOKEN' } });
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, occurredAt: 100 });
@@ -51,11 +196,18 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error:
       Object.assign(new Error('private'), { code: `${code}_private` }) }).code).toBe('agent_session_error');
   });
-  it('retains a closed Provider refusal code without its private binding context', () => {
-    const refusal = createProviderErrorV1('provider_compatibility_unverified', { connectionId: 'private-resource' });
+  it.each(['provider_compatibility_unverified', 'provider_incompatible_with_agent'] as const)('retains %s through startup diagnostics and public issue publication', code => {
+    const refusal = Object.assign(new Error('private upstream body'), createProviderErrorV1(code, { connectionId: 'private-resource' }));
     expect(readSessionPreparationFailureDiagnostic(refusal)).toEqual({
-      originalCode: 'provider_compatibility_unverified', reason: 'unknown', contextSource: 'unknown',
+      originalCode: code, reason: code, contextSource: 'unknown',
     });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal, occurredAt: 100 });
+    expect(issue).toMatchObject({ code, source: 'agent_session_error' });
+    expect(issue.sanitizedPreview).toMatch(/compatib/iu);
+    expect(JSON.stringify(issue)).not.toContain('private');
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: {
+      code: issue.code, details: { v: 1, source: issue.source },
+    }, occurredAt: 100 })).toEqual(issue);
   });
   it('lets required unreachable MCP preparation recover while real missing material remains closed', () => {
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: new McpServerCatalogUnavailableError('unreachable') }))

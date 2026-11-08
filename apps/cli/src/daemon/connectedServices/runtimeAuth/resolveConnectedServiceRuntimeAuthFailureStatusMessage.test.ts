@@ -1,24 +1,54 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConnectedServiceRuntimeAuthFailureStatusMessage } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
+import { normalizeConnectedServiceRuntimeAuthRecoveryProjection } from './projection/connectedServiceRuntimeAuthRecoveryProjection';
 
 describe('resolveConnectedServiceRuntimeAuthFailureStatusMessage', () => {
+  it.each(['reconnect_profile', 'profile_action_required'] as const)(
+    'keeps %s actionable without adding an anonymous profile-attention transcript row', kind => {
+      const report = { ok: true, result: { status: 'recovery_action_required',
+        action: { kind, serviceId: 'happier.agent.codex/openai-codex',
+          profileId: '705530f2-81e8-4ba2-bc7b-7929a4b95b5a', reason: 'auth_expired' } } };
+      const statusNote = resolveConnectedServiceRuntimeAuthFailureStatusMessage(report);
+      expect(normalizeConnectedServiceRuntimeAuthRecoveryProjection({ report, statusNote })).toMatchObject({
+        handled: true, statusMessage: null,
+      });
+    },
+  );
+  it.each(['switched', 'generation_apply_failed'] as const)('keeps routing ids out of the %s fallback', status => {
+    const accountId = '705530f2-81e8-4ba2-bc7b-7929a4b95b5a';
+    const note = resolveConnectedServiceRuntimeAuthFailureStatusMessage({ ok: true,
+      result: { status: 'switch_attempted', result: { status, activeProfileId: accountId } } });
+    expect(note?.message).toBeTruthy();
+    expect(note?.message).not.toContain(accountId);
+  });
+  it('presents unavailable quota proof as a continuing recovery', () => {
+    const report = { ok: true, result: { status: 'switch_attempted', result: {
+      status: 'quota_proof_unavailable', activeProfileId: 'backup', generation: 2,
+    } } };
+    const statusNote = resolveConnectedServiceRuntimeAuthFailureStatusMessage(report);
+    expect(statusNote?.code).toBe('switch_attempted_quota_proof_unavailable');
+    expect(normalizeConnectedServiceRuntimeAuthRecoveryProjection({ report, statusNote })).toMatchObject({
+      handled: true, statusCode: 'switch_attempted_quota_proof_unavailable',
+    });
+  });
+
   it.each([
     {
       mode: 'restart_resume',
-      expectedMessage: 'Connected-service account switched to backup; restarting session.',
+      expectedMessage: 'Connected-service account switched; restarting session.',
     },
     {
       mode: 'hot_apply',
-      expectedMessage: 'Connected-service account switched to backup; current session updated.',
+      expectedMessage: 'Connected-service account switched; current session updated.',
     },
     {
       mode: 'spawn_next_turn',
-      expectedMessage: 'Connected-service account switched to backup; the new account will apply on the next turn.',
+      expectedMessage: 'Connected-service account switched; the new account will apply on the next turn.',
     },
     {
       mode: undefined,
-      expectedMessage: 'Connected-service account switched to backup.',
+      expectedMessage: 'Connected-service account switched.',
     },
   ])('describes a switched account truthfully for $mode mode', ({ mode, expectedMessage }) => {
     const status = resolveConnectedServiceRuntimeAuthFailureStatusMessage({

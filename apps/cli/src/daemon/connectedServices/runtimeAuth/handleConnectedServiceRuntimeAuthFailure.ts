@@ -234,6 +234,7 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
         issue: input.classification,
         selection: input.selection,
     });
+    if (recoveryDecision.action === 'no_op') return { status: 'not_classified' };
     if (recoveryDecision.action === 'temporary_retry') {
         const profileId = readTemporaryThrottleProfileId({
             selection: input.selection,
