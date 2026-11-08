@@ -18,6 +18,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveCurrentExternalSessionAgentRoutingId } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { readSessionLiveWorkEligibility } from '@/agent/runtime/session/input/sessionLiveWorkEligibility';
+import { readKnownPendingQueueState } from '@/api/session/pendingQueueState';
 
 export type SessionEligibilityReason = Readonly<{
   kind: 'working' | 'waiting_for_you' | 'subagents_running' | 'unsent_draft' | 'draft_unknown'
@@ -53,6 +54,10 @@ export async function readCurrentSessionEligibility(input: Readonly<{
       const metadata = tryDecryptSessionOwnerMetadataView({ credentials: access.credentials,
         accountEncryptionMode: access.accountEncryptionMode, rawSession: access.rawSession });
       if (!metadata) return unavailable;
+      // A fresh Session read is the Pending authority for a stop decision: the runner's
+      // projection may not have received a `pending-changed` committed just before it.
+      const serverPending = readKnownPendingQueueState(access.rawSession);
+      if (serverPending && serverPending.pendingCount > 0) return { eligible: false, reasons: [{ kind: 'working' }] };
       const resume = { sessionId: access.sessionId, rawSession: access.rawSession, metadata,
         fallbackMachineId: input.access.machineId };
       const readAcpCatalogSnapshot = async () => {

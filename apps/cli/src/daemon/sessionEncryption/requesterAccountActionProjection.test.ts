@@ -10,7 +10,7 @@ import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploy
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
-  projectDeploymentPreparationAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  projectDeploymentPreparationAdmissionV1, createDeploymentCandidatePublicationV1, deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -668,9 +668,7 @@ describe('admitted requester Action projection', () => {
         expect(machineRead).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
       } else expect(machineRead).toEqual({ Authorization: 'Bearer bob-preparation' });
       for (const path of ['/v1/account/project-rows/read', '/v1/account/project-rows/list']) {
-        if (actionId === 'localServices.launcher.start') {
-          expect(await headers('POST', path)).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
-        } else expect(await headers('POST', path)).toEqual({ Authorization: 'Bearer bob-preparation' });
+        expect(await headers('POST', path)).toEqual({ Authorization: 'Bearer bob-preparation' });
         expect(await carrier.requesterHttpProjection.createRequestHeaders({ effectActionId: 'projects.open', method: 'POST', path }))
           .toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
         expect(await headers('GET', path)).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
@@ -1044,6 +1042,7 @@ describe('admitted requester Action projection', () => {
       accountId: 'bob', custodianAccountId: 'controller-owner', accountEncryptionMode: 'plain', serverIdentityId: 'stable-home',
       machineId: 'controller', installationId: 'controller-installation', actionId: 'deployments.deploy', requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+      deploymentChildRoot: true,
       deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'bob', serverIdentityId: 'stable-home',
         actionId: 'deployments.deploy', requestId,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -1275,6 +1274,8 @@ describe('admitted requester Action projection', () => {
       accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'worker', installationId: 'worker-installation',
       actionId: 'projects.script.run', requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+        sourceWorkspaceRefId: 'source-ref', source: admission },
     } });
     const params = { sourceWorkspaceRefId: 'source-ref', targetWorkspaceRefId: 'worker-ref' };
     const purpose = { kind: 'workspace_sync_prepare', controller: { machineId: 'controller', installationId: installation.installationId },
@@ -2168,7 +2169,42 @@ describe('admitted requester Action projection', () => {
       target: authorization.binding.target, installationId: 'installation', privateKey: keys.secretKey })).toBeNull();
   });
 
-  it('uses the admitted requester Artifact owner at the original Home and withholds a read after access loss', async () => {
+  it('finishes an admitted own-Session workspace read and refuses the next read after access loss', async () => {
+    const { createSessionNotificationContextFixture } = await import('@/testkit/backends/sessionFixtures');
+    const { createTestMetadata } = await import('@/testkit/backends/sessionMetadata');
+    const sessionId = 'caaaaaaaaaaaaaaaaaaaaaaaa';
+    const session = { ...createSessionNotificationContextFixture(sessionId), encryptionMode: 'plain',
+      metadata: JSON.stringify(createTestMetadata({ machineId: 'machine', path: '/workspace' })) };
+    let live = true;
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (new URL(url).pathname === `/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+      if (url.endsWith('/v1/account/encryption')) {
+        live = false;
+        return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      }
+      throw new Error(`Unexpected workspace read: ${new URL(url).pathname}`);
+    });
+    const projected = await projectRequesterAccountActionAuthorization({ authorization,
+      serverIdentityId: 'stable-home', bootstrap: bootstrap({ token: 'bob-ordinary', encryption: null }, async () => live) });
+    const reader = projected?.requesterAccountProjection;
+    if (!reader?.readOwnSessionWorkspace) throw new Error('Expected admitted workspace reader');
+    const request = { sessionId, machineId: 'machine', currentMachineHost: 'test-host', currentMachineHomeDir: '/tmp' };
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const before = reads.mock.calls.length;
+    expect(await reader.readOwnSessionWorkspace({ ...request, signal: cancelled.signal })).toBeNull();
+    expect(reads.mock.calls).toHaveLength(before);
+    expect(await reader.readOwnSessionWorkspace(request)).toEqual({ rootPath: '/workspace' });
+    const sessionReads = () => reads.mock.calls.filter(([url]) => new URL(String(url)).pathname === `/v2/sessions/${sessionId}`);
+    const admittedReads = sessionReads().length;
+    expect(await reader.readOwnSessionWorkspace(request)).toBeNull();
+    expect(sessionReads()).toHaveLength(admittedReads);
+  });
+
+  it('finishes an admitted requester Artifact read at its original Home and refuses the next read after access loss', async () => {
     const artifactId = '11111111-1111-4111-8111-111111111111';
     let live = true;
     let loseAdmissionDuringRead = false;
@@ -2195,7 +2231,11 @@ describe('admitted requester Action projection', () => {
     expect(reads.mock.calls.every(([url, config]) => String(url).startsWith('https://requester-home.test/')
       && config?.headers?.Authorization === 'Bearer bob-ordinary')).toBe(true);
     loseAdmissionDuringRead = true;
+    expect(await projected.requesterAccountProjection.readArtifact(ref)).toMatchObject({ artifactId, header });
+    const artifactReads = () => reads.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v1/artifacts/'));
+    const admittedReads = artifactReads().length;
     expect(await projected.requesterAccountProjection.readArtifact(ref)).toBeNull();
+    expect(artifactReads()).toHaveLength(admittedReads);
   });
 
   function createPreparedDeploymentFixture(options: Readonly<{ serverId: string; artifactId: string }>) {

@@ -301,9 +301,8 @@ async function projectAdmittedAccountCustody(
         if (request.machineId !== stamp.machineId || request.signal?.aborted || !await isCurrent()) return null;
         try {
           const { readOwnSessionMachineWorkspace } = await import('@/session/machineControlLocality');
-          const workspace = await readOwnSessionMachineWorkspace({ ...request, credentials: bootstrap.credentials,
+          return await readOwnSessionMachineWorkspace({ ...request, credentials: bootstrap.credentials,
             serverHttpBaseUrl: bootstrap.serverHttpBaseUrl });
-          return request.signal?.aborted || !await isCurrent() ? null : workspace;
         } catch (error) { refuseExternalActionPhase('requester_workspace_read', stamp.machineId, error); return null; }
       },
       readArtifact: async (ref, options) => {
@@ -332,8 +331,7 @@ async function projectAdmittedAccountCustody(
           const artifact = await runWithServerHttpBaseUrl(bootstrap.serverHttpBaseUrl,
             () => artifacts.read(ref.artifactId, { ...(options?.signal ? { signal: options.signal } : {}), includeSharedAudience: false,
               ...(authorizationHeaders ? { authorizationHeaders, prepareRecipients: false } : {}) }));
-          if (!artifact || artifact.artifactId !== ref.artifactId
-            || options?.signal?.aborted || !await isCurrent() || signedDocument && !await http!.isCurrent()) return null;
+          if (!artifact || artifact.artifactId !== ref.artifactId) return null;
           const promptLibraryArtifact = projectAccountArtifactToPromptLibraryStoredArtifact(artifact);
           return { artifactId: artifact.artifactId, header: artifact.header,
             ...(signedDocument ? { document: { artifactId: artifact.artifactId, header: artifact.header,

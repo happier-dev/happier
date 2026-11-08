@@ -126,7 +126,7 @@ describe('tracked Session Guard notice acknowledgement lifetime', () => {
     } finally { released.resolve(); await owner.close(); }
   });
 
-  it('does not admit a warning whose tracked Session retires before its delayed acknowledgement', async () => {
+  it('finishes an admitted warning after Session retirement and refuses the next call', async () => {
     const entered = deferred();
     const released = deferred();
     const owner = await setup(async () => { entered.resolve(); await released.promise; });
@@ -135,7 +135,10 @@ describe('tracked Session Guard notice acknowledgement lifetime', () => {
       await entered.promise;
       owner.retire();
       released.resolve();
-      await expect(result).resolves.toBeNull();
+      // The publisher owns this acknowledgement; caller custody must not replace it with null.
+      await expect(result).resolves.toEqual({ ok: false });
+      expect(owner.metadata()).toHaveProperty('sessionGuardStateV1.kind', 'stopping');
+      await expect(owner.send(new AbortController().signal, null)).resolves.toBeNull();
     } finally { released.resolve(); await owner.close(); }
   });
 });

@@ -26,7 +26,7 @@ afterAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('requester-qualified live Session network observation', () => {
-  it('queries Bob at the admitted Home, preserves real host activity, and withholds a reply after admission loss', async () => {
+  it('queries Bob at the admitted Home, finishes admitted observations, and refuses the next call after access loss', async () => {
     const sessionId = 'c1234567890123456789012345';
     const attribution = { serverId: 'bob-home', accountId: 'bob', machineId: 'machine', installationId: 'installation' };
     const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: sessionId,
@@ -144,8 +144,8 @@ describe('requester-qualified live Session network observation', () => {
       .toMatchObject({ eligible: true });
     expect(rpcTokens.length - beforeIncomplete).toBe(2);
     loseAdmissionDuringRpc = true;
+    expect(await readCurrentSessionEligibility({ access: input, inventory })).toMatchObject({ eligible: true });
     expect(await readCurrentSessionEligibility({ access: input, inventory })).toMatchObject({ eligible: false });
-    current = true;
     expect(await source.read()).toMatchObject({ coverage: 'unknown', items: [
       { category: 'session', state: 'unknown' }, { category: 'input', state: 'unknown' },
       { category: 'agents', state: 'unknown' }, { category: 'attention', state: 'unknown' },
@@ -156,5 +156,96 @@ describe('requester-qualified live Session network observation', () => {
       .toEqual({ session: 'unknown', input: 'unknown' });
     expect(reads).not.toHaveBeenCalled();
     expect(rpcTokens.length).toBe(callsBefore);
+  });
+
+  const createIdleRunnerFixture = (pending: () => Readonly<{ pendingCount: number; pendingVersion: number }>) => {
+    const sessionId = 'c9234567890123456789012345';
+    const tracked: TrackedSession = { pid: 2, startedBy: 'daemon', happySessionId: sessionId };
+    let metadata: Record<string, unknown> = { machineId: 'machine', path: '/project', flavor: 'codex', codexSessionId: 'native-session',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } };
+    let serverPending = { pendingCount: 0, pendingVersion: 1 };
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, metadata: JSON.stringify(metadata),
+        metadataLayoutVersion: 0, dataEncryptionKey: null, encryptionMode: 'plain', ...serverPending }) } };
+    });
+    const consumer = createSessionProviderInputConsumer({ messageQueue: new MessageQueue2<string>(() => 'mode'), session: {
+      waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+      getMetadataSnapshot: () => ({}), getAgentStateSnapshot: () => ({}),
+      readSubagentLiveWork: () => ({ state: 'settled', activeCount: 0 }),
+      readRuntimeActivitySnapshotTail: () => ({ sequence: 1, custody: null, settlement: {
+        identity: { mutationKey: 'runtime:idle', admissionOrder: 1 }, desiredValue: { state: 'idle', activeCount: 0 },
+        result: 'applied', committedProjection: { state: 'idle', activeCount: 0, observedAt: 1, revision: 1 }, committedRevision: 1,
+      } }),
+      // The runner's socket-maintained projection (no Session read of its own).
+      readPendingQueueStateForLiveWork: async () => ({ known: true, pendingBlockedCount: 0, ...pending() }),
+    } });
+    const handlers = new Map<string, RpcHandler>();
+    registerSessionProviderInputAdmissionRpc({ consumer, rpcHandlerRegistrar: {
+      registerHandler: (method, handler) => { handlers.set(method, handler); },
+    } });
+    let failNextRpc = false;
+    const input = { tracked, credentials: { token: 'owner-token', encryption: null }, custodianAccountId: 'owner',
+      serverId: 'home', machineId: 'machine', serverHttpBaseUrl: 'https://home.test', isTrackedCurrent: () => true,
+      // Only the Session network transport is replaced; RPC parsing and the host consumer are real.
+      callRpc: async (request: Parameters<NonNullable<Parameters<typeof readTrackedSessionInputLiveWork>[0]['callRpc']>>[0]) => {
+        if (failNextRpc) { failNextRpc = false; throw new Error('rpc_decrypt_failed'); }
+        return await handlers.get(request.method)!(request.request);
+      },
+    };
+    const sessionReads = () => reads.mock.calls.filter(([url]) => String(url).endsWith(`/v2/sessions/${sessionId}`)).length;
+    return { input, sessionReads, failNextRpc: () => { failNextRpc = true; },
+      setServerPending: (next: typeof serverPending) => { serverPending = next; },
+      setMetadata: (next: Record<string, unknown>) => { metadata = next; } };
+  };
+
+  it('observes idle runner activity without a Session read per observation and rebuilds once after an RPC failure', async () => {
+    const fixture = createIdleRunnerFixture(() => ({ pendingCount: 0, pendingVersion: 1 }));
+    expect(await readTrackedSessionInputLiveWork(fixture.input)).toMatchObject({ session: 'settled', input: 'settled' });
+    const afterFirst = fixture.sessionReads();
+    expect(afterFirst).toBe(1);
+    for (let tick = 0; tick < 10; tick += 1) {
+      expect(await readTrackedSessionInputLiveWork(fixture.input)).toMatchObject({ input: 'settled' });
+    }
+    expect(fixture.sessionReads()).toBe(afterFirst);
+    // A re-keyed or migrated Session surfaces through the existing RPC failure path.
+    fixture.failNextRpc();
+    expect(await readTrackedSessionInputLiveWork(fixture.input)).toEqual({ session: 'unknown', input: 'unknown' });
+    expect(await readTrackedSessionInputLiveWork(fixture.input)).toMatchObject({ input: 'settled' });
+    expect(fixture.sessionReads()).toBe(afterFirst + 1);
+    for (let tick = 0; tick < 5; tick += 1) await readTrackedSessionInputLiveWork(fixture.input);
+    expect(fixture.sessionReads()).toBe(afterFirst + 1);
+  });
+
+  it('refuses an idle stop when Pending committed just after the runner projection was last updated', async () => {
+    // The runner has not yet received `pending-changed`; its projection still says empty.
+    const fixture = createIdleRunnerFixture(() => ({ pendingCount: 0, pendingVersion: 1 }));
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: { items: [] } });
+    expect(await readCurrentSessionEligibility({ access: fixture.input })).toMatchObject({ eligible: true });
+    fixture.setServerPending({ pendingCount: 1, pendingVersion: 2 });
+    // The stop actuator's fresh decision sees the committed Pending row: no stop, the live runner keeps it.
+    expect(await readCurrentSessionEligibility({ access: fixture.input }))
+      .toEqual({ eligible: false, reasons: [{ kind: 'working' }] });
+  });
+
+  it('sees a vendor resume id written after spawn on the next Guard tick while activity reads stay record-free', async () => {
+    const fixture = createIdleRunnerFixture(() => ({ pendingCount: 0, pendingVersion: 1 }));
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: { items: [] } });
+    // At spawn the vendor has not reported its native Session id yet.
+    fixture.setMetadata({ machineId: 'machine', path: '/project', flavor: 'codex',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } });
+    expect(await readTrackedSessionInputLiveWork(fixture.input)).toMatchObject({ session: 'settled', input: 'settled' });
+    // The Guard's per-minute eligibility read (startDaemon `readSessionEligibility`).
+    const guardTick = () => readCurrentSessionEligibility({ access: fixture.input });
+    expect(await guardTick()).toMatchObject({ eligible: false, reasons: expect.arrayContaining([{ kind: 'not_resumable' }]) });
+    fixture.setMetadata({ machineId: 'machine', path: '/project', flavor: 'codex', codexSessionId: 'native-written-later',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } });
+    for (let tick = 0; tick < 3; tick += 1) await readTrackedSessionInputLiveWork(fixture.input);
+    expect(await guardTick()).toMatchObject({ eligible: true, resumeOptions: { existingSessionId: expect.any(String) } });
+    const before = fixture.sessionReads();
+    for (let tick = 0; tick < 5; tick += 1) await readTrackedSessionInputLiveWork(fixture.input);
+    expect(fixture.sessionReads()).toBe(before);
   });
 });
