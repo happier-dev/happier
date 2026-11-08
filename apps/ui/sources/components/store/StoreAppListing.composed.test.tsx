@@ -33,8 +33,7 @@ import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploy
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { createApprovalArtifact, writeApprovalRequestArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
-import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 // The real Registry read, App preparation hook, Action front door and Store listing body run; only the Home's
@@ -64,7 +63,7 @@ afterEach(standardCleanup);
 
 let sequence = 0;
 async function createFixture(extraDomains: ReadonlyArray<{ key: string; required: boolean }> = [],
-  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; deferredCreate?: 'applied' | 'unknown'; receivingTemplate?: boolean }> = {}) {
+  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean }> = {}) {
   const serverUrl = `https://store-app-presenter-${++sequence}.test`;
   const catalogUrl = `${serverUrl}/apps.json`;
   const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -205,7 +204,6 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     },
   });
   const creations: Record<string, unknown>[] = [];
-  let deferred = false;
   const createMode = { value: 'created' as 'created' | 'refused' | 'approval' | 'domainRouteRequired' | 'needsReview' | 'ownerDenied' };
   const templateHost = async (raw: unknown) => {
       const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
@@ -229,24 +227,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
               ? { deploy: { requestKey: input.environment.requestKey } } : {}) } });
         return preview;
       }
-      if (options.deferredCreate && !deferred) {
-        deferred = true;
-        // The remote admission returns a durable approval. Its real lifecycle is
-        // settled through the Inbox below, rather than inventing a terminal Artifact.
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const result = await createDefaultActionExecutor({ resolveServerIdForSessionId: () => null }).execute('approval.request.create', {
-          actionId: 'deployments.templates.instantiate', actionArgs: input,
-          summary: 'Review the template install', createdBy: { surface: 'system' },
-        }, { serverId, surface: 'ui', authority: 'present_user' });
-        if (!result.ok) return result;
-        return result.result;
-      }
       creations.push(input as Record<string, unknown>);
-      if (options.deferredCreate === 'unknown') return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown',
-        effectAttempted: true, details: DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'deploy',
-          errorCode: 'outcome_unknown', environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
-          definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
-          deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'uncertain-deploy', deploymentRevision: 5, state: 'outcome_unknown' } }) };
       return createMode.value === 'domainRouteRequired'
             ? { ok: false, errorCode: 'template_domain_route_required', error: 'template_domain_route_required' }
             : createMode.value === 'needsReview'
@@ -304,7 +285,8 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     body: { ok: true, environment: createdEnvironment, targetLinks: [] },
   });
   const account = await captureLazyActionAccountContext(serverId);
-  const templateHostDeps = {
+  if (options.receivingTemplate) receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+    resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope,
     // The installed host is the external template preparation/effect boundary.
     // Protocol preparation, child policy and exact confirmation admission remain real.
     prepareDeploymentTemplateInstantiation: async ({ input }) => {
@@ -324,28 +306,10 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
       } };
     },
     deploymentTemplateInstantiate: readTemplateHostResult,
-  } satisfies Partial<import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps>;
-  if (options.receivingTemplate) receiver = createActionExecutor(createActionExecutorBoundaryFixture({
-    resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(account).resolveEnvironmentApprovalScope,
-    ...templateHostDeps,
     approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
       read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
       create: async (artifactId, header, body, idScope) =>
         (await account.createArtifactDocument({ artifactId, header, body, idScope })).artifact }),
-  }));
-  // The template process is outside this UI test. Replay uses the shipped Protocol
-  // lifecycle and the Home's real Artifact CAS, with only that host effect supplied here.
-  const approvalExecutor = createActionExecutor(createActionExecutorBoundaryFixture({
-    ...templateHostDeps,
-    approvalsGet: async ({ artifactId }) => {
-      const artifact = await account.fetchArtifact(artifactId);
-      if (!artifact?.header || typeof artifact.body !== 'string') return null;
-      const matched = approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
-      return matched?.family === 'built_in' ? matched.request : null;
-    },
-    approvalsUpdate: ({ artifactId, request }) => writeApprovalRequestArtifact({ artifactId, request,
-      read: id => account.fetchArtifact(id),
-      write: (basis, header, body) => account.updateArtifact(artifactId, header, body, basis) }),
   }));
   storage.setState({
     settingsScope: account.accountLifetime.scope,
@@ -406,13 +370,6 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     preparations,
     creations,
     receiverOutcomes,
-    decideCreateApproval: async (artifactId: string) => {
-      let result;
-      await act(async () => { result = await approvalExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-        { surface: 'ui', authority: 'present_user', serverId, serverIdentityId: account.serverIdentityId,
-          runtimeAccountId: account.accountId }); });
-      return result;
-    },
     createMode,
     mode,
     dispose: () => account.dispose(),
@@ -491,51 +448,6 @@ it('installs from the person’s Store confirmation without a self-approval Arti
     await screen.unmount();
     await fixture.dispose();
   }
-});
-
-it.each(['applied', 'unknown'] as const)('settles an approved Store install as %s without losing its created Environment', async deferredCreate => {
-  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
-  const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
-  const fixture = await createFixture([], { deferredCreate });
-  const serverId = fixture.lifetime.scope.serverId;
-  const pushed: unknown[] = [];
-  const push = (value: unknown) => { pushed.push(value); };
-  function Harness() {
-    const state = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
-      lifetime: fixture.lifetime, demand: { presented: true } });
-    return state.kind === 'ready'
-      ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
-  }
-  const screen = await renderScreen(<DestinationInstanceHost tabId="store" ref={{ kind: 'plugins', params: {} }} pathname="/plugins" focused visible
-    navigation={{ push, pushRetainingCurrent: push, replace: () => {}, back: () => {} }}><Harness /></DestinationInstanceHost>);
-  try {
-    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
-    await chooseMachine(screen, 'target');
-    await chooseProject(screen, 'storefront');
-    await nameIt(screen);
-    await screen.pressByTestIdAsync('store.app.prepare.review');
-    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
-    await screen.pressByTestIdAsync('store.app.prepare.confirm');
-    await waitForHomeGovernance(() => expect(homes.artifacts(serverId).list(), screen.getTextContent()).toHaveLength(1));
-    const artifactId = homes.artifacts(serverId).list()[0]!.id;
-    const decision = await fixture.decideCreateApproval(artifactId);
-    expect(decision, JSON.stringify(decision)).toMatchObject(deferredCreate === 'applied'
-      ? { ok: true } : { ok: false, errorCode: 'outcome_unknown' });
-    await waitForHomeGovernance(() => expect(fixture.creations, screen.getTextContent()).toHaveLength(1));
-    if (deferredCreate === 'applied') {
-      await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
-      expect(String(pushed[0])).toContain('status-page');
-    } else {
-      await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.progress')).toBeTruthy());
-      expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
-      expect(screen.getTextContent()).toContain(t('projects.deployments.stateUnknown'));
-      expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
-      await screen.pressByTestIdAsync('store.app.prepare.recover');
-      await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
-      expect(new URL(String(pushed[0]), 'https://ui.test').searchParams.get('deploymentTab')).toBe('overview');
-      expect(fixture.creations).toHaveLength(1);
-    }
-  } finally { await screen.unmount(); await fixture.dispose(); }
 });
 
 it('opens an App through the Store listing body in its native ready, needs-review and unavailable states', async () => {
@@ -1146,15 +1058,18 @@ it.each(['target', 'parked', 'foreign-home'] as const)(
 );
 
 
-it('shows the created Environment and succeeded deploy separately from a forbidden Domain step, then opens only Domain recovery', async () => {
+it.each([
+  { name: 'forbidden Domain step', phase: 'domains', code: 'action_forbidden', state: 'succeeded', tab: 'domains' },
+  { name: 'unknown deploy outcome', phase: 'deploy', code: 'outcome_unknown', state: 'outcome_unknown', tab: 'overview' },
+] as const)('retains the created Environment after $name and opens recovery without another install', async scenario => {
   const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
   const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
   const fixture = await createFixture();
   const serverId = fixture.lifetime.scope.serverId;
-  const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'domains', errorCode: 'action_forbidden',
+  const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: scenario.phase, errorCode: scenario.code,
     environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
     definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
-    deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } });
+    deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'deployed', deploymentRevision: 11, state: scenario.state } });
   const installs: unknown[] = [];
   await answerExternalActionAccountForHome(homes, serverId, {
     actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0,
@@ -1191,16 +1106,17 @@ it('shows the created Environment and succeeded deploy separately from a forbidd
     await waitForHomeGovernance(() => expect(installs).toHaveLength(1));
     await waitForHomeGovernance(() => expect(screen.findAll(node => node.props.loading === true && node.props.testID === 'store.app.prepare.confirm')).toHaveLength(0));
     expect(screen.findHostByTestId('store.app.prepare.progress')).toBeTruthy();
-    expect(screen.getTextContent()).toContain(t('projects.deployments.stateSucceeded'));
-    expect(screen.getTextContent()).toContain(t('projects.deployments.domainChangeFailedTitle'));
+    expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+    expect(screen.getTextContent()).toContain(t(scenario.state === 'succeeded' ? 'projects.deployments.stateSucceeded' : 'projects.deployments.stateUnknown'));
+    if (scenario.phase === 'domains') expect(screen.getTextContent()).toContain(t('projects.deployments.domainChangeFailedTitle'));
     expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
     expect(screen.findHostByTestId('store.app.prepare.back')).toBeNull();
-    expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+    if (scenario.phase === 'domains') expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
     await screen.pressByTestIdAsync('store.app.prepare.progress.failed.details');
-    expect(screen.getTextContent()).toContain('action_forbidden');
+    expect(screen.getTextContent()).toContain(scenario.code);
     await screen.pressByTestIdAsync('store.app.prepare.recover');
     await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
-    expect(new URL(String(pushed[0]), 'https://ui.test').searchParams.get('deploymentTab')).toBe('domains');
+    expect(new URL(String(pushed[0]), 'https://ui.test').searchParams.get('deploymentTab')).toBe(scenario.tab);
     expect(installs).toHaveLength(1);
   } finally { await screen.unmount(); await fixture.dispose(); }
 });

@@ -17,6 +17,13 @@ import { buildDeploymentEnvironmentHref } from '@/components/projects/deployment
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+
+function recoveryForPartial(progress: DeploymentPartialResult): DeploymentEnvironmentTabV1 | 'deploy' {
+    return progress.phase === 'deploy'
+        && readDeploymentFailureRecoveryV1(progress.errorCode, progress).nextAction.destination !== 'history'
+        ? 'deploy' : deploymentPartialRecoveryTab(progress);
+}
 
 export type StoreAppListingSelection = Readonly<{ sourceId: string; itemId: string; version?: string }>;
 /** Placement and Project intent come from the person; the selected Registry item supplies the pin. */
@@ -109,13 +116,13 @@ export function useStoreAppListing(input: Readonly<{
                     if (!progress) return failure;
                     selectedAttempt.partial = progress;
                     return { ...failure, progress, ...(progress.environmentId ? {
-                        recovery: progress.phase === 'deploy' ? 'deploy' : deploymentPartialRecoveryTab(progress),
+                        recovery: recoveryForPartial(progress),
                     } : {}) };
                 };
                 const partial = selectedAttempt.partial;
                 let installInput: DeploymentTemplateInstantiateInputV1 = selectedAttempt.input;
                 let installedProjectSourceId = projectSourceId;
-                if (partial && partial.phase !== 'deploy') {
+                if (partial && recoveryForPartial(partial) !== 'deploy') {
                     const failure = { ok: false as const, errorCode: partial.errorCode, error: partial.errorCode, details: partial };
                     if (!partial.environmentId) return retainFailure(failure);
                     // The deployment owner named the failed step. Its existing editor owns recovery.
