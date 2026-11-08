@@ -72,7 +72,11 @@ import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderS
 
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
-const LEGEND_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
+// The host owns the cross axis. A list that first lays out under 10px wide (a Session remounted
+// into a collapsing pane) makes Legend pin its scroller to the measured item width, and that pinned
+// width then keeps re-measuring as "too narrow": a permanently 1px-wide, blank transcript. Our style
+// is applied after Legend's auto width, so the next layout reads the real pane width and clears it.
+const LEGEND_LIST_STYLE = { flex: 1, minHeight: 0, width: '100%' } as const;
 // Compile-time constant: only its identity churned, and it is read on every Legend render.
 const LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION = { data: true, size: true } as const;
 // The measurement runtime models ordinary transcript rows around 168-240px and
