@@ -83,6 +83,8 @@ export async function sendVoiceTextTurn(params: {
   onAssistantFinalAvailable?: (assistantEntryId: string | null) => void;
   /** Clear the echo guard + protected-head window when the reply stops/aborts. */
   onTtsStopped?: () => void;
+  /** A pending native request owns speech until its readout and listening rearm finish. */
+  waitForPendingReadout?: () => Promise<boolean>;
   pendingPort?: VoiceTextTurnPendingPort;
   durableDispatch?: Readonly<{
     localId: string;
@@ -258,6 +260,7 @@ export async function sendVoiceTextTurn(params: {
           // The terminal sentinel carries empty text purely to mark the group's
           // last chunk; nothing to speak, just advance/retire the queue.
           if (!chunk.text) return;
+          if (await params.waitForPendingReadout?.()) return;
           if (params.signal?.aborted) return;
           if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
           // The provider playback registered by speakAssistantSpeech is the one
@@ -417,6 +420,7 @@ export async function sendVoiceTextTurn(params: {
           return;
         }
 
+        if (await params.waitForPendingReadout?.()) return;
         throwIfAborted();
         await speakAssistantText({
           sessionId,
@@ -462,6 +466,7 @@ export async function sendVoiceTextTurn(params: {
         playHostText: async ({ text, signal }) => {
           // Drain admitted narration before its next chunk can replace host playback.
           await finalizeStreamedTurn();
+          await params.waitForPendingReadout?.();
           if (signal.aborted || !params.playbackController.isEpochCurrent(playbackEpoch)) return { status: 'cancelled' };
           clearReplyTtsGuard();
           let readBackStarted = false;
@@ -560,6 +565,7 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
   try {
+    if (await params.waitForPendingReadout?.()) return;
     await speakAssistantText({
       sessionId,
       text: assistantEntry.text,

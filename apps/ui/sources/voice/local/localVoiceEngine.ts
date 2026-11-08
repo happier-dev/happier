@@ -1108,6 +1108,7 @@ async function stopAndSendRecordedTurn(
         onTtsStarted: noteTtsStarted,
         onAssistantFinalAvailable: noteAssistantFinalAvailable,
         onTtsStopped: noteTtsStopped,
+        waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
         signal,
         ...(currentUiContext ? { currentUiContext } : {}),
       }),
@@ -1178,6 +1179,7 @@ async function stopSttAndSend(
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
+      waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
       signal,
       ...(admission.currentUiContext ? { currentUiContext: admission.currentUiContext } : {}),
     }),
@@ -1256,6 +1258,7 @@ export async function sendLocalVoiceAgentTextTurn(
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
+      waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
       signal,
       durableDispatch,
       onUserTranscriptAccepted: onAccepted,
@@ -1286,6 +1289,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,
+      waitForPendingReadout: activeNativePermissionInput?.waitForPendingReadout,
       signal,
       ...(currentUiContext ? { currentUiContext } : {}),
     }),
@@ -1461,7 +1465,7 @@ export async function toggleLocalVoiceTurn(
           const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId).catch(() => null);
           beginAutomaticCurrentUiContextUpdates(controlSessionId);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
-          if (text) {
+          if (text && !await activeNativePermissionInput?.waitForPendingReadout()) {
             const assistantEntryId = projectLocalVoiceAgentAssistantText(controlSessionId, text);
             await speakAssistantText({
               sessionId,

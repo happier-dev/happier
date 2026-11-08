@@ -16,6 +16,7 @@ import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindi
 export type NativeVoicePermissionInput = Readonly<{
   canAccept(): boolean;
   beginTurn(): void;
+  waitForPendingReadout(): Promise<boolean>;
   resumeReadout(): Promise<boolean>;
   captureResponse(): ((text: string) => Promise<void>) | null;
   waitForResponseSettlement(): Promise<'approved' | 'denied' | null>;
@@ -36,7 +37,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const execute = createFrontDoorActionExecute();
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
-  let reading = false;
+  let reading: Promise<void> | null = null;
   let responseSettlement: Promise<'approved' | 'denied' | null> = Promise.resolve(null);
   const readAddresses = (): readonly SessionAddress[] => {
     const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: params.controlSessionId });
@@ -47,18 +48,17 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   };
   let addresses = readAddresses();
   const question = () => t('voice.readiness.permissionQuestion', { approve: t('common.yes'), deny: t('common.no') });
-  const readPrompt = async (selected: NativePermissionPrompt, text: string, listen: boolean): Promise<void> => {
-    reading = true;
+  const readPrompt = (selected: NativePermissionPrompt, text: string, listen: boolean): Promise<void> => {
     selected.ready = false;
     selected.needsReadout = true;
-    try {
-      await params.readOut(text, listen,
-        () => !disposed && !params.signal.aborted && prompt === selected,
-        () => { selected.ready = listen; selected.needsReadout = false; });
-    } finally {
-      reading = false;
+    const presentation = params.readOut(text, listen,
+      () => !disposed && !params.signal.aborted && prompt === selected,
+      () => { selected.ready = listen; selected.needsReadout = false; }).finally(() => {
+      if (reading === presentation) reading = null;
       if (!disposed) observe();
-    }
+    });
+    reading = presentation;
+    return presentation;
   };
   const presentPrompt = async (selected: NativePermissionPrompt): Promise<void> => {
     const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: selected.address,
@@ -116,13 +116,25 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   return {
     canAccept: () => !disposed && !params.signal.aborted && prompt?.ready === true,
     beginTurn: () => { responseSettlement = Promise.resolve(null); },
+    async waitForPendingReadout() {
+      if (disposed || params.signal.aborted || !prompt) return false;
+      // The request itself is the spoken acknowledgement. Keep its original
+      // synthesis/playback and listening rearm ahead of the model's final reply.
+      await reading;
+      return true;
+    },
     async resumeReadout() {
-      if (disposed || params.signal.aborted || reading || !prompt?.needsReadout) return false;
+      if (disposed || params.signal.aborted) return false;
+      if (reading) {
+        await reading;
+        return true;
+      }
+      if (!prompt?.needsReadout) return false;
       const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: prompt.address,
         sessionId: prompt.address.sessionId, isCurrentAttemptTarget: true });
       if (!prefs.voiceSharePermissionRequests || !prefs.voiceCanApproveRequests) return false;
-      // A final reply can replace synthesis before its first playback buffer.
-      // Re-present that still-pending request at the turn's existing settlement.
+      // A genuine playback interruption can still leave the request unheard.
+      // Re-present it at the turn's existing settlement.
       await presentPrompt(prompt);
       return true;
     },

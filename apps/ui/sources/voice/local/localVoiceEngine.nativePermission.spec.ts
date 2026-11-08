@@ -19,8 +19,10 @@ describe('native Voice permission input', () => {
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
     { label: 'delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true },
-    { label: 'delegated Yes after a queued readout is replaced', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true },
-    { label: 'delegated Yes after playback is interrupted', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, startedReadout: true },
+    { label: 'delegated Yes with a final acknowledgement during queued readout', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true },
+    { label: 'delegated Yes with a final acknowledgement during playback', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, startedReadout: true },
+    { label: 'delegated Yes with an unstreamed acknowledgement', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, nonStreaming: true },
+    { label: 'delegated Yes with acknowledgement after readout', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, readoutCompleteBeforeFinal: true },
     { label: 'delegated No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated Yes after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'retargeted delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, retarget: true },
@@ -43,7 +45,7 @@ describe('native Voice permission input', () => {
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -52,7 +54,7 @@ describe('native Voice permission input', () => {
       welcome: { ...state.settings.voice.welcome, enabled: false },
       providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
         config: { ...config, conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false },
-          streaming: { ...config.streaming, enabled: true },
+          streaming: { ...config.streaming, enabled: !nonStreaming },
           tts: { ...config.tts, provider: 'device', autoSpeakReplies: true } },
       } },
     } } });
@@ -113,6 +115,7 @@ describe('native Voice permission input', () => {
     lifecycle.setConfiguredProviderId('local_conversation');
     const target = { serverId: localVoiceHomeId, sessionId: 's1' };
     let submitted: Promise<{ result: unknown } | { error: unknown }> | undefined;
+    let finishReadout: (() => void) | undefined;
     try {
       await lifecycle.toggle(target);
       expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
@@ -191,10 +194,14 @@ describe('native Voice permission input', () => {
       }
       const precedingSpeechCount = expoSpeechSpeak.mock.calls.length;
       const actualRequestSessionId = retarget ? 'delegated-next' : requestSessionId;
-      let finishReadout: (() => void) | undefined;
       // The OS has accepted synthesis, but no playback buffer has started yet.
       if (replacedReadout) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
         if (startedReadout) options.onStart?.();
+        finishReadout = () => {
+          finishReadout = undefined;
+          if (!startedReadout) options.onStart?.();
+          options.onDone?.();
+        };
       });
       if (retarget) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
         finishReadout = options.onDone;
@@ -241,10 +248,19 @@ describe('native Voice permission input', () => {
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
       if (replacedReadout) {
+        if (readoutCompleteBeforeFinal) {
+          finishReadout?.();
+          await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.canCommitInput === true);
+        }
         waiting.resolve();
+        // Drain the native stream's promise continuations while OS playback is
+        // held. Its final acknowledgement must not cancel the pending readout.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(expoSpeechSpeak.mock.calls.slice(precedingSpeechCount),
+          'The permission must play first without acknowledgement replacement or replay').toHaveLength(1);
+        finishReadout?.();
         await submitted;
-        await vi.waitFor(() => expect(expoSpeechSpeak.mock.calls.at(-1)?.[0],
-          'The pending permission must be re-presented after the final reply replaces its queued readout').toContain('permission'));
+        expect(expoSpeechSpeak.mock.calls.slice(precedingSpeechCount)).toHaveLength(1);
       }
       if (retarget) {
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'speaking' });
@@ -341,13 +357,14 @@ describe('native Voice permission input', () => {
       }
       if (!turnError) {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL)).toBe(false);
-        expect(expoSpeechSpeak.mock.calls.some(([text]) => text === 'Daemon reply')).toBe(true);
+        if (!replacedReadout) expect(expoSpeechSpeak.mock.calls.some(([text]) => text === 'Daemon reply')).toBe(true);
       }
       await expectNextCommitAccepted();
       expect(originalResult).toHaveProperty('result');
     } finally {
       asrHeld.resolve(answer);
       waiting.resolve();
+      finishReadout?.();
       await submitted;
       await lifecycle.stop(target.sessionId);
       unsubscribe();
