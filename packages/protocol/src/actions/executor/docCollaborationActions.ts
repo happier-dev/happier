@@ -15,6 +15,7 @@ import { artifactSupportsProseCollaborationV1 } from '../../artifacts/artifactSh
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
+import { locateDocPassageV1, selectDocPassageThreadAnchorMessageV1 } from '../../artifacts/artifactPassageV1.js';
 
 type SameHome = (left: string | null | undefined, right: string | null | undefined) => boolean;
 
@@ -111,33 +112,51 @@ function readPassageRootContent(message: DiscussionOpenedMessageV1): DocPassageR
 
 /** Bind once before review; replay publishes the reviewed passage rather than reading a new basis. */
 export async function prepareDocEditProposalInputV1(input: unknown, context: ActionExecutorContext,
-  discussionAction: ActionExecutorDeps['discussionAction'],
+  deps: Pick<ActionExecutorDeps, 'discussionAction' | 'artifactAction'>,
   sameHome: SameHome = areServerProfileIdentifiersEquivalent): Promise<
     { ok: true; input: DocEditProposeResolvedInputV1 } | ActionExecuteFailure> {
   const request = DocEditProposeInputV1Schema.parse(input);
   if ('target' in request) return { ok: true, input: request };
+  const { discussionAction } = deps;
   if (!discussionAction) return refuse('unsupported_action');
   if (!context.serverId) return refuse('server_target_required');
   if (!sameHome(request.discussionRef.serverId, context.serverId)) return refuse('server_target_mismatch');
-  context.signal?.throwIfAborted();
-  const value = await discussionAction({ actionId: 'discussion.read',
-    input: { discussionId: request.discussionRef.discussionId, beforeSeq: 2, limit: 1 }, context,
-    ...(context.signal ? { signal: context.signal } : {}) });
-  context.signal?.throwIfAborted();
-  const failure = readActionFailureEnvelope(value);
-  if (failure) return failure;
-  const opened = DiscussionReadResultV1Schema.safeParse(value);
-  if (!opened.success || !sameHome(opened.data.serverId, context.serverId)
-    || opened.data.discussionId !== request.discussionRef.discussionId) return refuse('invalid_action_output');
-  const root = opened.data.messages.find(message => message.seq === 1);
-  if (!root?.content) return refuse('content_unavailable');
-  if (root.discussionId !== request.discussionRef.discussionId || root.messageRef.messageId !== root.id
-    || root.messageRef.discussion.discussionId !== request.discussionRef.discussionId
-    || !sameHome(root.messageRef.discussion.serverId, context.serverId)) return refuse('invalid_action_output');
-  const passage = readPassageRootContent(root);
+  let anchor: DiscussionOpenedMessageV1 | null = null;
+  let beforeSeq: number | undefined;
+  while (!anchor) {
+    context.signal?.throwIfAborted();
+    const value = await discussionAction({ actionId: 'discussion.read',
+      input: { discussionId: request.discussionRef.discussionId, ...(beforeSeq === undefined ? {} : { beforeSeq }) }, context,
+      ...(context.signal ? { signal: context.signal } : {}) });
+    context.signal?.throwIfAborted();
+    const failure = readActionFailureEnvelope(value);
+    if (failure) return failure;
+    const opened = DiscussionReadResultV1Schema.safeParse(value);
+    if (!opened.success || !sameHome(opened.data.serverId, context.serverId)
+      || opened.data.discussionId !== request.discussionRef.discussionId) return refuse('invalid_action_output');
+    anchor = selectDocPassageThreadAnchorMessageV1(opened.data.messages);
+    if (anchor) break;
+    if (!opened.data.hasMoreOlder) return refuse(opened.data.messages.some(message => message.content !== null)
+      ? 'doc_passage_mismatch' : 'content_unavailable');
+    const oldest = Math.min(...opened.data.messages.map(message => message.seq));
+    if (!Number.isFinite(oldest) || beforeSeq !== undefined && oldest >= beforeSeq) return refuse('invalid_action_output');
+    beforeSeq = oldest;
+  }
+  if (!anchor?.content) return refuse('content_unavailable');
+  if (anchor.discussionId !== request.discussionRef.discussionId || anchor.messageRef.messageId !== anchor.id
+    || anchor.messageRef.discussion.discussionId !== request.discussionRef.discussionId
+    || !sameHome(anchor.messageRef.discussion.serverId, context.serverId)) return refuse('invalid_action_output');
+  const passage = readPassageRootContent(anchor);
   if (!passage) return refuse('doc_passage_mismatch');
   // Stored Home labels belong to the creator's device; the opened resource supplies routing identity.
-  const target = { ...passage, ref: { ...passage.ref, serverId: request.discussionRef.serverId } };
+  const ref = { ...passage.ref, serverId: request.discussionRef.serverId };
+  const read = await executeDocReadV1({ ref }, context, deps, sameHome);
+  if (!read.ok) return read;
+  const { artifact } = DocReadResultV1Schema.parse(read.result);
+  if (typeof artifact.body !== 'string') return refuse('content_unavailable');
+  const location = locateDocPassageV1({ target: passage, source: artifact.body, revision: artifact.revision });
+  if (location.state === 'detached') return refuse('doc_passage_mismatch');
+  const target = { ...passage, ref, revision: artifact.revision, range: location.range };
   return { ok: true, input: { ...request, target,
     baseRevision: target.revision, before: target.quote, reason: request.reason ?? '' } };
 }

@@ -9898,11 +9898,14 @@ access. Thread replies inherit the root's Doc anchor.
 Proposals retain the exact source passage (UTF-16 Markdown offsets and quote),
 before/after text, reason and full base revision. Posting one changes no Doc text.
 `doc.edit.propose` also accepts `discussionRef`, `localId`, `after` and an optional
-`reason`. The shared Doc adapter reads that Discussion's committed passage root
-through the authenticated content reader and binds its quote and full revision
-before approval. Approval replay keeps that reviewed basis without another root
-read. The explicit `target`, `baseRevision` and `before` form remains supported;
-neither form relocates a passage or bypasses acceptance's revision and quote check.
+`reason`. The shared Doc adapter reads the thread's latest committed passage
+comment (including an explicit reattachment), then reads the current Doc through
+`doc.read`. It locates that quote unambiguously in the current source and binds
+the current range and full revision before approval; a missing or ambiguous
+quote returns `doc_passage_mismatch`. Approval replay keeps that reviewed basis
+without another anchor or Doc read. The explicit `target`, `baseRevision` and
+`before` form remains supported and retains its authored basis. Acceptance still
+checks the exact reviewed revision and quote.
 List previews show the translated suggested-edit label and reason, not the
 reviewed before/after text; full human message reads retain the complete proposal.
 Comment/proposal operations need the Conversations feature and current Doc and

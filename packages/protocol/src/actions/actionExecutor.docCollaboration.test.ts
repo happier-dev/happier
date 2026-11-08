@@ -92,10 +92,11 @@ describe('Doc collaboration Actions', () => {
       ref: { ...ref, serverId: 'creator-cli-only-profile' } };
     const executor = createActionExecutor({
       // Opened authenticated Discussion HTTP and approval Artifact storage are the boundaries.
+      artifactAction: async () => ({ artifact }),
       discussionAction: async ({ actionId, input }) => {
         if (actionId === 'discussion.read') {
           reads++;
-          expect(input).toEqual({ discussionId: 'thread', beforeSeq: 2, limit: 1 });
+          expect(input).toEqual({ discussionId: 'thread' });
           return { v: 1, serverId: 'home', discussionId: 'thread', messageSeq: 2, hasMoreOlder: false, incomplete: false,
             messages: [{ ...rootMessage, content: { ...rootMessage.content, passage: storedTarget } }] };
         }
@@ -134,6 +135,59 @@ describe('Doc collaboration Actions', () => {
     expect(reads).toBe(1);
     expect(stored?.status).toBe('executed');
   });
+
+  it.each(['unchanged-passage', 'reattached', 'reattached-paged', 'missing-passage', 'ambiguous-passage'] as const)(
+    'bases a later thread proposal on the current Doc after an accepted edit (%s)', async scenario => {
+      const current = { ...revision, bodyVersion: revision.bodyVersion + 1 };
+      const body = scenario === 'unchanged-passage' ? '# Updated notes\n\nRead this.'
+        : scenario === 'ambiguous-passage' ? 'Read this / Read this' : '# Notes\n\nRead that.';
+      const reattached = scenario === 'reattached' || scenario === 'reattached-paged';
+      const fresh = { ...target, revision: current, quote: 'Read that', range: { start: 9, end: 18 } };
+      const accepted = { ...rootMessage, id: 'accepted', seq: 3,
+        messageRef: { ...rootMessage.messageRef, messageId: 'accepted' },
+        content: { kind: 'doc_edit_proposal', proposal: { target, baseRevision: revision,
+          before: target.quote, after: proposal.after, reason: proposal.reason } },
+        docEditProposalDispositionV1: { state: 'accepted', acceptedRevision: current,
+          decidedBy: { accountId: 'reader', atMs: 2 } } };
+      const messages = [rootMessage, accepted, ...(reattached ? [{ ...rootMessage,
+        id: 'reattached', seq: 2, messageRef: { ...rootMessage.messageRef, messageId: 'reattached' },
+        content: { ...rootMessage.content, passage: fresh }, replyTarget: { kind: 'doc_passage', doc: { ref, revision: current } } }] : [])];
+      const writes: unknown[] = [];
+      const pageCursors: Array<number | undefined> = [];
+      const executor = createActionExecutor({
+        // Opened authenticated Artifact and Discussion transports are the system boundaries.
+        artifactAction: async () => ({ artifact: { ...artifact, body, revision: current } }),
+        discussionAction: async ({ actionId, input }) => {
+          if (actionId === 'discussion.list') return { v: 1, serverId: 'home', discussions: [], nextCursor: null, incomplete: false };
+          if (actionId === 'discussion.read') {
+            const read = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.read'].parse(input);
+            pageCursors.push(read.beforeSeq);
+            const firstPage = scenario === 'reattached-paged' && read.beforeSeq === undefined;
+            return { v: 1, serverId: 'home', discussionId: 'thread',
+              messages: firstPage ? [accepted] : messages.filter(message => read.beforeSeq === undefined || message.seq < read.beforeSeq),
+              messageSeq: 3, hasMoreOlder: firstPage, incomplete: false };
+          }
+          const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+          writes.push(post);
+          return DiscussionPostResultV1Schema.parse({ v: 1, serverId: 'home', messageSeq: 4,
+            message: { ...rootMessage, id: 'fresh-proposal', seq: 4, localId: post.localId,
+              content: post.content, replyTarget: post.replyTarget,
+              messageRef: { ...rootMessage.messageRef, messageId: 'fresh-proposal' } } });
+        },
+      });
+      const result = await executor.execute('doc.edit.propose', { discussionRef, localId: 'next', after: 'Read again' }, person);
+      if (scenario === 'missing-passage' || scenario === 'ambiguous-passage') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'doc_passage_mismatch' });
+        expect(writes).toEqual([]);
+      } else {
+        const quote = reattached ? fresh.quote : target.quote;
+        expect(result).toMatchObject({ ok: true, result: { message: { content: { kind: 'doc_edit_proposal',
+          proposal: { target: { ref, revision: current, quote,
+            range: { start: body.indexOf(quote), end: body.indexOf(quote) + quote.length } },
+          baseRevision: current, before: quote } } } } });
+      }
+      expect(pageCursors).toEqual(scenario === 'reattached-paged' ? [undefined, 3] : [undefined]);
+    });
 
   it.each(['unavailable', 'not-a-passage', 'foreign-home'] as const)(
     'does not create a proposal from a %s thread anchor', async problem => {

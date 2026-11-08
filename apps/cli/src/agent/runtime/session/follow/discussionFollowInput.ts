@@ -12,7 +12,7 @@ import { renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1,
 import { readDiscussionMessagePartsV1, type DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
-import { resolveAccountDisplayLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { deriveSessionInputActionRequestAttributionV1, materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -31,12 +31,39 @@ import { readSessionPresentationContent, sealSessionStoredContent, tryDecryptSes
 import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { formatSessionInputMentionMarkerV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { buildMentionRefForKindV1, MENTION_BOUNDS, MENTION_KIND_V1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { fetchSessionSnapshotsBatch } from '@/session/transport/http/sessionsHttp';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
-function readDiscussionPromptText(content: DiscussionMessageContentV1): string {
+type DiscussionParticipantMention = Extract<ReturnType<typeof readDiscussionMessagePartsV1>[number], { t: 'mention' }>['participant'];
+
+function resolveFollowAccountActorLabel(
+  actor: NonNullable<Awaited<ReturnType<typeof readDiscussionInputQuestion>>>['accountActor'],
+  isSelf: boolean,
+): string | null {
+  if (!actor) return null;
+  const classification = classifyAccountActorLabelV1(actor, isSelf);
+  switch (classification.kind) {
+    case 'former': return 'Former member';
+    case 'self': return 'You';
+    case 'profile': return classification.label;
+    case 'unnamed': return 'Happier member';
+  }
+}
+
+function readSessionName(metadata: ReturnType<typeof readSessionPresentationContent>['metadata']): string {
+  const summary = metadata?.summary;
+  const summaryText = summary && typeof summary === 'object' && 'text' in summary ? summary.text : null;
+  return (typeof summaryText === 'string' ? summaryText.trim() : '')
+    || (typeof metadata?.name === 'string' ? metadata.name.trim() : '');
+}
+
+function readDiscussionPromptText(content: DiscussionMessageContentV1,
+  renderParticipant: (participant: DiscussionParticipantMention) => string): string {
   return readDiscussionMessagePartsV1(content, 'preview').map(part => part.t === 'text' ? part.text
     : part.t === 'reference' ? formatSessionInputMentionMarkerV1(part.reference)
     : part.t === 'attachment' ? `[${part.attachment.kind === 'folder' ? 'Folder' : 'File'}: ${part.attachment.name}]`
-    : part.participant.kind === 'account' ? `@account:${part.participant.accountId}` : `@session:${part.participant.sessionId}`).join('');
+    : renderParticipant(part.participant)).join('');
 }
 
 /** The existing Follow observation becomes one original input through the incumbent Pending owner. */
@@ -59,7 +86,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
       const { addressing } = observation;
       const read = { serverId: binding.serverId, addressing, discussionAction, signal };
       const question = await readDiscussionInputQuestion(read);
-      if (!question?.content) return false;
+      if (!question?.content || !question.addressingV1?.participantSessionIds.includes(addressing.participantSessionId)) return false;
       // Workflow attribution names an execution, not a causal Session original.
       // It cannot become a person-authored request or fabricate Session authority.
       if (question.producerV1?.kind === 'workflow') return false;
@@ -72,12 +99,53 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
       if (!delivery.selected) return false;
       const messages = await readDiscussionInputMessages({ ...read, question });
       if (!messages) return false;
+      const viewerAccountId = readAccountIdFromToken(input.credentials.token);
+      const accountLabels = new Map<string, string>();
+      for (const message of messages) {
+        const actor = message.accountActor;
+        const label = actor ? resolveFollowAccountActorLabel(actor, actor.accountId === viewerAccountId) : null;
+        if (actor && label) accountLabels.set(actor.accountId, label);
+      }
+      const parts = messages.flatMap(message => message.content ? readDiscussionMessagePartsV1(message.content, 'preview') : []);
+      const sessionLabels = new Map<string, string>();
+      const participantSessionIds = new Set(parts.flatMap(part => part.t === 'mention' && part.participant.kind === 'session'
+        ? [part.participant.sessionId] : []));
+      // Labels are advisory. Unavailable presentation never removes the selected
+      // identity or blocks delivery; authority remains with the existing input owner.
+      const peerSessionIds = [...participantSessionIds].filter(sessionId => sessionId !== input.session.sessionId
+        && sessionId !== producer?.sessionId);
+      if (peerSessionIds.length) {
+        try {
+          const [snapshots, currentness] = await Promise.all([
+            fetchSessionSnapshotsBatch({ token: input.credentials.token, serverUrl: binding.serverUrl,
+              sessionIds: peerSessionIds, signal }),
+            fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token, signal }),
+          ]);
+          for (const sessionId of peerSessionIds) {
+            const detail = snapshots.get(sessionId)?.detail;
+            if (detail?.status !== 200) continue;
+            const metadata = readSessionPresentationContent({ credentials: input.credentials, rawSession: detail.body.session,
+              accountEncryptionMode: currentness.mode }).metadata;
+            const label = readSessionName(metadata);
+            if (label) sessionLabels.set(sessionId, label);
+          }
+        } catch {
+          signal.throwIfAborted();
+        }
+      }
+      const participantReference = (sessionId: string): MentionRefV1 => {
+        const reference = { kind: MENTION_KIND_V1.session, ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, sessionId),
+          label: (sessionLabels.get(sessionId) ?? 'Session').slice(0, MENTION_BOUNDS.maxLabelChars), token: '' };
+        return { ...reference, token: formatSessionInputMentionMarkerV1(reference) };
+      };
+      const promptParticipant = (participant: DiscussionParticipantMention): string => participant.kind === 'session'
+        ? participantReference(participant.sessionId).token : '@Person';
       let root = question;
       const discussionContext: DiscussionPromptContextEntryV1[] = [];
       for (const ancestor of messages.slice(0, -1).reverse()) {
         root = ancestor;
         if (!root.content) return false;
-        const text = readDiscussionPromptText(root.content);
+        const text = readDiscussionPromptText(root.content, promptParticipant);
         const author = root.producerV1;
         if (author?.kind === 'workflow') {
           // Workflow output is not a person or a fabricated Session author.
@@ -86,7 +154,8 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
             messageRef: root.messageRef, authorAccountId: root.authorAccountId, producerV1: author, text,
           }) });
         } else {
-          const displayName = !author && root.accountActor?.profile ? resolveAccountDisplayLabelV1(root.accountActor.profile) : null;
+          const displayName = !author && root.accountActor
+            ? resolveFollowAccountActorLabel(root.accountActor, root.accountActor.accountId === viewerAccountId) : null;
           discussionContext.push({ author: {
             kind: author ? 'agent_session' : 'person',
             ...(root.authorAccountId ? { accountId: root.authorAccountId } : {}),
@@ -98,6 +167,11 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
       // The exact parent walk runs newest-to-oldest; render the admitted
       // background in conversation order without acquiring unrelated history.
       discussionContext.reverse();
+      const accountParticipants = [...new Set(parts.flatMap(part => part.t === 'mention' && part.participant.kind === 'account'
+        ? [part.participant.accountId] : []))];
+      if (accountParticipants.length) discussionContext.push({ kind: 'host_reference_metadata', text: JSON.stringify({
+        participants: accountParticipants.map(accountId => ({ kind: 'account', accountId })),
+      }) });
       const rootSource = root.replyTarget?.kind === 'doc_passage' ? root.replyTarget.doc : null;
       const passage = 'kind' in question.content ? question.content.kind === 'doc_passage_comment'
         ? question.content.passage : question.content.kind === 'doc_edit_proposal' ? question.content.proposal.target : null : null;
@@ -128,17 +202,24 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         doc = { docRef: source.ref, title: typeof header.header.title === 'string' ? header.header.title : null, revision: source.revision,
           openCommentCount, threadRef: root.messageRef };
       }
-      if (doc) discussionContext.push({ kind: 'host_reference_metadata', text: JSON.stringify({ doc }) });
-      const questionText = readDiscussionPromptText(question.content);
+      // A plain reply inherits the passage attached to its admitted thread root.
+      // Preserve that quoted version as source data, without fetching the Doc body
+      // or presenting the historical attachment as the document's current text.
+      const attachedPassage = passage ?? (root.content && 'kind' in root.content
+        ? root.content.kind === 'doc_passage_comment' ? root.content.passage
+          : root.content.kind === 'doc_edit_proposal' ? root.content.proposal.target : null : null);
+      if (doc) discussionContext.push({ kind: 'host_reference_metadata', text: JSON.stringify({ doc,
+        ...(attachedPassage ? { documentPassage: { revision: attachedPassage.revision, quote: attachedPassage.quote } } : {}),
+      }) });
       // Keep selected identity in the incumbent Pending metadata so dispatch
       // resolves current contributed context through its existing registry.
       // The intake's readable prompt uses the same canonical marker as its token.
-      const mentions = readDiscussionMessagePartsV1(question.content, 'preview').flatMap(part => part.t === 'reference'
-        ? [{ ...part.reference, token: formatSessionInputMentionMarkerV1(part.reference) }] : []);
-      const referenceMeta = mentions.length ? { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: { v: 1, mentions } } : undefined;
+      const readMentions = () => [...parts.flatMap(part => part.t === 'reference'
+        ? [{ ...part.reference, token: formatSessionInputMentionMarkerV1(part.reference) }] : []),
+        ...[...participantSessionIds].map(participantReference)];
       const localId = deriveDiscussionFollowInputLocalIdV1(addressing);
-      const displayName = !producer && question.accountActor?.profile
-        ? resolveAccountDisplayLabelV1(question.accountActor.profile) : null;
+      const displayName = !producer && question.accountActor
+        ? resolveFollowAccountActorLabel(question.accountActor, question.accountActor.accountId === viewerAccountId) : null;
       const sender: DiscussionPromptAuthorV1 = {
         kind: producer ? 'agent_session' : 'person',
         ...(question.authorAccountId ? { accountId: question.authorAccountId } : {}),
@@ -152,9 +233,27 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
           context: { surface: 'cli', authority: 'account_automation', serverId: binding.serverId }, signal,
         }));
         if (!roster.success || roster.data.discussionId !== addressing.discussionId) return false;
+        for (const actor of roster.data.accountActors ?? []) {
+          const label = resolveFollowAccountActorLabel(actor, actor.accountId === viewerAccountId);
+          if (label) accountLabels.set(actor.accountId, label);
+        }
         if (roster.data.participants.some(participant => participant.participant.kind === 'model'
           && 'sessionId' in participant && participant.sessionId === producerSessionId)) sender.kind = 'model';
       }
+      // `text` is the provider prompt; the transcript shows the authored message
+      // (`displayText`), so sender ids and context blocks never reach the bubble.
+      // Addressing this Session is implied by its own transcript.
+      const messageMeta = () => {
+        const mentions = readMentions();
+        const displayText = readDiscussionPromptText(question.content!, participant =>
+          participant.kind === 'session' && participant.sessionId === input.session.sessionId ? ''
+            : participant.kind === 'session' && participant.sessionId === sender.sessionId && sender.displayName
+              ? `@${sender.displayName}` : participant.kind === 'session'
+                ? formatSessionInputMentionMarkerV1(participantReference(participant.sessionId))
+                : `@${accountLabels.get(participant.accountId) ?? 'Person'}`).trim();
+        return { ...(mentions.length ? { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: { v: 1, mentions } } : {}),
+          ...(displayText ? { displayText } : {}) };
+      };
       // Render after the existing source read has supplied its display identity.
       // Neither the roster label nor the Bot marker supplies causal authority.
       const renderQuestionText = () => renderSessionInputContextPromptV1({
@@ -163,7 +262,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         ...(hasDirectDiscussionAnswerObligation({ addressing, original: question, reply }) ? {
           replyObligation: { mode: reply.mode, sessionId: input.session.sessionId, requestLocalId: localId },
         } : {}),
-        transformedUserText: questionText,
+        transformedUserText: readDiscussionPromptText(question.content!, promptParticipant),
         ...(discussionContext.length ? { discussionContext } : {}),
       });
       let actionRequestAttributionV1 = materializeActionRequestAttributionV1({
@@ -176,8 +275,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         const sourceSession = producer.sourceSession;
         if (!sourceSession?.sourceInputId) return false;
         const serverFeaturesSnapshot = input.session.getServerFeaturesSnapshot();
-        const accountId = readAccountIdFromToken(input.credentials.token);
-        const foreignSource = Boolean(accountId && question.authorAccountId && question.authorAccountId !== accountId);
+        const foreignSource = Boolean(viewerAccountId && question.authorAccountId && question.authorAccountId !== viewerAccountId);
         const sourceRead = resolveSessionTransportContext({ reason: 'follow-source-hydration', credentials: input.credentials, idOrPrefix: sourceSession.sourceSessionId,
           signal, ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) });
         // The authorized presentation read may identify a shared foreign Bot.
@@ -188,11 +286,11 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
             accountEncryptionMode: source.accountEncryptionCurrentness.mode }).metadata;
           if (source.sessionId === producer.sessionId) {
             if (sender.kind !== 'model' && readSessionBotV1(sourceMetadata?.bot)) sender.kind = 'bot';
-            const summary = sourceMetadata?.summary;
-            const summaryText = summary && typeof summary === 'object' && 'text' in summary ? summary.text : null;
-            const sessionName = (typeof summaryText === 'string' ? summaryText.trim() : '')
-              || (typeof sourceMetadata?.name === 'string' ? sourceMetadata.name.trim() : '');
-            if (sessionName) sender.displayName = sessionName;
+            const sessionName = readSessionName(sourceMetadata);
+            if (sessionName) {
+              sender.displayName = sessionName;
+              sessionLabels.set(producer.sessionId, sessionName);
+            }
           }
         }
         if (foreignSource) {
@@ -211,7 +309,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
           const result = await transport({ v: 1, sessionId: input.session.sessionId, targetMachineId, localId,
             requestedAction: { v: 1, kind: 'enqueue' }, reply: { ...reply, sourceSession },
             content: sealSessionStoredContent({ ...target, payload: { role: 'user', content: { type: 'text', text: renderQuestionText() },
-              ...(referenceMeta ? { meta: referenceMeta } : {}) },
+              meta: messageMeta() },
               idempotencyKey: `session-input:v1:${input.session.sessionId}:${localId}` }),
           }, { timeoutMs: resolveSessionMessageAdmissionTimeoutMs(), signal });
           return result.status === 'accepted' || result.status === 'alreadyAccepted';
@@ -243,7 +341,7 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
       const result = await sendSessionMessage({ credentials: input.credentials, idOrPrefix: input.session.sessionId,
         localId, wait: false, timeoutMs: resolveSessionMessageAdmissionTimeoutMs(),
         message: renderQuestionText(),
-        ...(referenceMeta ? { messageMeta: referenceMeta } : {}),
+        messageMeta: messageMeta(),
         inputAdmission: { provenance: admission.provenance, request: SessionInputRequestV1Schema.parse({ ...admission.request,
           discussionAddressing: addressing, actionRequestAttributionV1, replyIntent: { mode: reply.mode } }) },
         executionAuthority: 'account_automation', resumeInactiveSession: delivery.session.wake,

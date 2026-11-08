@@ -3648,8 +3648,11 @@ operations and content codec. Plaintext passage routing contains only Doc ref an
 revision; quote and proposal text belong to the content envelope.
 For an existing passage thread, `doc.edit.propose` may instead supply only
 `discussionRef`, `localId`, `after` and optional `reason`; the Doc adapter resolves
-the committed root's passage and revision before approval. Explicit passage
-inputs remain valid, and acceptance still verifies the reviewed source.
+the latest committed passage comment's anchor against the current Doc before
+approval, including any explicit reattachment. Missing or ambiguous quotes
+return `doc_passage_mismatch`; approval replay retains the resolved basis.
+Explicit passage inputs retain their authored basis, and acceptance still
+verifies the reviewed source.
 
 These three Actions are also available through the existing Voice Action binding.
 Voice reads use the same source admission, and comments and proposals retain

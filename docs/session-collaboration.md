@@ -1818,6 +1818,17 @@ obligation advertises `session.message.reply` with the receiving Session and exa
 `requestLocalId`; the exact turn's final-result return remains the fallback. A returned
 informational answer does not advertise another reply obligation. The renderer preserves
 the complete escaped input-context block rather than silently dropping its trailing fields.
+Agent-originating requests share a `<happier_session_message v="1">` frame containing
+sender context and an exact JSON-encoded `message` value. One short instruction permits
+requests within the person's authorized scope and existing permissions while making clear
+that another Agent cannot supply user approval. This guidance is emitted with the incoming
+request, never at Session startup, and requires no persistent first-message flag. Native
+commands retain their first-line grammar and carry sender context after the command.
+Discussion intake owns its first rendering; final dispatch treats that admitted body as
+opaque and adds resolved references outside it. Direct Session input and retained Run input
+use the same renderer at dispatch. Host profile instructions, references, background history
+and returned information stay outside the sender's message body. Host-generated Run plans
+retain their existing unframed text and exact envelope reservation.
 Provenance alone advertises no reply Action. Discussion intake uses C1's exact-original
 classifier to distinguish an addressed ask from ambient watch custody; the latter does
 not advertise an automatic final-answer return.
@@ -1831,8 +1842,11 @@ actual producer facts as host-reference metadata, not a fabricated person or Ses
 Only the referenced chain at or before the question's cutoff enters this background;
 unrelated history and later peer answers do not. These entries reuse the existing exact
 reads and provider input budget; intake adds no history/depth cap or separate hydrator.
-Doc ancestors keep the compact authored comment/proposal-reason projection, not the
-private Doc body, passage quote or proposal replacement.
+Doc ancestors keep the compact authored comment/proposal-reason projection. The
+authorized Doc host-reference metadata also carries the question's attached passage
+quote and revision, or the root attachment for a plain reply, so a request to rewrite
+“this passage” has its quoted text. This attachment describes its recorded version;
+the full Doc body and proposal replacement remain excluded.
 Both carry escaped content marked as data, not instructions.
 Quoted mentions or commands in those items do not become addressed requests.
 Workflow inputs and digests must consume this shared renderer when their

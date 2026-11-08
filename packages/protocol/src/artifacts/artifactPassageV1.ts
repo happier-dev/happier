@@ -1,9 +1,24 @@
 import { PromptDocArtifactRefV1Schema, type PromptDocArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
 import { DocEditProposalV1Schema, DocPassageRefV1Schema, type DocPassageRefV1 } from './artifactCollaborationV1.js';
 import type { ArtifactRevisionV1 } from './artifactRevisionV1.js';
+import type { DiscussionOpenedMessageV1 } from '../discussions/actions.js';
 
 type DocSourceV1 = Readonly<{ ref: PromptDocArtifactRefV1; revision: ArtifactRevisionV1; source: string }>;
 type PassageRangeV1 = DocPassageRefV1['range'];
+
+/** Reattachment is a later passage comment; suggestions retain their own immutable review basis. */
+export function selectDocPassageThreadAnchorMessageV1<M extends Pick<DiscussionOpenedMessageV1,
+  'seq' | 'content' | 'replyTarget'>>(messages: readonly M[]): M | null {
+  let anchor: M | null = null;
+  for (const message of messages) {
+    if (message.replyTarget?.kind !== 'doc_passage') continue;
+    const content = message.content;
+    if (content !== null && (!('kind' in content)
+      || (content.kind !== 'doc_passage_comment' && !(message.seq === 1 && content.kind === 'doc_edit_proposal')))) continue;
+    if (!anchor || message.seq > anchor.seq) anchor = message;
+  }
+  return anchor;
+}
 
 function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
 

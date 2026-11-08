@@ -2391,7 +2391,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? projectDiscussionModelParticipantLaunchV1(admitSessionSpawnNewActionInputV2(parsed.data as z.infer<typeof SessionSpawnNewActionInputV2Schema>)) : undefined);
     admittedInput = redactMemoryActionInput(actionId, parsed.data);
     if (actionId === 'doc.edit.propose' && !existingAdmission) {
-      const proposal = await prepareDocEditProposalInputV1(admittedInput, ctx, deps.discussionAction,
+      const proposal = await prepareDocEditProposalInputV1(admittedInput, ctx, deps,
         options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
       if (!proposal.ok) return proposal;
       admittedInput = proposal.input;
@@ -6385,7 +6385,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         let targetArgs = redactMemoryActionInput(targetActionId, parsedTargetArgs.data);
         if (targetActionId === 'doc.edit.propose') {
-          const proposal = await prepareDocEditProposalInputV1(targetArgs, ctx, deps.discussionAction,
+          const proposal = await prepareDocEditProposalInputV1(targetArgs, ctx, deps,
             options?.sameHome ?? ((left, right) => isSameHome(left, right, ctx)));
           if (!proposal.ok) return proposal;
           targetArgs = proposal.input;

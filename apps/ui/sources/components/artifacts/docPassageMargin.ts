@@ -1,6 +1,6 @@
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 
-import { locateDocPassageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
+import { locateDocPassageV1, selectDocPassageThreadAnchorMessageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 
 import { readDiscussionContentPassage } from '@/components/discussions/discussionComposerDocument';
@@ -114,18 +114,8 @@ export function buildDocPassageMargin<M extends DocPassageMarginMessage>(
     }
     // Re-attaching is a later comment with its own passage basis (`doc.comment.reply` without a parent);
     // the thread is placed by the latest readable one and keeps the first as what it was started on.
-    const passage =
-      [...ordered]
-        .reverse()
-        .filter(
-          (message) =>
-            message.replyTarget?.kind === 'doc_passage' &&
-            message.content !== null &&
-            'kind' in message.content &&
-            message.content.kind === 'doc_passage_comment',
-        )
-        .map((message) => readDiscussionContentPassage(message.content))
-        .find((value) => value !== null) ?? original;
+    const anchor = selectDocPassageThreadAnchorMessageV1(ordered.filter(message => message.content !== null));
+    const passage = readDiscussionContentPassage(anchor?.content) ?? original;
     const replies = ordered.filter((message) => message !== root);
     const proposals = ordered.filter(
       (message) =>

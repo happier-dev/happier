@@ -237,7 +237,8 @@ describe('buildDocPassageMargin', () => {
     expect(detached.location.state).toBe('detached');
     expect(detached.original).toEqual(original);
     const attached = buildDocPassageMargin({ source: source2, revision: r2,
-      threads: [{ discussionId: 'd-replay', messages: [root, reply, plain] }] }).threads[0]!;
+      threads: [{ discussionId: 'd-replay', messages: [root, reply, plain,
+        { ...reply, id: 'unreadable', seq: 4, content: null }] }] }).threads[0]!;
     expect(attached.location).toEqual({ state: 'exact', range: reattached.range });
     expect(attached.passage).toEqual(reattached);
     expect(attached.original).toEqual(original);
