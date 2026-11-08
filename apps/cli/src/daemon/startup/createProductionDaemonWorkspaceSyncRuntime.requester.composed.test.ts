@@ -80,11 +80,13 @@ vi.mock('node:child_process', async original => {
 // Native and HTTP boundaries stay installed until every fixture's onTestFinished cleanup settles.
 beforeEach(() => { native.reset(); vi.restoreAllMocks(); executionBoundary.recovery = undefined; });
 
-it.skipIf(process.platform !== 'linux')('settles owner list and native state after disable, enable and terminate of a requester-created two-Machine relationship', async () => {
+it.skipIf(process.platform !== 'linux').each(['requester', 'installed'] as const)('settles owner list and native state without post-write reads for %s lifecycle Actions on a two-Machine relationship', async owner => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
     remoteTarget: true, socketIo });
-  const created = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await setup.rpc.handleRequest({
+  const created = WorkspaceSyncRelationshipCreateResultV1Schema.parse(owner === 'installed'
+    ? await setup.fixture.parent.workspaceSync.relationshipOwner.create(setup.request)
+    : await setup.rpc.handleRequest({
     method: `${setup.installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
     params: setup.request, callerAuthority: 'present_user', callerInputAuthorization: setup.authorization,
     machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'member-a', machineId: setup.installed.machineId,
@@ -102,20 +104,30 @@ it.skipIf(process.platform !== 'linux')('settles owner list and native state aft
     callerInputAuthorization: setup.account.authorization,
     machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'member-a', machineId: setup.installed.machineId,
       installationId: setup.installed.installation.installationId, role: 'manage', encryptionMode: 'plain' } };
-  const invoke = async (method: string, params: unknown, requester = true) => {
+  const invoke = async (method: string, params: unknown, requester = owner === 'requester') => {
     const handler = handlers.get(method);
     if (!handler) throw new Error('Sync handler is unavailable');
-    return handler(params, requester ? context : { ...context, callerInputAuthorization: undefined });
+    return handler(params, requester ? context : undefined);
   };
   const list = async () => WorkspaceSyncRelationshipsListRpcResultV1Schema.parse(await invoke(
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST, { workspaceRefId: setup.sourceRef.id }, false));
+  const lifecycle = async (method: string) => {
+    const before = setup.requesterRowRequests.length;
+    await invoke(method, { relationshipId: created.relationshipId });
+    const requests = setup.requesterRowRequests.slice(before);
+    const mutationIndex = requests.findIndex(event => event.path.endsWith('/mutate'));
+    expect(mutationIndex).toBeGreaterThanOrEqual(0);
+    const postWriteReads = requests.slice(mutationIndex + 1).filter(event =>
+      event.path.endsWith('/list') || event.path.endsWith('/read'));
+    expect(postWriteReads, `${owner} lifecycle must reconcile its acknowledged rows`).toHaveLength(0);
+  };
   expect((await list()).relationships).toEqual([expect.objectContaining({ definition: expect.objectContaining({
     relationshipId: created.relationshipId, enabled: true }) })]);
-  await invoke(RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE, { relationshipId: created.relationshipId });
+  await lifecycle(RPC_METHODS.DAEMON_WORKSPACE_SYNC_PAUSE);
   expect((await list()).relationships).toEqual([expect.objectContaining({ definition: expect.objectContaining({ enabled: false }) })]);
-  await invoke(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME, { relationshipId: created.relationshipId });
+  await lifecycle(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME);
   expect((await list()).relationships).toEqual([expect.objectContaining({ definition: expect.objectContaining({ enabled: true }) })]);
-  await invoke(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE, { relationshipId: created.relationshipId });
+  await lifecycle(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE);
   expect((await list()).relationships).toEqual([]);
   expect(await setup.fixture.parentManagedWorkspaceSync!.list()).toEqual([]);
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');

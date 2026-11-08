@@ -185,6 +185,13 @@ export type WorkspaceSyncTargetBootstrapAuthorityDependencies = Readonly<{
 
 export type WorkspaceSyncTargetAuthority = Readonly<{
   activity: LiveWorkProducerV1;
+  /** Exact continuation of a signed native target loan; no new admission. */
+  hasRetainedRecoveryAdmission(input: Readonly<{
+    request: WorkspaceSyncTargetConflictRecoverV1;
+    accountServerId: string;
+    actorAccountId: string;
+    receivingMachine: Readonly<{ machineId: string; installationId: string }>;
+  }>): boolean;
   /** Host-admitted personal read; public ingress must validate current receiving authority. */
   previewCommittedCopyHere(request: WorkspaceSyncCommittedCopyPreviewRequest): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
   previewCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyPreviewRequest): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
@@ -356,8 +363,14 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
     // order so per-read admission and the existing refusal precedence remain.
     const reads = [...new Set(input.machineIds)].map(machineId => ({ machineId,
       result: (async () => {
-        if (input.authorization && (machineId !== input.authorization.binding.machineId
-          || machineId === input.authorization.binding.workspaceSyncAdmission?.source.machineId)) {
+        const sourceMachineId = input.authorization?.binding.workspaceSyncAdmission?.source.machineId;
+        // A SOURCE-bound Move also reads its selected WORKER through the
+        // requester's existing Machine read port. Only SOURCE facts come from
+        // the signed Sync admission; WORKER-bound roots still require it for
+        // every foreign endpoint, including when the admission is missing.
+        if (input.authorization && (machineId === sourceMachineId
+          || machineId !== input.authorization.binding.machineId
+            && input.authorization.binding.machineId !== sourceMachineId)) {
           const binding = input.authorization.binding;
           const admitted = input.relationshipId ? readWorkspaceSyncSourceAdmissionV1(binding,
             { serverId: input.serverId, machineId, relationshipId: input.relationshipId }) : null;
@@ -1605,17 +1618,23 @@ export function createWorkspaceSyncTargetAuthority(
     });
   };
 
+  const findRetainedRecoveryTarget = (request: WorkspaceSyncTargetConflictRecoverV1) => {
+    for (const endpointRole of ['alpha', 'beta'] as const) {
+      const authorityKey = retainedAuthorityKey({ ...request, operationId: request.relationshipId, endpointRole });
+      const entry = retained.get(authorityKey);
+      if (entry?.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
+        && entry.transientAuthority && entry.relationshipDefinition) return { authorityKey, entry };
+    }
+    return null;
+  };
+
   const resolveRecoveryWorkspace = async (request: WorkspaceSyncTargetConflictRecoverV1,
     context?: WorkspaceSyncConflictRecoveryContext) => {
     // Initial SOURCE admission already lent this physical endpoint to the
     // relationship. Its custodian's Account graph cannot describe that loan.
-    const admittedTarget = !context?.getProjectSnapshot && [...retained.entries()].find(([, entry]) => (
-      entry.relationshipId === request.relationshipId && entry.targetWorkspaceRefId === request.targetWorkspaceRefId
-      && entry.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
-      && entry.transientAuthority && entry.relationshipDefinition
-    ));
+    const admittedTarget = !context?.getProjectSnapshot && findRetainedRecoveryTarget(request);
     if (admittedTarget) {
-      const [authorityKey, entry] = admittedTarget;
+      const { authorityKey, entry } = admittedTarget;
       const relationship = entry.relationshipDefinition!;
       const workspace: WorkspaceRefV1 = { id: entry.targetWorkspaceRefId, serverId: localServerId,
         machineId: entry.targetMachineId, rootPath: entry.targetRootPath, createdAtMs: relationship.createdAtMs };
@@ -2380,6 +2399,14 @@ export function createWorkspaceSyncTargetAuthority(
 
   const authority: WorkspaceSyncTargetAuthority = {
     activity,
+    hasRetainedRecoveryAdmission: ({ request, accountServerId, actorAccountId, receivingMachine }) => {
+      const target = findRetainedRecoveryTarget(request)?.entry.targetRouting;
+      const admitted = target?.targetContext.machineAdmission;
+      return target?.accountServerId === accountServerId && admitted?.actorAccountId === actorAccountId
+        && admitted.machineId === receivingMachine.machineId
+        && admitted.installationId === receivingMachine.installationId
+        && request.targetMachineId === receivingMachine.machineId;
+    },
     previewCommittedCopyHere: async (request) => await inspectCommittedCopyPreviewHere(request, await refreshCommittedCopyPreview(request)),
     previewCommittedCopyAtTarget: async (request) => {
       const resolved = await refreshCommittedCopyPreview(request);

@@ -45,7 +45,7 @@ import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { captureServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { RpcError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, readRpcErrorCode, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import type { WorkspaceSyncCommittedCopyPreviewV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
@@ -253,6 +253,7 @@ function controllerUnavailable(cause?: unknown): Error {
 }
 
 function parseControllerStatusResponse(value: unknown): WorkspaceSyncStatusV1 {
+  readMachineActionRpcResult(value);
   if (!value || typeof value !== 'object' || Array.isArray(value) || !('status' in value)) {
     throw controllerUnavailable();
   }
@@ -1520,7 +1521,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           return parseControllerStatusResponse(response);
         } catch (error) {
           if (signal?.aborted) throw error;
-          if (error && typeof error === 'object' && 'code' in error) throw error;
+          if (readRpcErrorCode(error) || error && typeof error === 'object' && 'code' in error) throw error;
           throw controllerUnavailable(error);
         }
       },
@@ -1787,6 +1788,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             localResolutionEndpoint, getProjectSnapshot: retained.execution.getSnapshot,
           });
         }
+        logger.debug('[Workspace Sync] Recovery dispatch', {
+          workspaceSyncRecoverySender: retained.execution.recoverConflictResolutionAtTarget ? 'retained_preparation' : 'restored_source',
+        });
         if (retained.execution.recoverConflictResolutionAtTarget) {
           return retained.execution.recoverConflictResolutionAtTarget(wireRequest, request.signal);
         }
@@ -1796,6 +1800,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           request: wireRequest, timeoutMs: null, ...(request.signal ? { signal: request.signal } : {}),
         })));
       }
+      logger.debug('[Workspace Sync] Recovery dispatch', { workspaceSyncRecoverySender: 'target_authority' });
       return targetAuthority.recoverConflictResolutionAtTarget(request);
     },
     readFileAtTarget: targetAuthority.readFileAtTarget,
@@ -1850,10 +1855,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     waitForProjectReconciliation: async (graphRevision, signal) => {
       if (!runtime) throw controllerUnavailable();
       signal?.throwIfAborted();
-      const refreshed = await refreshInstalledProjectRows(signal);
+      const snapshot = factories.getProjectSnapshot();
       await runtime.whenProjectsSettled({
         graphRevision: graphRevision < 0 ? 'absent' : graphRevision,
-        ...(refreshed.scopeKey ? { scopeKey: refreshed.scopeKey } : {}),
+        ...(snapshot?.scopeKey ? { scopeKey: snapshot.scopeKey } : {}),
         ...(signal ? { signal } : {}),
       });
     },
@@ -2269,6 +2274,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     discardStagedConflictResolutionAtTarget: targetAuthority.discardStagedConflictResolutionHere,
     releaseConflictResolutionCaptureHere: targetAuthority.releaseConflictResolutionCaptureHere,
     recoverConflictResolutionAtTarget: targetAuthority.recoverConflictResolutionHere,
+    hasRetainedRecoveryAdmission: targetAuthority.hasRetainedRecoveryAdmission,
     readFileAtTarget: targetAuthority.readFileHere,
     observeEntryAtTarget: targetAuthority.observeEntryHere,
     preflightHandoffTargetReplacement: targetAuthority.preflightHandoffTargetReplacementHere,

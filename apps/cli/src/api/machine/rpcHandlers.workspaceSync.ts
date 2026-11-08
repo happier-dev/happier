@@ -13,6 +13,7 @@ import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/direct
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import type { WorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PrivateWorkspaceSyncTargetAdmission, PrivateWorkspaceSyncTargetExecutionResolution } from './machineRpcAuthorization';
@@ -43,6 +44,7 @@ export type WorkspaceSyncRpcController = Readonly<{
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
+  hasRetainedRecoveryAdmission?: WorkspaceSyncTargetAuthority['hasRetainedRecoveryAdmission'];
   /** One requester Account admission for each controller call. The returned
    * view shares the installed controller and its retained native jobs. */
   forRequester?(context?: RpcHandlerContext, options?: Readonly<{ includeAvailability?: boolean }>): Promise<
@@ -114,13 +116,19 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
 
 /** Admission is already current. Match only the incumbent host capture. */
 export function resolvePrivateWorkspaceSyncTargetExecution(
-  adapter: Pick<WorkspaceSyncHandoffAdapter, 'resolvePrivateExecution'>,
+  adapter: Pick<WorkspaceSyncHandoffAdapter, 'resolvePrivateExecution'> &
+    Pick<MachineWorkspaceSyncRpcService, 'hasRetainedRecoveryAdmission'>,
   admission: PrivateWorkspaceSyncTargetAdmission,
 ): PrivateWorkspaceSyncTargetExecutionResolution {
   const { routing } = admission;
   const capture = adapter.resolvePrivateExecution?.(routing.phase === 'recover'
     ? { relationshipId: routing.relationshipId } : { operationId: routing.operationId });
-  if (!capture) return { kind: 'no_private_capture' };
+  if (!capture) {
+    if (routing.phase === 'recover' && adapter.hasRetainedRecoveryAdmission?.({ request: routing,
+      accountServerId: routing.accountServerId, actorAccountId: admission.context.actorAccountId,
+      receivingMachine: admission.receivingMachine })) return { kind: 'native_admitted' };
+    return { kind: 'no_private_capture' };
+  }
   const { input, execution } = capture;
   const identity = execution.executionIdentity;
   const home = routing.accountServerId;

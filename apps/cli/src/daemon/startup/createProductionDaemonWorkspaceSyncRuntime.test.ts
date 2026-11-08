@@ -20,9 +20,12 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
   WorkspaceSyncSourceWriterTargetRoutingV1Schema, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { WorkspaceSyncTargetConflictRecoverResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
 import { observeWorkspaceSyncEntryAtRoot } from '@/workspaces/sync/workspaceSyncFileRead';
@@ -805,6 +808,28 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const request = { relationshipId: relationship.relationshipId, targetMachineId: fixture.targetRef.machineId,
       targetWorkspaceRefId: fixture.targetRef.id };
     await expect(recover(request, context)).resolves.toEqual({ status: 'settled' });
+    if (!fixture.targetParent) throw new Error('The actual receiving target runtime is unavailable');
+    const rpc = new RpcHandlerManager({ scopePrefix: fixture.targetRef.machineId, encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+        machineId: fixture.targetRef.machineId, resolveHomeServerIdentityId: async () => fixture.serverId,
+        resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'target-parent-installation',
+      }, source) });
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: rpc, service: fixture.targetParent.workspaceSync });
+    const invokeRecovery = (actorAccountId: string) => rpc.handleRequest({
+      method: `${fixture.targetRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER}`,
+      params: request, callerAuthority: 'present_user', machineAdmission: {
+        actorAccountId, custodianAccountId: 'owner', machineId: fixture.targetRef.machineId,
+        installationId: 'target-parent-installation', role: 'manage', encryptionMode: 'plain',
+      },
+    }, undefined, 'authenticated_home_socket');
+    // Only the authenticated Home transport is substituted. Both the success
+    // producer and the foreign request's native-isolation decision are real.
+    expect(WorkspaceSyncTargetConflictRecoverResultV1Schema.parse(
+      readMachineActionRpcResult(await invokeRecovery('owner')))).toEqual({ status: 'settled' });
+    const refused = await invokeRecovery('foreign-requester');
+    expect(refused).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+    expect(() => WorkspaceSyncTargetConflictRecoverResultV1Schema.parse(readMachineActionRpcResult(refused)))
+      .toThrowError(expect.objectContaining({ rpcErrorCode: 'agent_isolation_unavailable', effectAttempted: false }));
     expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
     // A new inode at the same path is not the endpoint retained by bootstrap.
     const retainedPath = `${fixture.targetPath}-retained`;
@@ -1367,6 +1392,21 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       );
       expect(projectedFailure).toMatchObject({ rpcErrorCode: errorCode,
         ...(carrierReason ? { message: carrierReason } : {}) });
+      if (intent === 'remote-refusal') {
+        await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () =>
+          await readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+        const target = getActiveProjectAccountRowsSnapshot()?.workspaceRefs.find(ref =>
+          ref.machineId === fixture.targetRef.machineId && ref.rootPath === fixture.targetRef.rootPath);
+        if (!target) throw new Error('Create did not materialize its target reference');
+        // The handoff caller releases retained execution only for a settled preparation refusal.
+        await expect(fixture.parent.handoffAdapter.prepare({
+          operationId: `${request.operationId}-preparation`, accountServerId: fixture.serverId,
+          sourceMachineId: fixture.sourceRef.machineId, sourceRootPath: fixture.sourceRef.rootPath,
+          targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetRef.rootPath,
+          sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: target.id,
+          action: { kind: 'create_relationship', mode: 'keep_both_in_sync', contentPolicy },
+        })).rejects.toMatchObject({ name: 'WorkspaceSyncPreparationRefusal', code: 'peer_unavailable' });
+      }
       if (carrierTrace) {
         expect(carrierTrace.mock.calls.filter(([message]) => message === '[workspace-sync-carrier-stage]'))
           .toEqual(['target_read', 'grant_mint', 'endpoint_revalidation', 'native_tunnel_open'].flatMap(stage =>
@@ -1989,7 +2029,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       conflictCount: 0,
       lastCycleObservedAtMs: null,
     };
-    const callMachineRpc = vi.fn(async (request: { method: string }) => (
+    const callMachineRpc = vi.fn(async (request: { method: string }): Promise<unknown> => (
       request.method === 'daemon.directTransfer.export.prepare'
         ? {
             success: true, transferId: 'rel-1', expiresAt: Date.now() + 60_000,
@@ -2178,14 +2218,9 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
 
     const relationshipOwnerInput = createRelationshipOwner.mock.calls[0]![0];
     const reconciliationSignal = new AbortController().signal;
+    const readsBeforeReconciliation = refreshProjectRows.mock.calls.length;
     await relationshipOwnerInput.waitForProjectReconciliation(7, reconciliationSignal);
-    expect(refreshProjectRows).toHaveBeenCalledWith({
-      credentials: { token: 'secret-token', encryption: null },
-      serverId,
-      publication: 'installed',
-      selection: { kinds: ['workspace-ref', 'relationship-graph'] },
-      signal: reconciliationSignal,
-    });
+    expect(refreshProjectRows).toHaveBeenCalledTimes(readsBeforeReconciliation);
     expect(runtime.whenProjectsSettled).toHaveBeenCalledWith({
       graphRevision: 7,
       scopeKey: 'scope-1',
@@ -2224,6 +2259,17 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       createIfMissing: true,
     });
     await expect(daemonRuntimeInput.handoffRelationshipController?.flush('rel-1')).resolves.toEqual(controllerStatus);
+    const nativeRefusal = createRpcCallError({ error: 'Recovery refused', errorCode: 'agent_isolation_unavailable' });
+    callMachineRpc.mockRejectedValueOnce(nativeRefusal);
+    await expect.soft(daemonRuntimeInput.handoffRelationshipController?.flush('rel-1')).rejects.toBe(nativeRefusal);
+    const remote = new RpcHandlerManager({ scopePrefix: 'controller', encryptionMode: 'plain', logger: () => {} });
+    remote.registerHandler('flush-refusal', async () => { throw nativeRefusal; });
+    const serializedRefusal = await remote.handleRequest({ method: 'controller:flush-refusal', params: {} });
+    expect(serializedRefusal).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+    callMachineRpc.mockResolvedValueOnce(serializedRefusal);
+    await expect(daemonRuntimeInput.handoffRelationshipController?.flush('rel-1')).rejects.toMatchObject({
+      rpcErrorCode: 'agent_isolation_unavailable',
+    });
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-b',
       method: 'daemon.workspaceSync.flush.v1',
