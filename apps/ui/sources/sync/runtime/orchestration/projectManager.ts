@@ -160,6 +160,12 @@ class ProjectManager {
     private static readonly MAX_SCM_OPERATION_LOG = 200;
     private projects: Map<string, Project> = new Map();
     private projectKeyToId: Map<string, string> = new Map();
+    /**
+     * The key each Project was registered under. A key string follows how its Home id resolves, which
+     * changes when a Home's identity is learned or forgotten; retiring a Project releases the key it
+     * registered, never a recomputed one that would leave the old key pointing at a removed Project.
+     */
+    private registeredKeyByProjectId: Map<string, string> = new Map();
     private sessionToProject: Map<string, string> = new Map();
     private nextProjectId = 1;
     private readonly scmSnapshotListeners = new Set<Readonly<{
@@ -228,6 +234,7 @@ class ProjectManager {
 
             this.projects.set(projectId, project);
             this.projectKeyToId.set(keyString, projectId);
+            this.registeredKeyByProjectId.set(projectId, keyString);
             
             return project;
         }
@@ -355,8 +362,9 @@ class ProjectManager {
         }
 
         // Clean up all references
-        const keyString = this.getProjectKeyString(project.key);
-        this.projectKeyToId.delete(keyString);
+        const keyString = this.registeredKeyByProjectId.get(projectId);
+        if (keyString !== undefined && this.projectKeyToId.get(keyString) === projectId) this.projectKeyToId.delete(keyString);
+        this.registeredKeyByProjectId.delete(projectId);
         this.projects.delete(projectId);
 
         // Remove session mappings
@@ -932,6 +940,7 @@ class ProjectManager {
         const changedKeys = [...this.projects.values()].map(project => project.key);
         this.projects.clear();
         this.projectKeyToId.clear();
+        this.registeredKeyByProjectId.clear();
         this.sessionToProject.clear();
         this.nextProjectId = 1;
         for (const key of changedKeys) this.publishScmSnapshotChange(key);

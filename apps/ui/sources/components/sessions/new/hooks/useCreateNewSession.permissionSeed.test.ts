@@ -4,7 +4,7 @@ import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHel
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -20,17 +20,24 @@ import type { NewSessionAutomationDraft } from '@/sync/domains/automations/autom
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import {
-    buildBackendTargetKey,
-    buildBackendTargetKeyV2,
-    buildQualifiedPluginContributionKey,
+    buildBackendTargetKey} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import {
+    buildBackendTargetKeyV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import {
+    buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
     buildMentionRefForKindV1,
-    MENTION_KIND_V1,
-    SessionModelSelectionV1Schema,
+    MENTION_KIND_V1} from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import {
+    SessionModelSelectionV1Schema} from '@happier-dev/protocol/providers/selection/v1';
+import {
     SessionSpawnNewInputV2Schema,
-    type SessionCapabilitySelectionV1,
-    type SessionSpawnNewInputV2,
+    type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import {
+    type SessionCapabilitySelectionV1} from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import {
     type SessionSpawnNewResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { renderScreen as renderTestScreen } from '@/dev/testkit';
@@ -47,7 +54,6 @@ import {
     ProfileRowReadResponseV1Schema, type ProfileRecordV1,
 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 import { installNewSessionScreenModelCommonModuleMocks, selectNewSessionTestHome } from './newSessionScreenModelTestHelpers';
 
@@ -258,7 +264,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
         if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 1 });
         if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
         if ((path === '/v2/sessions' || path === '/v2/sessions/active') && method === 'GET') {
-            return Response.json(V2SessionListResponseSchema.parse({
+            return Response.json(createSessionListSourceFixture({
                 sessions: [...createdSessions.values()], nextCursor: null, hasNext: false,
             }));
         }
@@ -726,6 +732,7 @@ describe('useCreateNewSession permission seeding', () => {
                 profileMap: new Map(),
                 recentMachinePaths: [],
                 agentType: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
                 promptStore: createNewSessionPromptStore(''),
@@ -747,11 +754,23 @@ describe('useCreateNewSession permission seeding', () => {
 
         await renderScreen(React.createElement(Test));
 
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+
         await act(async () => {
             await handleCreateSession?.();
         });
 
         expect(captured.value, JSON.stringify(modalAlertSpy.mock.calls)).not.toBeNull();
+        expect(writes.mock.calls.map(([key]) => key).filter(key => key === 'settings' || key.startsWith('account-settings:'))).toEqual([]);
+        const { renderHook } = await import('@/dev/testkit');
+        const { useNewSessionBackendTargetState } = await import('./screenModel/useNewSessionBackendTargetState');
+        const next = await renderHook(() => useNewSessionBackendTargetState({ entries: [], projectionPhase: 'ready' }));
+        const { resolveBackendTargetKeyV2 } = await import('@/agents/backendCatalog/backendTargetKeyV2');
+        expect(resolveBackendTargetKeyV2(next.getCurrent().backendTarget)).toBe(
+            buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }),
+        );
+        await next.unmount();
         expect(captured.value?.permissionMode).toBe('safe-yolo');
         expect(typeof captured.value?.configuration?.permissionIntent.updatedAtMs).toBe('number');
         expect(Number.isFinite(captured.value?.configuration?.permissionIntent.updatedAtMs)).toBe(true);
@@ -1189,6 +1208,8 @@ describe('useCreateNewSession permission seeding', () => {
                 selectedMachineCapabilities: null,
                 targetServerId: 'server-a',
                 allowedTargetServerIds: ['server-a'],
+                // The Runs feature decision reaches the launcher as this flag, not through settings.
+                executionRunsEnabled: true,
             });
 
             handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -1351,7 +1372,9 @@ describe('useCreateNewSession permission seeding', () => {
     });
 
     it('passes transcriptStorage through to the strict Action request when requested', async () => {
-        const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
+        const { useCreateNewSession, captured, modalConfirmSpy } = await setupUseCreateNewSessionHarness();
+        // Claude installs through its vendor's recipe: Create asks once before an Agent the Machine lacks.
+        modalConfirmSpy.mockResolvedValueOnce(true);
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -1404,6 +1427,7 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(captured.value?.transcriptStorage).toBe('direct');
+        expect(captured.value?.agentInstallConsent).toEqual({ vendorRecipe: true });
     });
 
     it('routes spawn to the target server without switching global active server', async () => {
@@ -1529,7 +1553,8 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
+        // The launch dialog passes its optional buttons through; `undefined` keeps the default OK.
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart', undefined);
         expect(captured.value).toBeNull();
     });
 
@@ -2146,7 +2171,7 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.aiBackendNotCompatibleWithSelectedProfile');
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.aiBackendNotCompatibleWithSelectedProfile', undefined);
         expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });

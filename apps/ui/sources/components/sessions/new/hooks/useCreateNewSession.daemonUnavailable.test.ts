@@ -865,6 +865,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(launch.hook.getCurrent().attachments.attachmentsUploadsEnabled).toBe(true);
     expect(launch.hook.getCurrent().reconciliation.launchApproval.pending).toBeNull();
     if (askOnUi) {
+      expect(launch.confirm.mock.calls[0]?.[2]).toMatchObject({ confirmText: 'sessionGettingStarted.steps.createSession.copyLabel' });
       expect(launch.hook.getCurrent().isCreating, 'Native consent retains the submitted launch').toBe(true);
       expect(launch.creationSettled).toBe(false);
       expect(launch.settlement).not.toHaveBeenCalled();
@@ -2518,6 +2519,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalledWith(
       'common.error',
       expect.stringContaining('newSession.launchStillPendingBody'),
+      undefined,
     );
 
     await hook.unmount();
@@ -2572,8 +2574,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     const { sync } = await import('@/sync/sync');
     expect(sync.sendMessage).not.toHaveBeenCalled();
     expect(router.replace).toHaveBeenCalledTimes(1);
-    expect(modalAlertSpy).toHaveBeenCalledWith(expectedTitle, expect.stringContaining(initialInput.code));
-    expect(modalAlertSpy).toHaveBeenCalledWith(expectedTitle, expect.stringContaining(expectedLabel));
+    // Launch dialogs pass their optional buttons through; `undefined` keeps the default OK.
+    expect(modalAlertSpy).toHaveBeenCalledWith(expectedTitle, expect.stringContaining(initialInput.code), undefined);
+    expect(modalAlertSpy).toHaveBeenCalledWith(expectedTitle, expect.stringContaining(expectedLabel), undefined);
     expect(warnedBeforeNavigation).toBe(true);
     expect(firstPromptAtNavigation).toBe('Keep this first prompt');
     await hook.unmount();
@@ -3505,6 +3508,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await vi.waitFor(() => expect(modalAlertSpy.mock.calls).toContainEqual([
       'common.error',
       'Attachment validation failed',
+      undefined,
     ]));
 
     await hook.unmount();

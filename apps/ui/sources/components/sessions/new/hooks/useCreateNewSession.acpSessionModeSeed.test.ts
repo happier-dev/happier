@@ -1,5 +1,5 @@
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import 'fake-indexeddb/auto';
 import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -8,7 +8,11 @@ import React from 'react';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, MACHINE_PLAIN_DATA_KEY_MARKER, RPC_ERROR_CODES, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
+import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -21,7 +25,6 @@ import { installNewSessionScreenModelCommonModuleMocks, selectNewSessionTestHome
 import type { HandleCreateSessionOptions } from './useCreateNewSession';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
@@ -35,6 +38,7 @@ const localStorageBoundary = installLocalStorageMock();
 installDisconnectedServerSocketBoundary(socket => { configureConnectedServerSocketBoundary(socket); });
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
 const scopedSocketEmitWithAckSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', async () => {
@@ -55,7 +59,7 @@ installNewSessionScreenModelCommonModuleMocks({
     Modal: {
       alert: modalAlertSpy,
       alertAsync: vi.fn(async () => {}),
-      confirm: vi.fn(async () => false),
+      confirm: modalConfirmSpy,
       hide: vi.fn(),
       hideAll: vi.fn(),
       prompt: vi.fn(async () => null),
@@ -124,7 +128,7 @@ async function createHarness() {
       if (path === '/v1/account/profile') return Response.json({ id: target.origin === 'https://server-b' ? 'account-b' : 'account-a' });
       if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
       if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
-      if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(V2SessionListResponseSchema.parse({
+      if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(createSessionListSourceFixture({
         sessions: [...sessionRows.values()], nextCursor: null, hasNext: false,
       }));
       const sessionRead = /^\/v2\/sessions\/([^/]+)$/.exec(path);
@@ -359,6 +363,8 @@ afterAll(async () => {
 describe('useCreateNewSession (ACP mode seeding)', () => {
   beforeEach(() => {
     modalAlertSpy.mockReset();
+    modalConfirmSpy.mockReset();
+    modalConfirmSpy.mockResolvedValue(false);
     scopedSocketEmitWithAckSpy.mockReset();
   });
 
@@ -1083,7 +1089,9 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       expect(onAfterCreatedSettled).not.toHaveBeenCalledWith({ status: 'rejected' });
       const { readManualSessionSpawnOperation } = await import('@/sync/domains/session/spawn/manualSessionSpawnOperation');
       expect(readManualSessionSpawnOperation({ serverId: 'server-a', accountId: 'account-a' }, requestId))
-        .toMatchObject({ operationId, state: 'accepted' });
+        // The unmounted launcher consumed nothing (asserted above); the canonical record keeps the
+        // operation and mirrors its received terminal snapshot.
+        .toMatchObject({ operationId, state: 'succeeded' });
     } finally {
       await hook.unmount();
       operationReply.resolve({ kind: 'not_found' });
@@ -1202,6 +1210,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(modalAlertSpy).toHaveBeenCalledWith(
       'common.error',
       'newSession.actionMethodUnavailable',
+      undefined,
     );
     expect(await TokenStorage.removeCredentialsForServerUrl(
       activeServer.serverUrl,
@@ -1211,6 +1220,8 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
   it('carries agent mode through the strict V2 Action for staticAgentModes (Claude)', async () => {
     const { useCreateNewSession, sessionSpawnNewRpcSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
+    // Claude installs through its vendor's recipe: Create asks once before an Agent the Machine lacks.
+    modalConfirmSpy.mockResolvedValueOnce(true);
 
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { experiments: false } as unknown as Settings;
@@ -1265,6 +1276,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(publishModeSpy).not.toHaveBeenCalled();
     expect(sessionSpawnNewRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentModeId: 'plan',
+      agentInstallConsent: { vendorRecipe: true },
     }));
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
@@ -1611,6 +1623,8 @@ describe('useCreateNewSession (installed Agent render-to-spawn parity)', () => {
 
   beforeEach(() => {
     modalAlertSpy.mockReset();
+    modalConfirmSpy.mockReset();
+    modalConfirmSpy.mockResolvedValue(false);
   });
 
   afterEach(() => {
