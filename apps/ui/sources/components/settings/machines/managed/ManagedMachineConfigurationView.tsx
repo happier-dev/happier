@@ -10,7 +10,7 @@ import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -267,7 +267,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A retained draft describes what was reviewed; only the current catalog admits new reads or mutations.
     const provisioner = catalogProvisioner ?? draft?.provisioner;
     const controller = hostAvailability ? hostAvailability.controller : requestedController;
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision, purpose: 'repair' });
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision, purpose: 'repair', onApprovalPending });
     const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController, provisioner: delegatedAcquire ? undefined : catalogProvisioner,
         refreshKey: readRevision });
     const localizeActionText = usePluginLocalizedTextResolver({ projection: presentation.projection });
@@ -824,7 +824,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // replaced is not drawn again as a generic "no longer available" choice.
     const refusalOnField = !!launchRefusal?.fieldPath && launchFields.some(field => field.path === launchRefusal.fieldPath);
     const retainedChoice = facts?.optionStatus === 'unavailable' && !refusalOnField ? draft?.selected : undefined;
-    const repairs = draft?.check?.prerequisites?.filter(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction) ?? [];
+    const repairs = (receiptFacts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options))
+        .filter(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction);
     // Nothing to choose from yet is not "no choices" while the launch still waits on a required field: the field says what it needs.
     const awaitsRequiredInput = launchFields.some(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
     // A failed read leaves nothing to fill a blank required field from: the failure takes the fields' place, not a column of empty boxes.

@@ -27,7 +27,7 @@ export type ManagedProvisionerScope = Readonly<{ chip: React.ReactNode; placemen
 
 /**
  * Add a machine → Create one (lab `m-add`, `af-add`): the provisioners, grouped by the first question people
- * have — on this computer and free, or in the cloud and billed. Each card's status and step come from
+ * have — on a computer they control, a cloud sandbox, or a cloud server. Each card's status and step come from
  * the provisioner's own `check`; nothing is faked ready. Desktop draws cards; a phone draws push rows.
  * Only a provisioner one of your computers creates (its declared acquire role) names that computer: the
  * chip sits on the section holding one, and Account-created ones never show it.
@@ -36,7 +36,7 @@ export const MachineProvisionerSections = React.memo(
   function MachineProvisionerSections(
     props: Readonly<{
       cards: readonly ManagedProvisionerCard[];
-      /** "On this Mac" (the platform's word for this computer). */
+      /** The translated group title for computers the person controls. */
       localTitle: string;
       /** The live, personal line: what the local provisioners share ("12 cores, 36 GB of memory…"). */
       localDescription: string;
@@ -44,26 +44,28 @@ export const MachineProvisionerSections = React.memo(
       testID: string;
       /** The machine-scope chip ("Managed from · MacBook Pro"), for the section of computer-run provisioners. */
       scope?: ManagedProvisionerScope;
-      /** Computer-run VMs while no computer can run them: one row naming them, leading to adding a computer. */
+      /** Computer-run machines while no computer can run them: one row naming them, leading to adding a computer. */
       localCollapsed?: Readonly<{ names: readonly string[]; onAddComputer: () => void }>;
       /** Opens the one hand-off for every provider this browser cannot reach, named once per group. */
       onHandoff?: () => void;
     }>,
   ) {
     const local = props.cards.filter((card) => card.location === 'local');
-    const cloud = props.cards.filter((card) => card.location === 'cloud');
-    // The chip belongs with this computer's VMs; a cloud provider a computer runs (Modal) carries it only without them.
-    const scoped = [local, cloud].find((cards) => cards.some((card) => card.acquire === 'daemon'));
+    const sandboxes = props.cards.filter((card) => card.location === 'cloud' && card.enrollmentRole === 'sandbox');
+    const cloud = props.cards.filter((card) => card.location === 'cloud' && card.enrollmentRole !== 'sandbox');
+    // The chip belongs with this computer's machines; a cloud provider a computer runs (Modal) carries it only without them.
+    const scoped = [local, sandboxes, cloud].find((cards) => cards.some((card) => card.acquire === 'daemon'));
     const scopeFor = (cards: readonly ManagedProvisionerCard[]) =>
       props.scope && cards === scoped ? props.scope : undefined;
-    const group = (cards: readonly ManagedProvisionerCard[], key: 'local' | 'cloud') => {
+    const group = (cards: readonly ManagedProvisionerCard[], key: 'local' | 'cloud-sandboxes' | 'cloud') => {
       if (cards.length === 0) return null;
       const scope = scopeFor(cards);
       return (
         <React.Fragment key={key}>
           {scope?.placement === 'row' ? <ManagedScopeRow testID="managed-picker.scope" chip={scope.chip} /> : null}
           <ProvisionerGroup
-            title={key === 'local' ? props.localTitle : t('managedMachines.add.cloudTitle')}
+            title={key === 'local' ? props.localTitle : t(key === 'cloud-sandboxes'
+              ? 'managedMachines.add.cloudSandboxesTitle' : 'managedMachines.add.cloudTitle')}
             description={key === 'local' ? props.localDescription
               : props.compact ? t('managedMachines.add.cloudDescriptionShort') : t('managedMachines.add.cloudDescription')}
             cards={cards}
@@ -81,13 +83,14 @@ export const MachineProvisionerSections = React.memo(
     ) : null;
     return (
       <>
-        {/* No-cost machines on the managing computer lead, then the billed cloud (lab m-add, on every device). Which
+        {/* Computers the person controls lead, then cloud sandboxes and servers. Which
             Add path leads is a separate decision (58d §D2, `machineAddLeadsWithCreate`). */}
         {group(local, 'local')}
-        {group(cloud, 'cloud')}
         {collapsed}
+        {group(sandboxes, 'cloud-sandboxes')}
+        {group(cloud, 'cloud')}
         {/* The note is page content: an edge-only section gives it the page column, not a local inset. */}
-        {cloud.length > 0 ? (
+        {sandboxes.length > 0 || cloud.length > 0 ? (
           <ItemGroup surface="none">
             <AccountsNote compact={props.compact} />
           </ItemGroup>
@@ -97,14 +100,14 @@ export const MachineProvisionerSections = React.memo(
   },
 );
 
-/** Lab af-add: "On your computers" — the VMs a computer you've added runs, folded until one can run them. */
+/** Machines a computer you've added runs, folded until one can run them. */
 function LocalCollapsedGroup(
   props: Readonly<{ names: readonly string[]; onAddComputer: () => void; compact: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
   const label = t('managedMachines.add.action.addComputer');
   return (
-    <ItemGroup title={t('managedMachines.add.onYourComputers')}>
+    <ItemGroup title={t('managedMachines.add.onThisComputer')}>
       <Item
         testID={props.testID}
         title={t('managedMachines.add.localCollapsedTitle')}

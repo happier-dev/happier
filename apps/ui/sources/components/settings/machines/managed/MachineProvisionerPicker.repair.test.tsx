@@ -11,6 +11,7 @@ import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/act
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createManagedControllerMachineFixture as createMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -23,6 +24,8 @@ import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-cr
 import { activate as activateCrabbox } from '../../../../../../../packages/plugins/machine-crabbox/src/activate';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -57,8 +60,10 @@ function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
 }
 
 describe('mounted provisioner repair', () => {
-    it.each(['picker', 'crabbox', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
+    it.each(['picker', 'crabbox', 'configuration', 'configuration.optionsPrerequisite', 'approval.picker', 'configuration.approval', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
         const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
+        const optionsPrerequisite = scenario === 'configuration.optionsPrerequisite';
+        const needsApproval = scenario.includes('approval');
         const repairUnavailable = scenario.endsWith('repairUnavailable');
         const projectionFailure = scenario === 'projectionOffline' ? 'machine-unavailable'
             : scenario === 'projectionTransportUnavailable' ? 'transport-unavailable' : undefined;
@@ -72,6 +77,10 @@ describe('mounted provisioner repair', () => {
         const machine = createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() });
         storage.setState({ machineListByServerId: { [serverId]: [machine] },
             machineListStatusByServerId: { [serverId]: 'idle' } });
+        const machineRow = { ...createPlainMachineRowFixture({ id: 'controller', accountId: 'owner' }), installationId: 'installation' };
+        harness.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === machineRow.id ? machineRow : null).json(),
+        }) });
         const isCrabbox = scenario === 'crabbox';
         const contribution = isCrabbox ? { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox' } : { pluginId: 'custom.compute', localId: 'native' };
         const action = { pluginId: contribution.pluginId, localId: isCrabbox ? 'install' : 'repair' };
@@ -121,6 +130,7 @@ describe('mounted provisioner repair', () => {
                 [buildQualifiedPluginContributionKey(optionsIdentity)]: projectedOptions },
         } });
         let repaired = false;
+        let settleRepairApproval: (() => Promise<void>) | undefined;
         boundary.rpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
             if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
                 if (scenario === 'projectionOffline') throw createRpcCallError({ error: 'machine_unavailable', errorCode: RPC_ERROR_CODES.FORBIDDEN,
@@ -130,9 +140,41 @@ describe('mounted provisioner repair', () => {
             }
             if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true,
                 inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
-            if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) { repaired = true; return { ok: true, result: { repaired: true } }; }
             return { ok: false, code: 'unsupported' };
         });
+        // The Home/daemon HTTP response and Artifact persistence are system boundaries.
+        // The real raw-Action transport, continuation and mounted presentation stay composed.
+        harness.answer(serverId, '/v1/actions/action.invoke', { select: async value => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            if (!needsApproval) {
+                repaired = true;
+                return { body: { v: 1, actionId: 'action.invoke', requestId: envelope.requestId,
+                    execution: { ok: true, result: { repaired: true } } } };
+            }
+            const executed = StoredApprovalRequestSchema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+                createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId: 'action.invoke', actionArgs: envelope.input,
+                summary: 'Repair native compute', decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 2, ok: true, result: { repaired: true } },
+                executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+                    serverId, serverIdentityId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner', machineId: 'controller',
+                    target: envelope.target, actionId: 'action.invoke', requestId: envelope.requestId } });
+            const open = StoredApprovalRequestSchema.parse({ ...executed, status: 'open', decision: undefined, execution: undefined });
+            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+            const account = await captureLazyActionAccountContext(serverId);
+            let artifactId: string;
+            try { artifactId = await account.createArtifact(buildApprovalRequestArtifactHeaderV1(open), JSON.stringify(open)); }
+            finally { account.dispose(); }
+            settleRepairApproval = async () => {
+                repaired = true;
+                const account = await captureLazyActionAccountContext(serverId);
+                try { await account.updateArtifact(artifactId, buildApprovalRequestArtifactHeaderV1(executed), JSON.stringify(executed)); }
+                finally { account.dispose(); }
+                const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+                publishHomeAccountChange(serverId, [artifactId], { changeKinds: ['artifact'] });
+            };
+            return { body: { v: 1, actionId: 'action.invoke', requestId: envelope.requestId,
+                execution: { ok: true, result: { kind: 'approval_request_created', actionId: 'action.invoke', artifactId } } } };
+        } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true, result: {
@@ -141,14 +183,17 @@ describe('mounted provisioner repair', () => {
         } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired ? { available: true } : isCrabbox ? crabboxCheck : {
+            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
                 available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
                   ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
             } } } };
         } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result: createMachineProvisionerOptionsFixture() } } };
+            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true,
+                result: optionsPrerequisite ? createMachineProvisionerOptionsFixture({
+                    base: { launch: {}, available: repaired, prerequisites: repaired ? [] : [{ requirement: { kind: 'systemTool', id: 'native-vm' },
+                        status: 'unavailable', repairAction: { action, input: repairInput } }] } }) : createMachineProvisionerOptionsFixture() } } };
         } });
         const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
@@ -156,6 +201,7 @@ describe('mounted provisioner repair', () => {
         const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId}
             scope={{ controller: { machineId: 'controller', installationId: 'installation' }, machine, hasCandidates: true, machineList: 'settled', chip: null }} />
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
+                {...(optionsPrerequisite ? { initialEnrollmentIdentity: { kind: 'existingUser', role: 'adopted' } as const } : {})}
                 initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
         // Both public entry points receive the page's selected controller; automatic selection is a separate contract.
         const card = surface === 'picker' ? `managed-picker.provisioners.${provisioner.descriptor.billing.location}.${buildQualifiedPluginContributionKey(contribution)}.action`
@@ -190,6 +236,7 @@ describe('mounted provisioner repair', () => {
             ? { accessibilityLabel: 'error', accessibilityHint: projectionFailure }
             : { accessibilityLabel: 'ready', accessibilityHint: undefined });
         const checksBeforeRepair = harness.requestsFor('/v1/actions/machines.provisioners.check').length;
+        if (optionsPrerequisite) expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
         await act(async () => { void screen.pressByTestId(repairControl); });
         if (projectionFailure) {
             const failureId = `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.repairFailure`;
@@ -219,22 +266,42 @@ describe('mounted provisioner repair', () => {
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(screen.findByTestId('app-shell-confirmation-confirm') !== null || boundary.navigate.mock.calls.length > 0
+                || settleRepairApproval !== undefined
+                || screen.tree.findAll(node => node.props.testID?.endsWith?.('.repairFailure')).length > 0
                 || screen.findByTestId('managed-picker.unavailable') !== null || screen.findByTestId('managed-config.error') !== null).toBe(true);
         });
         expect(screen.findByTestId('managed-picker.unavailable')?.props.diagnosticCode).toBeUndefined();
         expect({ confirmReady: screen.findByTestId('app-shell-confirmation-confirm') !== null, navigation: boundary.navigate.mock.calls,
-            error: screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable').map(node => node.props.diagnosticCode) })
+            error: screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable' || node.props.testID?.endsWith?.('.repairFailure')).map(node => node.props.diagnosticCode) })
             .toEqual({ confirmReady: true, navigation: [], error: [] });
         expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
         await act(async () => { void screen.pressByTestId('app-shell-confirmation-confirm'); });
+        if (needsApproval) {
+            await waitForHomeGovernance(() => expect(settleRepairApproval).toBeTypeOf('function'));
+            const approvalId = surface === 'picker' ? 'managed-picker.approval' : 'managed-config.approval';
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId(approvalId) !== null
+                    || harness.requestsFor('/v1/actions/machines.provisioners.check').length > checksBeforeRepair
+                    || screen.tree.findAll(node => node.props.testID?.endsWith?.('.repairFailure')).length > 0).toBe(true);
+            });
+            expect({ approvalPresented: screen.findByTestId(approvalId) !== null,
+                failures: screen.tree.findAll(node => node.props.testID?.endsWith?.('.repairFailure') && node.props.diagnosticCode)
+                    .map(node => node.props.diagnosticCode),
+                checks: harness.requestsFor('/v1/actions/machines.provisioners.check').length - checksBeforeRepair,
+            }).toEqual({ approvalPresented: true, failures: [], checks: 0 });
+            expect(repaired).toBe(false);
+            expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(checksBeforeRepair);
+            await act(async () => { await settleRepairApproval!(); });
+        }
         await waitForHomeGovernance(() => expect(repaired || screen.findByTestId('managed-picker.unavailable') !== null
             || screen.findByTestId('managed-config.error') !== null).toBe(true));
         expect(screen.findByTestId('managed-picker.unavailable')?.props.diagnosticCode
             ?? screen.findByTestId('managed-config.error')?.props.diagnosticCode).toBeUndefined();
         expect(repaired).toBe(true);
-        const invocation = boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)?.[0];
-        expect(invocation).toMatchObject({ machineId: 'controller', serverId: resolveServerProfileScopeIdForIdentifier(serverId), payload: { qualifiedActionId: buildQualifiedPluginContributionKey(action),
-            expectedContributorOccurrenceId: 'repair-occurrence', executionSurface: 'ui', input: repairInput, presentUserIntent: 'confirmed' } });
+        const invocation = harness.requestsFor('/v1/actions/action.invoke')[0];
+        expect(invocation?.input).toMatchObject({ target: { kind: 'machine', machineId: 'controller' }, input: { action, input: repairInput } });
+        expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
         await waitForHomeGovernance(() => {
             expect(harness.requestsFor('/v1/actions/machines.provisioners.check').length).toBeGreaterThan(checksBeforeRepair);
             if (surface === 'picker') expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)
@@ -243,6 +310,7 @@ describe('mounted provisioner repair', () => {
                 expect(screen.findByTestId('managed-config')).not.toBeNull();
                 expect(screen.findByTestId(card)).toBeNull();
                 expect(screen.findByTestId('managed-config.error')).toBeNull();
+                if (optionsPrerequisite) expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false);
             }
         });
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);

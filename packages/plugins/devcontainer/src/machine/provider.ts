@@ -24,21 +24,43 @@ function output(result: PluginProcessResult) {
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
 function json(result: PluginProcessResult): unknown { return JSON.parse(output(result)); }
-function flags(launch: DevcontainerLaunch) { return ['--workspace-folder', launch.workspaceFolder, '--config', launch.configPath]; }
+function flags(launch: DevcontainerLaunch) {
+  if (!launch.workspaceFolder || !launch.configPath) fail('invalid_request');
+  return ['--workspace-folder', launch.workspaceFolder, '--config', launch.configPath,
+    ...(launch.runtime === 'podman' ? ['--docker-path', 'podman'] : [])];
+}
+function imageSource(launch: DevcontainerLaunch) { return launch.configuration?.kind === 'image' ? launch.configuration : undefined; }
+function readyPath(managedMachineId: string) { return `/tmp/.${devcontainerComposeProjectName(managedMachineId)}-ready`; }
+function nativeLabels(launch: DevcontainerLaunch, managedMachineId: string) {
+  return imageSource(launch) ? { 'happier.managed-machine': managedMachineId, 'happier.image-review': launch.reviewedEffectDigest }
+    : { 'devcontainer.local_folder': launch.workspaceFolder!, 'devcontainer.config_file': launch.configPath!, 'happier.managed-machine': managedMachineId };
+}
 function managedFlags(launch: DevcontainerLaunch, managedMachineId: string) {
   return [...flags(launch), '--id-label', `devcontainer.local_folder=${launch.workspaceFolder}`,
     '--id-label', `devcontainer.config_file=${launch.configPath}`, '--id-label', `happier.managed-machine=${managedMachineId}`];
 }
 function quote(value: string) { return `'${value.replace(/'/gu, `'"'"'`)}'`; }
+function mountArgument(fields: readonly string[]) {
+  return fields.map(value => /[,"\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(',');
+}
+function commandFailure(result: PluginProcessResult, command: string): MachineProvisionerNativeCauseV1 {
+  const observed = result.termination.observed;
+  const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
+  return { localCause: 'native_command_failed', command,
+    exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
+    ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+    ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}) };
+}
 
 /** Docker effects exist only behind this provisioner's admitted native roles.
  * Enrollment, credentials, revision and Session custody remain host-owned. */
 export function createDevcontainerProvider(input: Readonly<{
-  exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef; devcontainer: ManagedExecutableRef;
+  exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef; devcontainer?: ManagedExecutableRef;
   signal: AbortSignal; observedAt: number; environment?: Readonly<Record<string, string>>;
 }>) {
   const environment = input.environment ?? readDevcontainerNativeEnvironment();
   const nativeInput = { ...input, environment };
+  const cli = () => input.devcontainer ?? fail('provider_unavailable');
   const run = (executable: ManagedExecutableRef, args: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string, workspaceFolder?: string) =>
     input.exec.run({ executable, args, ...(stdin === undefined ? {} : { stdin }), ...(workspaceFolder ? { cwd: workspaceFolder } : {}),
       env: { ...environment, ...(managedMachineId ? { COMPOSE_PROJECT_NAME: devcontainerComposeProjectName(managedMachineId) } : {}) } },
@@ -82,17 +104,19 @@ export function createDevcontainerProvider(input: Readonly<{
   }
   function assertLabels(native: Record<string, unknown>, launch: DevcontainerLaunch, managedMachineId: string) {
     const labels = record(record(native.Config).Labels);
-    if (labels['devcontainer.local_folder'] !== launch.workspaceFolder || labels['devcontainer.config_file'] !== launch.configPath
-      || labels['happier.managed-machine'] !== managedMachineId) fail('resource_mismatch');
+    if (Object.entries(nativeLabels(launch, managedMachineId)).some(([key, value]) => labels[key] !== value)) fail('resource_mismatch');
   }
+  const childExec = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string) =>
+    imageSource(launch)
+      ? run(input.docker, ['exec', ...(stdin === undefined ? [] : ['--interactive']), '--workdir', '/workspace', containerId, ...argv], stdin, live, managedMachineId, launch.workspaceFolder)
+      : run(cli(), ['exec', ...flags(launch), '--container-id', containerId, ...argv], stdin, live, managedMachineId, launch.workspaceFolder);
   async function namespace(launch: DevcontainerLaunch, containerId: string, managedMachineId: string) {
     // Even id/pwd applies the configured userEnvProbe and can evaluate shell
     // startup. Keep that IO behind the same reviewed-effects owner as launch.
-    await assertDevcontainerEffectReview(nativeInput, launch, launch.reviewedEffectDigest);
+    if (!imageSource(launch)) await assertDevcontainerEffectReview(nativeInput, launch, launch.reviewedEffectDigest);
     // This is private bootstrap IO; regular child commands use the enrolled
     // Machine transport.
-    const observed = output(await run(input.devcontainer, ['exec', ...flags(launch), '--container-id', containerId,
-      'sh', '-c', 'id -un; pwd -P'], undefined, false, managedMachineId, launch.workspaceFolder));
+    const observed = output(await childExec(launch, containerId, ['sh', '-c', 'id -un; pwd -P'], undefined, false, managedMachineId));
     const boundary = observed.indexOf('\n');
     if (boundary <= 0 || !observed.endsWith('\n')) fail('child_namespace_unavailable');
     // POSIX paths may contain CR/LF. Only id's first LF and pwd's final LF
@@ -124,6 +148,10 @@ export function createDevcontainerProvider(input: Readonly<{
     const native = await inspectContainer(containerId, launch, managedMachineId);
     if (!native || record(native.State).Running !== true || record(native.State).Paused !== false) fail('native_realization_unknown');
     assertLabels(native, launch, managedMachineId);
+    // Running alone does not mean an image's preparation/setup completed: a
+    // detached run can succeed before IO is interrupted, or failed setup cleanup
+    // can be unavailable. Only this creation path produces the guest witness.
+    if (imageSource(launch) && !completed(await childExec(launch, containerId, ['sh', '-c', 'test -f "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId))) fail('native_realization_unknown');
     const observed = await namespace(launch, containerId, managedMachineId);
     const resource = DevcontainerResourceSchema.parse({ ...launch, managedMachineId, containerId, ...observed, ...storage(native, observed.workspaceRoot) });
     return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource,
@@ -133,31 +161,64 @@ export function createDevcontainerProvider(input: Readonly<{
   }
   async function inventory(launch: DevcontainerLaunch, managedMachineId: string) {
     return output(await run(input.docker, ['ps', '--all', '--no-trunc',
-      '--filter', `label=devcontainer.local_folder=${launch.workspaceFolder}`,
-      '--filter', `label=devcontainer.config_file=${launch.configPath}`,
-      '--filter', `label=happier.managed-machine=${managedMachineId}`, '--format', '{{.ID}}'], undefined, false, managedMachineId, launch.workspaceFolder))
+      ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--filter', `label=${key}=${value}`]),
+      '--format', '{{.ID}}'], undefined, false, managedMachineId, launch.workspaceFolder))
       .trim().split(/\r?\n/u).filter(Boolean);
   }
-  async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath) {
+  async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId) {
     let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
     try {
       // Only admitted acquire/rebuild roles reach evaluation of host and child
       // hooks. Discovery and retained-resource inspection never evaluate them.
       let result: PluginProcessResult;
-      try { result = await run(input.devcontainer, ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder); }
-      catch { nativeCause = { localCause: 'native_command_failed', command: 'up', exitCode: null };
+      const source = imageSource(launch);
+      const command = source ? 'run' : 'up';
+      try { result = source
+        ? await run(input.docker, ['run', '--detach',
+          ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
+          '--mount', mountArgument([launch.workspaceFolder ? 'type=bind' : 'type=volume',
+            `source=${launch.workspaceFolder ?? `${devcontainerComposeProjectName(managedMachineId)}-workspace`}`, 'target=/workspace']),
+          '--workdir', '/workspace', '--entrypoint', 'sh', '--', source.image,
+          '-c', "trap 'exit 0' TERM INT; while :; do sleep 2147483647 & wait $!; done"], undefined, false, managedMachineId, launch.workspaceFolder)
+        : await run(cli(), ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder); }
+      catch { nativeCause = { localCause: 'native_command_failed', command, exitCode: null };
         fail('native_realization_unknown'); }
       if (!completed(result)) {
-        const observed = result.termination.observed;
-        const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
-        nativeCause = { localCause: 'native_command_failed', command: 'up',
-          exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
-          ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-          ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-        } satisfies MachineProvisionerNativeCauseV1;
+        nativeCause = commandFailure(result, command);
         fail('native_realization_unknown');
       }
       if (result.stdoutTruncated) fail('native_observation_unavailable');
+      if (source) {
+        const id = output(result).trim();
+        if (!/^[a-f0-9]{64}$/u.test(id)) fail('native_realization_unknown');
+        recoveryReference = id;
+        const prepare = async () => {
+          if (!launch.workspaceFolder) {
+            // Docker creates an absent image workspace as root. Give only the
+            // volume root to the image's actual user; never chown host binds or
+            // recursively rewrite retained project contents.
+            const identity = output(await childExec(launch, id, ['sh', '-c', 'id -u; id -g'], undefined, false, managedMachineId)).trim().split(/\r?\n/u);
+            if (identity.length !== 2 || identity.some(value => !/^\d+$/u.test(value))) fail('child_namespace_unavailable');
+            const ownership = await run(input.docker, ['exec', '--user', '0', id, 'chown', `${identity[0]}:${identity[1]}`, '/workspace']);
+            if (!completed(ownership)) { nativeCause = commandFailure(ownership, 'exec'); fail('native_setup_failed'); }
+          }
+          if (source.setupScript) {
+            const setup = await childExec(launch, id, ['sh', '-c', source.setupScript], undefined, false, managedMachineId);
+            if (!completed(setup)) { nativeCause = commandFailure(setup, 'exec'); fail('native_setup_failed'); }
+          }
+          const ready = await childExec(launch, id, ['sh', '-c', ': > "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId);
+          if (!completed(ready)) { nativeCause = commandFailure(ready, 'exec'); fail('native_setup_failed'); }
+        };
+        try { await prepare(); }
+        catch {
+          // A failed/uncertain setup must never later reconcile into an enrolled
+          // child. Retain the volume and the exact recovery reference even when
+          // container cleanup itself is unavailable.
+          try { await run(input.docker, ['rm', '--force', id]); } catch { /* Recovery retains the exact container id. */ }
+          fail('native_setup_failed');
+        }
+        return await observe(launch, id, managedMachineId);
+      }
       const up = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout)));
       if (typeof up.containerId === 'string' && /^[a-f0-9]{64}$/u.test(up.containerId)) recoveryReference = up.containerId;
       if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
@@ -169,8 +230,9 @@ export function createDevcontainerProvider(input: Readonly<{
   return {
     async check() {
       try {
-        const version = output(await run(input.devcontainer, ['--version'])).trim();
         output(await run(input.docker, ['version', '--format', '{{.Server.Version}}']));
+        if (!input.devcontainer) return { available: true };
+        const version = output(await run(input.devcontainer, ['--version'])).trim();
         return /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(version) ? { available: true } : { available: false, code: 'devcontainer_version_unavailable' };
       } catch (error) { return { available: false, code: code(error) }; }
     },
@@ -184,6 +246,7 @@ export function createDevcontainerProvider(input: Readonly<{
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
       const result = await realize(launch, managedMachineId);
+      if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') return result;
       return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
           ...(/^[a-f0-9]{64}$/u.test(result.recovery.reference) ? { nativeResourceId: result.recovery.reference } : {}) },
@@ -211,8 +274,9 @@ export function createDevcontainerProvider(input: Readonly<{
         const matching = await inventory(resource, resource.managedMachineId);
         if (matching.length !== 1 || matching[0] !== resource.containerId) fail('resource_mismatch');
         await assertDevcontainerEffectReview(nativeInput, resource, reviewedEffectDigest);
-        const replacementLaunch = DevcontainerLaunchSchema.parse({ workspaceFolder: resource.workspaceFolder,
-          configPath: resource.configPath, ...(resource.configuration ? { configuration: resource.configuration } : {}), reviewedEffectDigest });
+        const replacementLaunch = DevcontainerLaunchSchema.parse({ ...(resource.workspaceFolder ? { workspaceFolder: resource.workspaceFolder } : {}),
+          ...(resource.configPath ? { configPath: resource.configPath } : {}), ...(resource.runtime ? { runtime: resource.runtime } : {}),
+          ...(resource.configuration ? { configuration: resource.configuration } : {}), reviewedEffectDigest });
         issued = true;
         // The CLI's remove-existing flag selects by labels (or Compose
         // project/service), so deletion uses the retained exact Docker id.
@@ -246,9 +310,10 @@ export function createDevcontainerProvider(input: Readonly<{
         issued = true;
         const result = intent === 'stop'
           ? await run(input.docker, ['stop', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder)
-          : await run(input.devcontainer, ['up', ...managedFlags(resource, resource.managedMachineId), '--expect-existing-container'], undefined, false, resource.managedMachineId, resource.workspaceFolder);
+          : imageSource(resource) ? await run(input.docker, ['start', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder)
+            : await run(cli(), ['up', ...managedFlags(resource, resource.managedMachineId), '--expect-existing-container'], undefined, false, resource.managedMachineId, resource.workspaceFolder);
         if (!completed(result)) return { kind: 'unknown' as const, code: 'native_power_unknown' };
-        if (intent === 'start') {
+        if (intent === 'start' && !imageSource(resource)) {
           const started = record(json(result));
           if (started.outcome !== 'success' || started.containerId !== resource.containerId) fail('resource_mismatch');
         }
@@ -270,13 +335,13 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async exec(raw: DevcontainerResource, argv: readonly string[], stdin?: Uint8Array) {
       const { resource } = await exact(raw, true);
-      return run(input.devcontainer, ['exec', ...flags(resource), '--container-id', resource.containerId, ...argv], stdin, true, resource.managedMachineId, resource.workspaceFolder);
+      return childExec(resource, resource.containerId, argv, stdin, true, resource.managedMachineId);
     },
     async putFile(raw: DevcontainerResource, guestPath: string, bytes: Uint8Array, mode = 0o600) {
       if (!guestPath.startsWith('/') || guestPath.includes('\u0000') || !Number.isInteger(mode) || mode < 0) return { kind: 'refused' as const, code: 'invalid_request' };
       const { resource } = await exact(raw, true);
       const command = `umask 077; cat > ${quote(guestPath)} && chmod ${mode.toString(8)} ${quote(guestPath)}`;
-      const written = await run(input.devcontainer, ['exec', ...flags(resource), '--container-id', resource.containerId, 'sh', '-c', command], bytes, false, resource.managedMachineId, resource.workspaceFolder);
+      const written = await childExec(resource, resource.containerId, ['sh', '-c', command], bytes, false, resource.managedMachineId);
       return { kind: completed(written) ? 'confirmed' as const : 'unknown' as const };
     },
   };

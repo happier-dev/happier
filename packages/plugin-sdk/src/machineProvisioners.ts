@@ -69,6 +69,7 @@ export type DevcontainerEffectReviewV1 = Readonly<{
 export type MachineProvisionerOptionsResultV1 = Readonly<{
   code?: 'provider_unavailable'; nativeCause?: MachineProvisionerNativeCauseV1;
   base?: Readonly<{ launch: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerConditionalPriceV1[];
+    prerequisites?: MachineProvisionerCheckResultV1['prerequisites'];
     unavailableReason?: MachineProvisionerDimensionOptionV1['unavailableReason'];
     guestPlatform?: MachineProvisionerDimensionOptionV1['guestPlatform'];
     enrollmentRole?: MachineProvisionerContributionV1['enrollmentRole'];

@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDevcontainerProvider } from './provider.js';
 import { readDevcontainerEffectReview } from './effectReview.js';
-import { DevcontainerReviewQuerySchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
-import { DEVCONTAINER_PLUGIN } from '../manifest.js';
+import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
+import { DEVCONTAINER_PLUGIN, DEVCONTAINER_RECONCILIATION_SCHEMAS } from '../manifest.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const containerId = 'a'.repeat(64);
 let launch: DevcontainerLaunch;
@@ -70,14 +71,58 @@ function native(overrides: Readonly<{ up?: PluginProcessResult; running?: boolea
     signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
   return { requests, tools, provider: createDevcontainerProvider(tools) };
 }
+function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { setup?: PluginProcessResult; hostPath?: string; cleanupFailure?: boolean; runResult?: PluginProcessResult } = {}) {
+  const requests: Parameters<ExecService['run']>[0][] = [];
+  let running = true;
+  let currentId = containerId;
+  let labels: Record<string, string> = {};
+  let removed = false;
+  let setupFailed = false;
+  let ready = false;
+  const volume = 'happier6d616e616765642d61-workspace';
+  const exec: Pick<ExecService, 'run'> = { run: async request => {
+    requests.push(request);
+    expect(request.executable).toMatchObject({ id: { localId: runtime } });
+    const args = request.args ?? [];
+    if (args[0] === 'image') return result([{ Id: 'sha256:image', Config: { User: 'coder', Env: ['TOKEN=private-image-env'] } }]);
+    if (args[0] === 'run') {
+      labels = Object.fromEntries(args.flatMap((arg, index) => arg === '--label' ? [args[index + 1]!.split(/=(.*)/su).slice(0, 2)] : []));
+      if (requests.filter(entry => entry.args?.[0] === 'run').length > 1) currentId = 'b'.repeat(64);
+      removed = false;
+      ready = false;
+      return options.runResult ?? result(`${currentId}\n`);
+    }
+    if (args[0] === 'inspect') return removed ? result('', 1) : result([{ Id: currentId, Config: { Labels: labels }, State: { Running: running, Paused: false },
+      Mounts: [options.hostPath ? { Type: 'bind', Source: options.hostPath, Destination: '/workspace' }
+        : { Type: 'volume', Name: volume, Destination: '/workspace' }] }]);
+    if (args[0] === 'exec') {
+      // Minimal images provide these operations through the required shell,
+      // without promising standalone test/touch executables.
+      if (args.includes('test') || args.includes('touch')) return result('', 127);
+      if (args.at(-3) === 'test -f "$1"' && args.at(-1)?.endsWith('-ready')) return result('', ready ? 0 : 1);
+      if (args.at(-3) === ': > "$1"' && args.at(-1)?.endsWith('-ready')) ready = true;
+      if (args.at(-1) === 'touch /workspace/prepared' && options.setup) { setupFailed = true; return options.setup; }
+      return result(args.at(-1) === 'id -un; pwd -P' ? 'coder\n/workspace\n'
+        : args.at(-1) === 'id -u; id -g' ? '1000\n1000\n' : 'guest-command-complete\n');
+    }
+    if (args[0] === 'stop') running = false;
+    if (args[0] === 'start') running = true;
+    if (args[0] === 'ps') return result(removed ? '' : `${currentId}\n`);
+    if (args[0] === 'rm') { if (options.cleanupFailure && setupFailed) return result('', 1); removed = true; return result(''); }
+    if (args[0] === 'stop' || args[0] === 'start') return result('');
+    throw new Error(`Unexpected image command ${args[0]}`);
+  } };
+  const tools = { exec, docker: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: runtime } },
+    signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
+  return { requests, tools, volume, provider: createDevcontainerProvider(tools) };
+}
 
 describe('Devcontainer native roles', () => {
   it.each([
-    { kind: 'image', image: 'example:latest' },
     { kind: 'inline', config: '{ // Saved JSONC configuration\n "image": "example:latest", "mounts": ["type=bind,source=/host/data,target=/data"], }' },
   ])('materializes a preset $kind configuration and creates a separate container per Machine', async configuration => {
     const query = DevcontainerReviewQuerySchema.parse({ workspaceFolder: configurationRoot, configPath: '',
-      configuration: { ...configuration, ...(configuration.kind === 'image' ? { config: '' } : { image: '' }) } });
+      configuration: { ...configuration, image: '' } });
     const h = native({ rowScoped: true });
     const reviewed = await readDevcontainerEffectReview(h.tools, query);
     launch = reviewed.launch;
@@ -89,7 +134,7 @@ describe('Devcontainer native roles', () => {
     if (configuration.kind === 'inline') expect(reviewed.effectReview.effects).toContainEqual(expect.objectContaining({ kind: 'mount',
       details: expect.arrayContaining(['type=bind,source=/host/data,target=/data']) }));
     const other = await readDevcontainerEffectReview(h.tools, { workspaceFolder: configurationRoot,
-      configuration: { kind: 'image', image: 'example:other' } });
+      configuration: { kind: 'inline', config: '{"image":"example:other"}' } });
     expect(other.launch.configPath).not.toBe(launch.configPath);
     expect(JSON.parse(await readFile(launch.configPath, 'utf8'))).toMatchObject({ image: 'example:latest' });
     await rm(launch.configPath);
@@ -98,11 +143,101 @@ describe('Devcontainer native roles', () => {
     expect(await native().provider.rebuild({ ...resource, ...launch }, launch.reviewedEffectDigest)).toMatchObject({ kind: 'bound',
       resource: { value: { configuration, containerId: 'b'.repeat(64) } } });
   });
+  it.each(['docker', 'podman'] as const)('creates an image with retained volume through %s and enrolls guest commands without the Dev Containers CLI', async runtime => {
+    const { requests, tools, volume } = imageNative(runtime);
+    const dependencies: string[] = [];
+    const services = { exec: tools.exec, managedServices: { dependencies: { status: async (id: string) => {
+      dependencies.push(id);
+      return { state: 'ready', executable: { kind: 'managedDependency', id: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: id } } };
+    } } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { runtime, configuration: {
+        kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } }, { surface: 'plugin' }));
+      if (!options.base?.available) throw new Error('Expected selected runtime availability');
+      const selectedLaunch = DevcontainerLaunchSchema.parse(options.base.launch);
+      const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a' }, { surface: 'plugin' }));
+      if (acquired.kind !== 'bound') throw new Error('Expected actual retained image');
+      const retained = acquired.resource.value;
+      expect(retained).toMatchObject({ containerId, runtime, storage: { kind: 'child', childPath: '/workspace' }, volumes: [{ name: volume, childPath: '/workspace' }] });
+      expect(await kit.invokeAction('bootstrap', { resource: retained }, { surface: 'plugin' })).toMatchObject({ kind: 'native' });
+      const executed = await kit.invokeAction('exec', { resource: retained, argv: ['printf', 'guest-command-complete'] }, { surface: 'plugin' });
+      expect(executed).toMatchObject({ stdoutBase64: Buffer.from('guest-command-complete\n').toString('base64') });
+      expect(await kit.invokeAction('power', { resource: retained, intent: 'stop' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
+      expect(await kit.invokeAction('power', { resource: retained, intent: 'start' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
+      expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(1);
+      const rebuilt = await kit.invokeAction('rebuild', { resource: retained, reviewedEffectDigest: selectedLaunch.reviewedEffectDigest }, { surface: 'plugin' });
+      expect(rebuilt).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64), volumes: retained.volumes } } });
+      expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(2);
+      expect(requests.filter(request => request.args?.[0] === 'run').map(request => request.args)).toEqual([
+        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`]),
+        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`]),
+      ]);
+      expect(requests.some(request => request.args?.some(arg => arg.startsWith('type=bind')))).toBe(false);
+      expect(requests.filter(request => request.args?.includes('chown')).map(request => request.args)).toEqual([
+        ['exec', '--user', '0', containerId, 'chown', '1000:1000', '/workspace'],
+        ['exec', '--user', '0', 'b'.repeat(64), 'chown', '1000:1000', '/workspace'],
+      ]);
+      expect(JSON.stringify(options)).not.toContain('private-image-env');
+      expect(new Set(dependencies)).toEqual(new Set([runtime]));
+    } finally { await kit.dispose(); }
+  });
+  it('uses an explicitly selected host bind without rewriting its ownership or requiring a setup script', async () => {
+    const hostPath = await mkdtemp(join(configurationRoot, 'host,workspace-'));
+    const h = imageNative('docker', { hostPath });
+    const reviewed = await readDevcontainerEffectReview(h.tools, { workspaceFolder: hostPath, configuration: { kind: 'image', image: 'example:latest' } });
+    expect(await h.provider.acquire(reviewed.launch, 'managed-a')).toMatchObject({ kind: 'bound', resource: { value: {
+      storage: { kind: 'bind', hostPath, childPath: '/workspace' }, volumes: [],
+    } } });
+    expect(h.requests.find(request => request.args?.[0] === 'run')?.args).toContain(`type=bind,"source=${hostPath}",target=/workspace`);
+    expect(h.requests.some(request => request.args?.includes('chown'))).toBe(false);
+  });
+  it.each([false, true])('never offers a reconcileable installation after failed image setup, cleanup failure %s', async cleanupFailure => {
+    const h = imageNative('docker', { setup: { ...result('', 2), stderr: new TextEncoder().encode('setup failed token=private-setup-token') }, cleanupFailure });
+    const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } });
+    const acquired = await h.provider.acquire(reviewed.launch, 'managed-a');
+    expect(acquired).toMatchObject({ kind: 'unknown', recovery: { reference: containerId, reason: 'native_setup_failed' },
+      nativeCause: { command: 'exec', exitCode: 2 } });
+    expect(acquired).not.toHaveProperty('nativeOperationRef');
+    expect(h.requests.find(request => request.args?.[0] === 'rm')?.args).toEqual(['rm', '--force', containerId]);
+    expect(h.requests.some(request => request.args?.at(-1) === 'id -un; pwd -P')).toBe(false);
+    expect(JSON.stringify(acquired)).not.toContain('private-setup-token');
+  });
+  it('never reconciles a failed image rebuild into enrollment when exact container cleanup is unavailable', async () => {
+    const behavior: { setup?: PluginProcessResult; cleanupFailure: boolean } = { cleanupFailure: true };
+    const h = imageNative('docker', behavior);
+    const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } });
+    const acquired = await h.provider.acquire(reviewed.launch, 'managed-a');
+    if (acquired.kind !== 'bound') throw new Error('Expected initial prepared image');
+    behavior.setup = result('', 2);
+    expect(await h.provider.rebuild(acquired.resource.value, reviewed.launch.reviewedEffectDigest)).toMatchObject({ kind: 'unknown', recovery: { reason: 'native_setup_failed' } });
+    expect(await h.provider.reconcile(acquired.resource.value)).toMatchObject({ kind: 'unknown' });
+  });
+  it('retains an interrupted image creation for observation without enrolling an unprepared child or replaying setup', async () => {
+    const h = imageNative('docker', { runResult: { ...result(`${containerId}\n`), stdoutTruncated: true } });
+    const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } });
+    const acquired = await h.provider.acquire(reviewed.launch, 'managed-a');
+    expect(acquired).toMatchObject({ kind: 'pending' });
+    if (acquired.kind !== 'pending') throw new Error('Expected interrupted allocation handle');
+    expect(await h.provider.reconcile(acquired.nativeOperationRef.value)).toMatchObject({ kind: 'pending' });
+    expect(h.requests.filter(request => request.args?.[0] === 'run')).toHaveLength(1);
+    expect(h.requests.some(request => request.args?.at(-1) === 'touch /workspace/prepared')).toBe(false);
+  });
   it('retains projected native up failure beside the exact pending acquisition handle', async () => {
     const h = native({ up: { ...result('', 1), stderr: new TextEncoder().encode('boot failed token=private-acquisition-token') } });
     const acquired = await h.provider.acquire(launch, 'managed-a');
     expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: 1 } });
     expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+  });
+  it('uses the selected Podman runtime in advanced CLI review, launch and bootstrap commands', async () => {
+    const h = native();
+    const tools = { ...h.tools, docker: { ...h.tools.docker, id: { ...h.tools.docker.id, localId: 'podman' } } };
+    const reviewed = await readDevcontainerEffectReview(tools, { runtime: 'podman', workspaceFolder: launch.workspaceFolder!, configPath: launch.configPath! });
+    const provider = createDevcontainerProvider(tools);
+    expect(await provider.acquire(reviewed.launch, 'managed-a')).toMatchObject({ kind: 'bound' });
+    const commands = h.requests.filter(request => ['read-configuration', 'up', 'exec'].includes(request.args?.[0] ?? ''));
+    expect(commands.length).toBeGreaterThan(0);
+    for (const request of commands) expect(request.args).toEqual(expect.arrayContaining(['--docker-path', 'podman']));
   });
   it('writes shared-admitted padding bits exactly through the activated file Action', async () => {
     const h = native();

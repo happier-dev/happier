@@ -38,11 +38,11 @@ async function nativeProvider(selection: CrabboxLaunchV1 | CrabboxResourceV1, co
 
 export const CRABBOX_MACHINE_PROVISIONER = {
   title: 'Crabbox', icon: 'hard-drives', resourceKind: 'crabbox-lease', schemaVersion: 1,
-  enrollmentRole: 'server',
+  enrollmentRole: 'sandbox',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema, resourceIdPath: 'leaseId',
   platforms: ['darwin', 'linux', 'win32'], browserReachable: false, prerequisites: [],
-  billing: { location: 'cloud', stoppedBilling: 'unknown' }, retention: { supportedIntents: ['delete'] },
+  billing: { location: 'local', stoppedBilling: 'unknown' }, retention: { supportedIntents: ['delete'] },
   credentialPurposeRequirements: [{ purpose: CRABBOX_CONNECTION_PURPOSE, optionalWhen: { op: 'and', all: [
     { op: 'eq', path: 'transport', value: 'direct' }, { op: 'eq', path: 'backendId', value: 'local-container' },
   ] } }],
@@ -54,6 +54,7 @@ export const CRABBOX_MACHINE_PROVISIONER = {
 export const CRABBOX_COORDINATOR_PROVISIONER = {
   ...CRABBOX_MACHINE_PROVISIONER,
   title: 'Crabbox coordinator', bootstrapCredential: { kind: 'ssh' },
+  enrollmentRole: 'server', billing: { location: 'cloud', stoppedBilling: 'unknown' },
   credentialPurposeRequirements: [],
   actions: { check: 'coordinator-check', options: 'coordinator-options', acquire: 'coordinator-acquire',
     bootstrap: 'coordinator-bootstrap', inspect: 'coordinator-inspect', destroy: 'coordinator-destroy' },

@@ -269,6 +269,8 @@ const machineProvisionerOptionsResult = lazyDefinition(() => mini.strictObject({
   nativeCause: mini.optional(MachineProvisionerNativeCauseV1Schema),
   /** Missing base means an incomplete query, never a launch inferred from display facts. */
   base: mini.optional(mini.strictObject({ launch: PluginJsonValueV2Schema, ...optionFacts(),
+    /** Complete prerequisites for this configuration; omitted values retain the discovery check. */
+    prerequisites: mini.optional(mini.array(ManagedPrerequisiteV1Schema)),
     effectReview: mini.optional(DevcontainerEffectReviewV1Schema),
   })),
   dimensions: mini.strictObject({
@@ -321,6 +323,11 @@ export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.stric
 })));
 export type MachineProvisionerCheckResultV1 = mini.infer<typeof MachineProvisionerCheckResultV1Schema>;
 export type MachineProvisionerOptionsResultV1 = mini.infer<typeof MachineProvisionerOptionsResultV1Schema>;
+/** Selected configuration facts replace discovery prerequisites, including an explicit empty snapshot. */
+export function readMachineProvisionerPrerequisitesV1(check: MachineProvisionerCheckResultV1 | undefined,
+  options: MachineProvisionerOptionsResultV1 | null | undefined): mini.infer<typeof ManagedPrerequisiteV1Schema>[] {
+  return options?.base?.prerequisites ?? check?.prerequisites ?? [];
+}
 export type MachineProvisionerDimensionOptionV1 = MachineProvisionerOptionsResultV1['dimensions']['size'][number];
 export type MachineProvisionerConditionalPriceV1 = mini.infer<typeof optionPrice>;
 export type MachineProvisionerOptionConstraintV1 = NonNullable<MachineProvisionerOptionsResultV1['constraints']>[number];

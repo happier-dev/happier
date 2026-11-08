@@ -4,7 +4,7 @@ import { ManagedEnrollmentCorrelationV1Schema, type ManagedControllerCurrentness
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
-    readMachineProvisionerSelectionForLaunchV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -82,20 +82,21 @@ async function captureIssuedConfigurationFacts(machine: ManagedMachineV1, provis
     native: ManagedReconciliationNative): Promise<ManagedConfigurationFactsV1 | undefined> {
     if (machine.reviewedFacts || !provisioner) return undefined;
     let check: ReturnType<typeof MachineProvisionerCheckResultV1Schema.parse> | undefined;
+    let options: MachineProvisionerOptionsResultV1 | undefined;
     let optionProjection: Parameters<typeof buildManagedConfigurationFactsV1>[0]['optionProjection'];
     try { check = MachineProvisionerCheckResultV1Schema.parse(await native.invoke('check', {})); }
     catch { /* Optional metadata stays unavailable; never lose an issued native identity. */ }
     if (provisioner.actions.options && native.optionsInputSchema) {
         try {
             const selectors = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(native.optionsInputSchema)).parse(machine.launch.choices);
-            const options = MachineProvisionerOptionsResultV1Schema.parse(await native.invoke('options', selectors));
+            options = MachineProvisionerOptionsResultV1Schema.parse(await native.invoke('options', selectors));
             optionProjection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
                 selection: readMachineProvisionerSelectionForLaunchV1(options, machine.launch.choices) });
         } catch { /* The receipt retains exact choices and an explicit unavailable option status. */ }
     }
     return buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
         launch: machine.launch, controller: machine.controller, provisioner, optionProjection,
-        optionStatus: optionProjection ? 'current' : 'unavailable', prerequisites: check?.prerequisites ?? [],
+        optionStatus: optionProjection ? 'current' : 'unavailable', prerequisites: readMachineProvisionerPrerequisitesV1(check, options),
         localResources: check?.localResources, billing: provisioner.billing, retentionCapabilities: provisioner.retention,
         machineOverride: { retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage },
         ...(machine.preset ? { preset: machine.preset } : {}),

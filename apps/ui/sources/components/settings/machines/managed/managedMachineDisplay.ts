@@ -7,6 +7,7 @@ export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/man
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
+import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 /**
  * The display facts the creation surfaces draw (plans 50/51): provisioner cards, the configurator's
@@ -28,6 +29,8 @@ export type ManagedProvisionerCard = Readonly<{
   /** The provisioner's mark at the size its slot draws it (a tile's, a row's). */
   mark: (size: number) => React.ReactNode;
   location: 'local' | 'cloud';
+  /** The provisioner's declared machine kind distinguishes cloud sandboxes from servers. */
+  enrollmentRole?: MachineProvisionersListResultV1['provisioners'][number]['descriptor']['enrollmentRole'];
   /** Who creates it, from the provisioner's declared acquire role: the Account, or one of your computers. */
   acquire: 'account' | 'daemon';
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;

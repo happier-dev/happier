@@ -103,12 +103,12 @@ async function publishNoAccountProvisioners(serverId: string) {
 
 describe('provisioner picker demand', () => {
   it.each([
-    { name: 'agent37', load: () => import('../../../../../../../packages/plugins/machine-agent37/src/manifest') },
-    { name: 'maritime', load: () => import('../../../../../../../packages/plugins/machine-maritime/src/manifest') },
-    { name: 'hetzner', load: () => import('../../../../../../../packages/plugins/machine-hetzner/src/manifest') },
-    { name: 'e2b', load: () => import('../../../../../../../packages/plugins/machine-e2b/src/manifest') },
-    { name: 'boat', load: () => import('../../../../../../../packages/plugins/machine-boat/src/manifest') },
-  ])('offers the same $name Account action on the selected controller in a browser', async ({ name, load }) => {
+    { name: 'agent37', group: 'cloud-sandboxes', load: () => import('../../../../../../../packages/plugins/machine-agent37/src/manifest') },
+    { name: 'maritime', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-maritime/src/manifest') },
+    { name: 'hetzner', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-hetzner/src/manifest') },
+    { name: 'e2b', group: 'cloud-sandboxes', load: () => import('../../../../../../../packages/plugins/machine-e2b/src/manifest') },
+    { name: 'boat', group: 'cloud', load: () => import('../../../../../../../packages/plugins/machine-boat/src/manifest') },
+  ])('offers the same $name Account action on the selected controller in a browser', async ({ name, group, load }) => {
     const { PLUGIN } = await load();
     const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
     const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN.manifest);
@@ -155,7 +155,7 @@ describe('provisioner picker demand', () => {
         const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
         expect(cards.find(card => card.id === key), screen.getTextContent()).toMatchObject({ action: { kind: 'choose' } });
       });
-      const row = `managed-picker.provisioners.cloud.${key}`;
+      const row = `managed-picker.provisioners.${group}.${key}`;
       await act(async () => screen.pressByTestId(screen.findByTestId(`${row}.action`) ? `${row}.action` : row));
       expect(onSelectProvisioner).toHaveBeenCalledWith({ serverId, provisioner: key, controller });
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);

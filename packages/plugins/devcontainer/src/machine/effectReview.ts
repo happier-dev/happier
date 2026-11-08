@@ -5,12 +5,12 @@ import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { DevcontainerReviewQuerySchema } from './schemas.js';
+import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema } from './schemas.js';
 import type { DevcontainerLaunch } from './schemas.js';
 import { containedDevcontainerPath as contained, materializeDevcontainerConfiguration } from './configuration.js';
 
 type NativeReviewInput = Readonly<{ exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef;
-  devcontainer: ManagedExecutableRef; signal: AbortSignal; environment?: Readonly<Record<string, string>> }>;
+  devcontainer?: ManagedExecutableRef; signal: AbortSignal; environment?: Readonly<Record<string, string>> }>;
 type Effect = DevcontainerEffectReviewV1['effects'][number];
 const reviewComposeNamespace = 'happierreview';
 const namespaceParameter = '${managedMachineNamespace}';
@@ -87,6 +87,18 @@ async function optionalSource(root: string, path: string): Promise<string | unde
     return fail('native_observation_unavailable');
   }
 }
+async function inspectImage(input: NativeReviewInput, imageRef: string, environment: Readonly<Record<string, string>>, cwd?: string) {
+  const run = (args: readonly string[]) => input.exec.run({ executable: input.docker, args, ...(cwd ? { cwd } : {}), env: environment }, { signal: input.signal });
+  let inspection = await run(['image', 'inspect', imageRef]);
+  if (inspection.termination.requestedBy.kind === 'none' && inspection.termination.observed.kind === 'exit' && inspection.termination.observed.exitCode !== 0) {
+    const pulled = await run(['pull', imageRef]);
+    if (pulled.termination.requestedBy.kind !== 'none' || pulled.termination.observed.kind !== 'exit' || pulled.termination.observed.exitCode !== 0) fail('native_observation_unavailable');
+    inspection = await run(['image', 'inspect', imageRef]);
+  }
+  const inspected = nativeJson(inspection);
+  if (!Array.isArray(inspected) || inspected.length !== 1 || typeof record(inspected[0]).Id !== 'string') fail('native_observation_unavailable');
+  return record(inspected[0]);
+}
 
 /** Native read-configuration does not launch or run lifecycle hooks. It resolves
  * Feature staging and image metadata; cache paths are not reviewed effects.
@@ -96,7 +108,26 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   const reviewEnvironment = { ...environment, COMPOSE_PROJECT_NAME: reviewComposeNamespace };
   const query = DevcontainerReviewQuerySchema.parse(rawQuery);
   const materialized = await materializeDevcontainerConfiguration(query);
+  if (materialized.configuration?.kind === 'image') {
+    const source = materialized.configuration;
+    const nativeImage = await inspectImage(input, source.image, environment, materialized.workspaceFolder);
+    const imageConfig = record(nativeImage.Config);
+    const effects: Effect[] = [
+      { scope: 'host', kind: 'image', title: 'Container image', details: [source.image, 'Passive inspection may download the full image into the runtime cache.'] },
+      { scope: 'child', kind: 'mount', title: 'Workspace', details: [materialized.workspaceFolder
+        ? `type=bind,source=${materialized.workspaceFolder},target=/workspace`
+        : 'A separate named volume at /workspace for this Machine; retained when rebuilding or deleting its container. Its root is assigned to the image user; existing file ownership is retained.'] },
+      { scope: 'child', kind: 'lifecycle', title: 'Container startup', details: ['The image entrypoint and command are replaced by an idle shell; Dev Containers metadata hooks are not evaluated.'] },
+    ];
+    if (source.setupScript) effects.push({ scope: 'child', kind: 'lifecycle', title: 'Setup script', details: [source.setupScript] });
+    if (strings(imageConfig.User).length) effects.push({ scope: 'child', kind: 'user', title: 'Image user', details: strings(imageConfig.User) });
+    const keys = strings(imageConfig.Env).map(value => value.split('=', 1)[0]!).filter(Boolean);
+    if (keys.length) effects.push({ scope: 'child', kind: 'environment', title: 'Image environment', details: keys });
+    const reviewedEffectDigest = createHash('sha256').update(canonical({ ...materialized, runtime: materialized.runtime ?? 'docker', imageId: nativeImage.Id, imageConfig })).digest('hex');
+    return { launch: DevcontainerLaunchSchema.parse({ ...materialized, reviewedEffectDigest }), effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest, effects } };
+  }
   const { workspaceFolder, configPath } = materialized;
+  if (!workspaceFolder || !configPath || !input.devcontainer) fail('invalid_request');
   const configSource = await optionalSource(workspaceFolder, configPath);
   if (configSource === undefined) fail('native_observation_unavailable');
   // Reuse the repository's Devcontainer JSONC display parser, without making
@@ -116,7 +147,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     await input.exec.run({ executable, args, cwd: workspaceFolder,
       env: reviewEnvironment }, { signal: input.signal }));
   const native = record(await run(input.devcontainer, ['read-configuration', '--workspace-folder', workspaceFolder,
-    '--config', configPath, '--id-label', `devcontainer.local_folder=${workspaceFolder}`,
+    '--config', configPath, ...(query.runtime === 'podman' ? ['--docker-path', 'podman'] : []), '--id-label', `devcontainer.local_folder=${workspaceFolder}`,
     '--id-label', `devcontainer.config_file=${configPath}`, '--id-label', 'happier.managed-machine= ',
     '--include-merged-configuration', '--include-features-configuration']));
   // CLI id-label validation requires a nonempty value. Protocol row ids trim
@@ -195,24 +226,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   async function image(imageRef: unknown, selected = false) {
     if (typeof imageRef !== 'string') return;
     add('host', 'image', 'Container image', [imageRef]);
-    let inspection = await input.exec.run({ executable: input.docker, args: ['image', 'inspect', imageRef],
-      cwd: workspaceFolder, env: reviewEnvironment }, { signal: input.signal });
-    if (inspection.termination.requestedBy.kind === 'none' && inspection.termination.observed.kind === 'exit'
-      && inspection.termination.observed.exitCode !== 0) {
-      // Native read-configuration can obtain registry metadata without a local
-      // image (utils.ts:260–289). This additional image-config inspection may
-      // download the full image into Docker's cache when it is absent locally;
-      // no container, Dockerfile instruction or lifecycle hook is evaluated.
-      const pulled = await input.exec.run({ executable: input.docker, args: ['pull', imageRef],
-        cwd: workspaceFolder, env: reviewEnvironment }, { signal: input.signal });
-      if (pulled.termination.requestedBy.kind !== 'none' || pulled.termination.observed.kind !== 'exit'
-        || pulled.termination.observed.exitCode !== 0) fail('native_observation_unavailable');
-      inspection = await input.exec.run({ executable: input.docker, args: ['image', 'inspect', imageRef],
-        cwd: workspaceFolder, env: reviewEnvironment }, { signal: input.signal });
-    }
-    const inspected = nativeJson(inspection);
-    if (!Array.isArray(inspected) || inspected.length !== 1 || typeof record(inspected[0]).Id !== 'string') fail('native_observation_unavailable');
-    const nativeImage = record(inspected[0]);
+    const nativeImage = await inspectImage(input, imageRef, reviewEnvironment, workspaceFolder);
     const imageConfig = record(nativeImage.Config);
     const imageMetadata = record(imageConfig.Labels)['devcontainer.metadata'];
     evidence.push({ image: imageRef, id: nativeImage.Id, metadata: imageMetadata ?? null });
@@ -359,13 +373,14 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   const reviewedEffectDigest = createHash('sha256').update(canonical({ workspaceFolder, configPath,
     observed: { configuration, workspace, mergedConfiguration: merged,
       featureSets: authoritativeFeatureSets, compose: compose ?? null, evidence }, sources })).digest('hex');
-  return { launch: { ...materialized, reviewedEffectDigest },
+  return { launch: DevcontainerLaunchSchema.parse({ ...materialized, reviewedEffectDigest }),
     effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest, effects } };
 }
 
-export async function assertDevcontainerEffectReview(input: NativeReviewInput, query: Pick<DevcontainerLaunch, 'workspaceFolder' | 'configPath' | 'configuration'>,
+export async function assertDevcontainerEffectReview(input: NativeReviewInput, query: Pick<DevcontainerLaunch, 'runtime' | 'workspaceFolder' | 'configPath' | 'configuration'>,
   reviewedEffectDigest: string): Promise<void> {
-  const current = await readDevcontainerEffectReview(input, { workspaceFolder: query.workspaceFolder,
-    configPath: query.configPath, ...(query.configuration ? { configuration: query.configuration } : {}) });
+  const current = await readDevcontainerEffectReview(input, { ...(query.runtime ? { runtime: query.runtime } : {}),
+    ...(query.workspaceFolder ? { workspaceFolder: query.workspaceFolder } : {}),
+    ...(query.configPath ? { configPath: query.configPath } : {}), ...(query.configuration ? { configuration: query.configuration } : {}) });
   if (current.launch.reviewedEffectDigest !== reviewedEffectDigest) fail('request_conflict');
 }

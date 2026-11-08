@@ -3548,9 +3548,22 @@ between invocations.
 
 Safe checks may return an optional prerequisite `repairAction` containing a qualified Action reference and JSON invocation input. The host validates that reference and input against the current Action catalog without activating or running the repair. The fact is descriptive, not installation authority: an explicit repair uses the ordinary Action front door and its current approval and execution policy. A missing system tool does not imply a managed installer exists.
 
-In 0.3 development source, Devcontainer options accept the existing controller
-`workspaceFolder` and `configPath`, or a saved `configuration` with `kind: image`
-and `image`, or `kind: inline` and JSON/JSONC `config`. The provider writes embedded
+In 0.3 development, an options result can also attach prerequisites to its
+selected `base` launch. When present, that complete snapshot replaces the check
+prerequisites in the existing receipt and repair flow; an empty list clears them.
+When absent, the check prerequisites remain in use.
+
+In unreleased 0.3 development source, the Docker container provisioner defaults
+to an image, with an optional setup script and optional `workspaceFolder`. Without
+a host workspace it uses a container-owned volume. The image path invokes the
+managed Docker dependency directly, with Podman as a runtime choice; the Dev
+Containers CLI is used for advanced file or inline configuration. Remote Docker
+hosts and contexts are outside this flow. Presets, Team presets, pools and retention
+remain on the existing managed Machine owners.
+
+For advanced configuration, Devcontainer options accept the controller
+`workspaceFolder` and `configPath`, or a saved `configuration` with `kind: inline`
+and JSON/JSONC `config`. The provider writes embedded
 sources into `.devcontainer/happier-<content digest>.json` in that workspace;
 relative configuration paths resolve from `.devcontainer`. Distinct sources
 keep separate files so presets sharing a workspace do not overwrite each other.

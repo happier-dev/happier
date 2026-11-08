@@ -46,6 +46,21 @@ const fresh = (name = 'Guest') => createManagedConfiguratorDraft({ provisioner, 
 const small = () => selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), options), 'size', 'small');
 
 describe('managed configurator draft owner', () => {
+    it('reviews selected configuration prerequisites and drops them when image options replace an unavailable CLI configuration', () => {
+        const docker = { requirement: { kind: 'systemTool', id: 'docker' }, status: 'available' } as const;
+        const cli = { requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'unavailable',
+            repairAction: { action: { pluginId: 'fixture.compute', localId: 'install' }, input: {} } } as const;
+        const advanced = { ...options,
+            base: { launch: {}, available: false, prerequisites: [cli] } };
+        const draft = refreshManagedConfiguratorOptions({ ...small(), check: { available: true, prerequisites: [docker] } }, advanced);
+        expect(managedConfiguratorFacts(draft)?.prerequisites).toEqual([cli]);
+        expect(managedConfiguratorAcquireInput(draft, 'home')).toBeNull();
+        const image = refreshManagedConfiguratorOptions(draft, options);
+        expect(managedConfiguratorFacts(image)?.prerequisites).toEqual([docker]);
+        expect(managedConfiguratorAcquireInput(image, 'home')).not.toBeNull();
+        const cleared = refreshManagedConfiguratorOptions(draft, { ...options, base: { launch: {}, prerequisites: [] } });
+        expect(managedConfiguratorFacts(cleared)?.prerequisites).toEqual([]);
+    });
     // Owner decision 2026-11-06: cloud memory advice warns without blocking a choice or acquire.
     it.each([
         [1024 ** 3, 'cloud', true],

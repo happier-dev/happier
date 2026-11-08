@@ -13,7 +13,7 @@ import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAcco
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { InputHints } from '@happier-dev/protocol/inputs/inputFields';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
@@ -255,7 +255,7 @@ export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projec
         provisioner: draft.provisioner.descriptor,
         ...(current ? { optionProjection: current } : {}),
         billing: capabilities.billing, retentionCapabilities: capabilities.retention,
-        prerequisites: draft.check?.prerequisites ?? [], localResources: draft.check?.localResources,
+        prerequisites: readMachineProvisionerPrerequisitesV1(draft.check, draft.options), localResources: draft.check?.localResources,
         prices: selected.prices,
         nativeFacts: selected.nativeFacts, machineOverride: draft.override, preset: draft.preset, setup: draft.setup,
         categoryPreferences: draft.categoryPreferences }); }

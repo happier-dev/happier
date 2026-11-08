@@ -252,6 +252,8 @@ describe('portable managed reconciliation', () => {
     });
 
     it.each(['authored', 'reviewed', 'options-unavailable', 'empty-options-schema'] as const)('records configuration facts once at issued acquisition (%s)', async mode => {
+        const hostPrerequisite = { requirement: { kind: 'systemTool', id: 'docker' }, status: 'available' } as const;
+        const configurationPrerequisite = { requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'available' } as const;
         const launch = { ...machine.launch, choices: { cpu: 4, image: 'ubuntu' } };
         const launchSchema = { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } },
             required: ['cpu', 'image'], additionalProperties: false } satisfies PluginJsonSchemaV2;
@@ -274,10 +276,10 @@ describe('portable managed reconciliation', () => {
                 return { ...native, optionsInputSchema: mode === 'empty-options-schema' ? { type: 'object' as const, properties: {}, additionalProperties: false } : launchSchema, invoke: async (role, body, io) => {
                     if (role === 'check' || role === 'options') {
                         run.roles.push(role);
-                        if (role === 'check') return { available: true, prerequisites: [] };
+                        if (role === 'check') return { available: true, prerequisites: [hostPrerequisite] };
                         if (mode === 'options-unavailable') throw new Error('private provider error');
                         expect(body).toEqual(mode === 'empty-options-schema' ? {} : launch.choices);
-                        return { base: { launch: launch.choices, nativeFacts: { image: { id: 'ubuntu', title: 'Ubuntu Linux' } } },
+                        return { base: { launch: launch.choices, prerequisites: [configurationPrerequisite], nativeFacts: { image: { id: 'ubuntu', title: 'Ubuntu Linux' } } },
                             dimensions: { size: [{ id: 'four', title: 'Four cores', assignments: [],
                                 nativeFacts: { size: { id: 'four', title: 'Four cores', cpuCores: 4 } } }], image: [], location: [], network: [], duration: [] } };
                     }
@@ -291,6 +293,7 @@ describe('portable managed reconciliation', () => {
             expect(run.roles).not.toContain('options');
         } else {
             expect(facts).toMatchObject({ launch, provisioner: descriptor, optionStatus: mode === 'options-unavailable' ? 'unavailable' : 'current' });
+            expect(facts).toMatchObject({ prerequisites: mode === 'options-unavailable' ? [hostPrerequisite] : [configurationPrerequisite] });
             if (mode !== 'options-unavailable') expect(facts).toMatchObject({ nativeFacts: { size: { cpuCores: 4 }, image: { title: 'Ubuntu Linux' } } });
             expect(run.roles.filter(role => role === 'options')).toHaveLength(1);
             expect(JSON.stringify(facts)).not.toContain('private provider error');

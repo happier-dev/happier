@@ -52,6 +52,7 @@ describe('Crabbox lazy family authoring', () => {
     expect(portable).toBeDefined();
     if (!portable) throw new Error('The coordinator must expose its Account role binding');
     expect(portable).toMatchObject({ browserReachable: false, bootstrapCredential: { kind: 'ssh' },
+      billing: { location: 'cloud' }, enrollmentRole: 'server',
       retention: { supportedIntents: ['delete'] } });
     const registered = new Set<string>();
     // Registration is the host ABI boundary; authored validation and activation run unchanged.
@@ -63,6 +64,7 @@ describe('Crabbox lazy family authoring', () => {
       expect(registered.has(id)).toBe(true);
     }
     const native = provisioners.find(descriptor => descriptor.id === 'crabbox');
+    expect(native).toMatchObject({ billing: { location: 'local' }, enrollmentRole: 'sandbox' });
     expect(actions.find(action => action.id === native?.actions.acquire)?.execution.target).toBe('daemon');
     expect(registered.has(native!.actions.acquire)).toBe(false);
   });

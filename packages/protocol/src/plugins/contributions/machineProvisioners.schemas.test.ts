@@ -20,6 +20,31 @@ import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
 
+it('carries configuration-specific prerequisites through the closed options read and authored role', () => {
+  const prerequisite = { requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'unavailable',
+    repairAction: { action: { pluginId: 'fixture.compute', localId: 'install' }, input: { tool: 'devcontainer' } } };
+  const result = { code: 'provider_unavailable', base: { launch: {}, available: false, prerequisites: [prerequisite] },
+    dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
+  expect(provisioners.MachineProvisionerOptionsResultV1Schema.parse(result)).toEqual(result);
+  const schema = provisioners.MachineProvisionerOptionsResultProtocolV1Schema;
+  expect(schema.parse(result)).toEqual(result);
+  expect(compilePluginJsonSchema(schema.jsonSchema)(result)).toBe(true);
+  expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ ...result,
+    base: { ...result.base, prerequisites: [{ ...prerequisite, secret: 'forbidden' }] } }).success).toBe(false);
+  expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ dimensions: result.dimensions }).success).toBe(true);
+});
+
+it('replaces discovery prerequisites with the complete selected runtime snapshot and permits explicit clearance', () => {
+  const check = provisioners.MachineProvisionerCheckResultV1Schema.parse({ available: false,
+    prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unavailable' }] });
+  const options = provisioners.MachineProvisionerOptionsResultV1Schema.parse({ base: { launch: {}, available: false,
+    prerequisites: [{ requirement: { kind: 'systemTool', id: 'podman' }, status: 'unavailable' }] },
+    dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
+  expect(provisioners.readMachineProvisionerPrerequisitesV1(check, options)).toEqual(options.base?.prerequisites);
+  expect(provisioners.readMachineProvisionerPrerequisitesV1(check, { ...options, base: { launch: {}, prerequisites: [] } })).toEqual([]);
+  expect(provisioners.readMachineProvisionerPrerequisitesV1(check, { ...options, base: { launch: {} } })).toEqual(check.prerequisites);
+});
+
 it('carries only the generated guest public host key through closed acquire and bootstrap roles', () => {
   const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
   const roles = defineMachineProvisionerSchemas({ launch: native, resource: native });

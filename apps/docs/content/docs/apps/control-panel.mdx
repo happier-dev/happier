@@ -74,6 +74,18 @@ Saved remote hosts are synced, so the same host list can follow you across devic
 
 User guide: [Remote hosts (SSH)](/apps/remote-hosts).
 
+In the 0.3 development Machine picker, **On a computer you control** groups
+local runtimes, **Cloud sandboxes** groups hosted sandboxes, and **Cloud
+servers** groups hosted servers. Crabbox's local-container mode runs on a
+computer you control; its coordinator-backed mode is cloud-hosted.
+
+The Docker container option creates a managed child from an image, with an
+optional setup script. It uses Docker or Podman on the selected computer. An
+optional workspace folder can bind host files; otherwise the workspace uses a
+container-owned volume. File or inline Dev Container configuration is an
+advanced option. See [Devcontainer child machines](/organize/projects-and-worktrees#devcontainer-child-machines).
+This is unreleased 0.3 development behavior.
+
 #### Local virtual machines (0.3 development)
 
 Lume, Cua local sandboxes (container and QEMU runtimes) and newly created Cua Spaces are under development for 0.3. They are not released managed Machine support. The selected computer must have the native runtime installed and be reachable; a phone or browser controls that computer rather than running the guest itself.

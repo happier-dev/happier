@@ -104,7 +104,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         outcome: NonNullable<ManagedProvisionerCard['repairFailure']>;
     }> | null>(null);
     const compact = useViewportClass() === 'compact';
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope, purpose: 'repair' });
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope, purpose: 'repair', onApprovalPending });
     const { localized, markFor } = presentation;
     const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: catalog.binding?.scope });
     const repairAbort = React.useRef<AbortController | null>(null);
@@ -197,7 +197,8 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         return [{ id, title,
             kind: kind ? kind.charAt(0).toLocaleUpperCase() + kind.slice(1) : undefined,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
-            location: location === 'local' ? 'local' : 'cloud', acquire: provisioner.acquireExecutionTarget, mark: (size: number) => markFor(provisioner, size),
+            location: location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
+            acquire: provisioner.acquireExecutionTarget, mark: (size: number) => markFor(provisioner, size),
             repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
                 && repairFailure.controller?.machineId === controller?.machineId
                 && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,

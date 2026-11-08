@@ -6,36 +6,44 @@ const text = defineProtocolString({ minLength: 1, pattern: '^[^\\u0000\\r\\n]+$'
 const path = defineProtocolString({ minLength: 1, pattern: '^[^\\u0000]+$' });
 const inactiveOperand = defineProtocolString({ pattern: '^[^\\u0000]*$' });
 const childPath = defineProtocolString({ pattern: '^/[^\\u0000]*$' });
-const configuration = defineProtocolUnion([
+export const DevcontainerRuntimeSchema = defineProtocolUnion([defineProtocolLiteral('docker'), defineProtocolLiteral('podman')]);
+const setupScript = defineProtocolString({ pattern: '^[^\\u0000]*$' });
+const imageConfiguration = defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text, setupScript: setupScript.optional() }, closed);
+const advancedConfiguration = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('file') }, closed),
-  defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('inline'), config: path }, closed),
 ]);
 // Editors retain hidden operands when switching source kinds. Only the active
 // operand is required; materialization retains the selected source alone.
 export const DevcontainerReviewQuerySchema = defineProtocolUnion([
-  defineProtocolObject({ workspaceFolder: path, configPath: path,
-    configuration: defineProtocolObject({ kind: defineProtocolLiteral('file'), image: inactiveOperand.optional(), config: inactiveOperand.optional() }, closed).optional() }, closed),
-  defineProtocolObject({ workspaceFolder: path, configPath: inactiveOperand.optional(),
-    configuration: defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text, config: inactiveOperand.optional() }, closed) }, closed),
-  defineProtocolObject({ workspaceFolder: path, configPath: inactiveOperand.optional(),
-    configuration: defineProtocolObject({ kind: defineProtocolLiteral('inline'), config: path, image: inactiveOperand.optional() }, closed) }, closed),
+  defineProtocolObject({ runtime: DevcontainerRuntimeSchema.optional(), workspaceFolder: path, configPath: path,
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('file'), image: inactiveOperand.optional(), config: inactiveOperand.optional(), setupScript: setupScript.optional() }, closed).optional() }, closed),
+  defineProtocolObject({ runtime: DevcontainerRuntimeSchema.optional(), workspaceFolder: inactiveOperand.optional(), configPath: inactiveOperand.optional(),
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('image'), image: text, setupScript: setupScript.optional(), config: inactiveOperand.optional() }, closed) }, closed),
+  defineProtocolObject({ runtime: DevcontainerRuntimeSchema.optional(), workspaceFolder: path, configPath: inactiveOperand.optional(),
+    configuration: defineProtocolObject({ kind: defineProtocolLiteral('inline'), config: path, image: inactiveOperand.optional(), setupScript: setupScript.optional() }, closed) }, closed),
 ]);
 const reviewedEffectDigest = defineProtocolString({ pattern: '^[a-f0-9]{64}$' });
-export const DevcontainerLaunchSchema = defineProtocolObject({
-  workspaceFolder: path, configPath: path, configuration: configuration.optional(), reviewedEffectDigest,
-}, closed);
+const launchFields = { runtime: DevcontainerRuntimeSchema.optional(), reviewedEffectDigest };
+const advancedFields = { ...launchFields, workspaceFolder: path, configPath: path, configuration: advancedConfiguration.optional() };
+const imageFields = { ...launchFields, workspaceFolder: path.optional(), configPath: path.optional(), configuration: imageConfiguration };
+export const DevcontainerLaunchSchema = defineProtocolUnion([
+  defineProtocolObject(advancedFields, closed), defineProtocolObject(imageFields, closed),
+]);
 export const DevcontainerStorageSchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('bind'), hostPath: path, childPath }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('child'), childPath }, closed),
 ]);
-export const DevcontainerResourceSchema = defineProtocolObject({
-  workspaceFolder: path, configPath: path, configuration: configuration.optional(), reviewedEffectDigest,
+const resourceFields = {
   managedMachineId: text,
   containerId: defineProtocolString({ pattern: '^[a-f0-9]{64}$' }),
   user: text, workspaceRoot: childPath, storage: DevcontainerStorageSchema,
   volumes: defineProtocolArray(defineProtocolObject({ name: text, childPath }, closed)),
-}, closed);
+};
+export const DevcontainerResourceSchema = defineProtocolUnion([
+  defineProtocolObject({ ...advancedFields, ...resourceFields }, closed),
+  defineProtocolObject({ ...imageFields, ...resourceFields }, closed),
+]);
 export const DevcontainerNativeOperationSchema = defineProtocolUnion([
   DevcontainerResourceSchema,
   defineProtocolObject({ managedMachineId: text, launch: DevcontainerLaunchSchema,

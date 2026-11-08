@@ -94,18 +94,22 @@ describe('MachineProvisionerSections when the browser cannot reach a provider (R
 
 describe('MachineProvisionerSections order (lab m-add)', () => {
   for (const compact of [false, true]) {
-    it(`leads with the no-cost machines on the managing computer before the cloud (${compact ? 'phone' : 'wide'})`, async () => {
+    it(`groups computers, cloud sandboxes and cloud servers in order (${compact ? 'phone' : 'wide'})`, async () => {
       const choose = { kind: 'choose', label: 'Choose', onPress: vi.fn() } as const;
       const ready = { tone: 'ready', label: 'Ready' } as const;
       const screen = await renderScreen(
         <MachineProvisionerSections testID="p" compact={compact} localTitle="On this machine" localDescription=""
-          cards={[card('hetzner', choose, ready), { ...card('lima', choose, ready), location: 'local', acquire: 'daemon' }]} />,
+          cards={[card('hetzner', choose, ready), { ...card('vercel', choose, ready), enrollmentRole: 'sandbox' },
+            { ...card('lima', choose, ready), location: 'local', acquire: 'daemon', enrollmentRole: 'sandbox' }]} />,
       );
       const order = screen.tree.root.findAll((node) => typeof node.type === 'string'
-        && typeof node.props.testID === 'string' && /^p\.(local|cloud)\./.test(node.props.testID))
+        && typeof node.props.testID === 'string' && /^p\.(local|cloud-sandboxes|cloud)\./.test(node.props.testID))
         .map((node) => (node.props.testID as string).split('.')[1]);
       expect(order[0]).toBe('local');
-      expect(order).toContain('cloud');
+      expect([...new Set(order)]).toEqual(['local', 'cloud-sandboxes', 'cloud']);
+      expect(screen.findByTestId('p.local.lima')).toBeTruthy();
+      expect(screen.findByTestId('p.cloud-sandboxes.vercel')).toBeTruthy();
+      expect(screen.findByTestId('p.cloud.hetzner')).toBeTruthy();
       await screen.unmount();
     });
   }

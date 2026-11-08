@@ -267,7 +267,20 @@ Its files, source control, terminals and sessions use the child's observed user
 and workspace folder, which can differ from the Docker host's folder. Selecting
 a Devcontainer does not turn host commands into container commands automatically.
 
-Creation reviews the selected configuration's host initialization and child
+Choose Docker container on a computer you control to start from a container image,
+optionally with a setup script. Docker or Podman is needed on
+that computer. The workspace folder is optional: without a host folder the child
+uses a container-owned volume. A Dev Container file or inline configuration is
+available for advanced setups. Presets, Team presets, pools and retention use the
+existing managed Machine flows.
+
+The image must provide a Linux shell and the `id`, `chown` and `sleep` commands.
+Happier replaces the image's entrypoint and command to keep the child running;
+Dev Container metadata hooks are not run in image mode. The setup script runs
+as the image's default user on creation and rebuild, not on stop and start. The
+named workspace volume is retained on rebuild and container deletion.
+
+For advanced configuration, creation reviews host initialization and child
 image, build, Compose, Features, mounts, networking and lifecycle effects before
 running them. Rebuild is a separate reviewed operation with an **Ask first**
 default. If the reviewed effects change, review them again before continuing.
