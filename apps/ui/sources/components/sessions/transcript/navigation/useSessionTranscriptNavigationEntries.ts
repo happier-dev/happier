@@ -22,6 +22,7 @@ import {
 } from "@happier-dev/session-core/pins";
 import type { Message } from "@happier-dev/session-core/messages";
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 
 export type TranscriptNavigationServerAccountScope = Readonly<{
     serverId: string;
@@ -70,6 +71,7 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     remoteBackfillEnabled?: boolean;
 }>): SessionTranscriptNavigationEntriesState {
     const remoteBackfillEnabled = params.remoteBackfillEnabled !== false;
+    const transcriptHistory = useSessionTranscriptSource().history.useState();
     const {
         activeServerAccountScope,
         forkedTranscriptEnabled,
@@ -170,6 +172,9 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     // it; measured on remote-dev 2026-08-18 this ran to its 12-page ceiling during session open
     // and decrypted hundreds of messages the transcript never needed.
     React.useEffect(() => {
+        // The transcript owner supplies both readiness and its retained frontier.
+        // Wait for that first page, then request only genuinely older history.
+        if (!transcriptHistory.isLoaded || !transcriptHistory.hasOlder) return;
         if (!shouldRequestTranscriptNavigationRemotePage({
             hasMore: remoteHistoryHasMore,
             pagesLoaded: remoteHistoryPagesLoaded,
@@ -186,6 +191,8 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
         remoteUserRowCount,
         requestRemoteHistoryNextPage,
         transcriptNavigationLoadedMessages,
+        transcriptHistory.isLoaded,
+        transcriptHistory.hasOlder,
     ]);
 
     const transcriptNavigationEntries = React.useMemo<TranscriptNavigationEntry[]>(() => {
@@ -203,7 +210,7 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
         sessionMessagePins,
         togglePersistedSessionMessagePin,
         transcriptNavigationEntries,
-        historyComplete: !remoteHistoryHasMore,
+        historyComplete: transcriptHistory.isLoaded && (!transcriptHistory.hasOlder || !remoteHistoryHasMore),
         requestEarlierHistory: requestRemoteHistoryNextPage,
     };
 }

@@ -4181,11 +4181,7 @@ class Sync {
             const inFlightKey = `${buildSessionByIdHydrationInFlightKey(normalized, preferredServerId)}:${authorityScopeKey}:${includeTurnsProjection}`;
             const finishMessageHydration = async (result: EnsureSessionVisibleForRouteResult) => {
                 if (result.kind === 'available' && !options?.authority && options?.hydrateMessages !== false) {
-                    this.replayDeferredMessagesFetch(normalized);
-                    const messages = this.getOrCreateMessagesSync(normalized);
-                    // Route hydration ensures the initial transcript; it is not
-                    // fresh message demand after visibility already loaded it.
-                    if (storage.getState().sessionMessages[normalized]?.isLoaded !== true) messages.invalidateCoalesced();
+                    const messages = this.ensureInitialSessionMessages(normalized);
                     if (options?.awaitMessageHydration === true) await messages.awaitQueue();
                 }
                 return result;
@@ -10418,6 +10414,15 @@ class Sync {
         return false;
     }
 
+    private ensureInitialSessionMessages(sessionId: string): InvalidateSync {
+        this.replayDeferredMessagesFetch(sessionId);
+        const messages = this.getOrCreateMessagesSync(sessionId);
+        // Hydration and admission share the initial acquisition. Only an explicit
+        // visibility transition requests a fresh probe of an already loaded tail.
+        if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) messages.invalidateCoalesced();
+        return messages;
+    }
+
     private replayDeferredMessagesFetch(sessionId: string): void {
         if (this.deferredMessagesFetchSessionIds.delete(sessionId)) {
             // A deferred fetch may have been discovered by the currently running
@@ -13782,8 +13787,8 @@ class Sync {
                 const currentDemand = () => isCurrent()
                     && resolveSessionLiveConsumption(sessionId, serverId).isFullContentConsumer;
                 if (!currentDemand()) return;
-                // ACK hydration establishes the exact Home carrier; visibility
-                // then owns initial transcript acquisition and stale-region repair.
+                // ACK hydration establishes the exact Home carrier, then joins
+                // initial acquisition and stale repair without reopening the surface.
                 const authority = await captureServerRequestAuthorityForServerAccountScope({
                     serverId, activeRequest: this.requestViaConfiguredSocket,
                 });
@@ -13794,7 +13799,8 @@ class Sync {
                         authority, scopeCurrentness: currentDemand });
                 } finally { await authority.release(); }
                 if (currentDemand() && areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {
-                    this.onSessionVisible(sessionId);
+                    this.ensureInitialSessionMessages(sessionId);
+                    this.repairStaleTranscriptIfNeeded(sessionId);
                 }
             })(), { tag: 'Sync.sessionConsumptionCatchUp' });
         }

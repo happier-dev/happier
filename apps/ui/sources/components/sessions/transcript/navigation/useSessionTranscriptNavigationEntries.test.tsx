@@ -43,6 +43,7 @@ const transcriptState = vi.hoisted(() => ({
 function renderHook<Result>(hook: () => Result) {
     const source = createTestSessionTranscriptSource({
         sessionId: 'session-1', messages: transcriptState.ids.flatMap((id) => transcriptState.messagesById[id] ?? []),
+        history: { useState: () => ({ isLoaded: true, hasOlder: true, isLoadingOlder: false }) },
     });
     return renderBaseHook(hook, { wrapper: ({ children }) => wrapWithSessionTranscriptSource(children as React.ReactElement, source) });
 }
