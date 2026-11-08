@@ -790,13 +790,14 @@ describe("Machine preset relational owner", () => {
         expect(selected).toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
         if (selected.kind !== 'ready') throw new Error('Expected delegated preset admission');
         const provisioner = selected.declaration.provisioner;
-        const reviewedFacts = buildManagedConfigurationFactsV1({
+        const reviewedFacts = { ...buildManagedConfigurationFactsV1({
             choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
             launch, controller, optionStatus: 'current', prerequisites: [],
             provisioner: { ...provisioner, schemaVersion: provisioner.schemaVersion + 1 },
             billing: provisioner.billing, retentionCapabilities: provisioner.retention,
             preset: { ...definition, revision: 1 },
-        });
+        }), retentionCapabilities: { supportedIntents: [] },
+            billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const } };
         const request = { custodianAccountId: owner, requesterAccountId: member, requestEnvelopeDigest: 'delegated-admission', input: {
             requestId: 'preset-delegation-create', continuationPresent: false,
             input: { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const },
@@ -823,10 +824,12 @@ describe("Machine preset relational owner", () => {
         const acquired = await admitManagedAcquire(request);
         expect(acquired.machine).toMatchObject({ launch, retention: definition.retention, enrollmentAccountId: member });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)
-            .toEqual({ ...reviewedFacts, provisioner });
+            .toEqual({ ...reviewedFacts, provisioner,
+                retentionCapabilities: selected.declaration.retention, billing: selected.declaration.billing });
         expect(acquired.machine.reviewedFacts?.provisioner).toEqual(provisioner);
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true,
-            machine: { id: acquired.machine.id, reviewedFacts: { provisioner } } });
+            machine: { id: acquired.machine.id, reviewedFacts: { provisioner,
+                retentionCapabilities: selected.declaration.retention, billing: selected.declaration.billing } } });
         await expect(admitManagedAcquire({ ...request, requesterAccountId: admin })).rejects.toMatchObject({ code: 'request_conflict' });
         expect(await select(1)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
         expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 1,

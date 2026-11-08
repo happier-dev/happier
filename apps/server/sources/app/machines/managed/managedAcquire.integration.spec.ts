@@ -225,8 +225,8 @@ describe("managed acquisition durable authority", () => {
         expect(qualifyManagedAcquisitionPolicy(requested, declaration)).toMatchObject(requested);
     });
 
-    it('admits the selected finite variant policy and refuses a receipt for another launch', async () => {
-        const { account, controller, input, request, launch } = await createManagedComputeFixture('selected-variant',
+    it('binds controller capabilities and refuses an inconsistent receipt or another launch', async () => {
+        const { account, controller, input, request, launch, manifest } = await createManagedComputeFixture('selected-variant',
             { location: 'cloud', stoppedBilling: 'billed' });
         const reviewedFacts = ManagedConfigurationFactsV1Schema.parse(buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(launch.jsonSchema),
             launch: input.selection.launch, controller, optionStatus: 'current', prerequisites: [],
@@ -236,12 +236,22 @@ describe("managed acquisition durable authority", () => {
         await expect(admitManagedAcquire({ ...reviewedRequest, input: { ...reviewedRequest.input, requestId: 'other-variant-receipt',
             input: { ...input, reviewedFacts: { ...reviewedFacts, launch: { ...reviewedFacts.launch, choices: { image: 'another-image' } } } } } }))
             .rejects.toMatchObject({ code: 'invalid_request' });
+        // Controller capabilities now come from its declaration, so a receipt
+        // whose policy required requester-only finite capabilities is stale.
+        await expect(admitManagedAcquire(reviewedRequest)).rejects.toMatchObject({ code: 'invalid_request' });
         expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(0);
-        const created = await admitManagedAcquire(reviewedRequest);
-        expect(created.machine).toMatchObject({ retention: { kind: 'unused', effect: 'delete' }, wakeOnAcceptedMessage: false, reviewedFacts });
+        const provisioner = manifest.contributes?.machineProvisioners?.[0];
+        if (!provisioner) throw new Error('Expected controller provisioner');
+        const admittedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(launch.jsonSchema),
+            launch: input.selection.launch, controller, optionStatus: 'current', prerequisites: [],
+            billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+            machineOverride: { retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage } });
+        const currentRequest = { ...reviewedRequest, input: { ...reviewedRequest.input, input: { ...input, reviewedFacts: admittedFacts } } };
+        const created = await admitManagedAcquire(currentRequest);
+        expect(created.machine).toMatchObject({ retention: input.selection.retention, wakeOnAcceptedMessage: false, reviewedFacts: admittedFacts });
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).toMatchObject({
-            retention: reviewedFacts.retention, wakeOnAcceptedMessage: false, reviewedFacts });
-        expect(await admitManagedAcquire(reviewedRequest)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
+            retention: admittedFacts.retention, wakeOnAcceptedMessage: false, reviewedFacts: admittedFacts });
+        expect(await admitManagedAcquire(currentRequest)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
     });
 
     it("retains managed allocation independently of a Machine or initiating process", async () => {
