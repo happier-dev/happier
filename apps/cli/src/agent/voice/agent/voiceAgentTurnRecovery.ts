@@ -1,5 +1,6 @@
 import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { logger } from '@/ui/logger';
 
 /** Voice can finish speaking while the native Run retains its admitted recovery. */
 export async function runVoiceAgentTurn(
@@ -16,9 +17,9 @@ export async function runVoiceAgentTurn(
     settleWaiting(event.recovery);
   });
   try {
-    // Subscribe before admission so a fast provider refusal cannot hide its
-    // waiting fact. A rejected delivery still rejects rather than claiming a turn.
-    await deliver();
+    // A retained native wait already owns its admitted turn. Speak its current
+    // fact without delivering another turn; observe new waits before admission.
+    if (!recoveryWaiting) await deliver();
     const recovery = recoveryWaiting ?? await Promise.race([
       Promise.resolve(backend.waitForTurnCompletion?.(timeoutMs)).then(() => null),
       waiting,
@@ -27,6 +28,9 @@ export async function runVoiceAgentTurn(
     // Reuse the ordinary Session banner's waiting/retry wording. Recovery owns
     // the retry date; Voice adds no timer and never cancels the native wait.
     const retryAtMs = recovery.nextCheckAtMs ?? recovery.resetAtMs;
+    logger.infoFile('[VoiceAgent] Turn recovery phase', {
+      phase: 'waiting_settlement', armedAtMs: recovery.armedAtMs, retryAtMs,
+    });
     return retryAtMs === null ? 'Waiting for usage limit reset.'
       : `Waiting for usage limit reset. Happier will retry automatically at ${new Date(retryAtMs).toLocaleString()}.`;
   } finally {

@@ -9,10 +9,13 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import { readAgentSessionProviderIdentityConflict } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
+import type { ExecutionRunHostRuntimeEvent } from '../executionRunHostRuntime';
+import { logger } from '@/ui/logger';
 
 type FailedTurn = Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>;
 type TerminalTurn = Extract<AgentSessionRuntimeEvent, { kind: 'turn-complete' | 'turn-failed' | 'turn-cancelled' }>;
 type RecoveryPreparation = NonNullable<CreateCliExecutionRunBackendParams['prepareRuntimeFailureRecovery']>;
+type RecoveryWaiting = Extract<ExecutionRunHostRuntimeEvent, { kind: 'recovery-waiting' }>;
 
 /** Scope adapters retain identity/event correlation; the recovery effect order is shared. */
 export async function continueNativeRuntimeAfterFailure(params: Readonly<{
@@ -49,7 +52,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
     onTurnCompleted?: () => Promise<void>;
     onRecoveryWaiting?: (turnId: string, recovery: SessionUsageLimitRecoveryV1) => void;
     signal: AbortSignal;
-}>): AgentSessionRuntime {
+}>): AgentSessionRuntime & Readonly<{ readRecoveryWaiting(): RecoveryWaiting | null }> {
     let session = params.session;
     let request = params.request;
     let providerSessionId = request.kind === 'resume' ? request.providerSessionId : null;
@@ -60,6 +63,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
     let nativeInputIds: readonly string[] = [];
     let continuing = false;
     let recovery: AbortController | null = null;
+    let recoveryWaiting: RecoveryWaiting | null = null;
     let identityFailure: FailedTurn['diagnostic'] | null = null;
     let sequence = 0;
     let disposed = false;
@@ -100,10 +104,18 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
                     providerSessionId: nativeIdentity,
                     interruptedOriginId: failure.turnId,
                     signal,
-                    onRecoveryWaiting: recovery => params.onRecoveryWaiting?.(interrupted.delivery.turnId, recovery),
+                    onRecoveryWaiting: waiting => {
+                        recoveryWaiting = { kind: 'recovery-waiting', turnId: interrupted.delivery.turnId, recovery: waiting };
+                        logger.infoFile('[NativeAgentSession] Recovery phase', {
+                            phase: 'recovery_waiting', turnId: interrupted.delivery.turnId,
+                            nativeFailureAtMs: failure.emittedAtMs, armedAtMs: waiting.armedAtMs,
+                        });
+                        params.onRecoveryWaiting?.(interrupted.delivery.turnId, waiting);
+                    },
                 },
                 prepare: params.recover,
                 async retireNative() {
+                    recoveryWaiting = null;
                     // Retire the native writer before preserving/rematerializing
                     // its state for this exact conversation's continuation.
                     admittedSource = null;
@@ -209,6 +221,7 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
             if (event.kind === 'turn-failed' && !activeInput && event.turnId === nativeTurnId) return;
             if (event.kind === 'turn-failed' && event.turnId === nativeTurnId && activeInput && providerSessionId && !recovery) {
                 const attempt = new AbortController();
+                recoveryWaiting = null;
                 recovery = attempt;
                 void recover(event, attempt);
                 return;
@@ -228,6 +241,8 @@ export function createRecoveringAgentSessionRuntime(params: Readonly<{
     bind(session, request.kind === 'resume' ? request.providerSessionId : undefined);
 
     return Object.freeze({
+        // The recovery owner clears its active attempt before native continuation.
+        readRecoveryWaiting: () => recovery && !recovery.signal.aborted ? recoveryWaiting : null,
         get runtimeDescriptorV1() { return session.runtimeDescriptorV1; },
         get runtimeCapabilities() { return session.runtimeCapabilities; },
         get nativeGoalControlsSupported() { return session.nativeGoalControlsSupported; },

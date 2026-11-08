@@ -63,13 +63,14 @@ describe('withExecutionRunHostRuntimeCleanup snapshot lifetime', () => {
     });
     const shellLifetime = runtime.getRuntimeLifetimeSignal();
     expect(runtime.subscribeProviderInputOutcomes).toBeUndefined();
-    expect(runtime.subscribeRuntimeEvents).toBeUndefined();
-    await runtime.provisionRuntime();
-    expect(runtime.interaction).toEqual(interaction);
     const outcomes: unknown[] = [];
     const events: unknown[] = [];
-    const unsubscribeOutcome = runtime.subscribeProviderInputOutcomes?.((value) => outcomes.push(value));
+    // Runtime-event observers subscribe before lazy provisioning so a fast
+    // native refusal cannot lose its recovery-waiting projection.
     const unsubscribeEvent = runtime.subscribeRuntimeEvents?.((value) => events.push(value));
+    await runtime.provisionRuntime();
+    expect(runtime.interaction).toEqual(interaction);
+    const unsubscribeOutcome = runtime.subscribeProviderInputOutcomes?.((value) => outcomes.push(value));
     await expect(runtime.deliverInput('child-runtime', input, { localId: 'input-1' })).resolves.toEqual({ status: 'admitted' });
     expect(delivered).toEqual(['child-runtime', input, { localId: 'input-1' }]);
     expect(outcomes).toEqual([outcome]);

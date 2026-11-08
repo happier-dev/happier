@@ -1961,7 +1961,8 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
     const servicesPromise = params.services ?? Promise.resolve(createUnavailablePluginServices());
     const listeners = new Set<(message: AgentMessage) => void>();
     const inputOutcomeListeners = new Set<(outcome: SessionProviderInputOutcome) => void>();
-    const runtimeEventListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+    const runtimeEventListeners = new Set<(event: ExecutionRunHostRuntimeEvent) => void>();
+    let recoveringSession: ReturnType<typeof createRecoveringAgentSessionRuntime> | null = null;
     let operations: ReturnType<typeof createNativeAgentSessionInteractionOperations> | null = null;
     let unsubscribeEvents: (() => void) | null = null;
     let disposeSessionContext: (() => Promise<void>) | null = null;
@@ -2058,7 +2059,7 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                     assertUsable();
                 }
                 if (supportsResume && params.options.prepareRuntimeFailureRecovery) {
-                    opened = createRecoveringAgentSessionRuntime({
+                    recoveringSession = createRecoveringAgentSessionRuntime({
                         session: opened,
                         request,
                         openSession: async request => {
@@ -2085,6 +2086,7 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                         ...(params.options.connectedServiceRuntimeTurnCompleted ? { onTurnCompleted: params.options.connectedServiceRuntimeTurnCompleted } : {}),
                         signal,
                     });
+                    opened = recoveringSession;
                 }
                 operations = createNativeAgentSessionInteractionOperations({
                     session: opened,
@@ -2241,6 +2243,8 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
         },
         subscribeRuntimeEvents(handler) {
             runtimeEventListeners.add(handler);
+            const waiting = recoveringSession?.readRecoveryWaiting();
+            if (waiting) handler(waiting);
             return () => runtimeEventListeners.delete(handler);
         },
         // The exact adapter choice is the projection. A finite or native Execution

@@ -19,6 +19,8 @@ import type { ExecutionRunBackendController } from '@/agent/executionRuns/contro
 import { reloadConfiguration } from '@/configuration';
 import { createNativeAgentExecutionRunHostRuntime, createNativeAgentSessionInteractionHostRuntime } from './nativeAgentExecutionRun';
 import { createVoiceSessionContextLease } from './testkit/nativeSessionContext';
+import { createLazyExecutionRunHostRuntime } from './hostRuntime/lazy';
+import { withExecutionRunHostRuntimeCleanup } from './hostRuntime/cleanup';
 import { createExecutionRunControllerMessageHandler } from './messages/sessionStateEmission';
 import { sendBackendLongLivedRun } from './send/backendLongLivedPrompt';
 import { executeBoundedBackendRun } from './bounded/loop';
@@ -85,7 +87,9 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
         sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
         createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
     });
-    const manager = new VoiceAgentManager({ createRuntime: () => host });
+    const manager = new VoiceAgentManager({ createRuntime: () => withExecutionRunHostRuntimeCleanup(
+        createLazyExecutionRunHostRuntime({ resolveRuntime: async () => host }), async () => {},
+    ) });
     try {
         const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
@@ -119,12 +123,41 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                 expect(waiting).toMatchObject({ status: 'waiting', attemptCount: 0 });
                 expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('active_turn');
                 expect(recoveryDecisions).toHaveLength(attempt - 1);
+                // A second spoken commit must consume the retained waiting fact,
+                // without trying to admit another native turn or cancelling it.
+                const repeated = await manager.startTurnStream({ voiceAgentId, userText: 'Are you still waiting?' });
+                let settled: Awaited<ReturnType<typeof manager.readTurnStream>> | undefined;
+                await vi.waitFor(async () => {
+                    const read = await manager.readTurnStream({ voiceAgentId, streamId: repeated.streamId,
+                        cursor: 0, waitForEvents: false });
+                    if (read.done) settled = read;
+                    expect(read.done).toBe(true);
+                });
+                expect(settled!.events.filter(event => event.t === 'error')).toEqual([]);
+                expect(settled!.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
+                    text: expect.stringContaining('Happier will retry automatically at') } });
+                expect(settled!.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toHaveLength(1);
+                expect(sdk.processes).toHaveLength(expectedProcesses);
+                expect(temporaryThrottleScheduler.read('run:claude-consecutive-quota')).toMatchObject({ status: 'waiting', attemptCount: 0 });
+                expect(recoveryDecisions).toHaveLength(attempt - 1);
                 // Advance the real scheduler's provider reset boundary. Voice did
                 // not cancel or retry the native Run when its own stream settled.
                 nowMs = waiting!.nextRetryAtMs!;
                 await temporaryThrottleScheduler.wake({ sessionId: waiting!.sessionId, reason: 'manual' });
                 expectedProcesses += 1;
                 await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses));
+                // Once native continuation starts, the old waiting projection
+                // must no longer disguise an ordinary active-turn refusal.
+                const active = await manager.startTurnStream({ voiceAgentId, userText: 'Are you working now?' });
+                let activeSettled: Awaited<ReturnType<typeof manager.readTurnStream>> | undefined;
+                await vi.waitFor(async () => {
+                    const read = await manager.readTurnStream({ voiceAgentId, streamId: active.streamId,
+                        cursor: 0, waitForEvents: false });
+                    if (read.done) activeSettled = read;
+                    expect(read.done).toBe(true);
+                });
+                expect(activeSettled!.events).toContainEqual(expect.objectContaining({ t: 'error',
+                    errorCode: 'agent_runtime_turn_already_active' }));
                 await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
                     session_id: 'native-consecutive-quota', result: 'Native recovery completed.' });
                 await vi.waitFor(() => expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle'));
