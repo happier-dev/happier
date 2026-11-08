@@ -15,10 +15,18 @@ import { readConnectedAccountPurposeSetupDeclaration, resolveConnectedAccountPur
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { projectConnectedServiceRegistryEntries, type ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
-import { Modal } from '@/modal';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { resolveConnectedServiceSettingsErrorMessage } from '../connectedServiceSettingsErrors';
+import { readConnectedServiceSettingsErrorDetailsCode, readConnectedServiceSettingsErrorRequestId,
+    resolveConnectedServiceSettingsErrorMessage } from '../connectedServiceSettingsErrors';
+
+function presentPurposeSetupFailure(error: unknown): void {
+    const requestId = readConnectedServiceSettingsErrorRequestId(error);
+    alertActionFailure({ reason: resolveConnectedServiceSettingsErrorMessage(error),
+        code: readConnectedServiceSettingsErrorDetailsCode(error),
+        ...(requestId ? { context: { requestId } } : {}) });
+}
 
 /** Purpose admission, returned selections and Resource-default settlement share one owner. */
 export function useConnectedAccountPurposeSetup(input: Readonly<{
@@ -92,7 +100,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
             }
             return selected.ref;
         } catch (error) {
-            Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
+            presentPurposeSetupFailure(error);
             return null;
         }
     };
@@ -103,7 +111,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
                 if (!lifetime?.isCurrent()) return;
                 await getSyncSingleton().refreshProfile();
                 if (lifetime.isCurrent()) await select({ kind: 'account', account }, 'connected');
-            } catch (error) { Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error)); }
+            } catch (error) { presentPurposeSetupFailure(error); }
         })();
     };
     const selected = input.onSelected ? input.selectedTarget ?? null
