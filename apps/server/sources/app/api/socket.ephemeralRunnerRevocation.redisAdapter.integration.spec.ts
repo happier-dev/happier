@@ -2,12 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import Fastify from "fastify";
 import { Redis } from "ioredis";
+import { Server } from 'socket.io';
 import { io as ioClient } from "socket.io-client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
 import { eventRouter } from "@/app/events/connectionEventRouter";
-import { runPresenceTimeoutTick } from "@/app/presence/timeout";
+import { createMachinePresenceDeadlineOwner, createSessionPresenceDeadlineOwner, resolvePresenceTimeoutConfig, runPresenceTimeoutTick, startLocalMachinePresenceTimeout, stopLocalMachinePresenceTimeout } from "@/app/presence/timeout";
+import { registerPresenceDeadlineNotifications } from '@/app/presence/presenceDeadlineNotification';
+import { publishPresenceDeadline } from '@/app/presence/presenceRedisQueue';
+import { persistMachinePresence } from '@/app/presence/persistMachinePresence';
+import { auth } from '@/app/auth/auth';
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -51,6 +56,7 @@ type RedisMemoryInstance = Awaited<ReturnType<typeof resolveRedisAdapterValidati
 
 type StartedReplica = Readonly<{
     app: AppFastify;
+    io: Server;
     port: number;
     stopSocket: () => Promise<void>;
 }>;
@@ -61,7 +67,12 @@ async function startReplica(params: Readonly<{ instanceId: string; redis: Redis 
 
     const app = Fastify({ logger: false }) as unknown as AppFastify;
     const priorShutdownCallbacks = shutdownRuntime.callbacks.length;
+    // Observe the actual network boundary without replacing the router's logic.
+    const configuredTransport = vi.spyOn(eventRouter, 'setIo');
     startSocket(app);
+    const io = configuredTransport.mock.calls.at(-1)?.[0];
+    configuredTransport.mockRestore();
+    if (!(io instanceof Server)) throw new Error('Expected the real Socket.IO transport');
     const stopSocket = shutdownRuntime.callbacks.at(priorShutdownCallbacks);
     if (!stopSocket) throw new Error("Socket replica did not register its shutdown callback");
     await app.listen({ port: 0, host: "127.0.0.1" });
@@ -71,7 +82,7 @@ async function startReplica(params: Readonly<{ instanceId: string; redis: Redis 
         await app.close();
         throw new Error("Failed to bind Socket.IO replica");
     }
-    return { app, port, stopSocket };
+    return { app, io, port, stopSocket };
 }
 
 function createClient(params: Readonly<{
@@ -124,6 +135,7 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
     }, 120_000);
 
     afterEach(async () => {
+        await stopLocalMachinePresenceTimeout();
         while (clients.length > 0) clients.pop()?.close();
         while (replicas.length > 0) {
             const replica = replicas.pop();
@@ -131,7 +143,9 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
             await replica.stopSocket();
             await replica.app.close();
         }
-        while (redisClients.length > 0) await redisClients.pop()?.quit();
+        // Socket.IO may already have closed its real adapter root client.
+        // These test-owned connections have no remaining work after io.close.
+        while (redisClients.length > 0) redisClients.pop()?.disconnect();
         if (redisMemory) {
             await redisMemory.stop();
             redisMemory = null;
@@ -148,6 +162,77 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it('enrolls newly active Machine and Session deadlines on another replica and expires after producer loss', async () => {
+        const resolvedRedis = await resolveRedisAdapterValidationRedisUrl({ env: {} });
+        redisMemory = resolvedRedis.redisMemory;
+        harness.resetEnv({ SERVER_ROLE: 'api', HAPPIER_SOCKET_ADAPTER: 'redis-streams', REDIS_URL: resolvedRedis.redisUrl });
+        const redisA = new Redis(resolvedRedis.redisUrl);
+        const redisB = new Redis(resolvedRedis.redisUrl);
+        redisClients.push(redisA, redisB);
+        const replicaA = await startReplica({ instanceId: 'deadline-a', redis: redisA });
+        const replicaB = await startReplica({ instanceId: 'deadline-b', redis: redisB });
+        replicas.push(replicaA, replicaB);
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}', active: false } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', active: false } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const reader = createClient({ port: replicaA.port, auth: { token, clientType: 'user-scoped' } });
+        clients.push(reader);
+        expect(await waitForConnection(reader)).toBe('connected');
+        const packets: Array<{ type: string; id: string; active: boolean; activeAt: number }> = [];
+        reader.on('ephemeral', value => {
+            if (value.type === 'machine-activity' || value.type === 'activity') packets.push(value);
+        });
+        const machines = createMachinePresenceDeadlineOwner();
+        const sessions = createSessionPresenceDeadlineOwner();
+        // Each replica has independent process-local owners. The extra real
+        // owners represent B here; the socket harness shares module singletons.
+        await machines.start();
+        await sessions.start();
+        const received: string[] = [];
+        const release = registerPresenceDeadlineNotifications(replicaB.io, observation => {
+            received.push(observation.id);
+            if (observation.kind === 'machine') machines.schedule({ accountId: observation.accountId,
+                machineId: observation.id, lastActiveAt: new Date(observation.activeAt) });
+            else sessions.schedule(new Date(observation.activeAt));
+        });
+        const base = Date.now();
+        const timeoutConfig = resolvePresenceTimeoutConfig();
+        const contentAt = new Date('2025-01-01T00:00:00.000Z');
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(base);
+        try {
+            await persistMachinePresence(db, { accountId: account.id, machineId: machine.id, timestamp: base });
+            const producer = await startLocalMachinePresenceTimeout();
+            await db.session.update({ where: { id: session.id }, data: { active: true, lastActiveAt: new Date(base), updatedAt: contentAt } });
+            eventRouter.setIo(replicaA.io);
+            await publishPresenceDeadline({ kind: 'machine', accountId: account.id, id: machine.id, activeAt: base });
+            await publishPresenceDeadline({ kind: 'session', accountId: account.id, id: session.id, activeAt: base });
+            await vi.waitFor(() => expect(received.sort()).toEqual([machine.id, session.id].sort()));
+            await producer.stop(); // Producer's real local deadline owner is gone.
+            await vi.advanceTimersByTimeAsync(base + 20_000 - Date.now());
+            await persistMachinePresence(db, { accountId: account.id, machineId: machine.id, timestamp: Date.now() });
+            await vi.advanceTimersByTimeAsync(40_000);
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true);
+            await vi.advanceTimersByTimeAsync(timeoutConfig.machineTimeoutMs - 40_000 - 1);
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(true);
+            await vi.advanceTimersByTimeAsync(1);
+            await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).active).toBe(false));
+            await vi.advanceTimersByTimeAsync(Math.max(0, base + timeoutConfig.sessionTimeoutMs - Date.now()));
+            await vi.waitFor(async () => expect(await db.session.findUniqueOrThrow({ where: { id: session.id },
+                select: { active: true, updatedAt: true } })).toEqual({ active: false, updatedAt: contentAt }));
+            await vi.waitFor(() => expect(packets.filter(value => value.active === false)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: 'machine-activity', id: machine.id, activeAt: base + 20_000 }),
+                expect.objectContaining({ type: 'activity', id: session.id, activeAt: base }),
+            ])));
+            expect(packets.filter(value => value.active === false)).toHaveLength(2);
+        } finally {
+            release();
+            await Promise.all([machines.stop(), sessions.stop(), stopLocalMachinePresenceTimeout()]);
+            vi.useRealTimers();
+        }
     });
 
     it("disconnects the exact Runner Session and Machine sockets on another replica when control-loss expiry revokes them", async () => {
