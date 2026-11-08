@@ -2,14 +2,14 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import nacl from 'tweetnacl';
 import { vi } from 'vitest';
 import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, deploymentOperationForRootActionV1,
-    isDeploymentChildRootActionIdV1, type DeploymentChildRpcV1 } from '@happier-dev/protocol';
+    isDeploymentChildRootActionIdV1, type DeploymentChildRpcV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol';
 import { createDeploymentCandidatePublicationV1, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
     projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1,
     isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, sealExternalActionRequestV2, createActionExecutor } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -22,12 +22,20 @@ import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 /** Real closed producers and requester admission; only the installation file is substituted. */
+export interface DeploymentChildRequesterPacket {
+    method: string;
+    requestId: string;
+    params: JsonValue;
+    originalActionEnvelope: ExternalActionRequestEnvelope;
+    externalActionExecution: ExternalActionMachineRpcExecutionV1;
+}
+
 export async function createDeploymentChildRequesterHarness(options: Readonly<{
     encryptionMode?: 'plain' | 'e2ee';
     serverHttpBaseUrl?: string;
     profileId?: string;
     job?: DeploymentChildRpcV1;
-    rootActionId?: 'deployments.templates.instantiate' | 'deployments.publish' | 'deployments.environments.create';
+    rootActionId?: 'deployments.templates.instantiate' | 'deployments.environments.create';
     rootInput?: unknown;
     source?: Readonly<{ id: string; revision: number }>;
     receivingIdentity?: Readonly<{ machineId: string; installationId: string; homeIdentityId: string }>;
@@ -94,7 +102,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
         requestId: 'private-child-request', params: encodedJob, privateKey: controller.secretKey,
         deploymentChildRouting: projectDeploymentChildRoutingV1(job) });
     if (!execution) throw new Error('Missing controller packet');
-    const packet = { method, requestId: 'private-child-request', params: StrictJsonValueSchema.parse(encodedJob),
+    const packet: DeploymentChildRequesterPacket = { method, requestId: 'private-child-request', params: StrictJsonValueSchema.parse(encodedJob),
         originalActionEnvelope: envelope, externalActionExecution: execution };
     const currentness = { mode: encryptionMode, version: 1, signingKeyFingerprint: encryptionMode === 'plain' ? null : 'bob-signing',
         contentKeyFingerprint: encryptionMode === 'plain' ? null : computeAccountEncryptionMigrateKeyFingerprintV1(

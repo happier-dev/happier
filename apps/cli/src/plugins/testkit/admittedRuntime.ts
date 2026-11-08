@@ -7,8 +7,9 @@ import { createDaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/develo
 import {
     createPluginReloadController,
     type PluginReloadController,
+    type PluginRuntimeRegistryLease,
 } from '@/plugins/runtime/reload/controller';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { loadVerifiedPluginModule } from '@/plugins/runtime/loadPluginModule';
 import {
     createPreparedPluginActivationGraph,
@@ -32,6 +33,27 @@ type RuntimeOptions = Omit<
     | 'targetedContributions'
 >;
 
+type PublishedFixtureRegistry = ResolvedExecutablePluginRuntimeRegistry & Readonly<{
+    generation: number;
+    targetActivationFacts: NonNullable<ResolvedExecutablePluginRuntimeRegistry['targetActivationFacts']>;
+}>;
+
+export interface AdmittedPluginRuntimeFixture {
+    happyHomeDir: string;
+    controller: PluginReloadController;
+    lease: PluginRuntimeRegistryLease;
+    registry: PublishedFixtureRegistry;
+    dispose(): Promise<void>;
+}
+
+function assertPublishedFixtureFacts(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+): asserts registry is PublishedFixtureRegistry {
+    if (registry.generation === undefined || registry.targetActivationFacts === undefined) {
+        throw new Error('Admitted runtime fixture did not publish its generation and activation facts');
+    }
+}
+
 type AuthoredAdmittedPluginRuntimeFixture = Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> & Readonly<{
     committed: NonNullable<Awaited<ReturnType<typeof readCurrentCommittedPluginGenerations>>>;
     modulesByPluginId: Map<string, PluginDaemonModuleNamespace>;
@@ -43,6 +65,7 @@ export async function retireAdmittedPluginRuntimeRegistry(params: Readonly<{
     controller: PluginReloadController;
     registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
     happyHomeDir?: string;
+    generationAuthority?: RuntimeOptions['generationAuthority'];
 }>) {
     if (!params.controller.isRuntimeRegistryCurrent(params.registry)) return;
     await params.controller.adoptPreparedRuntimeRegistry({
@@ -52,6 +75,9 @@ export async function retireAdmittedPluginRuntimeRegistry(params: Readonly<{
             contributes: createResolvedContributionRegistry({}),
             // The empty retirement view has no Account work of its own.
             scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() },
+            // Keep the fixture's isolated declarations paired with their
+            // committed source authority, including its empty retirement view.
+            generationAuthority: params.generationAuthority,
             currentGlobalExternalSessionsRouter: params.controller.currentGlobalExternalSessions,
             targetedContributions: params.controller.getTargetedContributionsOwner(),
         }),
@@ -65,7 +91,7 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
     happyHomeDir?: string;
     controller?: PluginReloadController;
     runtimeOptions?: RuntimeOptions;
-}> = {}) {
+}> = {}): Promise<AdmittedPluginRuntimeFixture> {
     const ownsHome = params.happyHomeDir === undefined;
     const happyHomeDir = params.happyHomeDir
         ?? await mkdtemp(join(tmpdir(), 'happier-admitted-plugin-runtime-'));
@@ -86,6 +112,7 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
                 generation: controller.getState().generation + 1,
                 resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority,
                 currentGlobalExternalSessionsRouter: controller.currentGlobalExternalSessions,
+                runtimeRegistryController: controller,
                 targetedContributions: controller.getTargetedContributionsOwner(),
             });
         if (params.controller && controller.getState().activeRegistry) {
@@ -105,12 +132,14 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
             await lease.release();
             throw new Error('Admitted runtime fixture did not publish a current registry');
         }
+        const registry = lease.registry;
+        assertPublishedFixtureFacts(registry);
         let disposed = false;
         return {
             happyHomeDir,
             controller,
             lease,
-            registry: lease.registry,
+            registry,
             async dispose() {
                 if (disposed) return;
                 disposed = true;
@@ -121,7 +150,10 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
                         if (ownsController) {
                             await controller.shutdown();
                         } else {
-                            await retireAdmittedPluginRuntimeRegistry({ controller, registry: lease.registry, happyHomeDir });
+                            await retireAdmittedPluginRuntimeRegistry({
+                                controller, registry: lease.registry, happyHomeDir,
+                                generationAuthority: params.runtimeOptions?.generationAuthority,
+                            });
                         }
                     }
                 } finally {
@@ -152,6 +184,7 @@ export async function createAuthoredAdmittedPluginRuntimeFixture(params: Readonl
         manifest: unknown;
         files: Readonly<Record<string, string | Uint8Array>>;
         replaceExisting?: boolean;
+        includeAvailability?: boolean;
         instantiateCommittedModule?: (
             module: PluginDaemonModuleNamespace,
         ) => PluginDaemonModuleNamespace | Promise<PluginDaemonModuleNamespace>;
@@ -189,6 +222,7 @@ export async function createAuthoredAdmittedPluginRuntimeFixture(params: Readonl
             await seedCurrentLocalPathPluginFixture({
                 happyHomeDir, pluginRoot, pluginId: manifest.id, manifestVersion: manifest.version,
                 replaceExisting: plugin.replaceExisting,
+                includeAvailability: plugin.includeAvailability,
             });
         }
         const committed = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }));
