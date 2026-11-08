@@ -7327,6 +7327,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       fileNotFound: "Archivo no encontrado",
       invalidFormat: "Formato inválido",
       operationFailed: "Operación falló",
+      machineActionUnsupported: "El Happier de esta máquina necesita una actualización para hacer esto.",
       signupDisabled: "Este Home tiene desactivada la creación de cuentas nuevas. Inicia sesión con una cuenta existente o pide al administrador del Home que active los registros.",
       accountDisabled: ({ home }: { home: string }) => `Esta cuenta está desactivada en ${home}. Contacta con un administrador del Home.`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

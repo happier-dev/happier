@@ -7156,6 +7156,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       fileNotFound: "Fichier introuvable",
       invalidFormat: "Format invalide",
       operationFailed: "L’opération a échoué",
+      machineActionUnsupported: "Le Happier de cette machine doit être mis à jour pour faire cela.",
       signupDisabled: "Les inscriptions de nouveaux comptes sont désactivées sur ce Home. Connecte-toi avec un compte existant ou demande à l’administrateur du Home d’activer les inscriptions.",
       accountDisabled: ({ home }: { home: string }) => `Ce compte est désactivé sur ${home}. Contacte un administrateur du Home.`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

@@ -83,3 +83,29 @@ it('uses the held Home binding for admitted native filesystem effects without re
   await expect(execute('srv_foreign_home', 'foreign')).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
   await expect(access(join(f.directory, 'foreign'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
+
+it('serves the folder picker\'s browse Actions through the admitted daemon filesystem owner (RU2 19:25Z)', async () => {
+  // HTTP-dispatched external Actions reach this executor; it refused the browser family as unsupported_action.
+  const f = await createInstalledFilesystemMachineFixture();
+  const executor = createActionExecutor(createCliActionDeps({ token: f.bootstrap.credentials.token,
+    credentials: f.bootstrap.credentials, serverId: f.serverId, serverIdentityId: f.homeServerIdentityId,
+    serverHttpBaseUrl: f.serverHttpBaseUrl, sessionId: '', mode: 'plain', ctx: null }));
+  f.machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
+    stopSession: async () => true, requestShutdown() {} }, { externalActionIngressOwner: {
+    currentServerId: f.serverId, executor, resolveTarget: async () => ({ kind: 'machine', machineId: f.machineId }),
+  } });
+  const execute = (actionId: string, input: unknown) => f.machine.createFilesystemActionExecutor(f.serverId)({
+    actionId: actionId as never, input,
+    context: { surface: 'rpc', authority: 'present_user', serverId: f.homeServerIdentityId, runtimeAccountId: 'requester',
+      externalActionTarget: { kind: 'machine', machineId: f.machineId },
+      machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: f.machineId,
+        installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: () => f.bootstrap.isCurrent(),
+    },
+  });
+  for (const [actionId, input] of [['daemon.filesystem.listRoots', {}], ['daemon.filesystem.browseDirectory', { path: f.directory }]] as const) {
+    const result = await execute(actionId, input);
+    expect(result, `${actionId}: ${JSON.stringify(result)}`).not.toMatchObject({ errorCode: 'unsupported_action' });
+    expect(result, `${actionId}: ${JSON.stringify(result)}`).not.toMatchObject({ ok: false });
+  }
+});

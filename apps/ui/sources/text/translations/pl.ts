@@ -7173,6 +7173,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       fileNotFound: "Plik nie został znaleziony",
       invalidFormat: "Nieprawidłowy format",
       operationFailed: "Operacja nie powiodła się",
+      machineActionUnsupported: "Happier na tej maszynie wymaga aktualizacji, aby to zrobić.",
       signupDisabled: "Ten Home ma wyłączone zakładanie nowych kont. Zaloguj się na istniejące konto lub poproś administratora Home o włączenie rejestracji.",
       accountDisabled: ({ home }: { home: string }) => `To konto jest wyłączone w ${home}. Skontaktuj się z administratorem Home.`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

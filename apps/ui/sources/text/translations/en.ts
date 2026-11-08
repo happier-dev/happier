@@ -8535,6 +8535,7 @@ const enErrors = {
   fileNotFound: 'File not found',
   invalidFormat: 'Invalid format',
   operationFailed: 'Operation failed',
+  machineActionUnsupported: "This machine’s Happier needs an update to do this.",
   signupDisabled:
     'This Home has new account sign-ups disabled. Sign in with an existing account, or ask the Home admin to enable sign-ups.',
   accountDisabled: ({ home }: { home: string }) =>

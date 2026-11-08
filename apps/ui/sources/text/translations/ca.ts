@@ -6802,6 +6802,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         fileNotFound: 'Fitxer no trobat',
         invalidFormat: 'Format no vàlid',
         operationFailed: 'L\'operació ha fallat',
+        machineActionUnsupported: "El Happier d’aquesta màquina s’ha d’actualitzar per fer això.",
         signupDisabled: 'Aquest Home té la creació de comptes nous desactivada. Inicia sessió amb un compte existent o demana a l\'administrador del Home que activi els registres.',
         accountDisabled: ({ home }: { home: string }) => `Aquest compte està desactivat a ${home}. Contacta amb un administrador del Home.`,
         homeIdentityMismatch: ({ home }: { home: string }) =>

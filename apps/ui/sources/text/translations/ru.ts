@@ -7087,6 +7087,7 @@ export const ru: TranslationStructure = {
       fileNotFound: "Файл не найден",
       invalidFormat: "Неверный формат",
       operationFailed: "Операция не выполнена",
+      machineActionUnsupported: "Happier на этой машине нужно обновить, чтобы сделать это.",
       signupDisabled: "На этом Home отключено создание новых аккаунтов. Войдите в существующий аккаунт или попросите администратора Home включить регистрацию.",
       accountDisabled: ({ home }: { home: string }) => `Этот аккаунт отключён в ${home}. Обратитесь к администратору Home.`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

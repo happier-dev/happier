@@ -7051,6 +7051,7 @@ export const zhHans: TranslationStructure = {
       fileNotFound: "文件未找到",
       invalidFormat: "格式无效",
       operationFailed: "操作失败",
+      machineActionUnsupported: "这台机器上的 Happier 需要更新才能执行此操作。",
       signupDisabled: "该Home已禁用新账户注册。请使用现有账户登录，或联系Home管理员开启注册。",
       accountDisabled: ({ home }: { home: string }) => `此账户在 ${home} 上已被禁用。请联系 Home 管理员。`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

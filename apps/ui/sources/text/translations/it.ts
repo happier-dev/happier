@@ -7550,6 +7550,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       fileNotFound: "File non trovato",
       invalidFormat: "Formato non valido",
       operationFailed: "Operazione non riuscita",
+      machineActionUnsupported: "Happier su questa macchina deve essere aggiornato per farlo.",
       signupDisabled: "Questo Home ha disattivato la creazione di nuovi account. Accedi con un account esistente o chiedi all'amministratore dell’Home di attivare le registrazioni.",
       accountDisabled: ({ home }: { home: string }) => `Questo account è disabilitato su ${home}. Contatta un amministratore del Home.`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

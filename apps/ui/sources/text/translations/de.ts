@@ -7319,6 +7319,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         fileNotFound: 'Datei nicht gefunden',
         invalidFormat: 'Ungültiges Format',
         operationFailed: 'Operation fehlgeschlagen',
+        machineActionUnsupported: "Happier auf diesem Rechner muss dafür aktualisiert werden.",
         signupDisabled: 'Auf diesem Home sind neue Registrierungen deaktiviert. Melde dich mit einem bestehenden Konto an oder bitte die Home-Administration, Registrierungen zu aktivieren.',
         accountDisabled: ({ home }: { home: string }) => `Dieses Konto ist auf ${home} deaktiviert. Wende dich an die Home-Administration.`,
         homeIdentityMismatch: ({ home }: { home: string }) =>

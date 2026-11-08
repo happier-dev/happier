@@ -15,5 +15,7 @@ export function resolveFilesystemErrorReason(error: string | null | undefined): 
     if (error === 'not_authenticated' || error === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED) return t('errors.authenticationFailed');
     if (error === 'MACHINE_RPC_INVALID_RESPONSE') return t('errors.invalidFormat');
     if (error === 'ENOENT') return t('errors.fileNotFound');
+    // The Machine's Happier does not serve this Action yet (an older daemon): updating it is the recovery.
+    if (error === 'unsupported_action') return t('errors.machineActionUnsupported');
     return t('errors.operationFailed');
 }

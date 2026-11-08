@@ -218,7 +218,7 @@ import { projectVerifiedExternalActionRequesterContext } from '@/daemon/agentIso
 import { createReadFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/readFileHandler';
 import { createWriteFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/writeFileHandler';
 import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
-import { FILESYSTEM_MUTATION_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FILESYSTEM_MUTATION_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createPreparedFilesystemTransferActionExecutor, projectPreparedFilesystemActionResult } from '@/machines/transfer/createPreparedFilesystemTransferActionExecutor';
 import type { DirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { deliverScmFileAtRevision, prepareScmFileBytesExport } from '@/scm/actions/deliverScmFileAtRevision';
@@ -2468,8 +2468,8 @@ export class ApiMachineClient {
         }
     }
 
-    private filesystemEffectConfiguration(requesterAccountId: string): import('@/rpc/handlers/fileSystem/filesystemEffectOperation').FilesystemEffectConfiguration {
-        return { machineId: this.machine.id, requesterAccountId, workingDirectory: this.machineRpcWorkingDirectory,
+    private filesystemEffectConfiguration(requesterAccountId?: string): import('@/rpc/handlers/fileSystem/filesystemEffectOperation').FilesystemEffectConfiguration {
+        return { machineId: this.machine.id, ...(requesterAccountId === undefined ? {} : { requesterAccountId }), workingDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy, additionalAllowedReadDirs: [...this.additionalAllowedReadDirs],
             additionalAllowedWriteDirs: [...this.additionalAllowedWriteDirs],
             additionalAllowedReadFiles: [...this.transientSessionMediaReadAllowance.readAllowedReadFiles()],
@@ -2800,6 +2800,15 @@ export class ApiMachineClient {
                 const result = await inline.execute(request.actionId, request.input, { ...request.context,
                     verifyMachineAdmissionCurrent: async () => { await assertCurrentAuthority(); return true; } });
                 return result.ok ? result.result : result;
+            }
+            // The file browser family (folder picker, Code tree, filename search) has one effect owner; this
+            // admitted daemon path reaches it with the same configuration the native channel carries (RU2 19:25Z).
+            if (request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots || request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory
+                || request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles) {
+                await assertCurrentAuthority();
+                const { executeConfiguredFilesystemEffect } = await import('@/rpc/handlers/fileSystem/filesystemEffectOperation');
+                return await executeConfiguredFilesystemEffect(this.filesystemEffectConfiguration(),
+                    { actionId: request.actionId, input: request.input }, request.context.signal);
             }
             const actionId = FILESYSTEM_MUTATION_ACTION_IDS.find(id => id === request.actionId);
             if (!actionId) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };

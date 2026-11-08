@@ -6180,6 +6180,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         fileNotFound: '檔案未找到',
         invalidFormat: '格式無效',
         operationFailed: '操作失敗',
+        machineActionUnsupported: "這台機器上的 Happier 需要更新才能執行此操作。",
         signupDisabled: '此Home已停用新帳號註冊。請使用現有帳號登入，或聯絡Home管理員開啟註冊。',
         accountDisabled: ({ home }: { home: string }) => `此帳號在 ${home} 上已停用。請聯絡 Home 管理員。`,
         homeIdentityMismatch: ({ home }: { home: string }) =>
