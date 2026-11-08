@@ -3277,6 +3277,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { surface: widgetTarget, instanceId: added.instance.id }, added.instance, ctx);
           if (refusal && !isWidgetAdmissionUndecidableHereV1(refusal)) return refusal;
         }
+        const prepareCurrentApproval = () => prepareApprovalRequest({
+          deps,
+          actionId,
+          input: admittedInput,
+          actionArgs: admittedInput,
+          context: ctx,
+          ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
+          ...(deploymentReview === undefined ? {} : { deploymentReview }),
+          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+          executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
+          ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
+          ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
+        });
         if (options?.confirmUiDefault && approvalRouting === baseApprovalRouting
           && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && !ctx.bypassApprovals
           && ctx.presentUserConfirmation?.actionId !== actionId && deps.presentUserActionConfirmation) {
@@ -3289,15 +3302,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
             }, async () => {
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-              const policyReview = (childReviewRequired || actionId === 'projects.sources.moveToTeam' || actionId === 'machines.reboot' || actionId === 'providers.connections.endpoint.set'
-                || actionId === 'providers.connections.secrets.bind' || actionId === 'providers.connections.create_contribution')
-                ? await prepareApprovalRequest({ deps, actionId, input: admittedInput, actionArgs: admittedInput, context: ctx,
-                  ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
-                  ...(hostReviewedChildren ? { hostReviewedChildren } : {}) }) : null;
-              if (policyReview && 'ok' in policyReview) return policyReview;
-              const confirmationInput = policyReview?.actionArgs ?? admittedInput;
-              const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx,
-                ...(policyReview ? { preview: policyReview.preview } : {}) });
+              const policyReview = await prepareCurrentApproval();
+              if (!policyReview) {
+                const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
+                return classifyExecutionRunStartPreDispatchFailure(actionId, { ok: false, errorCode, error: errorCode });
+              }
+              if ('ok' in policyReview) return policyReview;
+              const confirmationInput = policyReview.actionArgs;
+              const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
               if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
               // Re-enter current authority and domain admission with the existing
@@ -3381,19 +3393,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!target.ok) return target;
           ctx = { ...ctx, executionRunTargetMachineId: target.machineId };
         }
-        const preparedApproval = await prepareApprovalRequest({
-          deps,
-          actionId,
-          input: admittedInput,
-          actionArgs: admittedInput,
-          context: ctx,
-          ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
-          ...(deploymentReview === undefined ? {} : { deploymentReview }),
-          ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
-          executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
-          ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
-          ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
-        });
+        const preparedApproval = await prepareCurrentApproval();
         if (!preparedApproval) {
           const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
           return classifyExecutionRunStartPreDispatchFailure(actionId, {

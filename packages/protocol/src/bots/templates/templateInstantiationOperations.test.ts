@@ -35,7 +35,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   executionContext: Partial<ActionExecutorContext> = {},
   copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string },
   softwareAuthorizationUnavailable = false,
-  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction'> = {}) {
+  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction' | 'presentUserActionConfirmation'> = {}) {
   const instanceBaseId = copy?.baseId ?? baseId;
   const instanceSessionId = copy?.sessionId ?? sessionId;
   let selectedRelease: BotTemplateReleaseV1 = carried ? { ...release, content: { ...release.content,
@@ -66,6 +66,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   let spawnContext: ActionExecutorContext | undefined;
   const catalogState = copy?.catalog ?? { value: { v: 1 as const, servers: [], bindings: [] } satisfies McpServerCatalogV1, revision: 0 };
   const events: string[] = [];
+  const confirmations: Parameters<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>[0][] = [];
   const machineSetupPlan: NonNullable<ActionExecutorDeps['machineSetupPlan']> = async ({ input }) => {
     if (softwareAuthorizationUnavailable) return { ok: false, errorCode: 'software_setup_transport_unavailable', error: 'Setup Plan transport unavailable' };
     events.push('software-plan');
@@ -137,6 +138,11 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       } });
     },
     ...softwareBoundary,
+    // Native review is a UI boundary; keep policy, preparation and replay real.
+    presentUserActionConfirmation: async request => {
+      confirmations.push(request);
+      return softwareBoundary.presentUserActionConfirmation ? softwareBoundary.presentUserActionConfirmation(request) : true;
+    },
     promptDocCreate: input => createPromptDocInLibrary({ store, request: input }),
     memoryLibrary: { serverId: 'home', store, randomId: () => 'seed-fact',
       readSession: async () => ({ metadata, revision }),
@@ -187,7 +193,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       return { type: 'success', disposition, sessionId: instanceSessionId, executionTarget: input.executionTarget,
         organizationPlacement: { folderId: null, tagIds: [] }, initialInput: awaiting ? { status: 'accepted', localId: 'host-onboarding' } : { status: 'notRequested' } };
     },
-  });
+  }, { confirmUiDefault: true });
   const actionInput = { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId }, expectedVersion: '1.0.0',
     ...(setup ? { setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }],
       accounts: [{ key: 'github', selection: { action: 'connect', binding: { source: 'connected', selection: 'profile', profileId: 'recipient-profile' } } }],
@@ -218,7 +224,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       if (typeof child.action !== 'string') throw new Error('Unexpected contributed preparation');
       return executor.execute(child.action, child.input, executionContextFor());
     } }), reject: () => decide('reject'), approve: () => decide('approve'),
-    approval: () => approval, selectedRelease, input: actionInput, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
+    approval: () => approval, confirmations, selectedRelease, input: actionInput, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
 }
 
 describe('template instantiation through ordinary creation', () => {
@@ -249,39 +255,42 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.counts()).toEqual({ births: 1, launches: 1 });
   });
 
-  it('approves an unchanged received release after the host binds its omitted revision', async () => {
+  it('accepts native review of an unchanged received release after the host binds its omitted revision', async () => {
     const f = fixture();
     Reflect.deleteProperty(f.input, 'expectedRevision');
     const result = await f.run(false);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    await f.approve();
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success' } });
     expect(f.counts()).toEqual({ births: 1, launches: 1 });
-    expect(f.approval()).toMatchObject({ actionArgs: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
-      execution: { ok: true } });
+    expect(f.confirmations).toMatchObject([{ actionId: 'template.instantiate', input: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } } }]);
+    expect(f.approval()).toBeNull();
   });
-  it('binds an omitted recipient revision before approval so a changed shared release cannot replace reviewed content', async () => {
-    const f = fixture();
+  it('binds an omitted recipient revision before native review so a changed shared release cannot replace reviewed content', async () => {
+    const f = fixture(false, false, false, false, false, false, false, {}, undefined, false, {
+      presentUserActionConfirmation: async () => {
+        const stored = f.boundary.rows.get(releaseId)!;
+        f.boundary.rows.set(releaseId, { ...stored, revision: { headerVersion: 2, bodyVersion: 2 },
+          body: JSON.stringify({ v: 1, state: 'released', release: { ...f.selectedRelease,
+            content: { ...f.selectedRelease.content, instructions: { markdown: 'Changed after review.' } } } }) });
+        return true;
+      },
+    });
     Reflect.deleteProperty(f.input, 'expectedRevision');
     const result = await f.run(false);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    const stored = f.boundary.rows.get(releaseId)!;
-    f.boundary.rows.set(releaseId, { ...stored, revision: { headerVersion: 2, bodyVersion: 2 },
-      body: JSON.stringify({ v: 1, state: 'released', release: { ...f.selectedRelease,
-        content: { ...f.selectedRelease.content, instructions: { markdown: 'Changed after review.' } } } }) });
-    await f.approve();
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
     expect(f.events).toEqual([]);
-    expect(f.approval()).toMatchObject({ actionArgs: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
-      execution: { ok: false } });
+    expect(f.confirmations).toMatchObject([{ actionId: 'template.instantiate', input: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } } }]);
+    expect(f.approval()).toBeNull();
   });
-  it('returns an ordinary required Plan review before native planning or Copy effects', async () => {
+  it('declines an ordinary required Plan review before native planning or Copy effects', async () => {
     const f = fixture(false, false, false, false, true, false, false, {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
         actions: { 'machines.setup.plan': { approvalRequiredSurfaces: ['ui'] } } }),
-    });
+    }, undefined, false, { presentUserActionConfirmation: async () => false });
     const result = await f.run();
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(f.approval()?.actionId).toBe('machines.setup.plan');
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(f.confirmations).toMatchObject([{ actionId: 'machines.setup.plan' }]);
+    expect(f.approval()).toBeNull();
     expect(f.events).toEqual([]);
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
   });
@@ -536,17 +545,17 @@ describe('template instantiation through ordinary creation', () => {
   it.each([false, true])('reviews the complete release and ordinary software plan before declining without birth (software=%s)', async software => {
     expect(isApprovalRequiredByActionsSettings('template.instantiate', ActionsSettingsV1Schema.parse({ v: 1 }),
       { surface: 'agent', authority: 'account_automation' })).toBe(true);
-    const f = fixture(true, false, false, false, software);
+    const f = fixture(true, false, false, false, software, false, false, {}, undefined, false,
+      { presentUserActionConfirmation: async () => false });
     const result = await f.run(false);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'copy-approval' } });
-    expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { release: f.selectedRelease } } });
-    if (software) expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { softwarePlan: {
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(f.confirmations).toMatchObject([{ actionId: 'template.instantiate', preview: { hostReviewedContent: { release: f.selectedRelease } } }]);
+    if (software) expect(f.confirmations).toMatchObject([{ preview: { hostReviewedContent: { softwarePlan: {
       desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
         ref: { pluginId: 'test.tools', recipeId: 'git', revision: '1' }, inputs: {},
       } }] } }], recipePlans: [],
-    } } } });
-    expect(await f.reject()).toMatchObject({ ok: true });
-    expect(f.approval()).toMatchObject({ status: 'rejected' });
+    } } } }]);
+    expect(f.approval()).toBeNull();
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
     expect(f.docs.size).toBe(0);
     expect(f.events).toEqual(software ? ['software-plan'] : []);
