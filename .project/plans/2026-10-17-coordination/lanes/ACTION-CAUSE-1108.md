@@ -1,6 +1,6 @@
 # ACTION-CAUSE-1108
 
-Implemented all four source corrections; focused tests and entry-loads 7/7 pass. [blocked] Generated CLI help publication waits on another operation's live lock; broader adjacent tests failed as recorded below. No stack lifecycle action or push.
+Implemented all four source corrections and published generated CLI help; focused tests and fresh continuation entry-loads 7/7 pass. The generated-help blocker is cleared; broader adjacent tests failed as recorded below. No stack lifecycle action or push.
 
 ## Delivered behavior
 
@@ -21,8 +21,8 @@ Implemented all four source corrections; focused tests and entry-loads 7/7 pass.
 
 - Evidence directory: `.project/tmp/ACTION-CAUSE-1108/`.
 - Daemon GREEN: 3/3 pass, `daemon-green.log` (native-XxRoPY-3-1794112218, terminal exit 0).
-- Entry-loads: 7/7 pass, `entry-loads.log` (native-DwSTLu-4-1794112203, terminal exit 0).
-- [blocked] Generated help: canonical `generateBundledPluginEntries.ts --mode write --aggregate` still waiting, `generate.log`; queued behind live PID2700895's workspace publication lock (queued compilation admission for installedServices/workflowSessionConversation/relay.access integration tests). Coordination/Systemic ASK posted 04:33 UTC; no lock/process changed. Original generator handle80200/PID2015697 remains alive; resume it, do not launch another writer.
+- Entry-loads: fresh continuation 7/7 pass, `entry-loads-continuation.log` (native-QZoJOy-3-1794123834, linux1, terminal exit 0 at 08:14:34Z). Earlier run: `entry-loads.log` (native-DwSTLu-4-1794112203, terminal exit 0).
+- Generated help: completed once after confirming earlier PID2015697 had exited: `node --conditions=happier-source --import ./packages/cli-common/registerSourceRuntime.mjs apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write --aggregate`, terminal exit 0; `generate-continuation.log`. Writer delta in `generatedBundledActionCliHelp.ts` is exactly the `doc.read` and `doc.edit.propose` subtitles. The commit also retains its already-generated compact-proposal optionality corrections for target/baseRevision/before/reason. Foreign generated changes are only `ohMyPi` → `ohmypi` normalization in `apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts`, `apps/cli/src/plugins/projection/registry/sources/generatedBundledCliHelpFacts.ts`, and `apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts`; preserved outside this commit. No generator/source edits or additional behavior mechanisms.
 - Adjacent Session/Discussion suites: 30 failed / 130 passed (`propose-session-adjacent.log`). All touched Doc cases pass; notification/SCM/managed/client/source-admission failures remain unattributed.
 - Adjacent protocol exposure suite: 35 passed / 2 failed (computer-secret-fill API projection and final desktop/browser/deployments/discussion-post projections), `propose-discovery-green-adjacent.log`; discovery RED is `propose-discovery-red.log`. No claim failures are pre-existing.
 - Scoped diff whitespace check passed. Package typechecks were not run: brief's explicit lane gate is focused tests + entry-loads; package diagnostics remain the integration owner's background lane.
@@ -38,6 +38,6 @@ Implemented all four source corrections; focused tests and entry-loads 7/7 pass.
 
 ## Handoff and residual risk
 
-- Runtime fixes committed: `a36c29da0967dffaa800c60a0adf717dc33fb2fd`; private-index fast path, machine identity, shared index preserved. Discovery source/report follow separately; generated help is not claimed published.
+- Runtime fixes committed: `a36c29da0967dffaa800c60a0adf717dc33fb2fd`; private-index fast path, machine identity, shared index preserved. Generated Action CLI help and this continuation report form the follow-up private-index commit; foreign generated changes are excluded as named above.
 - Coordination: load the change through the lifecycle owner, then replay plain rewrite → compact proposal in A's own passage thread → inspect/decline draft. Capture typed response and technical details if a failure remains. This lane was forbidden stack actions.
-- Coordination/Systemic must unblock the existing publication owner, collect the generator terminal result, and commit its current-source projection closure. Unverified: loaded runtime/model tool selection, original incident first cause, package-wide diagnostics and physical-platform behavior. No platform-specific runtime code was added.
+- Generated-help publication and entry-load verification are complete. Coordination owns the loaded replay above. Unverified: loaded runtime/model tool selection, original incident first cause, package-wide diagnostics and physical-platform behavior. No platform-specific runtime code was added.
