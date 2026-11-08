@@ -1,16 +1,17 @@
-> **IMPLEMENTED; production-after measurement is [blocked] on the orchestrator's server reload. No latency improvement or few-second switch is claimed yet.**
+> **IMPLEMENTED; client-only production replay shows no admission improvement. The combined production-after measurement is [blocked] on the orchestrator's server reload; the few-second goal remains unmet.**
 > The retained PostgreSQL response is structurally JSON-identical, including all 2,300 Session memberships in the 90D result.
-> Final client-inclusive entry loads pass 7/7; protocol typecheck is green; server touched diagnostics add zero, while whole-package checking is red. UI checking and production replay remain pending. Rejected attempts are described below.
+> Final client-inclusive entry loads pass 7/7; protocol typecheck is green; server touched diagnostics add zero, while whole-package checking is red. UI checking remains pending. Rejected attempts are described below.
 
-USAGE-SWITCH-FREEZE-7-1108 — observed 2026-11-08; server commit `fe747e5cbf6b`; evidence root `.project/tmp/usage-switch-freeze-7-1108/`.
+USAGE-SWITCH-FREEZE-7-1108 — observed 2026-11-08; server commit `fe747e5cbf6b`, client commit `6df82450568b`; evidence root `.project/tmp/usage-switch-freeze-7-1108/`.
 
 | Gate / measurement | Control / before | Candidate / status |
 | --- | ---: | ---: |
-| Clean production Coach 90D → How you work, 3,623 Sessions: settled | 14.616 s | Pending reload |
-| Same production switch: all measured frames visibly ready | 12.940 s | Pending reload |
-| Pointer → activity request start | 1.884 s | Exact clipped CPU reproduces 1.883 s; owner fix in progress |
-| Switch requests | 1 query-batch; zero Session evidence | Same demand must be retained |
-| Loaded server read / fold / price / project | 1.697 / 2.420 / 1.422 / 2.412 s | Pending reload |
+| Matched client-only production pair, old server: settled | 14.614 s | 14.111 s; server phase variation, no client causal claim |
+| Same production switch: all measured frames visibly ready | 13.507 s | 13.022 s |
+| Pointer → activity request start, timing off | 1.996 s | 2.055 s; no observed admission improvement |
+| Switch requests, 3,623 Sessions | 1 query-batch; zero Session evidence | Same; both pre-switch activity counts zero |
+| Loaded old-server read / fold / price / project | 1.731 / 2.686 / 1.387 / 2.435 s | 1.669 / 2.387 / 1.321 / 2.168 s |
+| Combined server + client production-after | Reload 127 control | Pending orchestrator reload |
 | Retained PostgreSQL full delivered response, real 74,212-event shape | Rich control | Exact structural JSON equality; 2,300 memberships |
 | Missing native-subject schema parses, constructed 74,212 rows | 74,212 (RED) | 0 (GREEN), valid/malformed present values preserved |
 | Missing attribution/provider fallback parses, constructed measured shape | Per absent row (RED) | 0 (GREEN), present/captured-source controls preserved |
@@ -47,7 +48,7 @@ The optional-metadata-only measurement showed modest savings; source cost reduct
 The admitted accounting sidecar already prevents repeated schema normalization downstream. Attribution validation is first performed per selected runtime contribution/coordinate; moving it earlier alone would save no parses for this private query.
 All retained-QA SQL operations are reads. No retained data, Prisma schema, migration, stack process or server lifecycle was changed by this lane.
 
-**Client and production basis.** `client/before-production-clean/{result,interaction,bundle}.json` and scoped `usage.png` are the deciding before capture.
+**Client and production basis.** `client/before-production-clean/{result,interaction,bundle}.json` and scoped `usage.png` preserve the initial clean 14.616 s before capture.
 It uses the retained FREEZE-6 production export, profiling off, Account A sign-in, and the canonical `capture.mjs` cleanup path.
 Coach 90D is active before the pointer; every pre-pointer accounting query has activity disabled. The switch issues exactly one new activity query.
 The demand has day granularity, activity resolution `both`, zero contribution queries and one Session-membership query; other optional outputs are false.
@@ -55,12 +56,15 @@ Server-Timing is auth 39.216, read 1697.319, fold 2419.760, price 1422.044, proj
 The request starts at +1883.6 ms and its controller finishes at +12222.6 ms.
 An earlier 14.403 s timing capture remains supplemental. A subsequent inherited-URL replay preloaded activity and issued no new request, so it was rejected for admission attribution.
 The clean harness now starts from Coach 90D without inherited query overrides and rejects pre-switch activity acquisition.
-The same retained export/browser basis is reserved for the after capture; mapped CPU diagnostics are separate from timing evidence.
-Mapped-export navigation was unresponsive and yielded no admission evidence; only recorded owned browser processes were retired. A fresh owned browser captured the exact retained production export with CPU clipped to pointerdown → request start; subsequent timing-replay attempts failed before measurement and do not replace the valid baseline.
+The deciding client-only pair is `client/{client-before-production-c,client-after-production-c}/`, using the same owned browser and unchanged reload-127 server: settled 14.614 → 14.111 s, native admission 1.996 → 2.055 s. Both are profiling-off production exports, Coach 90D active, 3,623 Sessions, pre-switch activity zero, exactly one switch query-batch POST and zero Session evidence; cleanup passes without collection errors. Scoped Rhythm output matches visually.
+`client/candidate-owner-attestation.json` proves the served candidate bundle contains the typed phase comparison and zero phase serializations. Reduced server phase times explain much of the settled difference; neither that difference nor a client admission gain is attributed to this fix.
+Mapped-export navigation yielded no admission evidence. Later observed CDP transfers took 103.2 s for the main bundle and 28.4 s for a chunk, outside the interaction; a short health probe was insufficient evidence to retire those attempts. Only owned browsers were affected; failed attempts do not replace the valid captures.
 `client/admission-cpu-exact/admission.json` now proves a 1883.155 ms pointer-to-native-request window on that export, with zero pre-switch activity queries and one new POST; only this window's samples are analyzed.
 Initial progress drain accounts for 420.6 ms inclusive (projection 149.6 ms, encoding 114.8 ms); React ancestry 518.6 ms overlaps that drain, with 150.3 ms React self time. These costs are not additive.
 Retained Session-input reads account for 134.2 ms inclusive and evidence-phase read for 83.5 ms self; that owner reserialized unchanged phase facts per admitted Session. RED witnessed 3,424 serializations for two publications; GREEN has zero serializations across 3,423 inputs and preserves two publications, refusal, completion and coverage transitions (5/5 focused tests).
-The existing `UsageQueryEvidencePhase.publishedPhase` now retains its typed published phase instead of a JSON string, comparing status/refusal facts before allocating source objects. No client latency win is claimed before production replay.
+The existing `UsageQueryEvidencePhase.publishedPhase` now retains its typed published phase instead of a JSON string, comparing status/refusal facts before allocating source objects. The paired production timing does not demonstrate a client latency win.
+`client/client-cpu-owner-pair-metrics.json` records a separate same-browser clipped CPU pair: phase-module self time 85.98 ms / 80 samples → 0.521 ms / one sample. Diagnostic admission windows vary 3.993 → 2.813 s and do not replace the timing-off latency conclusion; both captures complete and clean up with no collection errors.
+Session-input basis reads remain necessary: admitted Session versions and envelopes can change independently of Home invalidations. The profile did not establish a safe narrower admission rule or justify suppressing initial visible progress.
 
 **Validation and ownership.** `fold-red.log`, `fold-green.log`, `pricing/grouped-red.log`, `pricing/grouped-green.log` and `pricing/server-grouped-tests.log` hold deciding RED/GREEN evidence.
 `pricing/route-grouped.log` covers native delivery formats; `pricing/protocol-grouped-tests.log` covers changed readers and adjacent cost/calendar behavior.
