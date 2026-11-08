@@ -1020,7 +1020,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         || root.managedContinuation.expectedIntentRevision !== input.managedContinuation.expectedIntentRevision
         : root.managedContinuation !== undefined)
       || !await isCurrent()) return fail('admission_unavailable');
-    const confirmDisclosure = async (recipient: CurrentAccountMachineInventoryItem): Promise<ActionExecuteResult | null> => {
+    const confirmDisclosure = async (recipient: Readonly<{ id: string; custodian?: Readonly<{ accountId: string; displayName: string }> }>): Promise<ActionExecuteResult | null> => {
       if (kind === 'account' && input.authority === 'account_automation'
         || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
       if (!input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
@@ -1029,7 +1029,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       try {
         confirmed = await input.onRequesterSessionCredentialDisclosure(projectRequesterSessionCredentialDisclosure({
           disposition: 'ordinary_requester', accountId, machineId: recipient.id,
-          ...(recipient.access ? { custodian: recipient.access.custodian } : {}),
+          ...(recipient.custodian ? { custodian: recipient.custodian } : {}),
         }));
       } catch { return fail(input.signal?.aborted ? 'cancelled' : 'requester_credential_disclosure_declined'); }
       if (confirmed !== true) return fail('requester_credential_disclosure_declined');
@@ -1045,7 +1045,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       } else if (foreign || input.invocation) {
         if (!installed.installationPublicKey) return fail('admission_unavailable');
         if (foreign) {
-          const refusal = await confirmDisclosure(machine!);
+          const refusal = await confirmDisclosure({ id: machine!.id, custodian: machine!.access?.custodian });
           if (refusal) return refusal;
         }
         authorization = sealExternalActionRequesterAccountContextV1({ authorization,
@@ -1057,24 +1057,15 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (wake) {
         const wakeController = wake.target.controller;
         if (!wakeController) return fail('admission_unavailable');
-        const controller = machines?.find(row => row.id === wakeController.machineId)
-          ?? (await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
-            credentials: input.credentials, machineIds: [wakeController.machineId], projection: 'hostFacts',
-            serverHttpBaseUrl: homeUrl, ...(input.signal ? { signal: input.signal } : {}) })))[0];
-        if (!controller || controller.kind !== 'persistent' || controller.revokedAt !== null
-          || controller.replacedByMachineId !== null || controller.access?.accessState !== 'ready') return fail('admission_unavailable');
-        const installedController = await readInstalledMachine(controller);
-        if (!installedController?.installationPublicKey
-          || installedController.installationId !== wakeController.installationId) return fail('admission_unavailable');
-        const controllerKey = decodeBase64(installedController.installationPublicKey, 'base64');
-        if (encodeBase64(controllerKey, 'base64url') !== wake.installationPublicKey) return fail('admission_unavailable');
-        if (controller.access.custodian.accountId !== accountId) {
-          const refusal = await confirmDisclosure(controller);
+        // Home already admitted this exact controller and key. Guest Use need
+        // not grant controller inventory access, including delegated enrollment.
+        if (wake.requesterCredentialDisclosure) {
+          const refusal = await confirmDisclosure({ id: wakeController.machineId, custodian: wake.requesterCredentialDisclosure });
           if (refusal) return refusal;
-          authorization = sealExternalActionRequesterAccountContextV1({ authorization,
-            credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'managed_finite_wake', target: wake.target },
-            installationPublicKey: controllerKey, randomBytes });
         }
+        authorization = sealExternalActionRequesterAccountContextV1({ authorization,
+          credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'managed_finite_wake', target: wake.target },
+          installationPublicKey: decodeBase64(wake.installationPublicKey, 'base64url'), randomBytes });
       }
       body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
         executionAuthorization: authorization });

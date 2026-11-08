@@ -387,8 +387,8 @@ function token(kind: 'account' | 'terminal' = 'account') {
 
 async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   mutateRoot?: boolean; custodianAccountId?: string; authenticationKind?: 'account' | 'terminal';
-  finiteWake?: boolean; accountOwnedFiniteWake?: boolean; finiteAction?: boolean; staleController?: 'key' | 'installation';
-  controllerCustodianAccountId?: string;
+  finiteWake?: boolean; accountOwnedFiniteWake?: boolean; finiteAction?: boolean;
+  controllerCustodianAccountId?: string; controllerInventoryAbsent?: boolean;
   originalOwnAction?: ActionId; ownExecution?: ActionExecuteResult; onInventoryRead?: () => void; localDaemon?: boolean;
   ownHttpResponse?: Readonly<{ status: number; body: string }>;
   localDaemonExecution?: ActionExecuteResult;
@@ -460,9 +460,9 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
         ? { ...machine, access: { ...machine.access, custodian: { accountId: options.installedCustodianAccountId } } } : machine });
     }
     if (request.url === '/v1/machines/alice-controller') {
+      if (options.controllerInventoryAbsent) { response.statusCode = 404; return respond({ error: 'not_found' }); }
       if (request.headers.accept === 'application/json;happier-machine-projection=host-facts') options.onInventoryResponse?.(request.url, 1);
-      return respond({ machine: options.staleController === 'installation'
-        ? { ...controller, installationId: 'replacement-controller-installation' } : controller });
+      return respond({ machine: controller });
     }
     if (options.allowedTerminalSecurity && request.method === 'GET' && request.url === '/v1/account/security') {
       await options.beforeAccountSecurityRead?.();
@@ -546,8 +546,9 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
           enrolledMachineId: machine.id, expectedIntentRevision: 4,
           controller: options.accountOwnedFiniteWake ? undefined : { machineId: controller.id, installationId: controller.installationId },
           origin: { kind: 'finite-command', actionRequestId: 'request-1' }, reason: 'admitted-work' }),
-        installationPublicKey: encodeBase64(options.staleController === 'key'
-          ? ed25519.getPublicKey(new Uint8Array(32).fill(4)) : controllerPublicKey, 'base64url'),
+        ...(controller.access.custodian.accountId !== 'bob' && controller.access.custodian.accountId !== machine.access.custodian.accountId
+          ? { requesterCredentialDisclosure: controller.access.custodian } : {}),
+        installationPublicKey: encodeBase64(controllerPublicKey, 'base64url'),
       };
       if (options.mutateRoot) authorization.binding.requestId = 'different-request';
       return respond(authorization);
@@ -1537,7 +1538,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       const events: string[] = [];
       const inventoryResponses: Array<Readonly<{ path: string; rows: number }>> = [];
       const target = await home('e2ee', events, { finiteWake: true, originalOwnAction: 'session.spawn_new',
-        authenticationKind: 'terminal', custodianAccountId: 'bob', controllerCustodianAccountId: 'bob',
+        authenticationKind: 'terminal', custodianAccountId: 'bob', controllerCustodianAccountId: 'bob', controllerInventoryAbsent: true,
         onInventoryResponse: (path, rows) => { inventoryResponses.push({ path, rows }); } });
       const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'read-only-isolation',
         executionTarget: { serverId: homeIdentityId, machineId: 'alice-machine' },
@@ -1551,8 +1552,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       expect(await executor.execute('session.spawn_new', input, { surface: 'cli', authority: 'account_automation', actionRequestId: 'request-1' }))
         .toMatchObject({ ok: false, errorCode: 'fixture_receipt' });
       expect(events).toEqual(['home-authorized', 'dispatch']);
-      expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 },
-        { path: '/v1/machines/alice-controller', rows: 1 }]);
+      expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 }]);
       const delivered = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
       expect(delivered.executionAuthorization?.binding).toMatchObject({ actionId: 'session.spawn_new',
         accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'terminal', tokenEpoch: 7 } });
@@ -1598,10 +1598,9 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         return true;
       } });
     expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
-    expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 },
-      { path: '/v1/machines/alice-controller', rows: 1 }]);
+    expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 }]);
     expect(disclosedRecipients).toEqual(guestCustodian === 'bob'
-      ? ['alice-controller'] : ['alice-machine', 'alice-controller']);
+      ? ['alice-controller'] : ['alice-machine']);
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     const authorization = received.executionAuthorization;
     expect(authorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: guestCustodian,
@@ -1636,22 +1635,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: 'bob' });
     expect(received.executionAuthorization?.managedFiniteWake).toBeUndefined();
     expect(received.executionAuthorization?.requesterAccountContext).toBeUndefined();
-  });
-
-  it.each(['key', 'installation'] as const)('withholds controller custody when the Home hint no longer matches its actual published %s', async staleController => {
-    const events: string[] = [];
-    const target = await home('plain', events, { finiteWake: true, custodianAccountId: 'bob', staleController });
-    const disclosedRecipients: string[] = [];
-    const result = await dispatchOriginalAccountAction({ actionId: 'projects.script.run',
-      input: PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse({
-        workspace: { serverId: 'home', workspaceId: 'workspace-1', machineId: 'alice-machine', rootPath: '/workspace' },
-        selection: { kind: 'named', name: 'test' } }),
-      requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
-      credentials: { token: token(), encryption: null }, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId,
-      onRequesterSessionCredentialDisclosure: async disclosure => { disclosedRecipients.push(disclosure.machineId); return true; } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
-    expect(disclosedRecipients).toEqual([]);
-    expect(target.readReceived()).toBeUndefined();
   });
 
   it('refuses legacy credentials that cannot establish required Machine admission', async () => {

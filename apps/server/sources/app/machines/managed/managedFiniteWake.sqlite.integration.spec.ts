@@ -15,7 +15,7 @@ import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake, readManagedWakeTargets, resolveManagedWakeTargetInTx } from './managedWake';
+import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake, readCurrentManagedFiniteWakeCustodyInTx, readManagedWakeTargets, resolveManagedWakeTargetInTx } from './managedWake';
 import { projectManagedMachine } from './managedRows';
 import { createExternalActionDaemonDispatcher, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     resolveCurrentSessionMachineFromServer, resolveCurrentSessionPublisherFromServer } from '@/app/api/socket/externalActionDispatcher';
@@ -26,7 +26,7 @@ import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResp
     computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
@@ -69,6 +69,7 @@ import { markPendingActivationAuthorizationFailedInTx, mapPendingActivationAutho
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { measure } from './managedProjectionVolume.testkit';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 describe('finite managed wake original Action authority (real storage)', () => {
     let harness: LightSqliteHarness | undefined;
@@ -536,7 +537,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
         try {
             expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
-            const expected = level === 'view' ? 'managed_power_required' : 'resume_not_requested';
+            const expected = 'resume_not_requested';
             expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{
                 localId: input.localId, status: 'queued', deliveryState: null, activationHoldReason: expected,
             }] });
@@ -558,24 +559,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 .toMatchObject({ ok: true });
             const authorized = await listPendingMessages(input);
             if (!authorized.ok) throw new Error('Accepted queue disappeared');
-            if (level === 'view') expect(authorized.pending[0]).toMatchObject({ activationHoldReason: 'managed_power_required' });
-            else expect(authorized.pending[0]).not.toHaveProperty('activationHoldReason');
-            if (level === 'view') {
-                // Ordinary runtime resume can be admitted without compute power.
-                // Receiving Manage later must not turn that waiting, targetless
-                // authorization into a previously approved managed wake.
-                for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
-                    actorAccountId: test.account.id, machineId: machine.id,
-                    principal: { kind: 'account', accountId: requester.id }, level: 'admin',
-                }));
-                expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{
-                    localId: input.localId, activationHoldReason: 'resume_not_requested',
-                }] });
-                for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
-                    actorAccountId: test.account.id, machineId: machine.id,
-                    principal: { kind: 'account', accountId: requester.id }, level: 'view',
-                }));
-            }
+            expect(authorized.pending[0]).not.toHaveProperty('activationHoldReason');
             const first = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(await inTx(tx => markPendingActivationAuthorizationFailedInTx({ tx, sessionId: session.id,
                 requestId: input.localId, requestedAt: first.pendingActivationRequestedAt!, failureCode: 'managed_start_failed' }))).toBe(true);
@@ -588,13 +572,12 @@ describe('finite managed wake original Action authority (real storage)', () => {
             const retried = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(retried.pendingActivationRequestedAt!.getTime()).toBeGreaterThan(first.pendingActivationRequestedAt!.getTime());
             expect(mapPendingActivationAuthorization(retried)).toMatchObject({ requestId: input.localId, status: 'waiting' });
-            if (level === 'admin') expect(mapPendingActivationAuthorization(retried)?.managedWakeTargetV1).toMatchObject({
+            expect(mapPendingActivationAuthorization(retried)?.managedWakeTargetV1).toMatchObject({
                 managedId: test.row.id, enrolledMachineId: test.guest.id, controller: {
                     machineId: test.controller.id, installationId: test.controller.installationId,
                 }, origin: { kind: 'session-input', pendingRequestId: input.localId,
                     requestedAt: retried.pendingActivationRequestedAt!.getTime() },
             });
-            else expect(retried.pendingActivationManagedTarget).toBeNull();
             expect(await inTx(tx => markPendingActivationAuthorizationFailedInTx({ tx, sessionId: session.id,
                 requestId: input.localId, requestedAt: first.pendingActivationRequestedAt!, failureCode: 'runtime_start_failed' }))).toBe(false);
             await db.managedMachine.update({ where: { id: test.row.id }, data: { observation: {
@@ -699,11 +682,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             const retried = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(retried.pendingActivationRequestedAt!.getTime()).toBeGreaterThan(first.pendingActivationRequestedAt!.getTime());
             expect(mapPendingActivationAuthorization(retried)).toMatchObject({ requestId: input.localId, status: 'waiting' });
-            if (level === 'admin') expect(mapPendingActivationAuthorization(retried)?.managedWakeTargetV1).toMatchObject({ managedId: test.row.id });
-            else {
-                expect(retried.pendingActivationManagedTarget).toBeNull();
-                expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ activationHoldReason: 'managed_power_required' }] });
-            }
+            expect(mapPendingActivationAuthorization(retried)?.managedWakeTargetV1).toMatchObject({ managedId: test.row.id });
             expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } })).toEqual(original);
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } }))
                 .toMatchObject({ desired: 'stop', intentRevision: test.row.intentRevision });
@@ -996,16 +975,21 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { tokenAdmission.mockRestore(); }
     });
 
-    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
+    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage', 'session-input-use', 'session-input-opted-out'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
         const test = await setup();
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
-        for (const machine of [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
+        const sessionInput = disposition.startsWith('session-input-');
+        for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
             actorAccountId: test.account.id, machineId: machine.id,
-            principal: { kind: 'account', accountId: requester.id }, level: 'admin',
+            principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin',
         }));
+        if (disposition === 'session-input-opted-out') await db.managedMachine.update({
+            where: { id: test.row.id }, data: { wakeOnAcceptedMessage: false },
+        });
         const root = await auth.mintExternalActionExecutionAuthorization({ accountId: requester.id,
             authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch }, serverIdentityId: homeId,
-            machineId: test.guest.id, actionId: 'projects.script.run', requestId: test.requestId,
+            machineId: test.guest.id, actionId: sessionInput ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.script.run', requestId: test.requestId,
+            ...(sessionInput ? { machineRuntimeDemand: 'required' as const } : {}),
             requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: test.guest.id } });
         if (disposition === 'wrong-requester') await db.machineAccountGrant.deleteMany({ where: {
             machineId: test.guest.id, accountId: requester.id,
@@ -1014,14 +998,21 @@ describe('finite managed wake original Action authority (real storage)', () => {
             actorAccountId: test.account.id, machineId: test.controller.id,
             principal: { kind: 'account', accountId: requester.id }, level: 'view',
         }));
-        const forwardRpc = vi.fn(async () => ({ ok: true as const, result: { ok: true, result: {
-            kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' },
-        } } }));
+        const forwardRpc = vi.fn(async (request: { callParams: unknown }) => {
+            const wake = ManagedFiniteWakeRequestV1Schema.parse(request.callParams);
+            expect(wake.actionOrigin.binding.accountId).toBe(requester.id);
+            await test.check(wake.actionOrigin);
+            expect(await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, wake))).not.toBeNull();
+            return { ok: true as const, result: { ok: true, result: {
+                kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' },
+            } } };
+        });
         const result = await prepareManagedFiniteActionWake({ io: new Server(), signal: new AbortController().signal,
             actionOrigin: disposition === 'wrong-root' ? { ...root, binding: { ...root.binding, requestId: randomUUID() } } : root,
             forwardRpc });
-        expect(result.kind).toBe(disposition === 'owner' ? 'ready' : 'unavailable');
-        expect(forwardRpc).toHaveBeenCalledTimes(disposition === 'owner' ? 1 : 0);
+        const allowed = disposition === 'owner' || disposition === 'session-input-use';
+        expect(result.kind).toBe(allowed ? 'ready' : 'unavailable');
+        expect(forwardRpc).toHaveBeenCalledTimes(allowed ? 1 : 0);
     });
 
     it('retains the exact original finite PAT grant and mode instead of requiring a native power grant', async () => {
@@ -1117,6 +1108,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 target: test.target,
                 installationPublicKey: encodeBase64(test.controller.installationPublicKey!, 'base64url'),
             } });
+            expect(issued.json().managedFiniteWake.requesterCredentialDisclosure).toEqual(guestOwnership === 'owned'
+                ? { accountId: test.account.id, displayName: '' } : undefined);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
             expect(await auth.verifyExternalActionExecutionAuthorization(root.token)).toEqual(root.binding);
             expect(root.binding).toMatchObject({ accountId: requester.id,
@@ -1258,12 +1251,13 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { await app.close(); }
     });
 
-    it.each(['projects.script.run', 'daemon.filesystem.readFile', 'session.open'] as const)('preserves both installed custody boxes and the original root through actual %s wake and guest relay', async actionId => {
+    it.each(['projects.script.run', 'daemon.filesystem.readFile', 'session.open', SESSION_SPAWN_NEW_ACTION_ID_V1] as const)('preserves both installed custody boxes and the original root through actual %s wake and guest relay', async actionId => {
         const test = await setup();
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
-        for (const machine of [test.controller, test.guest]) {
+        const sessionInput = actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+        for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) {
             await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: machine.id,
-                principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
+                principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin' }));
         }
         const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
         const session = actionId === 'session.open' ? await db.session.create({ data: {
@@ -1279,7 +1273,13 @@ describe('finite managed wake original Action authority (real storage)', () => {
         }
         const envelope = { v: 1 as const, requestId: test.requestId,
             target: session ? { kind: 'session' as const, sessionId: session.id } : { kind: 'machine' as const, machineId: test.guest.id },
-            input: session ? { sessionId: session.id, intent: 'resume' } : { rootPath: '/work', path: 'original-private-file' } };
+            input: session ? { sessionId: session.id, intent: 'resume' } : sessionInput ? {
+                executionTarget: { serverId: homeId, machineId: test.guest.id },
+                creationKey: test.requestId, directory: { kind: 'path', path: '/work' },
+                organizationPlacement: { sectionId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                initialInput: { text: 'Start this Session' },
+            } : { rootPath: '/work', path: 'original-private-file' } };
         let carrier: ExternalActionExecutionAuthorizationV1 | undefined;
         const methods: string[] = [];
         const boundaryErrors: unknown[] = [];

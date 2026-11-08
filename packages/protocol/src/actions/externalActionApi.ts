@@ -7,7 +7,7 @@ export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
-import { AccessibleMachineAccessV1Schema } from '../machines/machineAccessV1.js';
+import { AccessibleMachineAccessV1Schema, MachineCustodianV1Schema } from '../machines/machineAccessV1.js';
 export { MachineNpmProfileAdmissionResponseV1Schema as ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '../machines/machineAccessV1.js';
 import { ManagedMachineRefReadV1Schema } from '../machines/managed/managedMachineV1.js';
 import { WorkspaceSyncAdmissionInputV1Schema, WorkspaceSyncAdmissionV1Schema } from '../workspaces/workspaceSyncAdmissionV1.js';
@@ -1390,6 +1390,8 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
   managedFiniteWake: z.optional(z.strictObject({
     target: ManagedWakeTargetV1Schema,
     installationPublicKey: MachineInstallationPublicKeySchema,
+    /** Home selects an additional person receiving credentials beyond the guest recipient. */
+    requesterCredentialDisclosure: z.optional(MachineCustodianV1Schema),
     requesterAccountContext: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
   })),
 }).check(z.superRefine((value, context) => {

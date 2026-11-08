@@ -11,14 +11,15 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveEffectiveMachineRoleInTx, resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { auth } from '@/app/auth/auth';
+import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { verifyCurrentExternalActionPrincipalInTx, verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
-import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { isCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { emitAutomationRunUpdatedToMachineOnly } from '@/app/automations/automationChangePublisher';
 import { afterTx, inTx, type Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { readWorkflowRunOriginWakeCandidatesInTx } from '@/app/workflows/workflowRunAttention';
 import { ManagedMachineError, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, type StoredManagedMachine } from './managedRows';
@@ -63,11 +64,17 @@ export async function readCurrentManagedFiniteWakeCustodyInTx(tx: Tx, input: Rea
     if (controller.kind !== 'admitted' || controller.installationId !== controllerBinding.installationId
         || controller.custodianAccountId !== row.custodianAccountId) return null;
     const installed = await tx.machine.findUnique({ where: { id: controllerBinding.machineId }, select: {
-        installationId: true, installationPublicKey: true,
+        installationId: true, installationPublicKey: true, account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT },
     } });
     if (installed?.installationId !== controllerBinding.installationId || !installed.installationPublicKey) return null;
     const publicKey = MachineInstallationPublicKeySchema.safeParse(encodeBase64(installed.installationPublicKey, 'base64url'));
-    return publicKey.success ? { target, installationPublicKey: publicKey.data } : null;
+    // Enrollment may place another person's guest on this managed resource.
+    // Guest disclosure covers its custodian once; only a new recipient needs another Ask.
+    return publicKey.success ? { target, installationPublicKey: publicKey.data,
+        ...(controller.custodianAccountId !== binding.accountId && controller.custodianAccountId !== binding.custodianAccountId
+            ? { requesterCredentialDisclosure: { accountId: controller.custodianAccountId,
+                displayName: resolveAccountDisplayLabelV1(installed.account) ?? '' } } : {}),
+    } : null;
 }
 
 /** The HTTP or verified socket invocation owns this entire wait; no request/content is persisted or replayed. */
@@ -156,7 +163,7 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
     if (!homeId) return undefined;
     const row = await tx.managedMachine.findFirst({ where: {
         homeId, enrolledMachineId: input.machineId, archivedAt: null,
-        creationState: 'active', allocation: 'bound', wakeOnAcceptedMessage: true,
+        creationState: 'active', allocation: 'bound',
     } });
     if (!row || row.desired === 'delete' || row.resource === null) return undefined;
     const controller = readManagedController(row);
@@ -339,7 +346,7 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
     const row = input.row;
     if (row.id !== target.managedId || row.homeId !== target.homeId || row.enrolledMachineId !== target.enrolledMachineId
         || !sameManagedInput(readManagedController(row), target.controller)
-        || row.creationState !== 'active' || row.archivedAt !== null || !row.wakeOnAcceptedMessage
+        || row.creationState !== 'active' || row.archivedAt !== null
         || row.allocation !== 'bound' || row.resource === null || row.desired === 'delete') throw new ManagedMachineError('admission_unavailable');
     await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: target.controller });
     let projected;
@@ -456,17 +463,24 @@ export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: s
                 || resolveManagedMachineRuntimeV1(projected, row.enrolledMachineId,
                     row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) })).inspectionRequired) ? [row.id] : [];
         }));
-        const machineIds = managedRows.flatMap(row => row.enrolledMachineId ? [row.enrolledMachineId] : []);
+        const machineIds = new Set(managedRows.flatMap(row => row.enrolledMachineId ? [row.enrolledMachineId] : []));
         const targets: ManagedWakeTargetV1[] = [];
         const originAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, request.controller.machineId);
-        const sessions = await tx.session.findMany({ where: { pendingActivationStatus: 'waiting',
-            pendingActivationRequestId: { not: null }, accountId: { in: originAccountIds } }, select: { id: true } });
-        for (const session of sessions) {
-            const current = await readPendingManagedWakeTargetInTx(tx, session.id);
-            if (current && current.homeId === request.homeId
-                && (!current.controller || current.controller.machineId === request.controller.machineId
-                    && current.controller.installationId === request.controller.installationId)) {
-                targets.push(current);
+        // Accepted origins retain their original controller. Select by immutable
+        // managed identity; the current row remains the controller-custody authority.
+        for (const ids of portableQueryChunks({ values: managedRows.map(row => row.id), bindingsPerValue: 2, fixedBindings: 4 })) {
+            const sessions = await tx.session.findMany({ where: { pendingActivationStatus: 'waiting',
+                pendingActivationRequestId: { not: null },
+                AND: [{ pendingActivationManagedTarget: jsonPathEquals(['homeId'], request.homeId) }],
+                OR: ids.map(id => ({ pendingActivationManagedTarget: jsonPathEquals(['managedId'], id) })),
+            }, select: { id: true, accountId: true } });
+            for (const session of sessions) {
+                const current = await readPendingManagedWakeTargetInTx(tx, session.id);
+                if (current && current.homeId === request.homeId
+                    && (!current.controller || current.controller.machineId === request.controller.machineId
+                        && current.controller.installationId === request.controller.installationId)) {
+                    targets.push(current);
+                }
             }
         }
         for (const run of await readWorkflowRunOriginWakeCandidatesInTx(tx, { accountIds: originAccountIds })) {
@@ -477,11 +491,20 @@ export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: s
                 && (!target.controller || target.controller.machineId === request.controller.machineId
                     && target.controller.installationId === request.controller.installationId)) targets.push(target);
         }
-        const runs = await tx.automationRun.findMany({ where: { accountId: { in: originAccountIds },
-            state: 'queued', claimedByMachineId: null, assignments: { some: { machineId: { in: machineIds } } } },
+        const readAssignedRuns = (accountIds: readonly string[], guestIds: readonly string[]) => tx.automationRun.findMany({
+            where: { accountId: { in: [...accountIds] }, state: 'queued', claimedByMachineId: null,
+                assignments: { some: { machineId: { in: [...guestIds] } } } },
             select: { id: true, accountId: true, revision: true, assignments: { select: { machineId: true } } } });
-        for (const run of runs) for (const assignment of run.assignments) {
-            if (!machineIds.includes(assignment.machineId)) continue;
+        const runs = new Map<string, Awaited<ReturnType<typeof readAssignedRuns>>[number]>();
+        // Reserve room for both IN sets, plus queued state and Prisma's offset.
+        for (const guestIds of portableQueryChunks({ values: [...machineIds], bindingsPerValue: 2, fixedBindings: 2 })) {
+            for (const accountIds of portableQueryChunks({ values: originAccountIds, bindingsPerValue: 1,
+                fixedBindings: guestIds.length + 2 })) {
+                for (const run of await readAssignedRuns(accountIds, guestIds)) runs.set(run.id, run);
+            }
+        }
+        for (const run of runs.values()) for (const assignment of run.assignments) {
+            if (!machineIds.has(assignment.machineId)) continue;
             const target = await resolveManagedWakeTargetInTx(tx, { actorAccountId: run.accountId, machineId: assignment.machineId,
                 origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId: assignment.machineId } } });
             if (target) targets.push(target);

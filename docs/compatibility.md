@@ -9646,6 +9646,17 @@ dependency could still start the unit; no dependency graph is inferred.
 
 ## Machine managed-resource classification (unreleased 0.3)
 
+Home's finite-wake authorization carries the admitted controller and installation
+key. CLI and UI consume that result without requiring requester access to the
+controller inventory. Optional `managedFiniteWake.requesterCredentialDisclosure`
+names an additional credential recipient selected by Home: the managed row's
+custodian, when different from both requester and guest custodian. Delegated
+enrollment can give the guest another custodian. Existing guest disclosure covers
+the same person once; a new controller recipient requires explicit consent before
+sealing or dispatch. Matching development Home, Protocol and clients reload
+together; older strict development readers reject this member. This unpublished
+carrier has no released 0.2 counterpart or retained-data migration.
+
 Current Home Machine rows publish `managedMachineRef` as an exact
 `{ homeId, managedId }` or null. Readers accept the omitted field emitted by
 supported 0.2 Homes as null through the canonical Protocol read projection;

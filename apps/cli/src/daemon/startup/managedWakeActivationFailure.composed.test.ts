@@ -34,6 +34,9 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { configuration } from '@/configuration';
 import { ApiClient } from '@/api/api';
 import { CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1 } from '@/api/apiMachine';
+import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
 import { updateSettings } from '@/persistence';
@@ -643,3 +646,70 @@ it.each([
         restore(); await app.close();
     }
 }), 30_000);
+
+
+it('delivers a stored-credential finite CLI entry through real Home admission without controller inventory', async () =>
+    await withConfiguredDaemonTestHome({ prefix: 'finite-controller-admission-' }, async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const homeId = await getOrCreateServerIdentityId();
+        const signing = nacl.sign.keyPair();
+        const machine = (active: boolean) => db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            installationId: randomUUID(), installationPublicKey: signing.publicKey, active,
+            operationProtocolCapabilities: CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1, operationProtocolCapabilitiesRevision: 1,
+            metadata: encodePlainMachineStoredContent({ host: 'wake', platform: 'linux', happyCliVersion: 'test', homeDir: '/tmp' }),
+            dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        // Finite custody is admitted independently of the guest presence projection.
+        // The controller's absent requester grant is the deciding condition here.
+        const controller = await machine(true), guest = await machine(true);
+        await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Finite', choices: {} },
+            resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            enrolledMachineId: guest.id, desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        await writeStoredCredentialsForServerId(configuration.activeServerId, { token, encryption: null });
+        const credentials = await readStoredCredentialsForServerId(configuration.activeServerId);
+        if (!credentials) throw new Error('Expected stored credentials');
+        const serverUrl = 'https://finite-admission.example';
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        machinesRoutes(app); registerAccountEncryptionRoutes(app); registerAccountSecurityRoutes(app); featuresRoutes(app);
+        registerAccountProfileRoute(app); registerAccountSettingsRoutes(app);
+        let delivered = false;
+        registerExternalActionRoutes(app, { dispatch: async request => {
+            const authorization = request.executionAuthorization;
+            const wake = authorization?.managedFiniteWake;
+            expect(wake?.target.controller).toEqual({ machineId: controller.id, installationId: controller.installationId });
+            if (!authorization || !wake) throw new Error('Expected Home-admitted finite controller');
+            expect(openExternalActionRequesterAccountContextV1({ authorization, serverIdentityId: homeId,
+                machineId: controller.id, installationId: controller.installationId!, installationPrivateKey: signing.secretKey,
+                purpose: { kind: 'managed_finite_wake', target: wake.target } })).toMatchObject({ token });
+            delivered = true;
+            // Guest execution is the external boundary; no real compute is started.
+            return { kind: 'placement_error', code: 'action_not_admitted' };
+        } });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: serverUrl });
+        const actualGet = axios.get;
+        let controllerReads = 0;
+        const inventory = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+            if (new URL(String(url), serverUrl).pathname === `/v1/machines/${controller.id}`) {
+                controllerReads++;
+                throw new Error('Requester inventory has no controller grant');
+            }
+            return actualGet(url, config);
+        });
+        try {
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: homeId, serverApiUrl: serverUrl,
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const result = await executor.execute('session.spawn_new', SessionSpawnNewInputV2Schema.parse({
+                creationKey: 'finite-admission', executionTarget: { serverId: configuration.activeServerId, machineId: guest.id },
+                directory: { kind: 'path', path: '/tmp' }, permissionMode: 'read-only',
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            }), { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'session.spawn_new' }, actionRequestId: randomUUID() });
+            expect(delivered, JSON.stringify({ result, controllerReads })).toBe(true);
+            expect(controllerReads).toBe(0);
+        } finally { inventory.mockRestore(); restore(); await app.close(); }
+    }));

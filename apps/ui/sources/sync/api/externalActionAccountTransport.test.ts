@@ -4,11 +4,12 @@ import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/ex
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -20,6 +21,11 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
+const disclosureConsent = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: disclosureConsent } }).module;
+});
 // Only authenticated HTTP and device credential IO leave this process.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -37,6 +43,7 @@ const binding: ExternalActionEncryptionBindingV2 = {
 
 beforeEach(async () => {
     await homes.reset();
+    disclosureConsent.mockReset().mockResolvedValue(true);
     serverId = await homes.addHome({ name: 'Plugin transport', serverUrl: 'https://plugin-transport.test',
         serverIdentityId: binding.serverIdentityId, accountId: 'owner', currentAccount: true, active: false });
     account = await captureLazyActionAccountContext(serverId);
@@ -58,13 +65,14 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
-    it('dispatches a Can use guest spawn with Home-admitted controller custody and no controller grant', async () => {
+    it.each(['shared', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
-        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'custodian' }),
+        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: recipient === 'shared' ? 'custodian' : 'owner' }),
             installationId: 'installation-1', installationPublicKey: encodeBase64(guestKeys.publicKey),
-            access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
+            access: { custodian: { accountId: recipient === 'shared' ? 'custodian' : 'owner', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
+        disclosureConsent.mockResolvedValue(recipient !== 'delegated-declined');
         let controllerReads = 0;
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
             body: await createMachineReadBatchResponseFixture(body, id => {
@@ -73,20 +81,31 @@ describe('captured Account Action response decoding', () => {
                 return null; // Can use on the guest grants no access to its controller.
             }).json(),
         }) });
-        const actionId = 'session.spawn_new';
+        const actionId = recipient === 'shared' ? 'session.spawn_new' : 'projects.script.run';
         const actionPath = `/v1/actions/${actionId}`;
         homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-spawn-proof', binding: { ...binding, actionId,
+            const sync = request.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, request.envelope.input)
+                : request.envelope.workspaceSyncAdmission;
+            const minted = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-spawn-proof', binding: { ...binding, actionId,
+                target: request.envelope.target,
                 machineId: row.id, installationId: row.installationId,
-                custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+                custodianAccountId: row.access.custodian.accountId, accountEncryptionMode: 'plain',
                 machineRuntimeDemand: 'required',
+                ...(sync ? { workspaceSyncAdmission: { relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(request.envelope.requestId),
+                    sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
+                    source: { actorAccountId: 'owner', custodianAccountId: row.access.custodian.accountId,
+                        machineId: sync.sourceMachineId, installationId: row.installationId, role: 'use', encryptionMode: 'plain' } } } : {}),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) },
                 managedFiniteWake: { target: { homeId: binding.serverIdentityId, managedId: 'managed-guest',
                     enrolledMachineId: row.id, expectedIntentRevision: 0,
                     controller: { machineId: 'private-controller', installationId: 'controller-installation' },
                     reason: 'admitted-work', origin: { kind: 'finite-command', actionRequestId: binding.requestId } },
-                    installationPublicKey: encodeBase64(controllerKeys.publicKey, 'base64url') } }) };
+                    installationPublicKey: encodeBase64(controllerKeys.publicKey, 'base64url'),
+                    ...(recipient !== 'shared' ? { requesterCredentialDisclosure: { accountId: 'custodian', displayName: 'Custodian' } } : {}) } });
+            expect(isExternalActionAuthorizationBoundToEnvelope(minted.binding, { actionId, machineId: row.id, envelope: request.envelope }),
+                JSON.stringify({ binding: minted.binding, envelope: request.envelope })).toBe(true);
+            return { body: minted };
         } });
         homes.answer(serverId, actionPath, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -97,22 +116,28 @@ describe('captured Account Action response decoding', () => {
                     purpose: { kind: 'external_action' } as const },
                 { machineId: 'private-controller', installationId: 'controller-installation', installationPrivateKey: controllerKeys.secretKey,
                     purpose: { kind: 'managed_finite_wake', target: authorization.managedFiniteWake.target } as const },
-            ]) expect(openExternalActionRequesterAccountContextV1({ authorization, serverIdentityId: binding.serverIdentityId,
+            ].filter(target => target.machineId !== row.id || row.access.custodian.accountId !== 'owner')) expect(openExternalActionRequesterAccountContextV1({ authorization, serverIdentityId: binding.serverIdentityId,
                 ...recipient })).toMatchObject({ token: account?.credentials.token });
             expect(JSON.stringify(body)).not.toContain(account?.credentials.token);
             return { body: { v: 1, actionId, requestId: binding.requestId,
                 execution: { ok: true, result: { type: 'success', sessionId: 'created-session' } } } };
         } });
         const result = await executeOriginalAccountMachineAction({ account, actionId, requestId: binding.requestId,
-            machineId: row.id, input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
+            authority: recipient === 'delegated-automation' ? 'account_automation' : 'present_user',
+            machineId: row.id, input: recipient !== 'shared' ? { workspace: { serverId, workspaceId: 'workspace', machineId: row.id, rootPath: '/tmp' },
+                selection: { kind: 'named', name: 'test' } } : projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
                 creationKey: 'shared-guest-spawn', executionTarget: { serverId, machineId: row.id },
                 directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             })) });
         expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
         expect(controllerReads).toBe(0);
-        expect(result.ok, JSON.stringify(result)).toBe(true);
-        expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+        expect(disclosureConsent, JSON.stringify(result)).toHaveBeenCalledTimes(recipient === 'shared' || recipient === 'delegated-automation' ? 0 : 1);
+        if (recipient === 'delegated-declined' || recipient === 'delegated-automation') {
+            expect(homes.requestsFor(actionPath)).toHaveLength(0);
+            expect(result).toMatchObject({ ok: false, errorCode: recipient === 'delegated-automation'
+                ? 'requester_account_material_unavailable' : 'requester_credential_disclosure_declined' });
+        } else expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
     });
     it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };

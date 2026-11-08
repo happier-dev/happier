@@ -28,6 +28,8 @@ import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
@@ -203,6 +205,18 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             // Home admitted the guest's exact installed controller and key.
             // Guest Use does not require a separate grant on that controller.
             controllerPublicKey = decodeBase64(wake.installationPublicKey, 'base64url');
+            const disclosure = wake.requesterCredentialDisclosure;
+            if (disclosure) {
+                if (params.authority === 'account_automation') return failure('requester_account_material_unavailable');
+                const confirmed = await Modal.confirm(t('approvals.untitled'), [
+                    t('machineRequester.fullSignIn', { machine: wake.target.controller.machineId }),
+                    t('machineRequester.osVisibility', { owner: disclosure.displayName || disclosure.accountId,
+                        machine: wake.target.controller.machineId }),
+                ].join('\n\n'), { ...(params.signal ? { signal: params.signal } : {}) });
+                if (params.signal?.aborted) return failure('cancelled');
+                account.assertCurrent();
+                if (!confirmed) return failure('requester_credential_disclosure_declined');
+            }
         }
         if (managedControllerCodec && codecMaterial) {
             if (!custody.installationPublicKey || wake) return failure('admission_unavailable');
