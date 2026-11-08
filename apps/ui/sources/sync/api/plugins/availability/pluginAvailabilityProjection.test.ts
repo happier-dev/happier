@@ -105,6 +105,24 @@ function intentList(cursor: number, ids: readonly string[], readCursor = cursor)
 }
 
 describe('active Plugin Account Availability projection hydrator', () => {
+    it('classifies a deterministic malformed Availability response without authorizing an automatic retry', async () => {
+        let requests = 0;
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 4 }),
+            // HTTP is the boundary: parsing and admission remain real. This is
+            // malformed even after tolerant stored-manifest loading is fixed.
+            captureRequestAuthority: async () => ({ request: async () => {
+                requests += 1;
+                return jsonResponse({ availabilityCursor: 'invalid', snapshots: [] });
+            } }),
+        });
+        await expect(hydrator.refresh()).rejects.toMatchObject({
+            code: 'plugin_availability_invalid_response', retryable: false, scope,
+        });
+        expect(requests).toBe(1);
+    });
+
     it('retains acquired installation UI through observation-only RPC refreshes while publishing changed facts', async () => {
         const pageId = `surfacePlacement:${pluginId}:page`;
         const release = releaseFacts();
@@ -313,7 +331,7 @@ describe('active Plugin Account Availability projection hydrator', () => {
         await expect(refresh).resolves.toBeNull();
     });
 
-    it('hydrates every intent from one list response without per-plugin HTTP reads', async () => {
+    it('hydrates uncatalogued intents from one list and reads only the hint-named intent exactly', async () => {
         const removedPluginId = 'com.acme.removed';
         const ids = Array.from({ length: 38 }, (_, index) => `com.acme.plugin${index}`);
         const reads = [pluginId, ...ids, removedPluginId].map((id) => ({
@@ -347,10 +365,12 @@ describe('active Plugin Account Availability projection hydrator', () => {
 
         const result = await hydrator.refresh();
         expect(request.mock.calls.map(([path]) => path)).toEqual([
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
         ]);
-        expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
+        expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ pluginId: removedPluginId });
+        expect(JSON.parse(String(request.mock.calls[2]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
         expect(result).toMatchObject({
             failedPluginIds: [], snapshot: { intentReads: expect.arrayContaining(reads),
                 materializations: [expect.objectContaining({ pluginId })] },

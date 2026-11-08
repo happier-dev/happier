@@ -13,6 +13,7 @@ import {
 import {
     PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import {
     PluginWebhookEndpointIdV1Schema} from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import {
@@ -308,6 +309,17 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             serverIdentityId: SERVER_IDENTITY_ID, accountId: 'account-a',
         });
         harness.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: WATCHER_MACHINE_ID, accountId: 'account-a' })] });
+        // Authentication starts the real Availability queue. Answer its initial
+        // reads before connecting, rather than leaving recovery in flight while
+        // this suite publishes its editor-specific projection below.
+        harness.answer(serverId, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'], {
+            body: { availabilityCursor: 1, inventoryComplete: true, snapshots: [{ serverIdentityId: SERVER_IDENTITY_ID,
+                machineId: WATCHER_MACHINE_ID, materializations: [stableMaterialization] }] },
+        });
+        harness.answer(serverId, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
+            body: { availabilityCursor: 1, pluginIds: [PLUGIN_ID], failedPluginIds: [],
+                intentReads: [{ pluginId: PLUGIN_ID, response: availabilityResponse }] },
+        });
         connection = await restoreServerAccountForTest({ serverUrl: SERVER_URL, serverIdentityId: SERVER_IDENTITY_ID,
             accountId: 'account-a', request: harness.request, configureSocket: configureConnectedServerSocketBoundary });
         const { storage } = await import('@/sync/domains/state/storage');
@@ -321,6 +333,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         // Load its inventory through the same public Sync owner as a foreground refresh.
         const { sync } = await import('@/sync/sync');
         await sync.refreshMachines({ serverId: connection.serverId });
+        await sync.refreshPluginAccountAvailability();
         await waitForHomeGovernance(() => expect(storage.getState().machines[WATCHER_MACHINE_ID]?.active).toBe(true));
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
             availabilityCursor: 1,
@@ -381,8 +394,19 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
                 contributes: contributions(declared),
             } },
         });
+        const censusResponse = { ...response, machineDeclarations: response.machineDeclarations?.map(row => ({ ...row,
+            declaration: { declarationDigestSha256: row.declaration.declarationDigestSha256 } })) };
+        const exactPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'];
+        harness.answer(serverId, exactPath, { body: response });
+        harness.answer(serverId, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
+            body: { availabilityCursor: 2, pluginIds: [PLUGIN_ID], failedPluginIds: [],
+                intentReads: [{ pluginId: PLUGIN_ID, response: censusResponse }] },
+        });
+        harness.answer(serverId, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'], {
+            body: { availabilityCursor: 2, inventoryComplete: true, snapshots: [] },
+        });
         replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
-            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response }], materializations: [], snapshots: [],
+            availabilityCursor: 2, intentReads: [{ pluginId: PLUGIN_ID, response: censusResponse }], materializations: [], snapshots: [],
         } });
         const members = machines.map(machineId => {
             const origin = { ...executionOrigin, sourceRef: { ...executionOrigin.sourceRef, machineId } };
@@ -403,13 +427,18 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             const reader = await renderHook(() => useActivePluginAccountAvailabilityReader());
             expect(reader.getCurrent()?.readCurrentAutomationEventContribution({ pluginId: PLUGIN_ID,
                 version: '1.0.0', eventLocalId: EVENT_LOCAL_ID, sourceContractVersion: 3,
-                machineId: WATCHER_MACHINE_ID, machineInstallationId: 'test-installation' }) != null).toBe(declared);
+                machineId: WATCHER_MACHINE_ID, machineInstallationId: 'test-installation' })).toBeNull();
+            const exactReadsBeforeMount = harness.requestsFor(exactPath).length;
             const hook = await renderHook(() => usePluginEventAutomationComposer({ machineId: WATCHER_MACHINE_ID, serverId,
                 projectionPhase: 'ready', projectionInputs: inputs, initialEventRef: event.event.identity,
                 guidedPreset: true, initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: WATCHER_MACHINE_ID,
                     setupInput: { v: 1, serverId, environmentId: 'production-environment' } },
             }));
             await flushHookEffects();
+            await waitForHomeGovernance(() => expect(harness.requestsFor(exactPath)).toHaveLength(exactReadsBeforeMount + 1));
+            await waitForHomeGovernance(() => expect(reader.getCurrent()?.readCurrentAutomationEventContribution({ pluginId: PLUGIN_ID,
+                version: '1.0.0', eventLocalId: EVENT_LOCAL_ID, sourceContractVersion: 3,
+                machineId: WATCHER_MACHINE_ID, machineInstallationId: 'test-installation' }) != null).toBe(declared));
             const machineIdFor = (origin: NonNullable<ReturnType<typeof hook.getCurrent>['selectedWatcherOrigin']>) =>
                 'materializationRef' in origin ? origin.materializationRef.machineId : origin.sourceRef.machineId;
             expect.soft(hook.getCurrent().watcherCandidates.map(candidate => machineIdFor(getPluginExecutionOriginCandidateOrigin(candidate))))

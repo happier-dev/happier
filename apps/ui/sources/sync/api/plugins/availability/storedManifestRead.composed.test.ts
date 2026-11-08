@@ -16,6 +16,7 @@ import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntim
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { ServerFetchAbortedForServerSwitchError, ServerFetchReadSupersededError } from '@/sync/http/client';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
 
 import { createActivePluginAccountAvailabilityProjectionHydrator } from './pluginAvailabilityProjection';
 
@@ -62,6 +63,66 @@ afterEach(() => {
 });
 
 describe('stored manifest Account Availability read', () => {
+    it.each([
+        { inventoryComplete: true, canMerge: true },
+        { inventoryComplete: false, canMerge: false },
+        { inventoryComplete: false, canMerge: true },
+    ])('acquires guided Event Machine bodies after the page census ($inventoryComplete / merge $canMerge)', async ({ inventoryComplete, canMerge }) => {
+        const base = intentRead();
+        const sourceConfigSchema = { type: 'object', properties: {}, additionalProperties: false } as const;
+        const manifest = { ...base.release!.normalizedManifest, contributes: {
+            actions: [{ id: 'setup', title: 'Configure source', scopes: ['global'], surfaces: ['plugin'],
+                dangerLevel: 'safe', execution: { target: 'daemon' }, inputSchema: sourceConfigSchema,
+                resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema) }],
+            events: [{ kind: 'event', id: 'changed', title: 'Changed', payloadSchema: sourceConfigSchema,
+                automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+                    supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema,
+                    setupActionRef: { pluginId, localId: 'setup' } } } }],
+        } };
+        const declaration = { manifest, declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
+        const exact = { ...base, intent: { ...base.intent!, desiredVersion: null }, release: null,
+            currentDeclaration: declaration, machineDeclarations: [{ machineId: 'machine-a',
+                machineInstallationId: 'installed-a', declaration }] };
+        let listCount = 0;
+        let exactCount = 0;
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => {
+                if (path === materializationsPath) return jsonResponse({ availabilityCursor: 1, snapshots: [], inventoryComplete });
+                if (path === intentsPath) {
+                    listCount += 1;
+                    return jsonResponse({ availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
+                        intentReads: [{ pluginId, response: { ...exact, machineDeclarations: [{ machineId: 'machine-a',
+                            machineInstallationId: 'installed-a', declaration: { declarationDigestSha256: declaration.declarationDigestSha256 } }] } }] });
+                }
+                expect(path).toBe(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']);
+                exactCount += 1;
+                return jsonResponse(exact);
+            } }),
+        });
+        const store = createPluginAccountAvailabilityReaderStore({ loadMachineDeclarations: async (_scope, id) => {
+            hydrator.requestPlugins([id]);
+            const refreshed = await hydrator.refresh({ canMergePlugins: () => canMerge });
+            if (refreshed) store.replace(refreshed);
+        } });
+        const first = await hydrator.refresh();
+        if (!first) throw new Error('Availability did not publish');
+        store.replace(first);
+        const reader = store.bind(scope);
+        const event = { pluginId, machineId: 'machine-a', machineInstallationId: 'installed-a',
+            version: '1.0.0', eventLocalId: 'changed', sourceContractVersion: 1 };
+        expect(reader.readCurrentAutomationEventContribution(event)).toBeNull();
+        // A missing or replaced Machine has no declaration to acquire.
+        await reader.ensureAutomationEventDeclarations({ pluginId, machineId: 'absent-machine' });
+        expect(exactCount).toBe(0);
+        await reader.ensureAutomationEventDeclarations({ pluginId, machineId: 'machine-a' });
+        expect(reader.readCurrentAutomationEventContribution(event)).toMatchObject({ id: 'changed' });
+        expect(reader.readCurrentAutomationEventContribution({ ...event, machineInstallationId: 'replaced' })).toBeNull();
+        await reader.ensureAutomationEventDeclarations({ pluginId, machineId: 'machine-a' });
+        expect({ listCount, exactCount }).toEqual({ listCount: inventoryComplete ? 1 : 2, exactCount: 1 });
+    });
+
     it('admits only consumed manifests on a 91-intent first load, then admits an exact Machine declaration on demand', async () => {
         const base = intentRead().release!.normalizedManifest;
         // #97 census: 91 intents, 32 current declarations, 28 rows with two
@@ -271,6 +332,7 @@ describe('stored manifest Account Availability read', () => {
                     ? { availabilityCursor: 1, pluginIds: [pluginId], intentReads: 'invalid', failedPluginIds: [] }
                     : { availabilityCursor: 2, pluginIds: [pluginId], failedPluginIds: [],
                         intentReads: [{ pluginId, response }] });
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) return jsonResponse(response);
                 throw new Error('Unexpected Availability request');
             });
             const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
@@ -298,7 +360,7 @@ describe('stored manifest Account Availability read', () => {
                 expect(hydrator.invalidate([availabilityChange()])).toEqual([pluginId]);
                 await queue.invalidateAndAwait();
                 expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
-                expect(request).toHaveBeenCalledTimes(readsAfterFailure + 2);
+                expect(request).toHaveBeenCalledTimes(readsAfterFailure + 3);
             } finally {
                 queue.stop();
             }
@@ -344,6 +406,7 @@ describe('stored manifest Account Availability read', () => {
                 captureRequestAuthority: async () => ({ request: async path => {
                     reads += 1;
                     if (reads === 1) return heldResponse.promise;
+                    if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) return jsonResponse(response);
                     return jsonResponse(path === materializationsPath
                         ? { availabilityCursor: 1, snapshots: [] }
                         : { availabilityCursor: 1, pluginIds: [pluginId], failedPluginIds: [],
@@ -383,7 +446,7 @@ describe('stored manifest Account Availability read', () => {
                     await refreshPluginAccountAvailabilityProjection(hydrator);
                 }
                 expect(reader.readCurrentAccountExecution(pluginId)).toMatchObject({ kind: 'available' });
-                expect(reads).toBe(control === 'pending' ? 2 : 3);
+                expect(reads).toBe(control === 'pending' ? 2 : control === 'invalidation' ? 4 : 3);
                 expect(vi.getTimerCount()).toBe(0);
             } finally {
                 heldResponse.resolve(jsonResponse({ availabilityCursor: 1, snapshots: [] }));

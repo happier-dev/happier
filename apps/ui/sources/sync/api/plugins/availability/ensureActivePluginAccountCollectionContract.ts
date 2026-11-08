@@ -1,4 +1,4 @@
-import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { apiSocket } from '@/sync/api/session/apiSocket';
@@ -15,7 +15,7 @@ type BootstrapRequestAuthority = Readonly<{
 
 export type PluginAccountCollectionContractBootstrapDependencies = Readonly<{
     captureRequestAuthority: (scope: ServerAccountScope) => Promise<BootstrapRequestAuthority>;
-    refreshAvailability: () => Promise<void>;
+    refreshAvailability: (pluginId: string) => Promise<void>;
 }>;
 
 export type EnsureActivePluginAccountCollectionContractInput = Readonly<{
@@ -42,7 +42,8 @@ export function createPluginAccountCollectionContractBootstrap(
     return async input => {
         if (!current(input)) return false;
         if (admitted(input)) return true;
-        const selected = input.readAvailability().readCurrentAccountExecution(input.pluginId);
+        const selected = await input.readAvailability().ensureCurrentAccountExecution(input.pluginId);
+        if (!current(input)) return false;
         if (selected.kind !== 'available' || selected.release !== null || selected.sourceCustody.kind !== 'bundled_first_party'
             || selected.sourceCustody.packagedRuntime.kind !== 'source_declaration') return false;
         const contracts = normalizePluginAccountCollectionContractsV1({ pluginId: input.pluginId,
@@ -71,7 +72,7 @@ export function createPluginAccountCollectionContractBootstrap(
                     if (!result.success || result.data.intent.pluginId !== input.pluginId || !input.accountLifetime.isCurrent()) return false;
                     // The server derives and publishes the writer. Only the incumbent
                     // sync refresh can make that result visible to Data admission.
-                    await dependencies.refreshAvailability();
+                    await dependencies.refreshAvailability(input.pluginId);
                     return input.accountLifetime.isCurrent();
                 } catch {
                     return false;
@@ -102,5 +103,5 @@ export const ensureActivePluginAccountCollectionContract = createPluginAccountCo
             activeRequest: (path, init) => apiSocket.request(path, init) });
         return { request: authority.request, release: authority.release };
     },
-    refreshAvailability: async () => { await sync.refreshPluginAccountAvailability(); },
+    refreshAvailability: async pluginId => { await sync.refreshPluginAccountAvailability([pluginId]); },
 });

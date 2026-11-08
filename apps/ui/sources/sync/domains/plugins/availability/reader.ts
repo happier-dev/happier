@@ -432,6 +432,8 @@ export type PluginAccountAvailabilityReader = Readonly<{
         pluginId: string; version: string; eventLocalId: string; sourceContractVersion?: number;
         machineId?: string; machineInstallationId?: string;
     }>) => AutomationEligibleEventContributionV1 | null;
+    /** Demand the exact plugin's Machine bodies through the canonical Availability loader. */
+    ensureAutomationEventDeclarations: (input: Readonly<{ pluginId: string; machineId: string }>) => Promise<void>;
     /** Acquires immutable code facts, then re-reads current Account admission. */
     ensureCurrentAccountExecution: (pluginId: string) => Promise<PluginAccountExecutionAdmission>;
     /** Exact target plus its declared suppliers; never a whole-inventory load. */
@@ -2195,6 +2197,7 @@ function createBoundReader(input: Readonly<{
     readObservationSnapshot: (pluginId?: string) => object | null;
     ensureBundledDeclaration: (pluginId: string) => Promise<void>;
     ensureTargetDeclarations: (pluginId: string) => Promise<void>;
+    loadMachineDeclarations?: (scope: ServerAccountScope, pluginId: string) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
@@ -2229,6 +2232,16 @@ function createBoundReader(input: Readonly<{
             if (manifest?.id !== request.pluginId || manifest.version !== request.version || !manifest.contributes.events) return null;
             return readAutomationEligibleEventContributionV1({ events: manifest.contributes.events,
                 eventLocalId: request.eventLocalId, sourceContractVersion: request.sourceContractVersion });
+        },
+        ensureAutomationEventDeclarations: async ({ pluginId, machineId }) => {
+            const state = input.readState();
+            if (!readProjectionForScope(state, input.scope) || state?.retiredPluginIds?.includes(pluginId)) return;
+            const reads = state!.intentReadsByPluginId.get(pluginId);
+            if (reads?.length !== 1) return;
+            const response = reads[0]!.response;
+            const declaration = response.machineDeclarations?.find(entry => entry.machineId === machineId)?.declaration;
+            if (response.intent?.enabled && response.intent.desiredVersion === null
+                && declaration && declaration.manifest === undefined) await input.loadMachineDeclarations?.(input.scope, pluginId);
         },
         ensureCurrentAccountExecution: async (pluginId: string) => {
             const current = input.readInitialFailure(pluginId) ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId);
@@ -2343,13 +2356,15 @@ export function createPluginAccountAvailabilityReader(input: Readonly<{
  * complete materialization snapshot and publishes its descriptive slices before
  * notifying readers. Operation policy remains a live read of this owner.
  */
-export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
+export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
     hostBundledUi?: readonly PluginHostBundledUiDeclaration[];
     loadHostBundledUi?: never;
 }> | Readonly<{
     hostBundledUi?: never;
     /** App-owned package facts are acquired before the first Account publication, not anonymous boot. */
     loadHostBundledUi: () => readonly PluginHostBundledUiDeclaration[];
+}>) & Readonly<{
+    loadMachineDeclarations?: (scope: ServerAccountScope, pluginId: string) => Promise<void>;
 }> = {}): PluginAccountAvailabilityReaderStore {
     let loadHostBundledUi = input.loadHostBundledUi;
     let hostBundledUi = loadHostBundledUi ? Object.freeze([]) : prepareBundledUiDeclarations(input.hostBundledUi ?? []);
@@ -2637,6 +2652,7 @@ export function createPluginAccountAvailabilityReaderStore(input: Readonly<{
                 readObservationSnapshot,
                 ensureBundledDeclaration,
                 ensureTargetDeclarations,
+                loadMachineDeclarations: input.loadMachineDeclarations,
             });
             if (!state || areServerAccountScopesEqual(state.scope, scoped)) boundReader = { scope: scoped, reader };
             return reader;

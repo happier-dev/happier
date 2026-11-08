@@ -702,6 +702,7 @@ import {
     subscribeSessionTranscriptConsumerReleases,
 } from './runtime/sessionRealtimeTranscriptConsumers';
 import { resolveSessionMessageRouteId } from '@happier-dev/session-core/messages';
+import { isSessionMessageRevisionHeld } from '@happier-dev/session-core/transcript';
 import type { SessionListQueryPageRequest } from './domains/session/listing/sessionListQueryController';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from './domains/session/readSessionOwnerMetadataView';
@@ -4527,7 +4528,9 @@ class Sync {
     };
 
     /** Join the existing Availability queue after an authenticated declaration claim. */
-    public refreshPluginAccountAvailability = async (): Promise<void> => {
+    public refreshPluginAccountAvailability = async (pluginIds?: readonly string[]): Promise<void> => {
+        if (pluginIds) this.pluginAvailabilityProjectionHydrator.requestPlugins(pluginIds);
+        else this.pluginAvailabilityProjectionHydrator.requireFullRefresh();
         await this.pluginAvailabilitySync.invalidateAndAwait({ settleOnFirstAttempt: true });
     };
 
@@ -4571,7 +4574,20 @@ class Sync {
         return true;
     }
 
-    async sendMessage(
+    /**
+     * A send the user started is a user request: it holds the lease up front, so a routine
+     * background teardown reported mid-send waits for it to settle (userRequestLease).
+     */
+    async sendMessage(...args: Parameters<Sync['sendMessageWithinUserRequest']>): Promise<DirectMessageSubmitResult> {
+        const releaseUserRequestLease = this.acquireUserRequestLease();
+        try {
+            return await this.sendMessageWithinUserRequest(...args);
+        } finally {
+            releaseUserRequestLease();
+        }
+    }
+
+    private async sendMessageWithinUserRequest(
         sessionId: string,
         text: string,
         displayText?: string,
@@ -7525,6 +7541,9 @@ class Sync {
             sessionDataKeys: this.sessionDataKeys,
             sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
             request: sessionRequest,
+            // Session-parts reads borrow the canonical single-flight: concurrent list pages
+            // demanding the same row share one physical read instead of each going fresh.
+            readTransport: this.createAppliedReadTransport(appliedTransportTarget),
             getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
             getCurrentSessionListRenderable: (sessionId) => (
                 activeServerId
@@ -7724,6 +7743,9 @@ class Sync {
             sessionDataKeys: this.sessionDataKeys,
             sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
             request: sessionRequest,
+            // Session-parts reads borrow the canonical single-flight: concurrent list pages
+            // demanding the same row share one physical read instead of each going fresh.
+            readTransport: this.createAppliedReadTransport(capturedAppliedServer),
             getExistingSession: () => null,
             getCurrentSessionListRenderable: (sessionId) => (
                 storage.getState().sessionListRowsByServerId?.[serverId]?.[sessionId]
@@ -8565,6 +8587,7 @@ class Sync {
           // and independent lists never wait for whole-Account draft recovery.
           this.selectMachineRefresh();
           this.selectArtifactRefresh(undefined, 'load');
+          this.pluginAvailabilityProjectionHydrator.requireFullRefresh();
           for (const syncUnit of [
               this.accountPetsSync, this.machinesSync, this.artifactsSync,
               this.pluginAvailabilitySync, this.purchasesSync,
@@ -8626,6 +8649,8 @@ class Sync {
           const concurrencyLimit = this.syncTuning.resumeConcurrencyLimit;
 
           // Rebuild core lists first (sessions drives most downstream state).
+          // A gap may have skipped Availability hints, so this read is complete.
+          this.pluginAvailabilityProjectionHydrator.requireFullRefresh();
           const core = await runTasksWithLimit(
               [
                   () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
@@ -10048,6 +10073,17 @@ class Sync {
         void task.catch(() => { if (this.projectAccountRowsRuntime === task) this.projectAccountRowsRuntime = null; });
         return task;
     }
+
+    /**
+     * The app's one Project rows owner when `scope` is this Account/Home, else null. Actions for the
+     * same Account read its held, hint-maintained rows instead of re-listing and re-opening every row.
+     */
+    public projectAccountRowsOwnerFor = (scope: AccountSettingsScope) => {
+        const current = this.pendingSettingsScope;
+        if (!current || current.accountId !== scope.accountId || !areServerProfileIdentifiersEquivalent(current.serverId, scope.serverId)) return null;
+        // Embed windows and an unapplied transport have no app owner; the captured Account keeps its own reader.
+        try { return this.ensureProjectAccountRowsRuntime(); } catch { return null; }
+    };
 
     /** Complete Project census for explicit recovery and refresh. */
     public refreshProjectAccountRows = async () => {
@@ -12819,15 +12855,30 @@ class Sync {
       }
 
       private async repairSessionTranscriptRevision(
-          repair: Readonly<{ sessionId: string; minSeq: number; messageIds: readonly string[]; messageSeqs?: Readonly<Record<string, number>> }>,
+          repair: Readonly<{
+              sessionId: string;
+              minSeq: number;
+              messageIds: readonly string[];
+              messageSeqs?: Readonly<Record<string, number>>;
+              messageUpdatedAts?: Readonly<Record<string, number>>;
+          }>,
       ): Promise<void> {
+          // A revision this client already applied (usually from its live frame) is
+          // materialized; only unknown, missing or newer revisions are read.
+          const messageIds = repair.messageIds.filter((messageId) => !isSessionMessageRevisionHeld(
+              this.sessionReceivedMessages, repair.sessionId, messageId, repair.messageUpdatedAts?.[messageId],
+          ));
+          if (messageIds.length === 0) return;
+          const minSeq = messageIds.length === repair.messageIds.length
+              ? repair.minSeq
+              : Math.min(...messageIds.map((messageId) => repair.messageSeqs?.[messageId] ?? repair.minSeq));
           const resolvedMessageIds = await this.refetchStaleTranscriptRegion(
               repair.sessionId,
-              repair.minSeq,
-              new Set(repair.messageIds),
+              minSeq,
+              new Set(messageIds),
               repair.messageSeqs,
           );
-          if (!repair.messageIds.every((messageId) => resolvedMessageIds.has(messageId))) {
+          if (!messageIds.every((messageId) => resolvedMessageIds.has(messageId))) {
               throw new Error('Durable transcript revision could not be materialized');
           }
       }

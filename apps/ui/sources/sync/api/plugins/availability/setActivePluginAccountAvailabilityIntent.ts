@@ -33,7 +33,7 @@ export type ActivePluginAccountAvailabilityIntentSetterDependencies = Readonly<{
     getServerSnapshot: () => AvailabilityIntentSetServerSnapshot;
     captureRequestAuthority: (scope: ServerAccountScope) => Promise<AvailabilityIntentSetRequestAuthority>;
     retirePluginAuthority: (pluginId: string) => void;
-    refreshAvailability: () => Promise<void>;
+    refreshAvailability: (pluginId: string) => Promise<void>;
 }>;
 
 export type ActivePluginAccountAvailabilityIntentSetResult =
@@ -66,7 +66,7 @@ function defaultDependencies(): ActivePluginAccountAvailabilityIntentSetterDepen
         retirePluginAuthority: (pluginId) => retirePluginAccountAvailabilityProjection([pluginId]),
         // Resolve Sync only when an acknowledged mutation needs publication;
         // this adapter is also imported while the Sync graph initializes.
-        refreshAvailability: async () => { await sync.refreshPluginAccountAvailability(); },
+        refreshAvailability: async pluginId => { await sync.refreshPluginAccountAvailability([pluginId]); },
     };
 }
 
@@ -217,7 +217,7 @@ export function createActivePluginAccountAvailabilityIntentSetter(
                 // The CAS receipt is authoritative independently of its reread.
                 // Wake the existing scoped publisher without waiting for network
                 // recovery or turning an applied write into a replayable failure.
-                fireAndForget(Promise.resolve().then(() => dependencies.refreshAvailability()), {
+                fireAndForget(Promise.resolve().then(() => dependencies.refreshAvailability(output.data.intent.pluginId)), {
                     tag: 'PluginAvailability.refreshAfterIntentSet',
                 });
                 return Object.freeze({ kind: 'updated', intent: output.data.intent });

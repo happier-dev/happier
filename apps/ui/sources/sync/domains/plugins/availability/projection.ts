@@ -31,6 +31,10 @@ import {
 } from './reader';
 
 const readerStore = createPluginAccountAvailabilityReaderStore({
+    loadMachineDeclarations: async (scope, pluginId) => {
+        const { sync } = await import('@/sync/sync');
+        if (currentProjectionLifetime(scope)) await sync.refreshPluginAccountAvailability([pluginId]);
+    },
     loadHostBundledUi: () => {
         if (!BUNDLED_PLUGIN_UI_APP_DECLARATIONS) throw new Error('Bundled Plugin UI declarations are not prepared');
         return BUNDLED_PLUGIN_UI_APP_DECLARATIONS;
@@ -77,6 +81,8 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
     failedPluginIds?: readonly string[];
     intentCensusIncomplete?: boolean;
     initialFailure?: PluginAccountAvailabilityInitialFailure;
+    /** A row-level read of only these plugins, merged into the held complete projection. */
+    pluginIds?: readonly string[];
 }>): void {
     readerStore.replace(input);
     const lifetime = currentProjectionLifetime(input.scope);
@@ -102,6 +108,7 @@ export function applyPluginAccountAvailabilityProjectionRefresh(input: Readonly<
     failedPluginIds: readonly string[];
     intentCensusIncomplete?: boolean;
     terminalFailure?: PluginAvailabilityResponseFailure;
+    pluginIds?: readonly string[];
 }>): void {
     replacePluginAccountAvailabilityProjection({ ...input, initialFailure: input.terminalFailure });
     if (input.terminalFailure) throw input.terminalFailure;
@@ -111,6 +118,19 @@ export function applyPluginAccountAvailabilityProjectionRefresh(input: Readonly<
     if (input.intentCensusIncomplete) {
         throw new Error('Plugin Availability intent census is incomplete.');
     }
+}
+
+/**
+ * Whether a row-level Availability read for `scope` can be merged: this owner
+ * holds that Account's complete projection (every Machine readable, intent
+ * census complete). Otherwise the refresh reads the whole inventory.
+ */
+export function canMergePluginAccountAvailabilityRows(scope: ServerAccountScope): boolean {
+    const current = readerStore.getSnapshot();
+    return current !== null
+        && areServerAccountScopesEqual(current.scope, scope)
+        && current.snapshot.inventoryComplete !== false
+        && current.intentCensusIncomplete !== true;
 }
 
 /**

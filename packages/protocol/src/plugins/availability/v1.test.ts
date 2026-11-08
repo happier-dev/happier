@@ -63,8 +63,11 @@ it('reads per-Machine declarations without inventing an Account-selected declara
     machineDeclarations: [{ ...read.machineDeclarations[0], ignoredAuthority: true }] }).success).toBe(false);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
     machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration, ignoredAuthority: true } }] }).success).toBe(false);
+  const censusRead = { ...read,
+    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { declarationDigestSha256: declaration.declarationDigestSha256 } }] };
+  expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.parse(censusRead)).toEqual(censusRead);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
-    machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { declarationDigestSha256: declaration.declarationDigestSha256 } }] }).success).toBe(false);
+    currentDeclaration: censusRead.machineDeclarations[0]!.declaration }).success).toBe(false);
   expect(availability.PluginAccountAvailabilityIntentReadResponseV1Schema.safeParse({ ...read,
     machineDeclarations: [{ ...read.machineDeclarations[0], declaration: { ...declaration, declarationDigestSha256: 'invalid' } }] }).success).toBe(false);
 });

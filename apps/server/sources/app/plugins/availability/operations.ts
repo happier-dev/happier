@@ -1,3 +1,4 @@
+import { readIntentRows, decodeIntentReadRow } from './intentReadRows';
 import type { Prisma } from "@prisma/client";
 import type { z } from "zod/mini";
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -657,7 +658,9 @@ function packageAssetFactsFromRow(row: StoredReleaseRow): PluginReleaseFactsV1 {
 }
 
 function packageAssetLinkFromRow(
-    row: StoredPackageAssetLinkRow,
+    row: Omit<StoredPackageAssetLinkRow, "packageAssetArtifact"> & Readonly<{
+        packageAssetArtifact: Pick<StoredPackageAssetArtifactRow, "id" | "accountId"> | null;
+    }>,
     descriptor: PluginReleaseFactsV1["packageAssetArchive"],
 ): PluginAccountPluginPackageAssetLinkV1 | null {
     if (
@@ -2106,34 +2109,15 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         throw new PluginAvailabilityOperationError('plugin_availability_invalid_request');
                     }
                 }
-                const [account, rows] = await Promise.all([
-                    tx.account.findUnique({
-                        where: { id: params.accountId },
-                        select: { seq: true },
-                    }),
-                    // Discovery already owns all intent rows in this page;
-                    // retain their facts instead of rereading each identity.
-                    tx.accountPluginIntent.findMany({
-                        where: { accountId: params.accountId,
-                            ...(input ? { pluginId: input.pluginId }
-                                : list?.cursor ? { pluginId: { gt: list.cursor } } : {}),
-                        },
-                        select: {
-                            pluginId: true,
-                            desiredVersion: true,
-                            enabled: true,
-                            offlineUiHosting: true,
-                            writableCollections: true,
-                            revision: true,
-                            releaseLessDeclaration: true,
-                        },
-                        orderBy: { pluginId: "asc" },
-                        ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
-                    }),
-                ]);
-                if (!account) {
-                    throw new PluginAvailabilityOperationError("plugin_account_not_found");
-                }
+                const capturedRows = await readIntentRows(tx, {
+                    accountId: params.accountId,
+                    ...(input ? { pluginId: input.pluginId } : {}),
+                    ...(list?.cursor ? { after: list.cursor } : {}),
+                    ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
+                });
+                const account = capturedRows[0];
+                if (!account) throw new PluginAvailabilityOperationError('plugin_account_not_found');
+                const rows = capturedRows.filter((row): row is typeof row & { pluginId: string } => row.pluginId !== null);
                 const candidates = [...new Set([
                     ...rows.map(row => row.pluginId),
                     ...(input ? [input.pluginId]
@@ -2158,18 +2142,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                             uiSlots: true,
                             packageAssetArchive: true,
                             packageAssetArtifactId: true,
-                            packageAssetArtifact: {
-                                select: {
-                                    id: true,
-                                    accountId: true,
-                                    header: true,
-                                    headerVersion: true,
-                                    body: true,
-                                    bodyVersion: true,
-                                    dataEncryptionKey: true,
-                                    seq: true,
-                                },
-                            },
+                            packageAssetArtifact: { select: { id: true, accountId: true } },
                             uiArtifacts: {
                                 select: {
                                     contributionId: true,
@@ -2195,14 +2168,14 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
                         ...(input.controller ? { controller: input.controller } : {}) })
                     : undefined;
-                return { availabilityCursor: account.seq, intentRows, releases, readPluginIds,
+                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds,
                     pluginIds: intentRows.map(row => row.pluginId),
                     ...(candidates.length > readPluginIds.length ? { nextCursor: readPluginIds.at(-1)! } : {}),
                     ...(managedResources !== undefined ? { managedResources,
                         managedResourcesReviewed: acceptsManagedResourceDispositions(managedResources, input?.managedResourceDispositions) } : {}) };
             }),
         ]);
-        const intents = new Map(current.intentRows.map(row => [row.pluginId, row]));
+        const intents = new Map(current.intentRows.map(row => [row.pluginId, decodeIntentReadRow(row)]));
         const releases = new Map(current.releases.map(row => [row.pluginId, row]));
         const results = await Promise.allSettled(current.readPluginIds.map(async pluginId => {
             const hosting = capability[0]!;
@@ -2227,7 +2200,11 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 intent,
                 release: facts,
                 currentDeclaration: readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
-                ...(machineDeclarations.length > 0 ? { machineDeclarations } : {}),
+                ...(machineDeclarations.length > 0 ? { machineDeclarations: list
+                    ? machineDeclarations.map(entry => ({ machineId: entry.machineId,
+                        machineInstallationId: entry.machineInstallationId,
+                        declaration: { declarationDigestSha256: entry.declaration.declarationDigestSha256 } }))
+                    : machineDeclarations } : {}),
                 uiArtifacts: facts ? release!.uiArtifacts.map((row) => {
                     const slot = facts.uiSlots.find((candidate) => (
                         candidate.contributionId === row.contributionId

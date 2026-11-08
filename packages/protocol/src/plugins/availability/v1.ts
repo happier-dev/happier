@@ -541,10 +541,10 @@ export type PluginAccountCurrentDeclarationV1 = Readonly<{
   manifest: PluginPortableReleaseManifestV1;
   declarationDigestSha256: PluginUiArtifactDigestV1;
 }>;
-// A Machine body is opaque until an exact consumer admits it. Account-current
-// declarations are consumed by discovery and retain full ingress admission.
+// Lists carry Machine identities/digests; exact reads supply opaque bodies for
+// semantic admission. Account-current declarations remain discovery inputs.
 const PluginAccountDeclarationEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
-  manifest: z.nonoptional(z.unknown()),
+  manifest: z.optional(z.unknown()),
   declarationDigestSha256: PluginUiArtifactDigestV1Schema,
 }));
 export const PluginAccountCurrentDeclarationV1Schema: z.ZodMiniType<PluginAccountCurrentDeclarationV1> = lazyZodSchema(() => z.extend(
@@ -558,7 +558,7 @@ export type PluginAccountAvailabilityIntentReadResponseV1 = {
   release: PluginReleaseFactsV1 | null;
   /** Omitted by older producers; null explicitly means no Account-selected declaration. */
   currentDeclaration?: PluginAccountCurrentDeclarationV1 | null;
-  /** Authenticated envelopes; their opaque manifest bodies require admission before use. */
+  /** List envelopes omit bodies; exact-read bodies require admission before use. */
   machineDeclarations?: readonly Readonly<{
     machineId: string;
     machineInstallationId: string;

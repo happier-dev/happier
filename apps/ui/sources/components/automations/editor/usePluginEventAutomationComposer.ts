@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
@@ -444,6 +445,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         [availabilityReader],
     );
     const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
+    const monitoringMachineId = params.initialSetupSeed?.monitoringMachineId;
+    React.useEffect(() => {
+        if (!params.guidedPreset || !watcherPluginId || !monitoringMachineId || !availabilityReader) return;
+        fireAndForget(availabilityReader.ensureAutomationEventDeclarations({ pluginId: watcherPluginId, machineId: monitoringMachineId }), {
+            tag: 'PluginAvailability.guidedEventDeclarations',
+        });
+    }, [availabilityReader, monitoringMachineId, params.guidedPreset, watcherPluginId]);
     const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
     const suppliedWatcherFacts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
     const executionOriginCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
@@ -509,13 +517,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const guidedSetupFailure = React.useMemo(() => params.guidedPreset ? readGuidedPluginEventAutomationSetupFailure({
         catalogReady: eventCatalogStatus === 'ready',
         event: watcherEvent,
+        plugin: params.projectionInputs?.pluginProjectionById[watcherPluginId],
         selectableWatchers,
         watcherFailures,
         discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
             target.machineId === params.initialSetupSeed?.monitoringMachineId
             && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
     }) : null, [eventCatalogStatus, params.guidedPreset, params.initialSetupSeed?.monitoringMachineId,
-        params.serverId, watcherEvent, selectableWatchers, suppliedWatcherFacts.establishingTargets, watcherFailures]);
+        params.serverId, params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
+        suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
     const payloadBrowser = React.useMemo(
         () => buildPluginEventAutomationPayloadBrowser(selectedEvent?.event.payloadSchema),

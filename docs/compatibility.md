@@ -2,6 +2,19 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Availability Machine declaration demand (unreleased 0.3)
+
+The Availability V1 list retains each Machine's closed identity, installation and
+digest envelope and omits its manifest body. Exact plugin reads retain that
+body; guided Event setup acquires it through the existing scoped Availability
+loader and admits its semantics before use. Account-current declarations remain
+discovery inputs. New readers accept earlier full-body lists; older strict
+development readers require Protocol, server and UI to reload together under the
+0.3 direct cut. No persisted format, publication admission or wire epoch changes.
+The inspected `../0.2` frontier `30790800ef79b06cac4941ddf3f73bcc73a9aab2`
+has no corresponding Availability list/Machine declaration contract in scoped
+source or staged/unstaged paths; no predecessor adapter is introduced.
+
 ## Managed provisioner check qualification (unreleased 0.3)
 
 The closed `machines.provisioners.check` V1 input adds optional `selectors`, using

@@ -37,6 +37,7 @@ import {
 } from "@happier-dev/protocol/plugins/ui";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { db } from "@/storage/db";
+import * as prismaStorage from "@/storage/prisma";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -451,6 +452,66 @@ describe("plugin Availability operations", () => {
             },
         });
     }
+
+    it('reads the Account cursor and intent page in one statement, then projects declarations after the snapshot', async () => {
+        await seedAccountAndMachine();
+        const manifest = { ...releaseFacts().normalizedManifest, description: 'availability-transaction-probe' };
+        const declaration = { manifest, manifestDigestSha256: `sha256:${'a'.repeat(64)}` };
+        await db.accountPluginIntent.create({ data: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID,
+            desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [],
+            releaseLessDeclaration: declaration } });
+        let statements = 0;
+        let insideSnapshot = false;
+        const snapshot = prismaStorage.withSqliteReadSnapshot;
+        // Observe the real DB adapter, including its dedicated read connection.
+        const observed = vi.spyOn(prismaStorage, 'withSqliteReadSnapshot').mockImplementation((read, options) => snapshot(async tx => {
+            const counted = new Proxy(tx, { get(target, key) {
+                const value = Reflect.get(target, key, target);
+                if (key === '$queryRaw') return (...args: unknown[]) => { statements += 1; return Reflect.apply(value, target, args); };
+                if (key === 'account' || key === 'accountPluginIntent') return new Proxy(value, { get(model, method) {
+                    const query = Reflect.get(model, method, model);
+                    return typeof query === 'function' ? (...args: unknown[]) => { statements += 1; return Reflect.apply(query, model, args); } : query;
+                } });
+                return value;
+            } });
+            insideSnapshot = true;
+            try { return await read(counted); } finally { insideSnapshot = false; }
+        }, options));
+        const parse = JSON.parse;
+        let declarationDecodes = 0;
+        const decoding = vi.spyOn(JSON, 'parse').mockImplementation((text, reviver) => {
+            if (text.startsWith('{"manifest":') && text.includes('availability-transaction-probe')) {
+                declarationDecodes += 1;
+                expect(insideSnapshot).toBe(false);
+            }
+            return parse(text, reviver);
+        });
+        try {
+            const listed = await operations().listIntentIds({ accountId: ACCOUNT_ID, input: {} });
+            expect(listed.intentReads[0]?.response.currentDeclaration?.manifest.description).toBe(manifest.description);
+            expect(statements).toBe(1);
+            expect(declarationDecodes).toBe(1);
+        } finally { observed.mockRestore(); decoding.mockRestore(); }
+    });
+
+    it('lists Machine declaration identities without bodies and retains bodies on exact reads', async () => {
+        await seedAccountAndMachine();
+        const manifest = releaseFacts().normalizedManifest;
+        const declaration = { manifest, manifestDigestSha256: `sha256:${'a'.repeat(64)}` };
+        await db.accountPluginIntent.create({ data: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID,
+            desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [],
+            releaseLessDeclaration: { schemaVersion: 2, legacyDeclaration: null,
+                machines: [{ machineId: MACHINE_ID, machineInstallationId: 'installation-a', declaration }] } } });
+        const service = operations();
+        const listed = await service.listIntentIds({ accountId: ACCOUNT_ID, input: {} });
+        const exact = await service.readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+        expect(listed.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(manifest);
+        expect(exact.machineDeclarations?.[0]?.declaration.manifest).toEqual(manifest);
+        expect(listed.intentReads[0]?.response.machineDeclarations).toEqual([{
+            machineId: MACHINE_ID, machineInstallationId: 'installation-a',
+            declaration: { declarationDigestSha256: declaration.manifestDigestSha256 },
+        }]);
+    });
 
     it('lists canonical intent projections including hosted archives, machine-only plugins and deleted known intents', async () => {
         await seedAccountAndMachine();
