@@ -351,6 +351,23 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
+  it('says a refused Add once, from the shared recovery owner, beside its one next step', async () => {
+    const { DeploymentAddRefusal } = await import('./DeploymentDatabasePage');
+    const opened: string[] = [];
+    const screen = await renderScreen(
+      <DeploymentAddRefusal testID="add.refusal" code="template_domain_required" onOpenRecovery={(destination) => opened.push(destination)} />,
+    );
+    try {
+      const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+      const recovery = readDeploymentRefusalRecoveryV1('template_domain_required')!;
+      expect(screen.getTextContent()).toContain(recovery.remedy);
+      // One message, no raw code beside it.
+      expect(screen.getTextContent()).not.toContain('template_domain_required');
+      await screen.pressByTestIdAsync('add.refusal.next');
+      expect(opened).toEqual(['domains']);
+    } finally { await screen.unmount(); }
+  });
+
   it('chooses from the Store catalog as an embedded picker, filtered to databases, not a Store page inside the sheet', async () => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');

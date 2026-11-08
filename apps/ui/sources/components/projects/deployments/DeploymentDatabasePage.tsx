@@ -52,6 +52,7 @@ import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/plugi
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
@@ -540,6 +541,8 @@ export type DeploymentAddSheetInput = Readonly<{
   detail: Detail;
   /** The catalog conditions this entry point opens with: Data → Add passes the database category. */
   catalogFilters: SettingsCollectionFilter;
+  /** Opens the editor a refusal's recovery names (Domains for a required address). */
+  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
   lifetime: ServerAccountScopeLifetime;
   review: DeploymentReviewHandle;
   machineName: (machineId: string) => string;
@@ -596,6 +599,7 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   return (
     <DeploymentAddReview item={chosen} detail={detail} lifetime={props.lifetime} review={props.review}
       machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome}
+      {...(props.onOpenRecovery ? { onOpenRecovery: props.onOpenRecovery } : {})}
       operands={{ machineId: member.machineId, projectSourceId: detail.environment.projectSourceId,
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
@@ -619,6 +623,7 @@ function DeploymentAddReview(props: Readonly<{
   operands: AddOperands;
   onBack: () => void;
   onClose: () => void;
+  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
   setChrome: CustomModalInjectedProps['setChrome'];
 }>) {
   const read = useRegistryItem({ kind: 'app', sourceId: props.item.sourceId, itemId: props.item.itemId,
@@ -653,6 +658,8 @@ function DeploymentAddReview(props: Readonly<{
   }, [actions, refKey, operandsKey]);
   const press = useDeploymentChangePress({ request: (artifactId) => { props.onClose(); props.review.request(artifactId); } },
     () => setAdded(true));
+  const refusalCode = press.outcome?.kind === 'refused' ? press.outcome.code
+    : preflight.status === 'failed' ? preflight.code : null;
   const add = () => {
     if (!templateRef) return;
     void press.press(async () => {
@@ -695,25 +702,44 @@ function DeploymentAddReview(props: Readonly<{
               <Item testID="project-deployments.add.where" title={t('projects.deployments.machine')} detail={props.machine} mode="info" />
               <Item testID="project-deployments.add.preflight" title={t('projects.deployments.addPreflight')} mode="info"
                 detail={preflight.status === 'checking' ? t('projects.deployments.addChecking')
-                  : preflight.status === 'failed' ? t('projects.deployments.addRefused')
+                  : preflight.status === 'failed' ? undefined
                     : preflight.shortOn.length === 0 ? t('projects.deployments.addRoomOk') : undefined}
                 {...(preflight.status === 'ready' && preflight.shortOn.length > 0 ? { subtitle: t(preflight.shortOn.includes('memoryBytes')
                   ? 'projects.deployments.addShortMemory' : 'projects.deployments.addShortDisk') } : {})} />
             </ItemGroup>
             {needsReview ? <SurfaceStateCard testID="project-deployments.add.needsReview" size="line" kind="unavailable"
               title={t('projects.deployments.addNeedsReview')} /> : null}
-            {preflight.status === 'failed' ? <SurfaceStateCard testID="project-deployments.add.preflightFailed" size="line"
-              kind="error" title={t('projects.deployments.addRefused')} reason={deploymentActionRefusalRemedy(preflight.code)}
-              diagnosticCode={preflight.code} /> : null}
-            {press.outcome?.kind === 'refused' ? <SurfaceStateCard testID="project-deployments.add.refused" size="line" kind="error"
-              title={t('projects.deployments.addRefused')} reason={deploymentActionRefusalRemedy(press.outcome.code)}
-              diagnosticCode={press.outcome.code} /> : null}
+            {/* One refusal, preview or Add: the recovery owner's sentence beside its one next step. */}
+            {refusalCode ? <DeploymentAddRefusal testID="project-deployments.add.refused" code={refusalCode}
+              {...(props.onOpenRecovery ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
+                props.onClose(); props.onOpenRecovery?.(destination);
+              } } : {})} /> : null}
           </>
         )}
         {setChrome ? null : footer}
       </View>
     </ListPresentationProvider>
   );
+}
+
+/**
+ * A refused Add, said once: the shared recovery owner's sentence and its one next step. A code that owner does not know
+ * keeps the generic remedy with its diagnostic code.
+ */
+export function DeploymentAddRefusal(props: Readonly<{
+  testID: string;
+  code: string;
+  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+}>) {
+  const recovery = readDeploymentRefusalRecoveryV1(props.code);
+  const { onOpenRecovery } = props;
+  if (!recovery) {
+    return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={t('projects.deployments.addRefused')}
+      reason={deploymentActionRefusalRemedy(props.code)} diagnosticCode={props.code} />;
+  }
+  return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={recovery.remedy}
+    {...(onOpenRecovery ? { action: { label: recovery.nextAction.label, testID: `${props.testID}.next`,
+      onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})} />;
 }
 
 type DeploymentSetBindings = ReturnType<typeof createDeploymentActions>['setBindings'];
