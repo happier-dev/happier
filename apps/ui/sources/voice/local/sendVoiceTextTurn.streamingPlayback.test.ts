@@ -8,6 +8,7 @@ import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessio
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { writeVoiceConversationScopeMetadata } from '@/voice/persistence/voiceConversationScopeMetadata';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -287,7 +288,7 @@ function registerStreamingPlaybackHooks(platform: 'ios' | 'web' = 'ios', ttsProv
             pending: { localId: body.localId, deliveryStatus: { status: 'external_handoff' } } });
         }
         if (request.method === 'POST' && /\/delivery\/handled$/.test(request.path)) return Response.json({});
-        return undefined;
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method, headers: request.headers }) ?? undefined;
       }).handle });
     disconnect = await account.restoreActiveConnection();
     const { sync } = await import('@/sync/sync');

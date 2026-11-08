@@ -1,15 +1,16 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { ExecutionRunTurnStreamStartV2RequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunEnsureOrStartResponseSchema } from '@happier-dev/protocol/execution/runs/index';
 
-import { createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, flushHookEffects, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -141,7 +142,13 @@ describe('foreground Voice text-turn QA bridge', () => {
       }
       if (request.method === 'POST' && /\/pending\/[^/]+\/delivery\/handled$/.test(request.path)) return Response.json({});
       if (/^\/v1\/sessions\/[^/]+\/messages$/.test(request.path)) return Response.json({ messages: [], hasMore: false });
-      return sessionHttp.handle(request.url, { method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body) }) ?? undefined;
+      const init = {
+        method: request.method,
+        headers: request.headers,
+        body: request.body === undefined ? undefined : JSON.stringify(request.body),
+      };
+      return sessionHttp.handle(request.url, init)
+        ?? createEmptyAccountBootstrapHttpResponse(request.path, init) ?? undefined;
     }).handle });
     serverId = home.homes.voice!.id;
     await loadSyncSingletonForTests();
@@ -152,6 +159,11 @@ describe('foreground Voice text-turn QA bridge', () => {
     disconnect = disconnectActiveServerConnection;
     const { sync } = await import('@/sync/sync');
     await sync.resumeSync('manual');
+    // Warm connection switches may publish before their Settings read settles.
+    // Exercise the configured agent mode after its real HTTP baseline arrives.
+    await waitForTestEvent(getStorage().subscribe, getStorage().getState, state =>
+      state.settingsScope?.serverId === serverId
+      && state.settingsScope.accountId === 'account-a' && state.settingsVersion === 1);
     home.requests.length = 0;
     registerVoiceAdapters([createLocalDirectVoiceAdapter(), createLocalConversationVoiceAdapter()]);
     lifecycle = createVoiceSessionLifecycleController();
