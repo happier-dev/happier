@@ -18,19 +18,28 @@ export function projectResolvedAgentBackendTarget(agentTarget: AgentExecutionTar
 }
 
 /** Canonical installed-Agent projection shared by every authored Session creator. */
-export function resolveSessionCreationAgentTarget(agentTarget: AgentExecutionTargetV1): Readonly<{
+export function resolveSessionCreationAgentTarget(
+  agentTarget: AgentExecutionTargetV1,
+  catalog: Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'agentDefinitionsById' | 'pluginEnablementById'> = readAgentCatalogSnapshot(),
+): Readonly<{
   agentId: string;
   backendTarget: BackendTargetRefV2;
 }> | null {
   const selectedTarget = AgentExecutionTargetV1Schema.safeParse(agentTarget);
   if (!selectedTarget.success) return null;
-  const catalog = readAgentCatalogSnapshot();
   const agentId = readAgentRoutingIdForContributionIdentity(
     indexAgentRoutingIdsByContributionIdentity([...catalog.agentDefinitionsById.values()]),
     selectedTarget.data.identity,
   );
   const agentContribution = agentId ? catalog.agentDefinitionsById.get(agentId) : null;
-  if (!agentContribution) return null;
+  if (!agentContribution) {
+    const enablement = catalog.pluginEnablementById?.[selectedTarget.data.identity.pluginId];
+    if (enablement?.enabled === false) {
+      const code = enablement.unavailableCode ?? 'plugin_disabled';
+      throw Object.assign(new Error(code), { code });
+    }
+    return null;
+  }
 
   return {
     agentId: agentContribution.id,

@@ -12,7 +12,7 @@ export type PluginAccountSettingsWatchInvalidation =
 const listeners = new Set<(invalidation: PluginAccountSettingsWatchInvalidation) => void>();
 const availabilityListeners = new Set<(accountScopeKey: string, pluginIds: readonly string[] | null) => void>();
 
-/** Runtime admission consumes the scoped Account feed; null re-reads its cursor-gone reset. */
+/** Null re-reads a cursor reset; an empty list retries only unavailable admission. */
 export function subscribePluginAccountAvailabilityChanges(
     listener: (accountScopeKey: string, pluginIds: readonly string[] | null) => void,
 ): () => void {
@@ -392,6 +392,7 @@ export function readPluginAccountSettingsWatchInvalidations(
 export function publishPluginAccountAvailabilityChanges(
     accountScopeKey: string,
     changes: readonly ChangeEntry[],
+    options?: Readonly<{ accountReadable: true }>,
 ): void {
     const changedPluginIds = new Set<string>();
     for (const change of changes) {
@@ -406,7 +407,7 @@ export function publishPluginAccountAvailabilityChanges(
             changedPluginIds.add(hint.pluginId);
         }
     }
-    if (changedPluginIds.size === 0) return;
+    if (changedPluginIds.size === 0 && !options?.accountReadable) return;
     const pluginIds = Object.freeze([...changedPluginIds]);
     for (const listener of availabilityListeners) listener(accountScopeKey, pluginIds);
 }

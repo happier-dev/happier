@@ -12,6 +12,8 @@ import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { logger } from '@/ui/logger';
+import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
+import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
@@ -49,6 +51,8 @@ describe('daemon release-less declaration publication', () => {
         const events: string[] = [];
         const claims: unknown[] = [];
         let accountPluginEnabled = startupMode === 'normal';
+        let accountReadable = true;
+        const accountReadStates: boolean[] = [];
         const diagnostics = vi.spyOn(logger, 'debug');
         const controller = createPluginReloadController({ happyHomeDir });
         let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | undefined;
@@ -69,6 +73,8 @@ describe('daemon release-less declaration publication', () => {
             // registry, source admission and Account claim owner remain composed.
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
                 if (String(url).endsWith('/intents/list')) {
+                    accountReadStates.push(accountReadable);
+                    if (!accountReadable) throw new Error('Account temporarily unavailable during reconnect');
                     const pluginIds = [...(PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [])];
                     return { data: { availabilityCursor: 17, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
                         response: { availabilityCursor: 17, hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
@@ -195,6 +201,34 @@ describe('daemon release-less declaration publication', () => {
             // unchanged declaration keeps this daemon's successful admission.
             expect(claims).toHaveLength(1);
             expect(claims[0]).toMatchObject({ manifest: { id: manifest.id, version: manifest.version } });
+            const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+            accountReadable = false;
+            await refreshStore.refreshRuntime([manifest.id]);
+            const unavailable = controller.getState().activeRegistry!;
+            expect(unavailable.contributes.pluginEnablementById?.[target.identity.pluginId])
+                .toMatchObject({ enabled: false, unavailableCode: 'plugin_account_execution_unavailable' });
+            expect(() => resolveSessionCreationAgentTarget(target, unavailable.contributes))
+                .toThrow(expect.objectContaining({ code: 'plugin_account_execution_unavailable' }));
+            accountReadable = true;
+            // A successful reconnect can carry no changed availability rows.
+            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [], { accountReadable: true });
+            await vi.waitFor(() => expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[target.identity.pluginId]?.enabled,
+                `Account reads: ${JSON.stringify(accountReadStates)}; refresh failures: ${JSON.stringify(diagnostics.mock.calls.filter(call => String(call[0]).includes('refresh failed')))}`)
+                .toBe(true), { timeout: 120_000 });
+            expect(resolveSessionCreationAgentTarget(target, controller.getState().activeRegistry!.contributes))
+                .toMatchObject({ agentId: 'codex' });
+            const spawnLease = await controller.acquireRuntimeRegistry();
+            try {
+                expect(await resolveRunnerAgentSessionDescriptorForLease({ target: {
+                    kind: 'backend', sourceKind: 'built_in', backendId: 'codex',
+                }, lease: spawnLease })).toMatchObject({ pluginId: target.identity.pluginId, backendId: 'codex' });
+            } finally { await spawnLease.release(); }
+            const recovered = controller.getState();
+            const recoveredPublication = projectionPublication.readRevision();
+            await refreshStore.refreshRuntime([manifest.id]);
+            expect(controller.getState().generation).toBe(recovered.generation);
+            expect(controller.getState().activeRegistry).toBe(recovered.activeRegistry);
+            expect(projectionPublication.readRevision()).toBe(recoveredPublication);
             retirePluginAccountCollectionWatchScope('another-account');
             retirePluginAccountCollectionWatchScope(resolveAccountSettingsScopeKey(credentials));
         } finally {
@@ -202,5 +236,7 @@ describe('daemon release-less declaration publication', () => {
             await controller.shutdown();
             await rm(happyHomeDir, { recursive: true, force: true });
         }
-    }, 120_000);
+    // This includes two full bundled-Account admission transitions in addition
+    // to the original declaration-only transitions.
+    }, 300_000);
 });

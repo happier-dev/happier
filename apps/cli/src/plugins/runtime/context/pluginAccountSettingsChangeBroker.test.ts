@@ -13,6 +13,16 @@ import {
 } from './pluginAccountSettingsChangeBroker';
 
 describe('Account plugin Settings watch broker', () => {
+    it('publishes Account readability without requiring an availability change or waking ordinary empty pages', () => {
+        const listener = vi.fn();
+        const unsubscribe = subscribePluginAccountAvailabilityChanges(listener);
+        try {
+            publishPluginAccountAvailabilityChanges('readable-scope', []);
+            expect(listener).not.toHaveBeenCalled();
+            publishPluginAccountAvailabilityChanges('readable-scope', [], { accountReadable: true });
+            expect(listener).toHaveBeenCalledExactlyOnceWith('readable-scope', []);
+        } finally { unsubscribe(); retirePluginAccountCollectionWatchScope('readable-scope'); }
+    });
     it('wakes availability consumers once per changed Account page and skips duplicate cursors', () => {
         const listener = vi.fn();
         const unsubscribe = subscribePluginAccountAvailabilityChanges(listener);

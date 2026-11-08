@@ -1016,9 +1016,14 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
           : getActiveAccountSettingsSnapshot()?.scopeKey;
         if (accountScopeKey !== currentScopeKey) return;
         const contributes = params.reloadController.getState().activeRegistry?.contributes;
-        const changedPluginIds = pluginIds ?? [...new Set([
+        const changedPluginIds = [...new Set(pluginIds === null ? [
           ...Object.keys(contributes?.pluginEnablementById ?? {}),
           ...(contributes?.pluginDeclarations ?? []).map(declaration => declaration.pluginId),
+        ] : [
+          ...pluginIds,
+          ...Object.entries(contributes?.pluginEnablementById ?? {})
+            .filter(([, enablement]) => enablement.unavailableCode === 'plugin_account_execution_unavailable')
+            .map(([pluginId]) => pluginId),
         ])];
         const relevantPluginIds = changedPluginIds.filter(pluginId => contributes?.pluginEnablementById?.[pluginId]
           || contributes?.pluginDeclarations?.some(declaration => declaration.pluginId === pluginId));

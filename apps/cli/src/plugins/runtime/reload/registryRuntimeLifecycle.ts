@@ -338,7 +338,11 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         : developmentRemoval
           ? Object.freeze([developmentRemoval.pluginId])
         : candidate!.admissionRefresh && activeRegistry
-          ? candidate!.changedPluginIds.filter(pluginId => {
+          ? [...new Set([
+              ...candidate!.changedPluginIds,
+              ...Object.keys(activeRegistry.contributes.pluginEnablementById ?? {}),
+              ...Object.keys(candidateContributes.pluginEnablementById ?? {}),
+            ])].filter(pluginId => {
               const before = activeRegistry.contributes.pluginEnablementById?.[pluginId];
               const after = candidateContributes.pluginEnablementById?.[pluginId];
               return before?.accountEnabled !== after?.accountEnabled

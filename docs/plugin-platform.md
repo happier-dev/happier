@@ -105,6 +105,13 @@ the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
 
+A failed Account enablement read withdraws new admission with
+`plugin_account_execution_unavailable`. The existing successful Account-feed
+reconnect re-admits unavailable plugins even when no availability row changed;
+ordinary unchanged live pages do not trigger reads. Admission compares the full
+bundled enablement result and republishes only changed plugins. Session creation
+preserves the catalog's typed refusal while Account execution is unavailable.
+
 In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Before the daemon has an active registry, the synchronous built-in snapshot reads the persisted Machine intent once through the admitted registry reader; it excludes disabled declarations and their UI artifact indexes. Runtime admission still combines Account and Machine intent. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
 
 The `plugins.enable` and `plugins.disable` Actions accept an optional `scope` of

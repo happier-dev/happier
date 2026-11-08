@@ -6600,7 +6600,8 @@ export class ApiMachineClient {
                     await refreshDemandedActiveConnectedAccountCatalogs({ token: this.token, signal });
                     signal.throwIfAborted();
                 }
-                publishPluginAccountAvailabilityChanges(accountScopeKey, changes);
+                publishPluginAccountAvailabilityChanges(accountScopeKey, changes,
+                    reason === 'live' ? undefined : { accountReadable: true });
                 for (const invalidation of pluginAccountSettingsInvalidations) {
                     publishPluginAccountSettingsWatchInvalidation(invalidation);
                 }

@@ -31,7 +31,7 @@ export function readCurrentContributionRegistry(): ResolvedContributionRegistry 
  */
 export function readAgentCatalogSnapshot(): Pick<
   ResolvedContributionRegistry,
-  'agentDefinitionsById' | 'catalogEntriesById' | 'executionRunProfiles'
+  'agentDefinitionsById' | 'catalogEntriesById' | 'executionRunProfiles' | 'pluginEnablementById'
 > {
   return readCurrentContributionRegistry();
 }
