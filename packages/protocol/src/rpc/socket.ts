@@ -26,6 +26,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { AgentStartSessionCallerV1Schema } from '../account/settings/admitAgentStartV1.js';
 import { AgentPermissionIntentV1Schema } from '../runtime/permissionIntentV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
+import { ActionRequestAttributionV1Schema } from '../actions/actionRequestAttributionV1.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { isSessionStopChildV1 } from '../actions/sessionSectionArchive.js';
 import { isMachineSetupPlanRpcChildV1, readSessionAgentReadinessChildActionV1 } from '../machines/managed/actionIdsV1.js';
@@ -66,13 +67,13 @@ export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
   if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, root)) {
     return exactMachineRoot && method === PROJECT_FINITE_ACTION_RPC_METHODS_V1[root as keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1] ? 'root' : null;
   }
-  if (root === 'discussion.second_opinion.start') {
-    return effect === 'session.spawn_new' && isDiscussionSecondOpinionModelRpcMethodV1(method) ? 'child' : null;
-  }
   const target = { machineId, installationId: execution.installationId };
   const readiness = readSessionAgentReadinessChildActionV1(binding, execution.reviewedChild, target);
   if (readiness !== null) return readiness === effect
     && resolveMachineRpcExternalActionEffectV1(method, binding, target, execution.reviewedChild) === readiness ? 'child' : null;
+  if (root === 'discussion.second_opinion.start') {
+    return effect === 'session.spawn_new' && isDiscussionSecondOpinionModelRpcMethodV1(method) ? 'child' : null;
+  }
   if (isMachineSetupPlanRpcChildV1({ rootActionId: root, effectActionId: effect, method })) {
     if (typeof params === 'string') return 'child';
     const plan = MachineSetupPlanInputV1Schema.safeParse(params);
@@ -145,6 +146,7 @@ export const SessionActionRpcOriginV1Schema = lazyZodSchema(() => z.strictObject
   sourceInputId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   callerPermissionMode: zMini.nullable(asProtocolZod(AgentPermissionIntentV1Schema)),
   causalPermissionAuthority: zMini.optional(zMini.nullable(SessionInputCausalPermissionAuthorityV1Schema)),
+  actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }));

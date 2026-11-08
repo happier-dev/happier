@@ -14,7 +14,7 @@ import type { createCliActionInventoryDeps } from './createCliActionInventoryDep
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
-import { SESSION_AGENT_READINESS_CHILDREN_V1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { SESSION_AGENT_READINESS_CHILDREN_V1, isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export function createCliMachineInventoryActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
   { callMachineAction, inventoryDeps }: Readonly<{
@@ -51,9 +51,9 @@ export function createCliMachineInventoryActionDeps(
         const readInventory = async () => {
           const readinessAction = readSessionAgentReadinessChildActionV1(
             context.externalActionExecutionAuthorization?.binding, readHostAdmittedReviewedChildV1(context) ?? undefined);
+          const readinessRoot = readHostReviewedChildRootV1(context, SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action, args);
           const readinessOnly = readinessAction === SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action
-            || readHostReviewedChildRootV1(context, SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action, args)?.actionId
-              === SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1;
+            || Boolean(readinessRoot && isSessionAgentReadinessRootActionIdV1(readinessRoot.actionId));
           const protectedRequest = context.externalActionCredential || context.externalActionExecutionAuthorization
             ? { context, effectActionId: readinessAction ?? context.externalActionExecutionAuthorization?.binding.actionId ?? 'machines.agents.list' } : {};
           if (args.draftDefinitions) {

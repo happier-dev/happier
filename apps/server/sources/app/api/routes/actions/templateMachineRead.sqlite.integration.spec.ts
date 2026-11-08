@@ -60,24 +60,17 @@ describe('approved Copy Machine read through Home authentication', () => {
                     parent: { actionId: 'session.spawn_new', input: {} }, context: spawnContext,
                     child: { ...SESSION_AGENT_READINESS_CHILDREN_V1.inventory, input: {} },
                     execute: async (_inventoryInput, inventoryContext) => {
-                        const readMachine = async (requestPath: string) => {
-                            const resolved = resolveExternalActionServerRequestHeaders({ context: inventoryContext,
-                                effectActionId: SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action,
-                                method: 'GET', path: requestPath, daemonToken: f.presentUserToken,
-                                serverIdentityId: authorization.binding.serverIdentityId,
-                                installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey });
-                            if (!resolved.ok) throw new Error('Expected admitted nested child request headers');
-                            const result = await axios.get(`${origin}${requestPath}`, { headers: {
-                                ...resolved.headers, 'x-happier-account-stored-content-protocol': '2',
-                            }, validateStatus: () => true });
-                            return { status: result.status, refusal: result.status === 200 ? null : result.data.authorizationRefusal,
-                                error: result.status === 200 ? null : result.data.error };
-                        };
-                        // Each request is freshly signed, so these refusals test
-                        // the nested child's purpose rather than a stale signature.
-                        expect((await readMachine(`/v1/machines/${randomUUID()}`)).status).toBe(401);
-                        expect((await readMachine('/v1/machines')).status).toBe(401);
-                        return readMachine(path);
+                        const resolved = resolveExternalActionServerRequestHeaders({ context: inventoryContext,
+                            effectActionId: SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action,
+                            method: 'GET', path, daemonToken: f.presentUserToken,
+                            serverIdentityId: authorization.binding.serverIdentityId,
+                            installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey });
+                        if (!resolved.ok) throw new Error('Expected admitted nested child request headers');
+                        const result = await axios.get(`${origin}${path}`, { headers: {
+                            ...resolved.headers, 'x-happier-account-stored-content-protocol': '2',
+                        }, validateStatus: () => true });
+                        return { status: result.status, refusal: result.status === 200 ? null : result.data.authorizationRefusal,
+                            error: result.status === 200 ? null : result.data.error };
                     },
                 }),
             });

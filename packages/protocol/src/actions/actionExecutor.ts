@@ -1,6 +1,6 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
-import { SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
+import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
@@ -1374,7 +1374,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? readHostReviewedChildRootV1(args.ctx, args.request.actionId, args.request.actionArgs) : null;
     const originalAuthorization = args.ctx.externalActionExecutionAuthorization;
     const originAuthorization = operationOrigin?.externalActionExecutionAuthorization;
-    const retainedReadinessParent = readinessParent?.actionId === SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1
+    const retainedReadinessParent = readinessParent && isSessionAgentReadinessRootActionIdV1(readinessParent.actionId)
       && args.ctx.operationAcceptance?.actionId === readinessParent.actionId
       && originalAuthorization?.token === originAuthorization?.token
       && sameStrictJsonValue(originalAuthorization?.binding ?? null, originAuthorization?.binding ?? null)
@@ -5840,7 +5840,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               if (!role) return Promise.resolve<ActionExecuteResult>({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
               const normalized = getActionSpec(childId).inputSchema.parse(childInput);
               return invokeHostReviewedChildV1({
-                parent: { actionId, input: projectNativeJsonValueForTransport(admittedSpawnInput) as Record<string, JsonValue> },
+                parent: { actionId, input: projectNativeJsonValueForTransport(parsed.data) as Record<string, JsonValue> },
                 context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
                 execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput, childContext),
               });

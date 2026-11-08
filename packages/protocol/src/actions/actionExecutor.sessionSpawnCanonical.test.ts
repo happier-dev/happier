@@ -18,6 +18,8 @@ import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema }
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
+import { invokeHostReviewedChildV1, readHostReviewedChildRootV1 } from './executor/deploymentRoleChild.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 const canonicalInput = {
   creationKey: 'plugin-operation-7',
@@ -231,6 +233,101 @@ describe('session.spawn_new canonical execution', () => {
       expect(creationTag).toBe(deriveSessionCreationTagV1({
         callerCreationNamespace: JSON.stringify(['workflow', 'server-1', 'workflow-run']), creationKey: canonicalInput.creationKey,
       }));
+      expect(stored).toMatchObject({ status: 'executed' });
+    } finally { lifetime.abort(); coordinator.dispose(); }
+  });
+
+  it.each([
+    ['template.instantiate', 'create_bot', true],
+    ['deployments.prepare', 'prepare-session', false],
+  ] as const)('keeps %s readiness review in its original native operation', async (rootActionId, sessionRole, withPlacement) => {
+    const lifetime = new AbortController();
+    const coordinator = createBlockingApprovalCoordinator();
+    let stored: ApprovalRequestV2 | null = null;
+    let installed = 0;
+    let launched = 0;
+    let readinessResult: unknown;
+    let waiting!: () => void;
+    const waitStarted = new Promise<'waiting'>(resolve => { waiting = () => resolve('waiting'); });
+    const parent = { actionId: rootActionId, input: { serverId: 'server-1' } };
+    const sessionInput = { creationKey: canonicalInput.creationKey, executionTarget: canonicalInput.executionTarget,
+      directory: canonicalInput.directory, agentTarget: canonicalInput.agentTarget,
+      ...(withPlacement ? { organizationPlacement: canonicalInput.organizationPlacement } : {}) };
+    // Root preparation has already admitted this Session child, as the Template
+    // and Prepare owners do. Review, continuation custody and leaf admission stay real.
+    const executor = createActionExecutor({
+      hostActionApprovalLifetime: { operationId: 'workflow-startup', signal: lifetime.signal },
+      sessionSpawnNew: async args => {
+        if (!args.invokeAgentReadinessAction) throw new Error('Missing readiness callback');
+        const result = await args.invokeAgentReadinessAction('machines.agents.install', {
+          machineId: 'machine-1', agentId: 'codex', intent: 'install',
+        });
+        readinessResult = result;
+        if (!result.ok) return { type: 'error', code: 'agent_cli_missing', agentId: 'codex', retryable: false };
+        launched++;
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+      },
+      // The Machine install RPC is the effect boundary.
+      machineAgentInstallStart: async args => {
+        installed++;
+        expect(args.signal).toBe(lifetime.signal);
+        expect(args.context?.operationAcceptance?.actionId).toBe(rootActionId);
+        expect(args.context && readHostReviewedChildRootV1(args.context, 'machines.agents.install', {
+          machineId: 'machine-1', agentId: 'codex', intent: 'install',
+        })).toEqual(parent);
+        return { ok: true, jobId: 'agent-install' };
+      },
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'nested-agent-review' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing Agent approval');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        coordinator.notifyApprovalUpdated({ artifactId: 'nested-agent-review', request: stored });
+        return { ok: true };
+      },
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+      approvalsWaitForDecision: async args => {
+        const decision = coordinator.waitForDecision(args);
+        waiting();
+        const result = await decision;
+        return { ...result, request: ApprovalRequestV2Schema.parse(result.request) };
+      },
+    });
+    try {
+      const pending = invokeHostReviewedChildV1({ parent,
+        context: {
+          surface: 'agent', authority: 'account_automation', serverId: 'server-1', serverIdentityId: 'server-1',
+          runtimeAccountId: 'account-1', actionRequestId: 'workflow-startup', signal: lifetime.signal,
+          executionRunTargetMachineId: 'machine-1', executionRunWorkflowRunId: 'workflow-run', agentStartWorkDepth: 1,
+          actionCaller: { kind: 'workflowRun', runId: 'workflow-run', authorization: {
+            principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+          actionRequestAttributionV1: { requestRef: 'person-request', requester: { serverId: 'server-1', accountId: 'account-1' },
+            persona: { serverId: 'server-1', sessionId: 'origin-session' }, origin: null },
+          operationAcceptance: { operationId: 'workflow-startup', actionId: rootActionId, accept: () => {} },
+          sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+          agentStartContext: { ...agentStartContext, caller: { kind: 'originless', runId: 'workflow-run', runDepth: 0 },
+            baseline: { machineId: 'machine-1', directory: canonicalInput.directory.path } },
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] },
+            actions: { 'machines.agents.install': { approvalRequiredSurfaces: ['agent'] } } }),
+        },
+        child: { action: 'session.spawn_new', role: sessionRole, input: projectNativeJsonValueForTransport(sessionInput) },
+        admittedReview: { action: 'session.spawn_new', role: sessionRole, surface: 'agent' },
+        execute: (input, context) => executor.execute('session.spawn_new', input, context),
+      });
+      expect(await Promise.race([waitStarted, pending]), JSON.stringify(readinessResult)).toBe('waiting');
+      expect(installed).toBe(0);
+      expect(launched).toBe(0);
+      expect(stored).toMatchObject({ actionId: 'machines.agents.install', status: 'open', approval: { flow: 'blocking' } });
+      expect(await executor.execute('approval.request.decide', { artifactId: 'nested-agent-review', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
+      })).toMatchObject({ ok: true });
+      const result = await pending;
+      expect(readinessResult, JSON.stringify(readinessResult)).toMatchObject({ ok: true });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+      expect(installed).toBe(1);
+      expect(launched).toBe(1);
       expect(stored).toMatchObject({ status: 'executed' });
     } finally { lifetime.abort(); coordinator.dispose(); }
   });

@@ -6,8 +6,9 @@ import { MachineInstallationProofV1Schema } from '../../machines/identity/instal
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '../../actions/externalActionApi.js';
+import { isSessionActionChildCreationRootV1 } from './sessionCreationActionIdsV1.js';
 import { deriveActionChildRequestIdV1 } from '../../workflows/workflowInvocationIdentityV1.js';
-import { deriveSessionCreationTagV1 } from './sessionCreationIdentityV1.js';
+import { deriveSessionCreationTagV1, deriveWorkflowSessionCreationTag } from './sessionCreationIdentityV1.js';
 
 /** The root's existing creation namespace reserves exactly one Prepare child. */
 export function deriveDeploymentPrepareSessionCreationIdentityV1(binding: ExternalActionExecutionAuthorizationBindingV1): Readonly<{
@@ -18,10 +19,11 @@ export function deriveDeploymentPrepareSessionCreationIdentityV1(binding: Extern
     parentActionId: 'deployments.prepare', childActionId: 'session.spawn_new', position: 0 });
   const creationKey = `action-request:${requestId}`;
   const sessionOrigin = binding.sessionActionOrigin;
+  const workflowOrigin = binding.workflowActionOrigin;
   const sessionCreationTag = sessionOrigin
     ? deriveSessionCreationTagV1({ callerCreationNamespace: JSON.stringify(['session', binding.serverIdentityId,
       binding.accountId, sessionOrigin.caller.sessionId]), creationKey })
-    : null;
+    : workflowOrigin ? deriveWorkflowSessionCreationTag(binding.serverIdentityId, workflowOrigin.runId, creationKey) : null;
   return sessionCreationTag ? { requestId, creationKey, sessionCreationTag } : null;
 }
 
@@ -31,8 +33,7 @@ export const SessionActionChildCreationProofV1Schema = lazyZodSchema(() => z.str
   machineAdmission: SocketRpcMachineAdmissionContextV1Schema,
   sourceExecution: WorkspaceSyncSourceExecutionV1Schema,
   proof: MachineInstallationProofV1Schema,
-}).check(z.refine(value => (value.sourceExecution.externalActionExecution.authorization.binding.actionId === 'discussion.second_opinion.start'
-    || value.sourceExecution.externalActionExecution.authorization.binding.actionId === 'deployments.prepare')
+}).check(z.refine(value => isSessionActionChildCreationRootV1(value.sourceExecution.externalActionExecution.authorization.binding.actionId)
   && value.sourceExecution.externalActionExecution.effectActionId === 'session.spawn_new'
   && value.sourceExecution.originalActionEnvelope !== undefined
   && value.sourceExecution.method === `${value.machineAdmission.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`)));

@@ -42,3 +42,8 @@ export function deriveSessionCreationTagV1(params: Readonly<{
     `${SESSION_CREATION_TAG_V1_PREFIX}${digest}`,
   );
 }
+
+/** Native Workflow startup and its canonical Action retain the same birth identity. */
+export function deriveWorkflowSessionCreationTag(serverId: string, runId: string, creationKey: string): SessionCreationTagV1 {
+  return deriveSessionCreationTagV1({ callerCreationNamespace: JSON.stringify(['workflow', serverId, runId]), creationKey });
+}

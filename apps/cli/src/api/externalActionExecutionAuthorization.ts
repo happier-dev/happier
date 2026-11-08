@@ -41,6 +41,7 @@ import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/acti
 import type { ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionMachineRpcExecutionV1, ExternalActionRequestEnvelope, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import { readHostReviewedParentV1, readHostAdmittedReviewedChildV1,
   readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 
 import { buildDeploymentPreparationBriefV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
@@ -1784,11 +1785,10 @@ export async function admitExternalActionMachineNpmProfileAcquisition(input: Rea
 }
 
 /** The in-process reviewed-child issuer proves that this effect still spends its Bot parent. */
-export function readAdmittedBotTemplateParentActionIdV1(context: ActionExecutorContext | undefined,
-  admittedChild = readHostAdmittedReviewedChildV1(context)): string | null {
-  const parent = readHostReviewedParentV1(context);
+export function readAdmittedBotTemplateParentActionIdV1(context: ActionExecutorContext | undefined): string | null {
+  const parent = readHostAdmittedReviewedRootV1(context);
   const actionId = context?.externalActionExecutionAuthorization?.binding.actionId;
-  return admittedChild && parent?.actionId === actionId
+  return parent?.actionId === actionId
     && BOT_TEMPLATE_ACTION_IDS_V1.some(candidate => candidate === parent.actionId) ? parent.actionId : null;
 }
 
@@ -1844,7 +1844,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   const independentChild = admittedChild?.actionId === input.effectActionId
     && isMachineSetupPlanOrApplyActionIdV1(input.effectActionId);
   const templateParentActionId = independentChild ? null
-    : readAdmittedBotTemplateParentActionIdV1(input.context, admittedChild);
+    : readAdmittedBotTemplateParentActionIdV1(input.context);
   const templateChild = templateParentActionId !== null;
   if (templateChild && !('credentialId' in binding)) {
     if (binding.accountId !== readAccountIdFromToken(input.daemonToken)) return { ok: false };

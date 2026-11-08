@@ -33,6 +33,8 @@ export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<
 }>;
 export type HostReviewedParentV1 = ReviewedOperation['parent'];
 type ChildProof = Readonly<{
+  /** Exact admitted caller retained by the issuer when it dispatches a nested child. */
+  parentProof?: ChildProof;
   rootActionId?: string;
   role?: string;
   signal?: AbortSignal;
@@ -87,6 +89,17 @@ export function readHostReviewedParentV1(context: ActionExecutorContext | undefi
     ? proof.operation.parent : context?.hostReviewedChild?.parent ?? null;
 }
 
+/** Root purpose survives nesting; it does not admit the pending leaf operand. */
+export function readHostAdmittedReviewedRootV1(context: ActionExecutorContext | undefined): HostReviewedParentV1 | null {
+  const current = (context as ChildContext | undefined)?.[deploymentRoleChild];
+  if (!current || !readProof(context, current.qualifiedActionId, current.input)
+    || context?.externalActionExecutionAuthorization
+      && context.externalActionExecutionAuthorization.binding.actionId !== current.rootActionId) return null;
+  let proof = current;
+  while (proof.parentProof) proof = proof.parentProof;
+  return proof.operation?.[deploymentRoleChild] === true ? proof.operation.parent : null;
+}
+
 /** The existing issuer's private port, not its serializable parent projection, carries admission. */
 export function readHostAdmittedReviewedParentV1(port: HostReviewedChildPortV1 | undefined): HostReviewedParentV1 | null {
   const admitted: ReviewedChildPort | undefined = port;
@@ -109,7 +122,7 @@ export function readHostReviewedChildRootV1(context: ActionExecutorContext, acti
   // this child request. Its existing child credential remains the ceiling.
   if (proof && context.externalActionExecutionAuthorization?.binding.actionId
     && context.externalActionExecutionAuthorization.binding.actionId !== proof.rootActionId) return null;
-  return proof?.operation?.parent ?? null;
+  return proof ? readHostAdmittedReviewedRootV1(context) ?? proof.operation?.parent ?? null : null;
 }
 
 /** Spend this invocation's exact prepared scope admission; public context cannot supply the symbol proof. */
@@ -169,13 +182,16 @@ function createReviewedChildProof(actionId: string, role: string, input: JsonVal
 
 function attachReviewedChildHttpProjection(context: ActionExecutorContext, childContext: ChildContext, proof: ChildProof): void {
   const authorization = context.externalActionExecutionAuthorization;
-  const http = authorization?.requesterHttpProjection;
+  const originalAuthorization = readHostReviewedChildOriginalAuthorizationV1(context)
+    ?? (authorization === proof.parentProof?.childAuthorization ? proof.parentProof?.originalAuthorization : undefined)
+    ?? authorization;
+  const http = originalAuthorization?.requesterHttpProjection;
   const reviewedChild = proof.reviewedChild;
   const rootActionId = proof.rootActionId;
   if (!reviewedChild || !rootActionId || !authorization || !http) return;
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
-    originalAuthorization: { value: readHostReviewedChildOriginalAuthorizationV1(context) ?? authorization },
+    originalAuthorization: { value: originalAuthorization },
     childAuthorization: { value: childAuthorization },
   });
   Object.defineProperties(childAuthorization, {
@@ -273,10 +289,15 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   if (!envelope && (!childInput || typeof childInput !== 'object' || Array.isArray(childInput))) return denied();
   const qualifiedActionId = envelope ? formatQualifiedPluginActionId(envelope.action) : action as ActionId;
   const proofInput = envelope ? envelope.input ?? null : childInput;
-  const reviewedChild = params.admittedReview && binding?.actionId === parent.actionId
+  const callerProof = readProof(context, parent.actionId, parentInput);
+  const parentProof = callerProof?.operation?.[deploymentRoleChild] === true
+    && (!binding || binding.actionId === callerProof.rootActionId) ? callerProof : undefined;
+  const rootActionId = parentProof?.rootActionId ?? parent.actionId;
+  const reviewedChild = params.admittedReview && binding?.actionId === rootActionId
     ? createReviewedChildProof(qualifiedActionId, child.role, proofInput) : undefined;
   const proof: ChildProof = {
-    rootActionId: parent.actionId, role: child.role, qualifiedActionId, input: proofInput,
+    rootActionId, role: child.role, qualifiedActionId, input: proofInput,
+    ...(parentProof ? { parentProof } : {}),
     ...(reviewedChild ? { reviewedChild } : {}),
     ...(context.signal ? { signal: context.signal } : {}),
     ...(envelope ? { envelope } : {}),
