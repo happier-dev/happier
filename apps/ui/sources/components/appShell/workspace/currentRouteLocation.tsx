@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { useGlobalSearchParams, usePathname } from 'expo-router';
+import { useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import { shallow } from 'zustand/shallow';
+import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
 
 type RouteParams = Readonly<Record<string, string | string[] | undefined>>;
 export type CurrentRouteLocation = Readonly<{ pathname: string; params: RouteParams }>;
@@ -48,6 +49,18 @@ export function useCurrentRoutePathname(): string {
     const workspace = React.useContext(CurrentRouteLocationContext);
     const pathname = usePathname();
     return workspace?.pathname ?? pathname;
+}
+
+/** File-pattern segments from the same current location as the route params, never concrete path values. */
+export function useCurrentRouteSegments(): readonly string[] {
+    const store = React.useContext(CurrentRouteLocationStoreContext);
+    const readPathname = React.useCallback(() => store?.getSnapshot()?.pathname ?? null, [store]);
+    const pathname = React.useSyncExternalStore(store?.subscribe ?? subscribeNoLocation, readPathname, readPathname);
+    const expoSegments = useSegments();
+    return React.useMemo(() => {
+        const route = pathname === null ? null : matchWorkspaceDestinationRoute(pathname);
+        return route ? route.routeKey.split('/') : expoSegments;
+    }, [expoSegments, pathname]);
 }
 
 /** The current route's path and query params, from the same owner as {@link useCurrentRoutePathname}. */

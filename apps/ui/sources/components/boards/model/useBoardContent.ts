@@ -25,7 +25,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionListRenderableDelta } from '@/sync/store/domains/sessionListIndexFinalization';
 import { useSessionListQueryHomeStates } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 import { compileSessionListRowLocalFilter, compileWorkflowRunSessionListFilter, resolveWorkflowRunUnavailableHomes } from '@/sync/domains/session/listing/sessionListWorkFilter';
-import { getStorage, useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useSessionListRowsByServerId, useWorkflowRunRows, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { getStorage, useWorkspaceRefs, useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useSessionListRowsByServerId, useWorkflowRunRows, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -310,10 +310,14 @@ function useFilteredWorkRefs(board: WorkBoardV1, homes: BoardHomes, enabled: boo
     // A Board filter, including its pinned summary, demands the whole relation.
     // The shared Run owner completes byte-bounded pages before any queued refresh.
     const window = useWorkflowRunWindow(filter?.underSessionId ? `under:${filter.underSessionId}` : 'all', { enabled: readsRuns, readMode: 'complete' });
+    // A Board's Project facet asks its Home for every key the Project's Sessions may carry (owner 11-08).
+    const queryWorkspaceRefs = useWorkspaceRefs();
+    const projectRefs = filter?.projects?.include.length || filter?.projects?.exclude.length ? queryWorkspaceRefs : undefined;
     const queryHomes = React.useMemo(() => {
         if (!filter || !includesSessions) return [];
         // An empty Home selection means every mounted Home, as in the Sessions list.
         return buildSessionListFilterQueryHomes(filter, {
+            workspaceRefs: projectRefs,
             storage: 'active',
             includeInactive: false,
             // The ordinary exhaustive corpus already contains attention rows. The extra
@@ -324,7 +328,7 @@ function useFilteredWorkRefs(board: WorkBoardV1, homes: BoardHomes, enabled: boo
             limit: SESSION_LIST_PAGE_MAX_LIMIT,
             mountedHomeServerIds: homes.mountedServerIds,
         }).map(home => ({ ...home, readMode: 'complete' as const }));
-    }, [filter, homes.mountedServerIds, includesSessions]);
+    }, [filter, homes.mountedServerIds, includesSessions, projectRefs]);
     const states = useSessionListQueryHomeStates({ enabled: includesSessions, homes: queryHomes });
     // The query owner completes each traversal before applying a queued refresh. A
     // consumer continuation effect would let ordinary Home wakes starve later pages.

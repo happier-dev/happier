@@ -67,7 +67,7 @@ vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
 
 const providerState = vi.hoisted(() => ({
     focusedSessionId: 'session-b' as string | null,
-    routeParams: { id: 'session-a' } as Record<string, unknown>,
+    routeParams: { id: 'session-a' } as Record<string, string | string[] | undefined>,
     routeSegments: ['(app)', 'session', '[id]'] as string[],
     visibleModalKind: null as string | null,
     focusedDetailsWorkspace: false,
@@ -78,10 +78,11 @@ const providerState = vi.hoisted(() => ({
     voiceSettings: null as unknown,
 }));
 
-vi.mock('expo-router', () => ({
-    useGlobalSearchParams: () => providerState.routeParams,
-    useSegments: () => providerState.routeSegments,
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ params: () => providerState.routeParams,
+        segments: () => providerState.routeSegments }).module;
+});
 
 vi.mock('@/modal', () => ({
     useVisibleModalKind: () => providerState.visibleModalKind,

@@ -1040,6 +1040,45 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each(['new', 'saved'] as const)('publishes the retained desktop $source editor when focus moves from a later destination', async source => {
+        nativeRouteBoundary.width = 1920;
+        const boundary = await serveMountedDraftActionHome();
+        const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        function PreviousDestination() {
+            const enrichment = React.useMemo(() => ({ entity: { kind: 'workflow', label: 'Previous destination' } }), []);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
+        const renderDestinations = (editorFocused: boolean) => <>
+            <DestinationInstanceHost tabId="editor" ref={{ kind: 'workflows', params: { workspacePathname: '/workflows/new' } }}
+                pathname="/workflows/new" focused={editorFocused} visible
+                navigation={{ push: routerSpy.push, replace: routerSpy.replace, back: routerSpy.back, canGoBack: routerSpy.canGoBack }}>
+                <WorkflowEditorHostScreen source={source === 'new' ? { kind: 'new' }
+                    : { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />
+            </DestinationInstanceHost>
+            <DestinationInstanceHost tabId="previous" ref={{ kind: 'workflows', params: { workspacePathname: '/workflows/runs/previous' } }}
+                pathname="/workflows/runs/previous" focused={!editorFocused} visible>
+                <PreviousDestination />
+            </DestinationInstanceHost>
+        </>;
+        const screen = await renderScreen(renderDestinations(false), { wrapper: await createMountedCurrentUiContextWrapper() });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
+        expect(await executor.execute('ui.current_context.read', {}, context)).toMatchObject({ ok: true,
+            result: { entity: { label: 'Previous destination' } } });
+        await screen.update(renderDestinations(true));
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(await executor.execute('ui.current_context.read', {}, context)).toMatchObject({ ok: true, result: {
+            entity: { kind: 'workflow', reference: { scope: boundary.scope, draftId: snapshot.draftId,
+                ...(source === 'saved' ? { workflowId: SAVED_TRIGGER_WORKFLOW_ID } : {}) } },
+        } });
+        expect(await executor.execute('workflow.authoring.draft.get', { scope: boundary.scope, draftId: snapshot.draftId }, context))
+            .toMatchObject({ ok: true, result: { status: 'available', drafts: [{ draftId: snapshot.draftId }] } });
+    });
+
     it.each([
         { source: 'new', width: 1280 },
         { source: 'saved', width: 1280 },

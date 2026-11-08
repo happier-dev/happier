@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { useSegments } from 'expo-router';
-import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
+import { useCurrentRouteParamsSelector, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import { Platform } from 'react-native';
 
 import { randomUUID } from '@/platform/randomUUID';
@@ -273,7 +272,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     const localOwner = React.useRef(Object.freeze({})).current;
     const hostActivelyViewed = useHostActivelyViewed();
     const mountLifecycleActive = !retiresCurrentUiContextMountWhenNotViewed() || hostActivelyViewed;
-    const routeSegments = useSegments();
+    const routeSegments = useCurrentRouteSegments();
     const route = React.useMemo(
         () => projectParameterFreeRoute(routeSegments),
         [routeSegments],
@@ -619,6 +618,17 @@ export function usePublishCurrentUiContext(
             publication.dispose();
         };
     }, [mountPublisher]);
+
+    React.useLayoutEffect(() => {
+        const publication = publicationRef.current;
+        if (!currentUiContextEligible || publication === null) return;
+        // React withdraws layout effects before publishing the next layout.
+        // Release this slot then, so a retained destination earlier in the
+        // tree can publish without losing its one focus-change notification.
+        return () => {
+            if (readCurrentUiContextMountLifecycleActive()) publication.clear();
+        };
+    }, [currentUiContextEligible, mountPublisher]);
 
     React.useLayoutEffect(() => {
         const publication = publicationRef.current;
