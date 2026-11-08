@@ -15,7 +15,7 @@ heavyweight_memory_floor_kib() {
     entry-loads) heavyweight_policy_floor='3145728' ;;
     native-source-test) heavyweight_policy_floor='1048576' ;;
     native-custody) heavyweight_policy_floor='1048576' ;;
-    source-bundle) heavyweight_policy_floor='10485760' ;;
+    source-bundle) heavyweight_policy_floor='12582912' ;;
     source-web-export) heavyweight_policy_floor='33554432' ;;
     dependency-install) heavyweight_policy_floor='3145728' ;;
     package-dist) heavyweight_policy_floor='6291456' ;;
@@ -436,6 +436,9 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'packages/cli-common' ] || [ "$policy_component" = 'packages/plugin-sdk' ] || [ "$policy_component" = 'apps/docs' ]; }; then
     policy_heavyClass='package-dist'
   fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'packages/agents' ] || [ "$policy_component" = 'packages/brand' ] || [ "$policy_component" = 'packages/connection-supervisor' ] || [ "$policy_component" = 'packages/peer-mediation' ] || [ "$policy_component" = 'packages/peer-transport' ] || [ "$policy_component" = 'packages/support' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_singleProject" = '1' ]; }; then
+    policy_heavyClass='package-dist'
+  fi
   if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_mixedProjects" = '1' ]; }; then
     policy_heavyClass='compilation'
   fi
@@ -451,11 +454,8 @@ native_command_policy_finish() {
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'packages/cli-common/scripts/build.mjs' ] || [ "$policy_entryRepositoryPath" = 'packages/privacy-kit/scripts/build.mjs' ]; }; then
     policy_heavyClass='package-dist'
   fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_singleProject" = '1' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
     policy_heavyClass='package-dist'
-  fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_component" = 'packages/protocol' ] || [ "$policy_component" = 'packages/sdk' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
-    policy_heavyClass='runtime-build'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_noCheck" = '1' ]; }; then
     policy_heavyClass='package-dist'
@@ -688,6 +688,7 @@ native_compiler_project_directory() {
   case "$native_result" in node_modules/.cache/tsc) native_result=. ;; */node_modules/.cache/tsc) native_result=${native_result%/node_modules/.cache/tsc} ;; esac
 }
 native_record_project_scope() {
+  native_project_count=$((native_project_count + 1))
   native_normalize_path "$native_project"; native_scope=$native_result
   native_project_path=$native_result
   case "$native_project_path" in *.json) ;; *) native_project_path="$native_project_path/tsconfig.json" ;; esac
@@ -873,7 +874,7 @@ native_resolve_command_policy_arguments() {
   native_normalize_path "$native_entry_path"; policy_entryRepositoryPath=$native_result
   case "$policy_entryRepositoryPath" in /*) ;; *) native_normalize_path "$policy_component/$policy_entryRepositoryPath"; policy_entryRepositoryPath=$native_result ;; esac
   case "$policy_entryRepositoryPath" in "$repo_root"/*) policy_entryRepositoryPath=${policy_entryRepositoryPath#"$repo_root"/} ;; esac
-  native_pending=; native_project_scope=; policy_mixedProjects=0
+  native_pending=; native_project_scope=; policy_mixedProjects=0; native_project_count=0
   for native_arg in "$@"; do
     if [ "$native_compile_options" = 1 ]; then
       case "$native_arg" in --) native_compile_options=0 ;; --compile) policy_compile=1 ;; esac
@@ -922,6 +923,8 @@ native_resolve_command_policy_arguments() {
   done
   native_normalize_path "$policy_config"; policy_config=$native_result
   policy_project=$native_project
+  policy_singleProject=0
+  [ "$native_project_count" -ne 1 ] || policy_singleProject=1
   policy_nativeTestPath=; policy_nativeCompilerSuite=0; policy_sourceConditionNativeTests=1
   native_test_count=0; native_test_component=; native_test_component_mixed=0
   native_test_argument_index=0

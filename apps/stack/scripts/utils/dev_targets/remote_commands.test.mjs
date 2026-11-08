@@ -975,6 +975,8 @@ test('measured native workload reservations round the recorded peak without a bl
     // focused-vitest-reservation-1105/measure-v2.log, loaded UI components.
     ['focused-validation-ui', 2995796],
     ['entry-loads', 2361852],
+    // Successful isolated source server build, admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
+    ['source-bundle', 11856864],
     // 2026-11-04 admission holder tree RSS; compile-reservation-peaks-1104/holder-snapshot.json.
     ['compilation', 38992620],
     // Live tsrs UI VmHWM sum plus measured within-holder RSS range.
@@ -1143,7 +1145,7 @@ test('source web export classification reserves its measured process-tree envelo
         assert.equal(Number(native.stdout), roundedKiB);
       }
     }
-    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB('source-bundle'), 10 * 1024 * 1024,
+    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB('source-bundle'), 12 * 1024 * 1024,
       'runtime source bundles retain their independently measured envelope');
     if (process.platform !== 'win32') {
       const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_validation" "$policy_heavyClass"',
@@ -2101,7 +2103,8 @@ test('finite workspace publishers retain placement class without an outer payloa
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const [cwd, entry, expected, heavyClass] of [
-    ['packages/protocol', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '1', 'runtime-build'],
+    ['packages/protocol', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '1', 'package-dist'],
+    ['packages/sdk', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '1', 'package-dist'],
     ['packages/cli-common', 'scripts/build.mjs', '1', 'package-dist'],
     ['packages/cli-common', join(root, 'packages/cli-common/scripts/build.mjs'), '1', 'package-dist'],
     ['packages/privacy-kit', 'scripts/build.mjs', '0', 'package-dist'],
@@ -2113,7 +2116,7 @@ test('finite workspace publishers retain placement class without an outer payloa
     ['apps/server', 'scripts/buildSharedDeps.mjs', '1', 'compilation'],
     ['packages/plugins/triage', 'scripts/ensureTypecheckDeclarationPrerequisites.mjs', '1', 'compilation'],
     ['apps/server', 'fixture/runTypeScriptCli.mjs', '0', 'compilation-server'],
-    ['packages/protocol', './fixture/buildTypeScriptPackageDist.mjs', '0', 'runtime-build'],
+    ['packages/protocol', './fixture/buildTypeScriptPackageDist.mjs', '0', 'package-dist'],
   ]) {
     const args = ['node', entry, '-p', 'tsconfig.json'];
     const policy = resolveRemoteCommandPolicy(args, { cwd, env });
@@ -2125,6 +2128,50 @@ test('finite workspace publishers retain placement class without an outer payloa
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s,%s" "$policy_selfPublisher" "$policy_heavyClass" "$(heavyweight_memory_floor_kib "$policy_heavyClass")"', 'policy', artifact, root, cwd, ...args], { encoding: 'utf8', env });
     assert.equal(native.status, 0, native.stderr);
     assert.equal(native.stdout, `${expected},${heavyClass},${commandPolicy.resolveHeavyweightMemoryFloorKiB(heavyClass)}`);
+  }
+});
+
+test('measured single-project package checks reuse dist admission without narrowing unknown projects', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'package-typecheck-floor-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  for (const name of ['agents', 'brand', 'connection-supervisor', 'peer-mediation', 'peer-transport', 'support']) {
+    const cwd = join(root, 'packages', name);
+    const args = ['node', '../../scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'tsconfig.json'];
+    const policy = await commandPolicy.resolvePackageCommandPolicy(args, {repoRoot: root, cwd});
+    assert.equal(policy.heavyClass, 'package-dist', name);
+    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass), 6 * 1024 * 1024);
+    const alias = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'typecheck'], {repoRoot: root, cwd});
+    assert.equal(alias.heavyClass, 'package-dist', `${name} public alias`);
+    assert.equal(resolveRemoteCommandPolicy([...args.slice(0, -1), 'tsconfig.tests.json'], {repoRoot: root, cwd}).heavyClass,
+      'compilation', 'a different project is not calibrated by the default project');
+    for (const projects of [['tsconfig.tests.json', 'tsconfig.json'], ['tsconfig.json', 'tsconfig.tests.json']]) {
+      const combined = [...args.slice(0, -2), ...projects.flatMap(project => ['-p', project])];
+      assert.equal(resolveRemoteCommandPolicy(combined, {repoRoot: root, cwd}).heavyClass,
+        'compilation', 'a default project must not hide an unmeasured project in either argument order');
+      if (process.platform === 'win32') continue;
+      const nativeCombined = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+        'policy', artifact, root, cwd, ...combined], {encoding: 'utf8'});
+      assert.equal(nativeCombined.status, 0, nativeCombined.stderr);
+      assert.equal(nativeCombined.stdout, 'compilation');
+    }
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_heavyClass" "$(heavyweight_memory_floor_kib "$policy_heavyClass")"',
+      'policy', artifact, root, cwd, ...args], {encoding: 'utf8'});
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, `package-dist,${6 * 1024 * 1024}`);
+  }
+  for (const name of ['protocol', 'sdk']) {
+    const cwd = join(root, 'packages', name);
+    const env = {...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict'};
+    const combined = ['node', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '-p', 'tsconfig.tests.json', '-p', 'tsconfig.json'];
+    assert.equal(resolveRemoteCommandPolicy(combined, {repoRoot: root, cwd, env}).heavyClass, 'compilation');
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+      'policy', artifact, root, cwd, ...combined], {encoding: 'utf8', env});
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'compilation');
   }
 });
 
@@ -2260,7 +2307,7 @@ test('publisher policy uses effective compiler argv and the selected prepared sc
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const cwd = join(repoRoot, 'packages/protocol');
   const args = ['node', '../../scripts/workspaces/buildTypeScriptPackageDist.mjs', '-p', 'tsconfig.json', '--noCheck'];
-  for (const [env, expected] of [[{}, 'runtime-build'], [{ HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' }, 'package-dist'], [{ HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', npm_lifecycle_event: 'prepack' }, 'runtime-build']]) {
+  for (const [env, expected] of [[{}, 'package-dist'], [{ HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' }, 'package-dist'], [{ HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', npm_lifecycle_event: 'prepack' }, 'package-dist']]) {
     assert.equal(resolveRemoteCommandPolicy(args, { cwd, env }).heavyClass, expected);
   }
   const sdkDir = join(repoRoot, 'packages/plugin-sdk');
@@ -2268,7 +2315,7 @@ test('publisher policy uses effective compiler argv and the selected prepared sc
   assert.equal(await commandPolicy.resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd: sdkDir, scriptName: 'check:prepare:api-governance:prepared', env: {} }), 'package-dist');
   assert.equal(await commandPolicy.resolveWorkspacePackageBuildAdmissionClass({ packageJson: { scripts: { build: 'pkgroll', selected: 'node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json' } }, cwd: sdkDir, scriptName: 'selected', env: {} }), 'package-dist');
   const resolvePublisher = commandPolicy.resolveCommandPublisherPolicy ?? (async () => ({ selfPublisher: '0', heavyClass: '' }));
-  assert.deepEqual(await resolvePublisher(['yarn', 'build'], { repoRoot, cwd, env: {} }), { selfPublisher: '1', heavyClass: 'runtime-build', requiredTools: '' });
+  assert.deepEqual(await resolvePublisher(['yarn', 'build'], { repoRoot, cwd, env: {} }), { selfPublisher: '1', heavyClass: 'package-dist', requiredTools: '' });
   assert.deepEqual(await resolvePublisher(['node', 'scripts/bundleWorkspaceDeps.mjs', '--declarations', '--run-script=check:prepare:api-governance:prepared'], { repoRoot, cwd: sdkDir, env: {} }), { selfPublisher: '1', heavyClass: 'package-dist', requiredTools: '' });
   assert.deepEqual(await resolvePublisher(['yarn', 'prepack'], { repoRoot, cwd: join(repoRoot, 'apps/cli'), env: { HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' } }), { selfPublisher: '1', heavyClass: 'compilation', requiredTools: '' });
 });
@@ -2348,7 +2395,7 @@ test('multiline build batches place their known producer prefix before any paylo
   const options = { repoRoot: root, cwd: root, env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' } };
   for (const args of [['bash', 'build-load.sh'], ['bash', '-c', script]]) {
     const policy = await commandPolicy.resolvePackageCommandPolicy(args, options);
-    assert.equal(policy.placementHeavyClass || policy.heavyClass, 'runtime-build',
+    assert.equal(policy.placementHeavyClass || policy.heavyClass, 'package-dist',
       'the Protocol publisher must exclude a worker that cannot satisfy its nested compiler floor');
     assert.equal(policy.admissionScript, undefined, 'placement inspection must not rewrite the batch or its phase ownership');
     assert.equal(policy.heavyClass, commandPolicy.resolveRemoteCommandPolicy(args, options).heavyClass,
@@ -2361,7 +2408,7 @@ test('multiline build batches place their known producer prefix before any paylo
   for (const prefix of ['unknown-command', 'cd packages/protocol', 'set -- packages/protocol', 'export SELECTED=build']) {
     const opaque = await commandPolicy.resolvePackageCommandPolicy(['bash', '-c',
       `${prefix}\npnpm --dir packages/protocol run build`], options);
-    assert.notEqual(opaque.placementHeavyClass || opaque.heavyClass, 'runtime-build',
+    assert.notEqual(opaque.placementHeavyClass || opaque.heavyClass, 'package-dist',
       'unknown shell state ends static prefix inspection');
   }
 });
@@ -2413,7 +2460,7 @@ test('runtime validation placement includes canonical preparation demand without
   const options = { repoRoot: root, env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' } };
   const runtime = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'test:integration'], { ...options, cwd: join(root, 'apps/consumer') });
   assert.equal(runtime.heavyClass, 'validation', 'only the test payload reserves the validation envelope');
-  assert.equal(runtime.placementHeavyClass, 'runtime-build', 'placement reads the transitive producer build through the canonical graph');
+  assert.equal(runtime.placementHeavyClass, 'package-dist', 'placement reads the transitive producer build through the canonical graph');
   for (const args of [
     ['sh', '-lc', 'pnpm --dir apps/consumer run test:integration'],
     ['apps/stack/bin/hstack-exec', '--cwd=apps/consumer', '--', 'node', '--test', 'integration.test.mjs'],
@@ -2421,7 +2468,7 @@ test('runtime validation placement includes canonical preparation demand without
   ]) {
     const composed = await commandPolicy.resolvePackageCommandPolicy(args, { ...options, cwd: root });
     assert.equal(composed.heavyClass, 'validation', 'composition retains the payload envelope');
-    assert.equal(composed.placementHeavyClass, 'runtime-build', 'shells, executors and manifest aliases carry preparation demand');
+    assert.equal(composed.placementHeavyClass, 'package-dist', 'shells, executors and manifest aliases carry preparation demand');
   }
   const sourceDev = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'test:integration'], {
     ...options, cwd: join(root, 'apps/consumer'), env: { HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' },
@@ -2498,11 +2545,11 @@ test('workspace build admission covers effective compilers behind real package l
   const classify = commandPolicy.resolveWorkspacePackageBuildAdmissionClass
     ?? (({ cwd }) => resolveRemoteCommandPolicy(['yarn', 'build'], { cwd }).heavyClass);
   for (const [name, mode, expected] of [
-    ['protocol', 'strict', 'runtime-build'],
+    ['protocol', 'strict', 'package-dist'],
     ['protocol', 'source-dev', 'package-dist'],
     ['cli-common', 'strict', 'package-dist'],
     ['plugin-sdk', 'strict', 'package-dist'],
-    ['sdk', 'strict', 'runtime-build'],
+    ['sdk', 'strict', 'package-dist'],
     ['sdk', 'source-dev', 'package-dist'],
     ['privacy-kit', 'strict', 'package-dist'],
     ['privacy-kit', 'source-dev', 'package-dist'],
@@ -2521,12 +2568,12 @@ test('workspace build admission includes hooks and fails closed for unresolved s
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: compiler, postbuild: 'node scripts/build.mjs' } } }), 'compilation');
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: 'yarn -s missing' } } }), 'compilation');
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: 'yarn -s recursive', recursive: 'yarn build' } } }), 'compilation');
-  assert.equal(await classify({ cwd, packageJson: { scripts: { build: '../../apps/stack/bin/hstack-exec --script=build:local', 'build:local': compiler } }, env: {} }), 'runtime-build');
+  assert.equal(await classify({ cwd, packageJson: { scripts: { build: '../../apps/stack/bin/hstack-exec --script=build:local', 'build:local': compiler } }, env: {} }), 'package-dist');
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: `node -e "$(compiler)" && ${compiler}` } } }), 'compilation');
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: `cd .. && ${compiler}` } }, env: {} }), 'compilation');
   assert.equal(await classify({ cwd, packageJson: { scripts: { build: compiler } }, env: {
     HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', npm_lifecycle_event: 'prepack',
-  } }), 'runtime-build');
+  } }), 'package-dist');
 });
 
 test('public self-dispatching delegation excludes binary runners and local lifecycle work', async t => {

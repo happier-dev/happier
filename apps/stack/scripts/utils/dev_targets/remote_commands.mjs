@@ -214,7 +214,8 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 // declaration pass was OOM-killed on linux2 at 12,356,912 KiB anonymous RSS.
 // The larger recorded tree plus the legacy 1,608,848 KiB unmeasured margin
 // is 10,269,176 KiB, rounded up to 10 GiB.
-// These historical source/runtime/compilation classes and package-dist are not Q1-complete:
+// Source-bundle's current successful calibration lives in command_resources.mjs.
+// These historical runtime/compilation classes and package-dist are not Q1-complete:
 // removing their legacy margin still needs successful class calibration.
 
 // 2026-10-23 nl1 Linux x64 cold exports: one thread's conservative live-tree
@@ -445,6 +446,11 @@ const FINAL_COMMAND_RULES = [
   // headroom these fit the existing 18 and 6 GiB classes respectively.
   { when: { kind: ['typecheck'], component: ['packages/protocol'] }, set: { heavyClass: 'runtime-build' } },
   { when: { kind: ['typecheck'], component: ['packages/cli-common', 'packages/plugin-sdk', 'apps/docs'] }, set: { heavyClass: 'package-dist' } },
+  // Successful complete default-project checks on 2026-11-08 fit 6 GiB;
+  // largest sampled tree RSS 4,877,652 KiB (Agents). Keep other projects
+  // and unmeasured package checks on their independent existing envelopes.
+  // Evidence: admission-floor-classes-1108/c2-typecheck-*.json.
+  { when: { kind: ['typecheck'], component: ['packages/agents', 'packages/brand', 'packages/connection-supervisor', 'packages/peer-mediation', 'packages/peer-transport', 'packages/support'], project: ['tsconfig.json', './tsconfig.json'], singleProject: ['1'] }, set: { heavyClass: 'package-dist' } },
   { when: { kind: ['typecheck'], mixedProjects: ['1'] }, set: { heavyClass: 'compilation' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { heavyClass: 'runtime-build' } },
@@ -453,13 +459,12 @@ const FINAL_COMMAND_RULES = [
   // admission-floor-classes-1108/privacy-kit-measurement.json. Like cli-common,
   // this finite package build fits the existing 6 GiB dist envelope.
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['packages/cli-common/scripts/build.mjs', 'packages/privacy-kit/scripts/build.mjs'] }, set: { heavyClass: 'package-dist' } },
-  // Round 3: strict dependency dist builds compile one package, not the root
-  // graph. Reuse package-dist (measured dist peaks fit 6 GiB); Protocol's
-  // 10,420,624 KiB and SDK's 6,720,800 KiB public-check observations instead
-  // require the existing runtime-build class. Cross-package projects and
-  // root/unknown builds retain general compilation; emit-only remains below.
-  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], packageComponent: ['1'], project: ['tsconfig.json', './tsconfig.json'], mixedProjects: ['0'] }, set: { heavyClass: 'package-dist' } },
-  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol', 'packages/sdk'], project: ['tsconfig.json', './tsconfig.json'], mixedProjects: ['0'] }, set: { heavyClass: 'runtime-build' } },
+  // Strict dependency dist builds compile one package, not the public check
+  // graph. Successful isolated 2026-11-08 tree RSS peaks: Protocol 4,732,356
+  // KiB and SDK 4,358,944 KiB; admission-floor-classes-1108/c2-isolated-*
+  // measurements. Both fit package-dist. Public checks retain their separate
+  // calibration; cross-package and root/unknown builds remain general.
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], packageComponent: ['1'], project: ['tsconfig.json', './tsconfig.json'], singleProject: ['1'], mixedProjects: ['0'] }, set: { heavyClass: 'package-dist' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], noCheck: ['1'] }, set: { heavyClass: 'package-dist' } },
   // Carry the explicit envelope into placement before its payload starts.
   { when: { admissionWrapper: ['1'] }, set: { heavyClass: 'compilation' } },
@@ -742,7 +747,7 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     stripTypes, sourceCondition, mode, config: normalizeCommandPath(config), resolverOverride,
     nativeLoader: args.some(arg => /^(?:--import|--require|--loader|--experimental-loader)(?:=|$)/.test(arg) || /^-r/.test(arg)) ? '1' : '0',
     workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
-    component: normalizeCommandPath(slashCwd), managerCwd, project, mixedProjects: projectScopes.size > 1 ? '1' : '0',
+    component: normalizeCommandPath(slashCwd), managerCwd, project, singleProject: projects.length === 1 ? '1' : '0', mixedProjects: projectScopes.size > 1 ? '1' : '0',
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
     sourceConditionNativeTests: testPaths.length > 0 && testPaths.every(path => REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.includes(path)) ? '1' : '0',
     nativeCompilerSuite: testPaths.some(path => REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.includes(path)) ? '1' : '0',
@@ -1420,6 +1425,7 @@ native_compiler_project_directory() {
   case "$native_result" in node_modules/.cache/tsc) native_result=. ;; */node_modules/.cache/tsc) native_result=\${native_result%/node_modules/.cache/tsc} ;; esac
 }
 native_record_project_scope() {
+  native_project_count=$((native_project_count + 1))
   native_normalize_path "$native_project"; native_scope=$native_result
   native_project_path=$native_result
   case "$native_project_path" in *.json) ;; *) native_project_path="$native_project_path/tsconfig.json" ;; esac
@@ -1605,7 +1611,7 @@ native_resolve_command_policy_arguments() {
   native_normalize_path "$native_entry_path"; policy_entryRepositoryPath=$native_result
   case "$policy_entryRepositoryPath" in /*) ;; *) native_normalize_path "$policy_component/$policy_entryRepositoryPath"; policy_entryRepositoryPath=$native_result ;; esac
   case "$policy_entryRepositoryPath" in "$repo_root"/*) policy_entryRepositoryPath=\${policy_entryRepositoryPath#"$repo_root"/} ;; esac
-  native_pending=; native_project_scope=; policy_mixedProjects=0
+  native_pending=; native_project_scope=; policy_mixedProjects=0; native_project_count=0
   for native_arg in "$@"; do
     if [ "$native_compile_options" = 1 ]; then
       case "$native_arg" in --) native_compile_options=0 ;; --compile) policy_compile=1 ;; esac
@@ -1654,6 +1660,8 @@ native_resolve_command_policy_arguments() {
   done
   native_normalize_path "$policy_config"; policy_config=$native_result
   policy_project=$native_project
+  policy_singleProject=0
+  [ "$native_project_count" -ne 1 ] || policy_singleProject=1
   policy_nativeTestPath=; policy_nativeCompilerSuite=0; policy_sourceConditionNativeTests=1
   native_test_count=0; native_test_component=; native_test_component_mixed=0
   native_test_argument_index=0

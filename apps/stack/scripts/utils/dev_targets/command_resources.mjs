@@ -33,7 +33,10 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // a blanket margin. Samples are not a certified maximum or cross-platform
   // calibration. Go still checks source.
   'native-custody': { memoryKiB: 1 * 1024 * 1024, diskClass: 'package-dist' },
-  'source-bundle': { memoryKiB: 10 * 1024 * 1024, diskClass: 'source-bundle' },
+  // Successful isolated Linux x64 server source bundle, 2026-11-08:
+  // sampled tree RSS 11,856,864 KiB, rounded up without a blanket margin.
+  // admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
+  'source-bundle': { memoryKiB: 12 * 1024 * 1024, diskClass: 'source-bundle' },
   'source-web-export': { memoryKiB: Math.ceil(SOURCE_WEB_EXPORT_MEMORY.parallelKiB / SOURCE_WEB_EXPORT_MEMORY.gibKiB) * SOURCE_WEB_EXPORT_MEMORY.gibKiB, diskClass: 'source-web-export' },
   // Two fresh isolated canonical dependency installs succeeded; larger live
   // tree VmHWM sum 2,374,684 KiB rounds to 3 GiB. Retained raw evidence:

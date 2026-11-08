@@ -541,9 +541,21 @@ and its compiler also use `package-dist`; two runs with fresh incremental-state
 files peaked at 439,544 KiB. Mixed-package and unknown checks retain
 `compilation`. Dependency preparation still admits its own compiler workloads.
 Canonical per-package `buildTypeScriptPackageDist.mjs -p tsconfig.json` strict
-builds reuse `package-dist`; Protocol and SDK use `runtime-build` because their
-public-check observations plus headroom exceed 6 GiB. Emit-only builds retain
+builds reuse `package-dist`, including Protocol and SDK. Successful isolated
+Linux x64 strict builds on 2026-11-08 peaked at 4,732,356 and 4,358,944 KiB of
+sampled tree RSS respectively, within the existing 6 GiB envelope. Their public
+typechecks keep their independent classifications. Emit-only builds retain
 `package-dist`. Root and cross-package project builds retain `compilation`.
+Successful default-project checks for Agents, Brand, Connection Supervisor,
+Peer Mediation, Peer Transport and Support also reuse `package-dist`: the
+largest isolated sampled tree RSS was 4,877,652 KiB (Agents). This assignment
+requires exactly one `tsconfig.json` project; alternative or combined projects
+keep their existing class. Nine other package checks stopped at source
+diagnostics and do not establish successful calibration peaks.
+The `source-bundle` envelope is 12 GiB after a successful isolated server source
+bundle on 2026-11-08 sampled 11,856,864 KiB of tree RSS, rounded up without
+margin. The isolated daemon bundle also succeeded, peaking at 8,412,264 KiB.
+These measurements do not recalibrate the distinct full-runtime worker.
 Privacy-kit's canonical pkgroll entry, `packages/privacy-kit/scripts/build.mjs`,
 also uses `package-dist`: its successful 2026-11-08 sampled tree RSS was
 496,368 KiB. The same measurement sweep completed 23 package dist builds;
