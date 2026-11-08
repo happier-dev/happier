@@ -671,7 +671,11 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                     await Promise.allSettled(pendingControls);
                     if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
                 }
-                await replacementLifecycle?.beforeReplacement();
+                // Final disposal has no successor to admit and may run after
+                // Session transport closes. Always reach native cleanup then.
+                if (nextSessionOpenIntent) {
+                    await replacementLifecycle?.beforeReplacement();
+                }
                 runtimeClosed = true;
                 let detachError: unknown;
                 let detachFailed = false;

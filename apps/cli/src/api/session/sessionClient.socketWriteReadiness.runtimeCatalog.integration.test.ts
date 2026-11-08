@@ -12,11 +12,16 @@ import {
 import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SessionTranscriptObservationInputSchema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readSessionWorkStateV1FromMetadata, writeSessionWorkStateV1ToMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { SessionRuntimeActivitySnapshotRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
 
 import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
-import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
+import { createHostRuntimeActivityProjection, createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
+import { createNativeAgentHostSessionRuntimePlan } from '@/plugins/runtime/runtimeCore/plugin/session';
+import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { createNativeAgentSessionWorkStateService } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { Session } from '@/api/types';
@@ -50,6 +55,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { createSessionRuntimeModelsPublisher } from '@/agent/runtime/controls/sessionRuntimeModelsPublisher';
 import { applyActiveModelFacts } from '@/providers/sessions/applyActiveModelFacts';
+import { createSessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
@@ -63,6 +69,10 @@ import { ApiClient } from '@/api/api';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher.testkit';
+import { enqueueReadySessionEventCommitted } from '@/agent/runtime/notifications/sendReadyWithPushNotification';
+import { logger } from '@/ui/logger';
 
 // Substitute only HTTP and Socket.IO. Negotiation, the outbox, tuple codecs,
 // Account-currentness admission and connection supersession remain real.
@@ -102,6 +112,81 @@ const currentFeatures = FeaturesResponseSchema.parse({
 describe('ApiSessionClient socket write readiness', () => {
   const clients: ApiSessionClient[] = [];
   const connectGates: ReturnType<typeof createDeferred>[] = [];
+
+  it('preserves terminal admission failure and disposes the native runtime after Session transport closes', async () => {
+    const session = createPlainSessionFixture({ id: 's-terminal-disposal-activity' });
+    serveSession(createSessionRecordFixture({ id: session.id, encryptionMode: 'plain', metadataLayoutVersion: 0,
+      metadata: JSON.stringify(session.metadata), metadataVersion: session.metadataVersion, share: null }));
+    const socket = createSocket();
+    const client = createClient(session, [socket]);
+    const projection = createHostRuntimeActivityProjection({ sessionId: session.id,
+      agentRuntimeApplicability: 'supported',
+      enqueueRegisteredSessionStateFieldMutation: mutation => client.enqueueRegisteredSessionStateFieldMutation(mutation) });
+    const binding = projection.bindAgentRuntime({ applicability: 'supported' });
+    await binding.observeEvent(AgentSessionRuntimeEventV1Schema.parse({ kind: 'runtime-activity-snapshot',
+      sessionId: session.id, sequence: 1, emittedAtMs: 1, state: 'idle', activeCount: 0 }));
+    let disposed = false;
+    // Only the native Agent process is substituted. Replacement, Activity,
+    // publisher negotiation, the mutation journal and failed-start cleanup are real.
+    const native: AgentSessionRuntime = {
+      async send() { throw new Error('Terminal admission failed before any prompt'); },
+      watch() { return { dispose() {} }; },
+      dispose() { disposed = true; },
+    };
+    const plan = await createNativeAgentHostSessionRuntimePlan({
+      backend: { id: 'sample.backend', agentId: 'sample.agent', provenance: 'external', source: { kind: 'path' },
+        definition: { kindVersion: 1, id: 'sample.backend', agentId: 'sample.agent' } },
+      agent: { id: 'sample.agent', provenance: 'external', source: { kind: 'path' },
+        definition: { kindVersion: 1, id: 'sample.agent', ownedBackendIds: ['sample.backend'] } },
+      policyAgentId: 'codex',
+      sessionInput: buildPluginSessionBindingInput({ credentials: { token: 'tok', encryption: null } }),
+      createSessionRuntime: async () => createNativeAgentSessionOperations(native, session.id,
+        undefined, undefined, undefined, undefined, undefined, {
+          context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
+          cwd: '/tmp/terminal-disposal', connectedAccounts: [],
+          capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+          cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+        }),
+    });
+    const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
+    const permissionHandler = new ProviderEnforcedPermissionHandler(client, { logPrefix: '[terminal-disposal-test]' });
+    const presentation = createCurrentSessionPresentationHost({ session: client, signal: new AbortController().signal });
+    const createRuntime = plan.config.createSessionRuntime;
+    if (!createRuntime) throw new Error('Missing native runtime factory');
+    const created = await createRuntime({
+      directory: '/tmp/terminal-disposal', metadata: session.metadata, machineId: 'machine-1',
+      agentTargetKey: 'backend:sample.backend', session: client, transcriptSession: client,
+      currentSessionPresentation: presentation.bindCurrentSession,
+      messageBuffer: base.messageBuffer, mcpServers: {}, permissionHandler,
+      getPermissionMode: () => 'default', memoryRecallGuidanceEnabled: false,
+      runnerProcessIdentity: null, startupModelSelection: null,
+      runWithTerminalModelSelection: async effect => ({ status: 'completed', value: await effect(null,
+        async localEffect => ({ status: 'completed', value: await localEffect() })) }),
+    });
+    const hookRuntime = created.nativeRuntime;
+    if (!hookRuntime?.setRuntimeReplacementLifecycle) throw new Error('Missing replaceable native runtime');
+    hookRuntime.setRuntimeReplacementLifecycle({
+      beforeReplacement: () => binding.revoke(),
+      onSuccessorBound: () => undefined,
+      onSuccessorUsable: () => projection.reofferCurrentSnapshot(),
+    });
+    const failure = Object.assign(new Error('Terminal follow admission refused'), { code: 'terminal_follow_unavailable' });
+    try {
+      await expect(runSessionLoopLifecycle({ ...base, session: client, permissionHandler,
+        runtime: created.operations, hookRuntime,
+        config: { ...base.config, processLifecycleOwnership: 'caller' },
+        opts: { ...base.opts, startedBy: 'terminal', startingMode: 'terminal' },
+        terminalRemoteModeLoop: { startingMode: 'terminal', remoteExitCode: 0,
+          runTerminal: async () => { throw failure; }, runRemote: async () => 'exit', onModeChange: () => undefined },
+        deps: {},
+      })).rejects.toBe(failure);
+      expect(disposed).toBe(true);
+      expect(socket.connected).toBe(false);
+    } finally {
+      projection.dispose();
+      await client.close();
+    }
+  });
 
   it.each(['current', 'replacement'] as const)('settles required daemon readiness failure before host construction for the %s runner', async runner => {
     const metadata = createTestMetadata({ hostPid: process.pid, hostProcessStartTimeMs: 10,
@@ -473,6 +558,92 @@ describe('ApiSessionClient socket write readiness', () => {
     clearActiveAccountSettingsSnapshot();
   });
 
+  it.each(['ready', 'task_complete'] as const)('announces one completed Turn and prepares facts once through the real %s append and commit receipt', async producer => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'semantic-owner' })).toString('base64url')}.signature`;
+    const session = createPlainSessionFixture({ id: `c${'6'.repeat(24)}` });
+    const row = { ...createSessionNotificationContextFixture(session.id), ownerAccountId: 'semantic-owner',
+      encryptionMode: 'plain' as const, dataEncryptionKey: null, metadata: JSON.stringify(session.metadata),
+      latestTurnId: 'completed-native-turn', latestTurnStatus: 'completed' as const };
+    serveSession(row);
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    const rows: Array<{ id: string; seq: number; localId: string; content: unknown; messageRole: string | null | undefined;
+      sidechainId: string | null | undefined; createdAt: number; updatedAt: number }> = [];
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/messages')) return { status: 200, data: { messages: rows, hasMore: false } };
+      if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [] } };
+      if (path === '/v2/account/session-follow-preferences') return { status: 200,
+        data: { assigned: false, direct: false, team: false, group: false } };
+      return get(url, options);
+    });
+    vi.mocked(axios.post).mockImplementation(async url => {
+      expect(String(url)).toContain('/follows/occurrence-routes');
+      return { status: 200, data: { ok: true, v: 1, sourceSessionId: session.id, routes: [] } };
+    });
+    const log = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId: 'semantic-owner', credentials: { token, encryption: null },
+      serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl, machineId: 'machine-1', installationId: 'installation',
+      signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
+      resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
+    const app = createDaemonControlApp({
+      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: session.id }], machineId: 'machine-1',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: session.id }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
+      onSessionActivityChanged: async (_sessionId, occurrence) => {
+        if (occurrence && !('original' in occurrence)) return dispatcher.dispatch(occurrence);
+      },
+    });
+    // Only IPC, HTTP and Socket.IO cross system boundaries. Both real producer
+    // callbacks enter the actual control app and canonical Follow dispatcher.
+    const requests: Promise<unknown>[] = [];
+    daemonPost.mockImplementation(async (path, body) => {
+      const pending = app.inject({ method: 'POST', url: path, payload: body as object,
+        headers: { 'x-happier-daemon-token': 'token' } }).then(response => {
+        expect(response.statusCode).toBe(200);
+        return response.json();
+      });
+      requests.push(pending);
+      return pending;
+    });
+    const activity = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1' });
+    const transcript = createSessionTranscriptHomeStub();
+    const socket = createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+        const observation = SessionTranscriptObservationInputSchema.parse(payload);
+        rows.push({ id: `row-${rows.length + 1}`, seq: rows.length + 1, localId: observation.localId,
+          content: observation.content, messageRole: observation.messageRole, sidechainId: observation.sidechainId,
+          createdAt: observation.createdAt, updatedAt: observation.updatedAt });
+      }
+      return activity.answer(event, payload) ?? transcript.answer(event, payload) ?? { result: 'success' };
+    } });
+    const client = createClient(session, [socket], { transport: { serverId: configuration.activeServerId, serverUrl,
+      createSessionSocketTransport: ({ sessionId, machineId }) => createSessionScopedSocketConnection({ token, serverUrl, sessionId, machineId }) } }, undefined, token);
+    const notifications = vi.spyOn(client, 'notifySessionFollowRuleMessageCommitted');
+    try {
+      await client.flushDurableMutationDelivery();
+      const checkpoints = (message: string, fields: object) => log.mock.calls.filter(([entry, details]) =>
+        entry === message && expect.objectContaining(fields).asymmetricMatch(details));
+      for (const seq of [1, 2]) {
+        row.latestTurnId = `completed-native-turn-${seq}`;
+        const admission = producer === 'ready'
+          ? await enqueueReadySessionEventCommitted(client, 'home_required', row.latestTurnId)
+          : await client.enqueueAgentMessageCommitted('codex', { type: 'task_complete', id: row.latestTurnId }, {
+            localId: `${row.latestTurnId}:task_complete`, meta: { source: 'runtime', runtimeEventKind: 'turn-complete',
+              runtimeTurnId: row.latestTurnId }, provenance: { kind: 'non_dependent', source: 'external' },
+          });
+        expect(await admission.whenCommitted).toMatchObject({ localId: expect.any(String), committedSequence: seq });
+        await client.flushDurableMutationDelivery();
+        // Observe both real callbacks without stubbing internal publication.
+        await Promise.all(notifications.mock.results.map(result => result.value));
+        await Promise.all(requests);
+        expect(rows).toHaveLength(seq);
+        expect.soft(checkpoints('[Session Follow] Occurrence ingress', { status: 'started', sourceMessageSeq: seq })).toHaveLength(1);
+        expect.soft(checkpoints('[Session Follow] Occurrence ingress', { status: 'completed', sourceMessageSeq: seq })).toHaveLength(1);
+        expect.soft(checkpoints('[Session Follow] Dispatch checkpoint', { phase: 'facts', status: 'started' })).toHaveLength(seq);
+      }
+    } finally { await client.close(); await app.close(); dispatcher.dispose(); notifications.mockRestore(); log.mockRestore(); }
+  });
+
   it.each(['foreground', 'sidechain', 'ordinary', 'explicit-local-custody'] as const)(
     'retains native foreground transcript custody until Home acknowledges the final sequence (%s)', async scope => {
     const session = createPlainSessionFixture({ id: 's-native-final-anchor' });
@@ -609,7 +780,133 @@ describe('ApiSessionClient socket write readiness', () => {
     }
   });
 
-  it.each(['unavailable', 'accepted', 'accepted_no_channels', 'failure_unavailable', 'failure_accepted', 'person_wrote_unavailable', 'person_wrote_owner', 'person_wrote_collaborator', 'unaccepted', 'unaccepted_rule_only', 'other_original', 'retired_account', 'missing_settings', 'wrong_account', 'other_home', 'retired_publisher'] as const)(
+  it.each([
+    { status: 'failed', holdNotification: false }, { status: 'cancelled', holdNotification: false },
+    { status: 'failed', holdNotification: true },
+  ] as const)('delivers ordinary $status fallback only after the real host persists its exact Turn (held notification: $holdNotification)', async ({ status, holdNotification }) => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'semantic-owner' })).toString('base64url')}.signature`;
+    const session = createPlainSessionFixture({ id: `c${(holdNotification ? '9' : status === 'failed' ? '7' : '8').repeat(24)}` });
+    const row = { ...createSessionNotificationContextFixture(session.id), ownerAccountId: 'semantic-owner',
+      encryptionMode: 'plain' as const, dataEncryptionKey: null, metadata: JSON.stringify(session.metadata),
+      latestTurnId: null as string | null, latestTurnStatus: null as 'failed' | 'cancelled' | 'in_progress' | null };
+    serveSession(row);
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    const rows: Array<{ id: string; seq: number; localId: string; content: unknown; messageRole: string | null | undefined;
+      sidechainId: string | null | undefined; createdAt: number; updatedAt: number }> = [];
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/messages')) return { status: 200, data: { messages: rows, hasMore: false } };
+      if (path.includes('delivery-mute')) return { status: 200, data: { scopes: [] } };
+      if (path === '/v1/push-tokens') return { status: 200, data: { tokens: [{ id: 'push-device', token: 'ExponentPushToken[device]', createdAt: 1, updatedAt: 1 }] } };
+      if (path === '/v1/account/activity/badge-snapshot') return { status: 200, data: { badgeCount: 1 } };
+      return await get(url, options);
+    });
+    const verifications: boolean[] = [];
+    const notificationRelease = createDeferred();
+    let notificationStarted = false;
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      if (!String(url).endsWith('/follows/occurrence-routes')) throw new Error(`Unexpected terminal fallback POST ${String(url)}`);
+      expect(body).toMatchObject({ sourcePublisher: { machineId: 'machine-1' }, sourceTurn: { id: 'host-terminal-turn', status } });
+      const persisted = row.latestTurnStatus === status;
+      verifications.push(persisted);
+      if (persisted && holdNotification) {
+        notificationStarted = true;
+        await notificationRelease.promise;
+        return { status: 503, data: { ok: false, v: 1, error: 'source_unavailable' } };
+      }
+      return persisted ? { status: 200, data: { ok: true, v: 1, sourceSessionId: session.id, routes: [] } }
+        : { status: 409, data: { ok: false, v: 1, error: 'source_unavailable' } };
+    });
+    const settings = notificationSettingsFixture({});
+    setActiveAccountSettingsSnapshot({ source: 'network', settings, ...notificationCatalogFixture(settings), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: runWithServerHttpBaseUrl(serverUrl, () => resolveAccountSettingsScopeKey({ token, encryption: null })) });
+    daemonPost.mockImplementation(async (path) => { if (path === '/session-activity-changed') throw new Error('daemon unavailable'); return { ok: true }; });
+    const activity = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1' });
+    const transcript = createSessionTranscriptHomeStub();
+    let terminalWriteStarted = false;
+    const terminalRelease = createDeferred();
+    const socket = createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+      if (event === 'session-turn-mutation') {
+        const mutation = SessionTurnMutationV1Schema.parse(payload);
+        if (mutation.action === 'begin') { row.latestTurnId = mutation.turnId; row.latestTurnStatus = 'in_progress'; }
+        if (mutation.action === 'fail' || mutation.action === 'cancel') {
+          terminalWriteStarted = true;
+          await terminalRelease.promise;
+          row.latestTurnId = mutation.turnId;
+          row.latestTurnStatus = mutation.action === 'fail' ? 'failed' : 'cancelled';
+        }
+        return createSessionTurnMutationAppliedSocketAck(mutation);
+      }
+      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+        const observation = SessionTranscriptObservationInputSchema.parse(payload);
+        rows.push({ id: `row-${rows.length + 1}`, seq: rows.length + 1, localId: observation.localId,
+          content: observation.content, messageRole: observation.messageRole, sidechainId: observation.sidechainId,
+          createdAt: observation.createdAt, updatedAt: observation.updatedAt });
+      }
+      return activity.answer(event, payload) ?? transcript.answer(event, payload) ?? { result: 'success' };
+    } });
+    const client = createClient(session, [socket], { transport: { serverId: configuration.activeServerId, serverUrl,
+      createSessionSocketTransport: ({ sessionId, machineId }) => createSessionScopedSocketConnection({ token, serverUrl, sessionId, machineId }) } }, undefined, token);
+    // Observe actual public notification promises without changing their logic,
+    // arguments, return identity or host scheduling. The durable append owner
+    // starts these observations before returning its receipt, but does not join them.
+    const notificationObservations = vi.spyOn(client, 'notifySessionFollowRuleMessageCommitted');
+    // The real runner starts after its initial registered publisher projection
+    // has settled. Do not let the intentionally held terminal write park startup.
+    await client.flushDurableMutationDelivery();
+    let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+    const provider: AgentSessionRuntime = { async send() { throw new Error('Provider-owned turn'); },
+      watch(next) { listener = next; return { dispose() { listener = undefined; } }; }, dispose() {} };
+    const runtime = createNativeAgentSessionOperations(provider, session.id, undefined, undefined, undefined, undefined, undefined, {
+      context: {} as AgentSessionRuntimeContext, cwd: '/tmp/terminal-fallback', connectedAccounts: [],
+      capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false }, cancellation: { declared: false },
+      configuration: { declared: false }, compaction: { capability: null } });
+    const base = createLifecycleParams({ runPermissionModePromptLoopFn: runPermissionModePromptLoop });
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(mode => mode.permissionMode,
+      { batcher: combinePermissionModeQueuedPrompts });
+    const run = runSessionLoopLifecycle({ ...base, session: client, runtime, hookRuntime: runtime,
+      permissionModeState: { ...base.permissionModeState, messageQueue: queue }, deps: { ...base.deps,
+        registerRunnerTerminationHandlersFn: options => registerRunnerTerminationHandlers({ ...options,
+          processLifecycleOwnership: 'caller', sessionExitReport: null, exit() {} }) } });
+    void run.catch(() => undefined);
+    let sequence = 0;
+    const emit = (event: Readonly<Record<string, unknown>>) => listener?.(AgentSessionRuntimeEventV1Schema.parse({
+      ...event, sessionId: session.id, emittedAtMs: ++sequence, sequence }));
+    try {
+      await vi.waitFor(() => expect(listener).toBeTypeOf('function'));
+      emit({ kind: 'turn-start', turnId: 'host-terminal-turn', startedBy: 'provider' });
+      emit(status === 'failed' ? { kind: 'turn-failed', turnId: 'host-terminal-turn', agentTurnId: 'native-provider-turn',
+        diagnostic: { code: 'native_failed', severity: 'error', message: 'Native failure' } }
+        : { kind: 'turn-cancelled', turnId: 'host-terminal-turn', agentTurnId: 'native-provider-turn', cause: 'providerCancelled' });
+      await vi.waitFor(() => expect(terminalWriteStarted).toBe(true));
+      await Promise.all(notificationObservations.mock.results.flatMap((result, index) => result.type === 'return'
+        && notificationObservations.mock.calls[index]?.[0].evidence.event.kind === 'failed_or_stopped' ? [result.value] : []));
+      expect(expoSend).not.toHaveBeenCalled();
+      terminalRelease.resolve();
+      if (holdNotification) {
+        await vi.waitFor(() => expect(notificationStarted).toBe(true));
+        let retired = false;
+        void run.then(() => { retired = true; }, () => undefined);
+        emit({ kind: 'runtime-ended', cause: 'providerEnded', retryable: false });
+        await vi.waitFor(() => expect(retired).toBe(true));
+        expect(expoSend).not.toHaveBeenCalled();
+        notificationRelease.resolve();
+        await Promise.all(notificationObservations.mock.results.flatMap(result => result.type === 'return' ? [result.value] : []));
+        expect(expoSend).not.toHaveBeenCalled();
+      } else await vi.waitFor(() => expect(expoSend).toHaveBeenCalledTimes(1));
+      expect(verifications.at(-1)).toBe(true);
+      expect(row).toMatchObject({ latestTurnId: 'host-terminal-turn', latestTurnStatus: status });
+    } finally {
+      terminalRelease.resolve();
+      notificationRelease.resolve();
+      emit({ kind: 'runtime-ended', cause: 'providerEnded', retryable: false });
+      await client.close();
+      await run.catch(() => undefined);
+    }
+  });
+
+  it.each(['unavailable', 'accepted', 'accepted_no_channels', 'person_wrote_unavailable', 'person_wrote_owner', 'person_wrote_collaborator', 'unaccepted', 'unaccepted_rule_only', 'other_original', 'retired_account', 'missing_settings', 'wrong_account', 'other_home', 'retired_publisher'] as const)(
     'keeps the original nonfinished personal notification with source-daemon %s', async disposition => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'semantic-owner' })).toString('base64url')}.signature`;
     const session = createPlainSessionFixture({ id: 's-personal-semantic' });
@@ -639,14 +936,15 @@ describe('ApiSessionClient socket write readiness', () => {
       ...notificationCatalogFixture(settings), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKey({ token: 'unrelated-account', encryption: null }) });
     let publisherCurrent = true;
+    let publisherAuthorityChecks = 0;
     daemonPost.mockImplementation(async (_path, body) => {
       if (!body || typeof body !== 'object' || !('followOccurrence' in body)) return { ok: true };
       const occurrence = SessionFollowRuleSourceOccurrenceV1Schema.parse(body.followOccurrence);
       if (!('sourceMessage' in occurrence)) throw new Error('Expected committed transcript original');
-      if (disposition === 'unavailable' || disposition === 'failure_unavailable' || disposition.startsWith('person_wrote')) throw new Error('daemon unavailable');
+      if (disposition === 'unavailable' || disposition.startsWith('person_wrote')) throw new Error('daemon unavailable');
       if (disposition === 'retired_account') clearActiveAccountSettingsSnapshot();
       if (disposition === 'retired_publisher') publisherCurrent = false;
-      if (disposition === 'accepted' || disposition === 'failure_accepted') {
+      if (disposition === 'accepted') {
         // Keep the IPC peer's channel dispatch real. This boundary fixture
         // supplies the private accepted response; daemon composition separately
         // proves that only source-backed Inbox acceptance produces that marker.
@@ -658,16 +956,18 @@ describe('ApiSessionClient socket write readiness', () => {
             follow: { event: occurrence.evidence.event, sourceMessage: occurrence.sourceMessage } } });
       }
       return { ok: true, personalFollow: { sourceSessionId: session.id,
-        ...(disposition === 'accepted' || disposition === 'accepted_no_channels' || disposition === 'failure_accepted' || disposition === 'other_original' ? { accepted: true as const } : {}),
+        ...(disposition === 'accepted' || disposition === 'accepted_no_channels' || disposition === 'other_original' ? { accepted: true as const } : {}),
         sourceMessage: { ...occurrence.sourceMessage,
           ...(disposition === 'other_original' ? { localId: 'different-original' } : {}), policies: [personalPolicy] } } };
     });
     const activity = createSessionRuntimeActivityHomeStub({ machineId: 'machine-1' });
     const transcript = createSessionTranscriptHomeStub();
-    const socket = createApiSessionSocketStub({ emitWithAck: (event, payload) =>
-      event === 'session-publisher-authority-check' && !publisherCurrent
+    const socket = createApiSessionSocketStub({ emitWithAck: (event, payload) => {
+      if (event === 'session-publisher-authority-check') publisherAuthorityChecks += 1;
+      return event === 'session-publisher-authority-check' && !publisherCurrent
         ? { status: 'superseded', sessionId: session.id }
-        : activity.answer(event, payload) ?? transcript.answer(event, payload) ?? { result: 'success' } });
+        : activity.answer(event, payload) ?? transcript.answer(event, payload) ?? { result: 'success' };
+    } });
     const client = createClient(session, [socket], { transport: { serverId: disposition === 'other_home' ? 'another-home' : configuration.activeServerId, serverUrl,
       createSessionSocketTransport: ({ sessionId, machineId }) => createSessionScopedSocketConnection({ token, serverUrl, sessionId, machineId }) } }, undefined, token);
     if (disposition.startsWith('person_wrote')) {
@@ -679,10 +979,12 @@ describe('ApiSessionClient socket write readiness', () => {
       const original = { localId: 'semantic-original', seq: 7, evidence,
         ...(disposition === 'person_wrote_owner' ? { authorAccountId: 'semantic-owner' }
           : disposition === 'person_wrote_collaborator' ? { authorAccountId: 'collaborator' } : {}) };
+      publisherAuthorityChecks = 0;
       await client.notifySessionFollowRuleMessageCommitted(original);
+      // One admitted fallback: the source capture is its only publisher decision.
+      expect(publisherAuthorityChecks).toBe(1);
     } else {
-      await expect(client.enqueueAgentMessageCommitted('codex', disposition.startsWith('failure_')
-        ? { type: 'turn_failed', id: 'failed-turn' } : { type: 'message', message: 'Original message' }, {
+      await expect(client.enqueueAgentMessageCommitted('codex', { type: 'message', message: 'Original message' }, {
         localId: 'semantic-original', provenance: { kind: 'non_dependent', source: 'background' },
       })).resolves.toMatchObject({ persisted: true, delivered: true });
     }
@@ -690,7 +992,7 @@ describe('ApiSessionClient socket write readiness', () => {
     // The outbox deliberately detaches notification observation from append
     // settlement. All transport boundaries above settle in microtasks.
     await new Promise<void>(resolve => setImmediate(resolve));
-    const expectsPush = !['accepted_no_channels', 'person_wrote_owner', 'retired_account', 'missing_settings', 'wrong_account', 'other_home', 'retired_publisher', 'unaccepted_rule_only'].includes(disposition);
+    const expectsPush = !['accepted_no_channels', 'person_wrote_owner', 'retired_account', 'missing_settings', 'wrong_account', 'other_home', 'unaccepted_rule_only'].includes(disposition);
     if (!expectsPush) {
       expect(expoSend).not.toHaveBeenCalled();
       return;
@@ -699,6 +1001,13 @@ describe('ApiSessionClient socket write readiness', () => {
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(expoSend).toHaveBeenCalledTimes(1);
     expect(expoSend.mock.calls[0]?.[0]).toMatchObject([{ data: { sessionId: session.id, serverUrl, activityEventLocalId: 'semantic-original' } }]);
+    if (disposition === 'retired_publisher') {
+      // The admitted fallback finished; the replaced publisher's next admission is refused.
+      const evidence = client.captureSessionFollowRuleEvidence({ kind: 'message' });
+      if (!evidence) throw new Error('Current owner source evidence unavailable');
+      await client.notifySessionFollowRuleMessageCommitted({ localId: 'after-replacement', seq: 8, evidence });
+      expect(expoSend).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('appends only committed effective Goal changes across racing sources and retries the original notice', async () => {
@@ -1097,10 +1406,13 @@ describe('ApiSessionClient socket write readiness', () => {
       policy: 'live', providerBinding: null, sessionBindingMetadata: null, runtimeBindingBasis: null,
       revalidateBeforeEffect: async () => true,
     } satisfies AuthorizedSessionModelTransitionTarget;
-    if (!combined) {
-      await client.updateMetadataAsCurrentPublisher(metadata => applyActiveModelFacts(metadata, target, 'qwen'));
-    }
     const snapshot = { observedAt: 1, currentModelId: 'chosen', models: [{ id: 'chosen', name: 'Chosen model' }] };
+    const activeSelection = createSessionActiveModelSelection({ selection: target.selection,
+      source: 'runtime_readback', runner: { pid: 123, processStartTimeMs: 1_000 }, teamCredentialModel: null });
+    if (!activeSelection) throw new Error('Invalid observed model selection fixture');
+    if (!combined) {
+      await client.updateMetadataAsCurrentPublisher(metadata => applyActiveModelFacts(metadata, target, 'qwen', activeSelection));
+    }
     const publisher = createSessionRuntimeModelsPublisher({ agentId: 'qwen', agentTargetKey: target.selection.agentTargetKey,
       runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 }, session: client,
       ...(combined ? { initialActiveTarget: target } : {}),
@@ -1115,7 +1427,8 @@ describe('ApiSessionClient socket write readiness', () => {
         snapshot: httpCount(`/v2/sessions/${session.id}`) - before.snapshot,
         currentness: httpCount('/v1/account/encryption/currentness') - before.currentness,
         commits: vi.mocked(axios.patch).mock.calls.length - before.commits,
-      }).toEqual({ authority: expected, snapshot: expected, currentness: expected, commits: expected });
+        // The second write seeds its CAS from the first write's own commit.
+      }).toEqual({ authority: expected, snapshot: 1, currentness: expected, commits: expected });
       expect(client.getMetadataSnapshot()?.sessionModelsV1).toMatchObject({ currentModelId: 'chosen',
         availableModels: [{ id: 'chosen', name: 'Chosen model' }],
         activeSelectionV1: { source: 'runtime_readback', selection: target.selection },
@@ -1274,6 +1587,19 @@ describe('ApiSessionClient socket write readiness', () => {
     await expect(claim).resolves.toEqual({ status: 'claimed' });
     expect(socket.emitWithAck).toHaveBeenCalledWith('session-runtime-activity-snapshot', {
       sessionId: session.id, mutationId: `runtime-activity-snapshot:${session.id}`, snapshot: { state: 'unknown', activeCount: 0 },
+    });
+  });
+
+  it('preserves Home archived refusal at startup publisher admission', async () => {
+    const session = createPlainSessionFixture({ id: 's-archived-startup-publisher-claim' });
+    const socket = createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+      if (event !== 'session-runtime-activity-snapshot') throw new Error(`Unexpected socket event: ${event}`);
+      const request = SessionRuntimeActivitySnapshotRequestSchema.parse(payload);
+      return { status: 'rejected', reason: 'archived', sessionId: request.sessionId, mutationId: request.mutationId };
+    } });
+    const client = createClient(session, [socket], { durableMutationDeliveryInitiallyActive: false });
+    await expect(client.claimCurrentSessionPublisherAuthorityForStartup()).rejects.toMatchObject({
+      name: 'SessionRuntimeActivitySnapshotRejectedError', code: 'runtime_activity_update_failed', reason: 'archived', retryable: false,
     });
   });
 
