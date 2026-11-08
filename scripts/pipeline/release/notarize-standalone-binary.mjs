@@ -375,7 +375,8 @@ export function runCodesignWithRetry(
     try {
       return runCommand(command);
     } catch (error) {
-      const timestampServiceUnavailable = /timestamp service is not available/iu.test(
+      // Both mean Apple's timestamp service did not answer this signing request.
+      const timestampServiceUnavailable = /timestamp service is not available|timestamp was expected but was not found/iu.test(
         commandFailureOutput(error),
       );
       if (!timestampServiceUnavailable || attempt >= attempts) {

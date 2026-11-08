@@ -763,3 +763,26 @@ test('a submit failure that names no submission is not retried', (t) => {
   assert.throws(run, /notarytool submit/u);
   assert.equal(notarytool.length, 1);
 });
+
+test('codesign retries a signature whose timestamp Apple did not return', () => {
+  const command = ['codesign', ['--timestamp', '/tmp/difft']];
+  let attempts = 0;
+  const missingTimestamp = new Error('Command failed: codesign --force --sign IDENTITY --timestamp /tmp/difft');
+  missingTimestamp.stderr = '/tmp/difft: A timestamp was expected but was not found.\n';
+
+  assert.equal(
+    runCodesignWithRetry(command, {
+      attempts: 4,
+      retryDelayMs: 10,
+      runCommand: () => {
+        attempts += 1;
+        if (attempts === 1) throw missingTimestamp;
+        return 'signed';
+      },
+      sleep: () => {},
+      logger: { warn: () => {} },
+    }),
+    'signed',
+  );
+  assert.equal(attempts, 2);
+});
