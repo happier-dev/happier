@@ -383,13 +383,19 @@ type AdmittedUsageTurn = Pick<UsageAccountingSessionMembership['turns'][number],
 type AccountingSessionMembership = ReturnType<typeof readUsageAccountingSessionMembership>;
 
 function resolveAccountingWorkMembership(query: UsageQuery, contributions: readonly UsageAnalyticsContribution[] = [],
-    admittedTurns?: readonly AdmittedUsageTurn[], sessionMembership?: AccountingSessionMembership) {
+    admittedTurns?: readonly AdmittedUsageTurn[], sessionMembership?: AccountingSessionMembership,
+    demand: 'all' | 'detail' = 'all') {
     const selected = query.session === null ? null : new Set(typeof query.session === 'string' ? [query.session] : query.session);
     // Session metadata cannot prove public-population or historical model/source/project membership.
     // Only the canonical scoped accounting contribution can admit those turns.
     const needsAccountingMembership = query.population === 'public_eligible_personal' || query.execution !== undefined
         || query.projects.length > 0 || query.sources.length > 0 || query.modelIds.length > 0
         || query.workspaceIds.length > 0 || query.backendModes.length > 0;
+    const requiresWorkMembership = needsAccountingMembership || query.agents.length > 0 || query.machines.length > 0;
+    // Broad detail consumes its already-selected Sessions, while Session discovery
+    // still needs accounting subjects even without historical dimension filters.
+    if (demand === 'detail' && !requiresWorkMembership) return { selected, needsAccountingMembership, requiresWorkMembership,
+        accountingWork: new Set<string>(), accountingSessions: new Set<string>(), matching: [] };
     const matching = contributions.filter(row => row.sessionId !== null
         && (!selected || selected.has(row.sessionId))
         && (!query.agents.length || row.agentId !== null && query.agents.includes(row.agentId))
@@ -411,7 +417,7 @@ function resolveAccountingWorkMembership(query: UsageQuery, contributions: reado
         ...matching.flatMap(row => row.sessionId === null ? [] : [row.sessionId]),
         ...turns.map(turn => turn.sessionId),
     ].filter(sessionId => !selected || selected.has(sessionId)));
-    return { selected, needsAccountingMembership, accountingWork, accountingSessions, matching };
+    return { selected, needsAccountingMembership, requiresWorkMembership, accountingWork, accountingSessions, matching };
 }
 
 /** Read demand and disclosed facts share the same historical membership owner. */
@@ -463,7 +469,8 @@ export function projectUsageQueryWorkEvidence(input: Readonly<{
 }>): UsageHowYouWorkDetailInput {
     const unknown = { status: 'unknown' as const };
     const { query } = input;
-    const { selected, needsAccountingMembership, accountingWork, accountingSessions } = resolveAccountingWorkMembership(query, input.contributions, input.admittedTurns, input.sessionMembership);
+    const { selected, needsAccountingMembership, requiresWorkMembership, accountingWork, accountingSessions } = resolveAccountingWorkMembership(
+        query, input.contributions, input.admittedTurns, input.sessionMembership, 'detail');
     if (needsAccountingMembership && accountingWork.size === 0) return unknown;
     const sessions = input.sessions.filter(session => (!selected || selected.has(session.id))
         && (!needsAccountingMembership || accountingSessions.has(session.id)));
@@ -471,33 +478,35 @@ export function projectUsageQueryWorkEvidence(input: Readonly<{
     if (!sessions.length) return unknown;
     const opened = sessions.map(session => input.sessionEvidence?.get(session.id) ?? projectSessionUsageWorkEvidence(session, input.openedMessages?.get(session.id),
         { messagesComplete: input.completeMessageSessionIds?.has(session.id) === true }));
-    const facts = opened.flatMap(detail => detail.facts ?? []).filter(fact => accountingWork.has(fact.workId)
+    // Broad personal history admits every opened fact. Do not build an unused
+    // work-id index or re-filter the entire corpus when one Session changes.
+    const selectAdmittedWork = <T>(rows: T[], keep: (row: T) => boolean) => requiresWorkMembership ? rows.filter(keep) : rows;
+    const facts = selectAdmittedWork(opened.flatMap(detail => detail.facts ?? []), fact => accountingWork.has(fact.workId)
         || !needsAccountingMembership && (!query.agents.length || (fact.agentId !== null && query.agents.includes(fact.agentId)))
         && (!query.machines.length || (fact.machineId !== null && query.machines.includes(fact.machineId))));
-    const knownWork = new Set([...accountingWork, ...facts.map(fact => fact.workId)]);
-    const requiresWorkMembership = needsAccountingMembership || query.agents.length > 0 || query.machines.length > 0;
-    const permissions = opened.flatMap(detail => detail.permissions ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
-    const closedTurns = opened.flatMap(detail => detail.closedTurns ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
+    const knownWork = new Set(requiresWorkMembership ? [...accountingWork, ...facts.map(fact => fact.workId)] : []);
+    const permissions = selectAdmittedWork(opened.flatMap(detail => detail.permissions ?? []), fact => knownWork.has(fact.workId));
+    const closedTurns = selectAdmittedWork(opened.flatMap(detail => detail.closedTurns ?? []), fact => knownWork.has(fact.workId));
     const collaborationSources = new Map<NonNullable<UsageHowYouWorkDetailInput['collaboration']>[number],
         NonNullable<UsageHowYouWorkDetailInput['collaboration']>[number]>();
-    const collaboration = opened.flatMap(detail => {
+    const collaboration = selectAdmittedWork(opened.flatMap(detail => {
         const resolved = projectUsagePrivateCollaborationSources(detail, sessionsById, needsAccountingMembership ? accountingWork : undefined);
         return (detail.collaboration ?? []).map((fact, index) => {
             collaborationSources.set(fact, resolved[index]!);
             return resolved[index]!;
         });
-    }).filter(fact => !requiresWorkMembership || fact.workId !== null && knownWork.has(fact.workId));
-    const acceptedInputs = opened.flatMap(detail => detail.acceptedInputs ?? []).filter(fact => !requiresWorkMembership || knownWork.has(fact.workId));
-    const composition = opened.flatMap(detail => detail.coach?.composition ?? []).filter(record =>
-        !requiresWorkMembership || record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
-    const compactions = opened.flatMap(detail => detail.coach?.detail?.compactions ?? []).filter(record =>
-        !requiresWorkMembership || record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
-    const modelRequests = opened.flatMap(detail => detail.coach?.detail?.modelRequests ?? []).filter(record =>
-        !requiresWorkMembership || knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
-    const mcpUsage = opened.flatMap(detail => detail.coach?.detail?.mcpUsage ?? []).filter(record =>
-        !requiresWorkMembership || knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
-    const phaseEvents = opened.flatMap(detail => detail.phaseEvents ?? []).filter(record =>
-        !requiresWorkMembership || record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
+    }), fact => fact.workId !== null && knownWork.has(fact.workId));
+    const acceptedInputs = selectAdmittedWork(opened.flatMap(detail => detail.acceptedInputs ?? []), fact => knownWork.has(fact.workId));
+    const composition = selectAdmittedWork(opened.flatMap(detail => detail.coach?.composition ?? []), record =>
+        record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
+    const compactions = selectAdmittedWork(opened.flatMap(detail => detail.coach?.detail?.compactions ?? []), record =>
+        record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
+    const modelRequests = selectAdmittedWork(opened.flatMap(detail => detail.coach?.detail?.modelRequests ?? []), record =>
+        knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
+    const mcpUsage = selectAdmittedWork(opened.flatMap(detail => detail.coach?.detail?.mcpUsage ?? []), record =>
+        knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
+    const phaseEvents = selectAdmittedWork(opened.flatMap(detail => detail.phaseEvents ?? []), record =>
+        record.turnId !== null && knownWork.has(JSON.stringify([record.sessionId, record.turnId])));
     if (opened.every(detail => detail.status === 'unknown')) return unknown;
     return retainUsagePrivateDetailPartitions({ status: 'partial',
         ...(opened.some(detail => detail.facts !== undefined) ? { facts } : {}),

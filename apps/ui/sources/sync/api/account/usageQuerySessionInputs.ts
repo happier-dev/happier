@@ -125,20 +125,27 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         const key = JSON.stringify([getUsageSessionEvidenceDemandKey({ ...value.query, includeTranscriptEvidence: false }, value.nowMs), value.admitted]);
         const previous = projections.get(key);
         if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)
-            && previous && previous.input.selected.size === value.selected.size
+            && previous
             && previous.input.selectedIds.length === value.selectedIds.length
-            && previous.input.selectedIds.every((id, index) => id === value.selectedIds[index])
-            && [...value.selected].every(([id, entry]) => previous.input.selected.has(id) && previous.input.selected.get(id) === entry)
+            && previous.input.selectedIds.every((id, index) => {
+                const retained = previous.input.selected.get(id);
+                const current = value.selected.get(id);
+                // A batch phase also carries sibling queries and read progress.
+                // This query consumes only its selected Session and private facts.
+                return id === value.selectedIds[index] && retained?.session === current?.session
+                    && retained?.detail === current?.detail;
+            })
             && (usageQueryNeedsSessionCandidates(value.query) || hasSameUsageQueryWorkEvidenceMembership({
                 query: value.query, contributions: value.contributions, previousContributions: previous.input.contributions,
                 admittedTurns: value.admittedTurns, previousAdmittedTurns: previous.input.admittedTurns,
                 sessionMembership: value.sessionMembership, previousSessionMembership: previous.input.sessionMembership,
             }))) return previous.value;
         const sessions = value.selectedIds.flatMap(id => value.selected.get(id)?.session ? [value.selected.get(id)!.session] : []);
-        const sessionEvidence = new Map([...value.selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
+        const selected = new Map(value.selectedIds.map(id => [id, value.selected.get(id) ?? null] as const));
+        const sessionEvidence = new Map([...selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
         const result = { sessions, detail: projectUsageQueryWorkEvidence({ ...value, sessions, sessionEvidence }) };
         if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)) {
-            projections.set(key, { input: { ...value, selected: new Map(value.selected) }, value: result });
+            projections.set(key, { input: { ...value, selected }, value: result });
         }
         return result;
     };
