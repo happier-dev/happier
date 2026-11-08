@@ -51,7 +51,7 @@ import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/ag
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
-import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
+import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
 import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
@@ -539,15 +539,16 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         } : { error: 'access_denied' } };
       }
       const path = new URL(url).pathname;
-      if (path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1('workspace.sync.relationship.create')) {
+      const authorizationToken = config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+      const authorizationRoot = typeof authorizationToken === 'string' ? requesterRoots.get(authorizationToken) : undefined;
+      if (authorizationRoot && path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(authorizationRoot.binding.actionId)) {
         const signature = config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
-        const token = config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
-        const root = typeof token === 'string' ? requesterRoots.get(token) : undefined;
+        const root = authorizationRoot;
         const ok = root
-          && config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === 'workspace.sync.relationship.create'
+          && config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === root.binding.actionId
           && typeof signature === 'string' && verifyExternalActionMachineRequestV1({
             publicKey: installed.installation.publicKey, signature, authorizationToken: root.token,
-            effectActionId: 'workspace.sync.relationship.create', target: { kind: 'machine', machineId: installed.machineId },
+            effectActionId: root.binding.actionId, target: { kind: 'machine', machineId: installed.machineId },
             installationId: installed.installation.installationId, requestId: root.binding.requestId, method: 'POST', path, body });
         return { status: ok ? 200 : 403, data: ok ? { ok: true } : { error: 'access_denied' } };
       }
@@ -592,6 +593,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
             ? doesWorkspaceSyncSourceWriterTargetRootMatchRouting(request.callerInputAuthorization, routing, request.machineAdmission) : null } });
         return authorizeMachineRpcRequest(request, {
         machineId: 'target-parent', resolveInstallationId: () => targetInstallation.installationId,
+        resolvePrivateWorkspaceSyncTargetExecution: admission => resolvePrivateWorkspaceSyncTargetExecution(
+          { resolvePrivateExecution: fixture.targetParent!.handoffAdapter.resolvePrivateExecution,
+            hasRetainedRecoveryAdmission: fixture.targetParent!.workspaceSync.hasRetainedRecoveryAdmission }, admission),
         resolveCustodianAccountId: async () => targetCustodianAccountId, resolveHomeServerIdentityId: async () => installed.homeServerIdentityId,
         verifyMachineAdmission: received => verifyMachineRpcAdmissionCurrent({ ...received,
           ...(received.workspaceSyncTargetRouting ? { workspaceSyncTargetReceiver: { machineId: 'target-parent',

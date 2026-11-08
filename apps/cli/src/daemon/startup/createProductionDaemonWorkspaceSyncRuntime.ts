@@ -1899,6 +1899,16 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   });
 
   const committedRelationshipOwner = relationshipOwner;
+  const installedRelationshipLifecycleOwner = (relationshipId: string) => {
+    const retained = runtime.handoffAdapter.resolvePrivateExecution?.({ relationshipId });
+    // An installed Account can create through requester custody too. Its
+    // lifecycle must update that retained projection as well as the Account
+    // rows, just like the retained handoff owner does.
+    return retained
+      && retained.execution.accountRowsCustody.accountId === readAccountIdFromToken(input.credentials.token)
+      && retained.execution.accountRowsCustody.serverId === semanticServerId
+      ? requesterRelationshipOwner(retained) : committedRelationshipOwner;
+  };
   const relationshipCreateDependencies: WorkspaceSyncRelationshipCreateDependencies = {
     localServerId: semanticServerId,
     localMachineId: input.localMachineId,
@@ -2261,8 +2271,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     prepareBetween: prepareBetweenAtController,
     relationshipOwner: {
       observeCreation: request => committedRelationshipOwner.observeCreation({ ...request, serverId: semanticServerId }),
-      setEnabled: async (relationshipId, enabled, signal) => await committedRelationshipOwner.setEnabled(relationshipId, enabled, signal),
-      stop: async (relationshipId, signal, retirement) => await committedRelationshipOwner.stop(relationshipId, signal, retirement),
+      setEnabled: async (relationshipId, enabled, signal) => await installedRelationshipLifecycleOwner(relationshipId).setEnabled(relationshipId, enabled, signal),
+      stop: async (relationshipId, signal, retirement) => await installedRelationshipLifecycleOwner(relationshipId).stop(relationshipId, signal, retirement),
       create: async (request, signal) => await factories.createRelationshipForProject(
         relationshipCreateDependencies,
         request,
