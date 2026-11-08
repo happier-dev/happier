@@ -54,6 +54,11 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
+  it('returns no Template parent without private child admission', () => {
+    expect(executionAuthorizationOwner.readAdmittedBotTemplateParentActionIdV1(undefined)).toBeNull();
+    expect(executionAuthorizationOwner.readAdmittedBotTemplateParentActionIdV1({ surface: 'api', authority: 'account_automation' })).toBeNull();
+  });
+
   it.each([{ accountEncryptionMode: 'plain' as const, custodianAccountId: 'alice', terminalTransport: false },
     { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: false },
     { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport }) => {

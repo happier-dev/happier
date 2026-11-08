@@ -3587,6 +3587,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
       }
 
+      // Prepared invocations capture the admitted operand before they re-enter.
+      // Keep the private child proof aligned before either ready path captures it.
+      ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, parsed.data, admittedInput) ?? ctx;
       if (sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
         const snapshot = ctx.sessionTargetsV1;
         const runTargets = async (): Promise<ActionExecuteResult> => {
@@ -3652,7 +3655,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
-      ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, admittedInput) ?? ctx;
       ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
         ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
@@ -6783,6 +6785,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (existing.status !== 'open' && !isRecoverableApproved && !isCancelableApproved) {
           return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
+        }
+
+        if (existing.v === 2 && existing.discussionDraftReview === true && settleDiscussionReview) {
+          // A private decline settles the original without publishing anything.
+          // Keep its review open until that idempotent settlement is confirmed,
+          // so a refused or lost reply remains recoverable at the origin card.
+          const settlementFailure = await settleDiscussionReview();
+          if (settlementFailure) return settlementFailure;
+          settleDiscussionReview = undefined;
         }
 
         const now = Date.now();

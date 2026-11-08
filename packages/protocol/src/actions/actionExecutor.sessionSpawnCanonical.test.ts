@@ -18,7 +18,8 @@ import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema }
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
-import { invokeHostReviewedChildV1, readHostReviewedChildRootV1 } from './executor/deploymentRoleChild.js';
+import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1,
+  readHostReviewedChildRootV1 } from './executor/deploymentRoleChild.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 const canonicalInput = {
@@ -330,6 +331,67 @@ describe('session.spawn_new canonical execution', () => {
       expect(launched).toBe(1);
       expect(stored).toMatchObject({ status: 'executed' });
     } finally { lifetime.abort(); coordinator.dispose(); }
+  });
+
+  it('retains an Agent Template root after Session admission stamps the operation operand', async () => {
+    const parent = { actionId: 'template.instantiate', input: { serverId: 'server-1' } };
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const inherited = { v: 2 as const, bindingsByServiceId: {} };
+    let inventoryRoot: unknown;
+    let inventoryLeaf: unknown;
+    let readinessResult: unknown;
+    let operationInput: unknown;
+    const executor = createActionExecutor({
+      // The daemon operation lifecycle is a host boundary. Its executor callback
+      // re-enters the real Action owner with the admitted operand and lifetime.
+      runActionOperation: async request => {
+        operationInput = request.input;
+        return request.execute({ ...request.context, operationAcceptance: {
+          operationId: 'template-child-operation', actionId: request.actionId, accept() {},
+        } });
+      },
+      sessionSpawnNew: async args => {
+        if (!args.invokeAgentReadinessAction) throw new Error('Missing readiness callback');
+        readinessResult = await args.invokeAgentReadinessAction('machines.agents.list', {
+          machineId: target.machineId, agentId: 'codex', refresh: true,
+        });
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+      },
+      // Native Machine inventory is the network effect boundary.
+      machinesAgentsList: async (_input, context) => {
+        inventoryRoot = readHostAdmittedReviewedRootV1(context);
+        inventoryLeaf = readHostAdmittedReviewedChildV1(context);
+        return { items: [] };
+      },
+    });
+    const result = await invokeHostReviewedChildV1({ parent,
+      context: {
+        surface: 'agent', authority: 'account_automation', serverId: 'server-1', serverIdentityId: 'stable-home',
+        runtimeAccountId: 'account-1', actionRequestId: 'agent-copy-request', defaultSessionId: 'parent-session',
+        actionCaller: agentStartContext.caller,
+        agentStartContext: { ...agentStartContext, baseline: { ...agentStartContext.baseline,
+          machineId: target.machineId, configuration: { agentTarget: canonicalInput.agentTarget, connectedServices: inherited } } },
+        callerPermissionMode: 'default',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        sessionInputSource: { sourceSessionId: 'parent-session', sourceTurnId: 'parent-turn', via: 'action' },
+        sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        externalActionTarget: target,
+        externalActionExecutionAuthorization: { v: 1, token: 'original-template-root', binding: {
+          serverIdentityId: 'stable-home', accountId: 'account-1', custodianAccountId: 'account-1',
+          authentication: { kind: 'terminal', tokenEpoch: 1 }, accountEncryptionMode: 'e2ee',
+          machineId: target.machineId, installationId: 'installation-1', actionId: 'template.instantiate',
+          requestId: 'agent-copy-request', requestEnvelopeDigest: 'a'.repeat(43), target,
+        } },
+      },
+      child: { action: 'session.spawn_new', role: 'create_bot', input: projectNativeJsonValueForTransport(canonicalInput) },
+      admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'agent' },
+      execute: (input, context) => executor.execute('session.spawn_new', input, context),
+    });
+    expect(operationInput).toMatchObject({ connectedServices: inherited });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+    expect(readinessResult, JSON.stringify(readinessResult)).toMatchObject({ ok: true });
+    expect(inventoryRoot).toEqual(parent);
+    expect(inventoryLeaf).toMatchObject({ actionId: 'machines.agents.list', role: 'session_agent_inventory' });
   });
 
   it.each(['agent', 'mcp', 'cli'] as const)('returns repairable directory validation facts on %s', async surface => {

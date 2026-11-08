@@ -246,8 +246,8 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
     ? readRequesterAccountActionContext(externalAuthorization)?.credentials
     : params.credentials;
   if (!contentCredentials) throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
-  const requesterHeaders = params.externalAction && externalAuthorization && externalTarget
-    && !moveChildRead && !params.deploymentArchiveExecution && !params.deploymentSetupExecution
+  const requesterProjection = params.externalAction && externalAuthorization && externalTarget
+    && !params.deploymentArchiveExecution && !params.deploymentSetupExecution
     ? resolveExternalActionServerRequestHeaders({
         context: params.externalAction.context,
         effectActionId: params.externalAction.effectActionId,
@@ -258,6 +258,10 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
         privateKey: params.externalAction.privateKey,
         method: 'GET', path,
       }) : undefined;
+  // The requester owner selects native Account transport for admitted Template
+  // children. Other finite children keep their existing codec-custody read.
+  const requesterHeaders = !moveChildRead || requesterProjection?.ok && requesterProjection.machineRpcAuthorization === 'account'
+    ? requesterProjection : undefined;
   if (requesterHeaders && !requesterHeaders.ok) {
     throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
   }
@@ -475,32 +479,6 @@ export async function callExactMachineRpc(params: Readonly<{
     }
     const moveChild = (moveAuthorization?.binding.actionId === 'projects.service.relocate'
       && params.externalAction?.effectActionId !== moveAuthorization.binding.actionId) || opinionChild || stopChild || setupPlanChild || deploymentChild !== null || readinessChild;
-    if (moveChild && params.externalAction && moveAuthorization) {
-      if (moveAuthorization.binding.actionId === 'projects.service.relocate') {
-        const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
-        const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
-        const normalized = child.success ? getActionSpec(child.data).inputSchema.safeParse(wrapper.success ? wrapper.data.input : params.request) : null;
-        if (!child.success || !normalized?.success || !readHostReviewedChildOperationV1(params.externalAction.context,
-          child.data, projectNativeJsonValueForTransport(normalized.data))) throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived');
-      }
-      const requester = readRequesterAccountActionContext(moveAuthorization);
-      if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
-      if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
-      if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');
-      const review = readinessChild ? isReviewedSessionAgentReadinessChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
-        : opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
-      let derivationReason: DeploymentChildDerivationRefusal | undefined;
-      const reviewInput = { authorization: moveAuthorization,
-        envelope: params.externalAction.context.originalActionEnvelope, signal,
-        actionId: params.externalAction.effectActionId, machineId, params: params.request,
-        ...(stopChild ? { target: stopChildTarget } : {}),
-        ...(opinionChild || deploymentChild || setupPlanChild || readinessChild ? { method: params.method } : {}),
-        ...(deploymentChild || readinessChild ? { reviewedChild, onRefused: (reason: DeploymentChildDerivationRefusal) => { derivationReason = reason; } } : {}),
-      };
-      if (!await review(reviewInput)) {
-        throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
-      }
-    }
     const timeoutMs = params.timeoutMs === null ? null
       : typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_MACHINE_RPC_TIMEOUT_MS;
     const setupTimeoutMs = timeoutMs ?? DEFAULT_MACHINE_RPC_TIMEOUT_MS;
@@ -570,6 +548,33 @@ export async function callExactMachineRpc(params: Readonly<{
         ...(archiveInstallationId ? { expectedInstallationId: archiveInstallationId } : {}),
         ...(attemptSignal ? { signal: attemptSignal } : {}),
       });
+      const accountRpc = machineTarget.machineRpcAuthorization === 'account';
+      if (!accountRpc && moveChild && params.externalAction && moveAuthorization) {
+        if (moveAuthorization.binding.actionId === 'projects.service.relocate') {
+          const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
+          const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
+          const normalized = child.success ? getActionSpec(child.data).inputSchema.safeParse(wrapper.success ? wrapper.data.input : params.request) : null;
+          if (!child.success || !normalized?.success || !readHostReviewedChildOperationV1(params.externalAction.context,
+            child.data, projectNativeJsonValueForTransport(normalized.data))) throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived');
+        }
+        const requester = readRequesterAccountActionContext(moveAuthorization);
+        if (!requester) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_unavailable');
+        if (requester.credentials.token !== params.credentials.token) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_credentials_mismatch');
+        if (!await requester.isCurrent()) throw new MachineRpcTargetNotCurrentError(machineId, 'requester_not_current');
+        const review = readinessChild ? isReviewedSessionAgentReadinessChild : setupPlanChild ? isReviewedMachineSetupPlanChild : deploymentChild ? isReviewedDeploymentChild : stopChild ? isReviewedSessionStopChild
+          : opinionChild ? isReviewedSecondOpinionModelSpawnChild : isReviewedServiceMoveChild;
+        let derivationReason: DeploymentChildDerivationRefusal | undefined;
+        const reviewInput = { authorization: moveAuthorization,
+          envelope: params.externalAction.context.originalActionEnvelope, signal,
+          actionId: params.externalAction.effectActionId, machineId, params: params.request,
+          ...(stopChild ? { target: stopChildTarget } : {}),
+          ...(opinionChild || deploymentChild || setupPlanChild || readinessChild ? { method: params.method } : {}),
+          ...(deploymentChild || readinessChild ? { reviewedChild, onRefused: (reason: DeploymentChildDerivationRefusal) => { derivationReason = reason; } } : {}),
+        };
+        if (!await review(reviewInput)) {
+          throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
+        }
+      }
       const machineCodec = machineTarget.codec;
       if (deploymentChild && (deploymentChild.machineId !== machineId
         || deploymentChild.installationId !== machineTarget.installationId)) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
@@ -625,7 +630,6 @@ export async function callExactMachineRpc(params: Readonly<{
           // The existing requester projection owns Account-vs-root transport.
           // An admitted Account template child uses native Account admission;
           // its controller root cannot be resealed as destination authority.
-          const accountRpc = machineTarget.machineRpcAuthorization === 'account';
           let transportAuthorization = accountRpc ? undefined : externalAction?.context.externalActionExecutionAuthorization;
           const seal = transportAuthorization?.requesterAccountProjection?.sealRequesterAccountContext;
           const hasPrivateBootstrap = request && typeof request === 'object'
@@ -649,7 +653,7 @@ export async function callExactMachineRpc(params: Readonly<{
             if (!sealed || !sealed.requesterAccountContext) throw new Error('Requester Account custody unavailable');
             transportAuthorization = sealed;
           }
-          if (moveChild && !seal) throw new Error('Requester Account custody unavailable');
+          if (!accountRpc && moveChild && !seal) throw new Error('Requester Account custody unavailable');
           const createExternalActionExecution = accountRpc ? undefined : createExecution(transportAuthorization);
           return await callSocketRpc({
             socket,
@@ -664,7 +668,7 @@ export async function callExactMachineRpc(params: Readonly<{
             ...(params.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
             authorization: params.authorization,
             ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
-            ...((params.method === RPC_METHODS.PROJECTS_OPEN || params.method === RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN
+            ...(!accountRpc && (params.method === RPC_METHODS.PROJECTS_OPEN || params.method === RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN
               || params.method === RPC_METHODS.DAEMON_PROJECTS_COMPUTE_EXEC || moveChild
               || (params.method === ACTION_OPERATION_RPC_METHODS_V1.cancel
                 && transportAuthorization?.binding.actionId === 'action.operations.cancel')) && externalAction?.context.originalActionEnvelope

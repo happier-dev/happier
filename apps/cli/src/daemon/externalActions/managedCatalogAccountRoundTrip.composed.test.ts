@@ -221,6 +221,7 @@ describe('managed catalog original Account transport', () => {
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy', launchRefusal: 'nonce' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy', launchRefusal: 'agent-missing' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy' },
+    { mode: 'e2ee', installFails: false, surface: 'agent', kind: 'copy' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'plan' },
     { mode: 'plain', installFails: false, surface: 'UI', kind: 'copy-software' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy-software' },
@@ -278,6 +279,18 @@ describe('managed catalog original Account transport', () => {
     let foregroundRunnerBootstrap: Parameters<typeof startMcpRequesterParent>[0]['foregroundRunnerBootstrap'];
     const launchRefusal = 'launchRefusal' in scenario ? scenario.launchRefusal : null;
     let refusedSessionId: string | undefined;
+    const phaseFailures: Array<{ phase?: string; errorClass?: string; errorCode?: string | null;
+      refusalBranch?: string; stackFrames?: readonly { file: string; line: number; column: number }[] }> = [];
+    const originalWarnLocalFile = logger.warnLocalFile.bind(logger);
+    vi.spyOn(logger, 'warnLocalFile').mockImplementation((message, ...args) => {
+      if (message === '[external-action-phase]' && args[0] && typeof args[0] === 'object') {
+        const diagnostic = args[0] as typeof phaseFailures[number];
+        phaseFailures.push({ phase: diagnostic.phase, errorClass: diagnostic.errorClass,
+          errorCode: diagnostic.errorCode, refusalBranch: diagnostic.refusalBranch,
+          stackFrames: diagnostic.stackFrames });
+      }
+      originalWarnLocalFile(message, ...args);
+    });
     const nativeRefusal = { type: 'error', errorCode: launchRefusal === 'agent-missing'
       ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING : SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
       errorMessage: 'PRIVATE_POOL_TOKEN /private/profile',
@@ -498,6 +511,7 @@ describe('managed catalog original Account transport', () => {
       const effectActionId = request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER];
       httpOutcomes.push({ method: request.method, url: request.url, status: reply.statusCode, ...(error ? { error } : {}),
         ...(request.url === '/v1/sessions' || request.url === '/v1/account/encryption/currentness'
+          || request.method === 'GET' && request.url === `/v1/machines/${machineId}`
           ? { authenticatedKind: request.authTokenKind,
           signedEffectAdmitted: request.externalActionExecutionAuthorized === true,
           hasReviewedChildProof: typeof request.headers[EXTERNAL_ACTION_REVIEWED_CHILD_HEADER] === 'string',
@@ -510,7 +524,8 @@ describe('managed catalog original Account transport', () => {
         ...(request.url === WORKFLOW_RUN_STORAGE_HTTP_PATH && request.body && typeof request.body === 'object'
           && 'operation' in request.body && typeof request.body.operation === 'string'
           ? { workflowOperation: request.body.operation } : {}),
-        ...((kind === 'spawn-use' || request.url === '/v1/account/encryption/currentness')
+        ...((kind === 'spawn-use' || request.url === '/v1/account/encryption/currentness'
+          || request.method === 'GET' && request.url === `/v1/machines/${machineId}`)
           && typeof effectActionId === 'string' ? { effectActionId } : {}),
         ...(request.url.startsWith('/v1/actions/') || request.url.startsWith('/v1/artifacts') ? { usedInstalledAccountBearer:
           request.headers.authorization === `Bearer ${installedToken}`, authorityCeiling:
@@ -1430,16 +1445,6 @@ describe('managed catalog original Account transport', () => {
           const protectedPat = 'protectedPat' in scenario;
           const keylessPat = 'keylessPat' in scenario;
           const denied = 'denied' in scenario ? scenario.denied : undefined;
-          const phaseFailures: Array<{ phase?: string; errorClass?: string; refusalBranch?: string }> = [];
-          const originalWarnLocalFile = logger.warnLocalFile.bind(logger);
-          vi.spyOn(logger, 'warnLocalFile').mockImplementation((message, ...args) => {
-            if (message === '[external-action-phase]' && args[0] && typeof args[0] === 'object') {
-              const diagnostic = args[0] as { phase?: string; errorClass?: string; refusalBranch?: string };
-              phaseFailures.push({ phase: diagnostic.phase, errorClass: diagnostic.errorClass,
-                refusalBranch: diagnostic.refusalBranch });
-            }
-            originalWarnLocalFile(message, ...args);
-          });
           const grant = ApiTokenGrantV1Schema.parse(r18Pat === 'unrestricted' ? API_TOKEN_FULL_GRANT_V1 : { ...API_TOKEN_FULL_GRANT_V1,
             actions: { families: [], ids: kind === 'copy-software'
               ? [BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
@@ -1525,6 +1530,12 @@ describe('managed catalog original Account transport', () => {
           const originalRoot = parentApproval.executionOriginV1.externalActionExecutionAuthorization;
           expect(originalRoot?.binding).toMatchObject({ accountId: recipient.id, principalId: recipient.id,
             credentialId: patTokenId, grant, admittedMachineRole: 'manage' });
+          if (mode === 'plain' && kind === 'copy') {
+            expect(parentApproval.executionOriginV1.originalActionEnvelope).toMatchObject({
+              v: 1,
+              target: { kind: 'machine', machineId }, input: copyInput,
+            });
+          }
           if (!originalRoot || !('principalId' in originalRoot.binding)) throw new Error('Expected original PAT Copy root');
           approvalRootToken = originalRoot.token;
           expect(installerStarts).toBe(0);
@@ -1660,11 +1671,18 @@ describe('managed catalog original Account transport', () => {
         const stored = await runWithServerHttpBaseUrl(serverUrl, () => recipientStore.read(proposed.artifactId));
         const approval = ApprovalRequestV2Schema.parse(JSON.parse(stored!.body as string));
         expect(approval).toMatchObject({ actionId: 'template.instantiate', createdBy: { surface: 'agent', sessionId: session.id } });
+        const copyRoot = approval.executionOriginV1.externalActionExecutionAuthorization?.binding;
+        expect(copyRoot ? { actionId: copyRoot.actionId, target: copyRoot.target,
+          credentialBound: 'credentialId' in copyRoot,
+          callerSessionId: copyRoot.sessionActionOrigin?.caller.sessionId } : null)
+          .toMatchObject({ actionId: 'template.instantiate', target: { kind: 'machine', machineId },
+            credentialBound: false, callerSessionId: session.id });
         // Real Agents finish their proposal turn before the person opens and
         // approves the card. Keep the Session alive, as in the loaded journey.
         liveParent?.completeCurrentTurn();
         await vi.waitFor(() => expect(liveParent?.mcpSession.getActiveTurnAdmissionWitness?.()).toBeFalsy(),
           { timeout: 15_000 });
+        const homeRequestsBeforeCopyApproval = httpOutcomes.length;
         const replaying = ui.executeConfirmed('approval.request.decide', {
           artifactId: proposed.artifactId, decision: 'approve',
         }, context);
@@ -1705,6 +1723,13 @@ describe('managed catalog original Account transport', () => {
         }
         expect(replayed, JSON.stringify(replayed)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
           result: { type: 'success', sessionId: expect.any(String) } } } });
+        if (kind === 'copy') {
+          const machineRead = httpOutcomes.slice(homeRequestsBeforeCopyApproval).find(value => value.method === 'GET'
+            && value.url === `/v1/machines/${machineId}`);
+          expect(machineRead).toMatchObject({ status: 200, signedEffectAdmitted: false,
+            hasReviewedChildProof: false, usedRawPatBearer: false });
+          expect(machineRead).not.toHaveProperty('effectActionId');
+        }
         if (!replayed.ok) throw new Error(replayed.errorCode);
         const approved = ApprovalRequestV2Schema.parse(JSON.parse((await runWithServerHttpBaseUrl(serverUrl,
           () => recipientStore.read(proposed.artifactId)))!.body as string));
@@ -2071,7 +2096,7 @@ describe('managed catalog original Account transport', () => {
       }
     } catch (error) {
       console.error('Template settlement failure:', JSON.stringify({ surface, mode, installFails, voiceReadbacks,
-        agentStarts, installerStarts,
+        agentStarts, installerStarts, phaseFailures,
         message: error instanceof Error ? error.message : 'unknown_failure', settledResult,
         nativeExecutions: nativeExecutions.map(value => {
           if (!value.execution || typeof value.execution !== 'object') return { actionId: value.actionId };
@@ -2093,6 +2118,7 @@ describe('managed catalog original Account transport', () => {
           errorCode: value.error && typeof value.error === 'object' && 'code' in value.error
             && typeof value.error.code === 'string' ? value.error.code : undefined })),
         actionHttp: httpOutcomes.filter(value => value.authorityCeiling !== undefined),
+        machineHttp: httpOutcomes.filter(value => value.method === 'GET' && value.url.startsWith('/v1/machines/')),
         httpErrors: httpOutcomes.filter(value => value.status >= 400) }));
       throw error;
     } finally {

@@ -7,6 +7,7 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { RPC_METHODS } from '@happier-dev/protocol';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
 import { ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
@@ -30,7 +31,7 @@ import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema }
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
 import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionAccountInvocationSurface,
   resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
-import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1,
+import { admitExternalActionRequesterInvocationAttributionV1, isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1,
   type ExternalActionRequesterAccountContextPurposeV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActionAdapter';
@@ -809,6 +810,12 @@ async function executeExternalActionRequest(input: Readonly<{
   // Surface selects this Account's Require and a named Session opens delegated
   // decisions, so those facts come only from this Account's own admitted invocation.
   const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
+  const invocationAttribution = admitExternalActionRequesterInvocationAttributionV1(invocation, admittedAuthorization?.binding,
+    pluginCaller ?? invocation?.caller);
+  if (!invocationAttribution.ok) {
+    return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+      execution: { ok: false, errorCode: 'forbidden', error: 'forbidden' } });
+  }
   // The new child codec cannot turn an unstamped Account request into a human
   // click via the ordinary Account surface default. Signed causal origins and
   // explicit invocation stamps retain their existing authority owner.
@@ -903,11 +910,12 @@ async function executeExternalActionRequest(input: Readonly<{
       ? 'account_automation'
       // The restored private host invocation establishes the person's CLI use
       // for both Account and terminal continuations at an automation floor.
-      : requesterContext?.invocation && admittedAuthorization
+      : (requesterContext?.invocation || controllerInvocation) && admittedAuthorization
         ? resolveExternalActionRootInvocationAuthority(admittedAuthorization)
         : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
     ...(invocation ? { callerPermissionMode: invocation.callerPermissionMode,
+      ...(invocationAttribution.actionRequestAttributionV1 ? { actionRequestAttributionV1: invocationAttribution.actionRequestAttributionV1 } : {}),
       ...(!envelope.data.managedCreationCodec && invocation.presentUserConfirmation
         ? { presentUserConfirmation: invocation.presentUserConfirmation } : {}),
       ...(invocation.callerInputConstraints ? { callerInputConstraints: invocation.callerInputConstraints } : {}),
@@ -919,6 +927,8 @@ async function executeExternalActionRequest(input: Readonly<{
       defaultSessionId: sessionActionOrigin.caller.sessionId,
       callerPermissionMode: sessionActionOrigin.callerPermissionMode,
       causalPermissionAuthority: sessionActionOrigin.causalPermissionAuthority ?? null,
+      ...(sessionActionOrigin.actionRequestAttributionV1
+        ? { actionRequestAttributionV1: sessionActionOrigin.actionRequestAttributionV1 } : {}),
       ...(sessionActionOrigin.workspaceWrites ? { workspaceWrites: sessionActionOrigin.workspaceWrites } : {}),
       sessionInputSource: { sourceSessionId: sessionActionOrigin.caller.sessionId,
         sourceTurnId: sessionActionOrigin.sourceTurnId,
@@ -940,7 +950,7 @@ async function executeExternalActionRequest(input: Readonly<{
     ...(executionAuthorization?.success
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
-          ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || actionId.data === 'session.spawn_new' || actionId.data === 'projects.open'
+          ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || isSessionAgentReadinessRootActionIdV1(actionId.data) || actionId.data === 'projects.open'
             || actionId.data === 'action.operations.cancel' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
             || isWorkspaceSyncRelationshipWriteActionId(actionId.data)
             || executionAuthorization.data.binding.deploymentChildRoot === true

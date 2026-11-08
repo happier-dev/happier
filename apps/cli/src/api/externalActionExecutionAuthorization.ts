@@ -116,7 +116,8 @@ import { isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRoot
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
-import { BOT_TEMPLATE_ACTION_IDS_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { BOT_TEMPLATE_ACTION_IDS_V1, BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;
 export type DeploymentArchiveOriginForHost = NonNullable<NonNullable<ExternalActionMachineRpcExecutionV1['deploymentChildExecution']>['archiveOrigin']>;
@@ -237,7 +238,11 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
   const actionId = readSessionAgentReadinessChildActionV1(binding, input.reviewedChild);
   if (!actionId || actionId !== input.actionId || binding.machineId !== input.machineId
     || resolveMachineRpcExternalActionEffectV1(input.method ?? '', binding, undefined, input.reviewedChild) !== actionId) return false;
-  const root = await readReviewedSessionSpawnInput(input);
+  const template = binding.actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+    ? BotTemplateInstantiateInputV1Schema.safeParse(await readReviewedExternalActionInput(input)) : undefined;
+  const root = template
+    ? template.success ? admitSessionSpawnNewActionInputV2(template.data.creation) : null
+    : await readReviewedSessionSpawnInput(input);
   if (!root || root.executionTarget.machineId !== input.machineId) return false;
   const selected = resolveSessionCreationAgentTarget(root.agentTarget);
   if (!selected) return false;
@@ -1788,7 +1793,7 @@ export async function admitExternalActionMachineNpmProfileAcquisition(input: Rea
 export function readAdmittedBotTemplateParentActionIdV1(context: ActionExecutorContext | undefined): string | null {
   const parent = readHostAdmittedReviewedRootV1(context);
   const actionId = context?.externalActionExecutionAuthorization?.binding.actionId;
-  return parent?.actionId === actionId
+  return parent && parent.actionId === actionId
     && BOT_TEMPLATE_ACTION_IDS_V1.some(candidate => candidate === parent.actionId) ? parent.actionId : null;
 }
 

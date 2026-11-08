@@ -5,6 +5,8 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildMachineAgentsDetectRequest } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -12,6 +14,7 @@ import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { createActionExecutor } from '@happier-dev/protocol';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
 import * as installationStore from '@/daemon/identity/store';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { encodeStoredCredentials } from '@/persistence';
@@ -35,23 +38,33 @@ describe('signed Session Agent readiness receiver', () => {
       actionInput: { jobId: 'job', waitForTerminal: true }, request: { jobId: 'job', cursor: 0, waitForTerminal: true } },
     { child: SESSION_AGENT_READINESS_CHILDREN_V1.status, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ,
       actionInput: { jobId: 'job', waitForTerminal: false }, request: { jobId: 'job', cursor: 0, waitForTerminal: false } },
-  ])('admits exact $child.role through Home and refuses altered proof or input', async scenario => {
+  ].flatMap(scenario => scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.inventory
+    ? [{ ...scenario, root: 'session' as const }, { ...scenario, root: 'pat-template' as const }]
+    : [{ ...scenario, root: 'session' as const }]))('admits exact $child.role for $root through Home and refuses altered proof or input', async scenario => {
     const keys = tweetnacl.sign.keyPair();
     const admission = { actorAccountId: 'requester', custodianAccountId: 'company', machineId: 'machine',
       installationId: 'installation', role: scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.acquire ? 'manage' as const : 'use' as const,
       encryptionMode: 'plain' as const };
-    const envelope = { v: 1 as const, requestId: 'spawn', target: { kind: 'machine' as const, machineId: admission.machineId }, input: {
+    const creation = {
       executionTarget: { serverId: 'home', machineId: admission.machineId }, directory: { kind: 'path', path: '/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       organizationPlacement: { sectionId: 'section', tagIds: [] },
       agentInstallConsent: { vendorRecipe: false },
-    } };
+    };
+    const envelope = { v: 1 as const, requestId: 'spawn', target: { kind: 'machine' as const, machineId: admission.machineId },
+      input: scenario.root === 'pat-template' ? BotTemplateInstantiateInputV1Schema.parse({
+        source: { kind: 'artifact', serverId: 'home', artifactId: 'template-artifact' }, expectedVersion: '1.0.0',
+        creation: { ...creation, creationKey: 'copy' },
+      }) : creation };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {
-      accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      accountId: 'requester', ...(scenario.root === 'pat-template'
+        ? { principalId: 'requester', credentialId: 'pat', grant: API_TOKEN_FULL_GRANT_V1 }
+        : { authentication: { kind: 'account', tokenEpoch: 1 } }), accountEncryptionMode: 'plain',
       custodianAccountId: 'company', serverIdentityId: 'home', machineId: admission.machineId, installationId: admission.installationId,
-      actionId: 'session.spawn_new', requestId: envelope.requestId, target: envelope.target,
+      actionId: scenario.root === 'pat-template' ? 'template.instantiate' : 'session.spawn_new', requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } });
+    const authority = resolveExternalActionRootInvocationAuthority(root);
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root,
       purpose: { kind: 'machine_rpc', method: scenario.method, params: scenario.request },
       credentials: encodeStoredCredentials({ token: 'requester-account', credentialProvenance: 'stored_session', encryption: null }),
@@ -62,13 +75,13 @@ describe('signed Session Agent readiness receiver', () => {
       ...(scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.inventory ? { serverId: 'home' } : {}), ...scenario.actionInput });
     const reviewedChild = { actionId: scenario.child.action, role: scenario.child.role,
       inputDigest: computeActionInputApprovalDigestV1(scenario.child.action, childInput) };
-    const encode = async (request: unknown) => socketRpcCodec.encodeParams({ mode: 'plain' }, request, { method, callId: requestId });
-    const packet = (params: unknown, proof = reviewedChild) => ({ method, requestId, params,
+    const encode = async (request: unknown, rpcMethod = method) => socketRpcCodec.encodeParams({ mode: 'plain' }, request, { method: rpcMethod, callId: requestId });
+    const packet = (params: unknown, proof = reviewedChild, rpcMethod = method) => ({ method: rpcMethod, requestId, params,
       originalActionEnvelope: envelope, externalActionExecution: { v: 1, authorization: sealed, effectActionId: scenario.child.action,
         target: root.binding.target, installationId: admission.installationId, reviewedChild: proof,
         machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: root.token, requesterAccountContext: sealed.requesterAccountContext,
           effectActionId: scenario.child.action, target: root.binding.target, installationId: admission.installationId,
-          method, requestId, params, reviewedChild: proof, privateKey: keys.secretKey }) } });
+          method: rpcMethod, requestId, params, reviewedChild: proof, privateKey: keys.secretKey }) } });
     const channel = await createRequesterCurrentnessSocketHarness();
     const installed = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
       installationId: admission.installationId, createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
@@ -113,7 +126,7 @@ describe('signed Session Agent readiness receiver', () => {
             externalActionMachineInstallationId: admission.installationId, externalActionMachineRequestPrivateKey: keys.secretKey,
             machineActionDirectTargetTransport: { machineId: admission.machineId,
               invoke: async (_method, request) => { localChildEffects.push(request); return { accepted: true }; } } });
-          await invokeHostAdmittedSignedReviewedChildV1({ context: { surface: 'rpc', authority: 'present_user',
+          await invokeHostAdmittedSignedReviewedChildV1({ context: { surface: 'rpc', authority,
             machineAdmission: admission, externalActionExecutionAuthorization: context.callerInputAuthorization,
             externalActionTarget: root.binding.target, originalActionEnvelope: envelope },
             child: { ...reviewedChild, input: childInput }, execute: async (_input, childContext) => {
@@ -123,22 +136,30 @@ describe('signed Session Agent readiness receiver', () => {
         }
         return { accepted: true };
       });
-      const invoke = async (request: unknown, proof = reviewedChild) => {
-        const params = await encode(request);
-        const result = await rpc.handleRequest({ method, params, requestId, callerAuthority: 'present_user', machineAdmission: admission,
-          callerInputAuthorization: sealed, originalActionEnvelope: envelope, workspaceSyncSourceExecution: packet(params, proof) });
+      const invoke = async (request: unknown, proof = reviewedChild, rpcMethod = method) => {
+        const params = await encode(request, rpcMethod);
+        const result = await rpc.handleRequest({ method: rpcMethod, params, requestId, callerAuthority: authority, machineAdmission: admission,
+          callerInputAuthorization: sealed, originalActionEnvelope: envelope, workspaceSyncSourceExecution: packet(params, proof, rpcMethod) });
         return socketRpcCodec.decodeResult({ mode: 'plain' }, { ok: true, result }, requestId);
       };
       const response = await invoke(scenario.request);
+      expect(response).toEqual({ accepted: true });
       expect(localChildEffects).toEqual([]);
       if (scenario.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
         expect(homeChildRequests).toEqual(['Bearer requester-account']);
       }
-      expect(response).toEqual({ accepted: true });
       expect(effects).toEqual([scenario.request]);
       expect(post.mock.calls.filter(([url]) => String(url).endsWith('/admission/verify'))).toHaveLength(1);
       expect(await invoke(scenario.request, { ...reviewedChild, role: 'forged' })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       expect(await invoke(scenario.request, { ...reviewedChild, inputDigest: 'A'.repeat(43) })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      if (scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.inventory) {
+        for (const altered of [{ ...childInput, machineId: 'other-machine' }, { ...childInput, agentId: 'other-agent' }]) {
+          expect(await invoke(scenario.request, { ...reviewedChild,
+            inputDigest: computeActionInputApprovalDigestV1(scenario.child.action, altered) })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+        }
+        expect(await invoke(scenario.request, reviewedChild, `${admission.machineId}:${RPC_METHODS.STOP_SESSION}`))
+          .toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+      }
       if (scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.acquire) {
         expect(await invoke({ ...scenario.request, agentId: 'other-agent' })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       }

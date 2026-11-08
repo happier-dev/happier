@@ -215,15 +215,25 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
 /** Called by the executor after this exact child's ordinary admission and review.
  * Public context cannot manufacture the issuer's private operand or role. */
 export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContext, actionId: string,
-  input: unknown): ActionExecutorContext | undefined {
+  input: unknown, admittedInput: unknown = input): ActionExecutorContext | undefined {
   const proof = readProof(context, actionId, input);
   const binding = context.externalActionExecutionAuthorization?.binding;
   if (!proof?.operation || !proof.role || binding && binding.actionId !== proof.rootActionId) return undefined;
-  if (proof.operation[deploymentRoleChild] === true) return context;
+  // Admission can stamp an Agent selection before an operation re-enters the
+  // executor. Match the issuer's original operand first, then retain the exact
+  // admitted operand rather than leaving its nested children with a stale proof.
+  if (proof.envelope && !sameStrictJsonValue(readRecord(admittedInput).action, proof.envelope.action)) return undefined;
+  const admittedProofInput = normalizeStrictJsonValue(proof.envelope ? readRecord(admittedInput).input ?? null : admittedInput);
+  if (proof.operation[deploymentRoleChild] === true && sameStrictJsonValue(admittedProofInput, proof.input)) return context;
+  const envelope = proof.envelope ? { ...proof.envelope, input: admittedProofInput } : undefined;
   const admittedProof: ChildProof = { ...proof,
-    operation: { ...proof.operation, [deploymentRoleChild]: true },
+    input: admittedProofInput,
+    ...(envelope ? { envelope } : {}),
+    operation: { ...proof.operation, [deploymentRoleChild]: true,
+      steps: envelope ? [{ actionId: 'action.invoke', input: envelope }]
+        : [{ actionId: proof.qualifiedActionId, input: admittedProofInput as Record<string, JsonValue> }] },
     ...(binding?.actionId === proof.rootActionId ? {
-      reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, proof.input),
+      reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, admittedProofInput),
     } : {}),
   };
   const admittedContext: ChildContext = { ...context, [deploymentRoleChild]: admittedProof };

@@ -26,7 +26,7 @@ import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdent
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { PluginMachineMaterializationRefV1Schema } from '../../plugins/availability/materializationRefV1.js';
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
-import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
+import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
 import { isDiscussionSecondOpinionModelRpcMethodV1 } from '../../discussions/secondOpinionActions.js';
@@ -38,6 +38,9 @@ import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionI
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { isPresentUserHostInvocation } from '../../actions/invocationAuthority.js';
+import { ActionRequestAttributionV1Schema, materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
+import type { ActionExecutorContext } from '../../actions/executor/types.js';
+import { readHostReviewedParentV1 } from '../../actions/executor/deploymentRoleChild.js';
 export { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 
 /** Same serialized fields as the credential custodian's access.key owner, on a private carrier only. */
@@ -112,6 +115,7 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   ]),
   surface: z.enum(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin']),
   authority: z.enum(['present_user', 'account_automation']),
+  actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   callerPermissionMode: z.optional(z.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
@@ -137,6 +141,68 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   message: 'An in-flow confirmation belongs to the present person in a host invocation.',
 })));
 export type ExternalActionRequesterInvocationV1 = z.infer<typeof ExternalActionRequesterInvocationV1Schema>;
+
+/** Project process-local Plugin descriptors onto the incumbent private caller contract. */
+export function projectExternalActionRequesterCallerV1(caller: ActionExecutorContext['actionCaller']): unknown {
+  if (caller?.kind !== 'plugin') return caller;
+  const fields = ExternalActionRequesterInvocationV1Schema.shape.caller._zod.def.options
+    .flatMap(option => Object.keys(option.shape));
+  return Object.fromEntries(Object.entries(caller).filter(([key]) => fields.includes(key)));
+}
+
+/** Preserve the host's admitted caller and exact review across Account transport. */
+export function projectExternalActionRequesterInvocationV1(args: Readonly<{
+  actionId: string;
+  context: ActionExecutorContext;
+  account: Readonly<{ accountId: string; serverId: string; serverIdentityId?: string }>;
+  target: Extract<NonNullable<ActionExecutorContext['externalActionTarget']>, { kind: 'machine' }>;
+  authentication?: Readonly<{ kind: 'account' | 'terminal' }>;
+}>): ExternalActionRequesterInvocationV1 | null {
+  const review = args.context.presentUserApproval;
+  const reviewedParent = readHostReviewedParentV1(args.context);
+  const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
+    ? args.context.presentUserConfirmation
+    : review?.actionId === args.actionId ? {
+      actionId: review.actionId, inputDigest: review.inputDigest, requestId: review.requestId,
+      accountId: args.account.accountId, serverId: args.context.serverIdentityId ?? args.account.serverId,
+      target: args.target,
+    } : undefined;
+  const workspaceWrites = args.context.workspaceWrites === 'deny' || args.context.agentStartWorkspaceWrites === 'deny'
+    ? 'deny' : args.context.workspaceWrites ?? args.context.agentStartWorkspaceWrites;
+  const provenance = !args.context.externalActionCredential
+    ? ExternalActionRequesterInvocationV1Schema.safeParse({ caller: projectExternalActionRequesterCallerV1(args.context.actionCaller),
+      surface: args.context.surface, authority: args.context.authority,
+      ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}),
+      ...(args.context.callerPermissionMode !== undefined ? { callerPermissionMode: typeof args.context.callerPermissionMode === 'string'
+        ? parseAgentPermissionIntentV1Alias(args.context.callerPermissionMode) ?? args.context.callerPermissionMode : args.context.callerPermissionMode } : {}),
+      ...(args.context.callerInputConstraints !== undefined ? { callerInputConstraints: args.context.callerInputConstraints } : {}),
+      ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
+      ...(args.context.defaultSessionId != null ? { defaultSessionId: args.context.defaultSessionId } : {}),
+      ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
+      ...(reviewedParent ? { reviewedParent } : {}),
+    }) : null;
+  if (!provenance?.success) return null;
+  const attribution = admitExternalActionRequesterInvocationAttributionV1(provenance.data, {
+    accountId: args.account.accountId, serverIdentityId: args.account.serverIdentityId ?? args.account.serverId,
+    authentication: args.authentication ?? { kind: 'account' },
+  });
+  return attribution.ok ? provenance.data : null;
+}
+
+/** An Account's private host invocation can retain its own cause, never name another person. */
+export function admitExternalActionRequesterInvocationAttributionV1(
+  invocation: ExternalActionRequesterInvocationV1 | undefined,
+  principal: Readonly<{ accountId: string; serverIdentityId: string; authentication?: Readonly<{ kind: string }>;
+    sessionActionOrigin?: unknown; workflowActionOrigin?: unknown }> | undefined,
+  caller: Readonly<{ kind: string }> | undefined = invocation?.caller,
+): Readonly<{ ok: true; actionRequestAttributionV1?: ActionRequestAttributionV1 }> | Readonly<{ ok: false }> {
+  const cause = invocation?.actionRequestAttributionV1;
+  if (!cause) return { ok: true };
+  if (!principal || principal.authentication?.kind !== 'account' || principal.sessionActionOrigin || principal.workflowActionOrigin
+    || caller?.kind !== 'host' || cause.requester && (cause.requester.accountId !== principal.accountId
+      || cause.requester.serverId !== principal.serverIdentityId)) return { ok: false };
+  return { ok: true, actionRequestAttributionV1: materializeActionRequestAttributionV1(cause) };
+}
 const installationContextRootShape = () => ({
   v: z.literal(1), authorization: z.pipe(ExternalActionExecutionAuthorizationV1Schema, z.transform(value => ({
     v: value.v, token: value.token, binding: value.binding,

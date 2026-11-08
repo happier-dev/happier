@@ -112,6 +112,7 @@ describe('ordinary reviewed child admission transport', () => {
         expect(issuer.readHostAdmittedReviewedChildV1(admitted)).toEqual({ actionId: child.action,
           role: child.role, input, inputDigest: computeActionInputApprovalDigestV1(child.action, input) });
         expect(retain(childContext, child.action, { ...input, agentId: 'claude' })).toBeUndefined();
+        expect(retain(childContext, child.action, { ...input, agentId: 'claude' }, input)).toBeUndefined();
         expect(retain(context, child.action, input)).toBeUndefined();
         expect(retain({ ...childContext, externalActionExecutionAuthorization: {
           ...authorization, binding: { ...authorization.binding, actionId: 'machines.agents.list' },
