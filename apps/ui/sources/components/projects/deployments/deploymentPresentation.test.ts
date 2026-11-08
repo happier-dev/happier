@@ -132,3 +132,15 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
         expect(deploymentAttentionLeaves({ kind: 'unhealthy' }, 'secretWithdrawn')).toBe(false);
     });
 });
+
+describe('an unconfirmed receipt names its recorded cause', () => {
+    it('says the recovery owner remedy for a typed cause, and keeps the check-the-Machine body without one', async () => {
+        const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+        const caused = { code: 'outcome_unknown', phase: 'activate' as const, failureCause: {
+            phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } };
+        expect(deploymentStateNotice('outcome_unknown', caused)?.text)
+            .toBe(readDeploymentRefusalRecoveryV1('database_transaction_conflict_exhausted')?.remedy);
+        expect(deploymentStateNotice('outcome_unknown', { code: 'outcome_unknown', phase: 'activate' })?.text)
+            .toBe(deploymentStateNotice('outcome_unknown')?.text);
+    });
+});

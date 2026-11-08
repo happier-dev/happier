@@ -245,3 +245,16 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
         expect(readDeploymentRefusalRecoveryV1('some_unknown_refusal')).toBeNull();
     });
 });
+
+describe('an unconfirmed receipt with a typed cause', () => {
+    it('remedies the recorded cause, not the generic lost confirmation, and stays generic without one', () => {
+        const failure = { code: 'outcome_unknown', phase: 'activate', failureCause: {
+            phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 } };
+        const caused = readDeploymentRefusalRecoveryV1('outcome_unknown', failure);
+        expect(caused).not.toBeNull();
+        expect(caused!.remedy).not.toBe(readDeploymentFailureRecoveryV1('outcome_unknown').remedy);
+        expect(readDeploymentRefusalRecoveryV1('database_transaction_conflict_exhausted')).toEqual(caused);
+        expect(readDeploymentRefusalRecoveryV1('outcome_unknown', { code: 'outcome_unknown', phase: 'activate' }))
+            .toEqual(readDeploymentFailureRecoveryV1('outcome_unknown'));
+    });
+});

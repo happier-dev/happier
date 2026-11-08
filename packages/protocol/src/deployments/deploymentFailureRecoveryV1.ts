@@ -45,6 +45,7 @@ const recoveries = {
     template_source_unavailable: recovery('The app template could not be loaded. Reconnect its registry or choose an available template.', 'store', 'Open app source'),
     template_changed: recovery('The template changed since you opened it. Reload the app listing and review the current version.', 'store', 'Reload app listing'),
     deployment_failed: recovery('The deployment failed. Open its build and service logs, fix the reported cause, then deploy again.', 'logs', 'Open deployment logs'),
+    database_transaction_conflict_exhausted: recovery('The Home was too busy to record the result, so it is not known whether the change took effect. Check deployment history and the running app before trying again.', 'history', 'Check change outcome'),
     outcome_unknown: recovery('Happier lost confirmation of the change. Check deployment history and the running app before starting another change.', 'history', 'Check change outcome'),
     unsupported_action: recovery('This target does not support the requested change. Review the linked target and choose a supported operation.', 'settings', 'Review target'),
     unsupported: recovery('This deployment option is not supported by the selected target. Choose a compatible target or option.', 'settings', 'Change deployment option'),
@@ -191,7 +192,10 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string) {
     const failure = isRecord(details.failure) ? details.failure : undefined;
     const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
-    const codes = [sourceAdmission?.reason, failure?.reason, failure?.code, details.reason, details.code, errorCode];
+    // A recorded typed cause (an unconfirmed transition's Home refusal) is more specific than the outcome code it settled as.
+    const failureCause = isRecord(details.failureCause) ? details.failureCause
+        : isRecord(failure?.failureCause) ? failure.failureCause : undefined;
+    const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
     const fact = failure?.requiredFact ?? details.requiredFact;

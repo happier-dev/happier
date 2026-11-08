@@ -12,6 +12,7 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-prot
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { t } from '@/text';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 export { deploymentRevisionLabel };
 
@@ -240,9 +241,13 @@ export function deploymentStateNotice(
   failure?: DeploymentReceiptFailureV1 | null,
 ): Readonly<{ tone: 'warning' | 'danger'; text: string }> | null {
   switch (state) {
-    case 'outcome_unknown':
-      return { tone: 'warning', text: failure?.code === 'deployment_activation_not_observed'
-        ? deploymentFailureTitle(failure) : t('projects.deployments.unknownBody') };
+    case 'outcome_unknown': {
+      if (failure?.code === 'deployment_activation_not_observed') return { tone: 'warning', text: deploymentFailureTitle(failure) };
+      // A recorded typed cause (T2-RECEIPT) gets the recovery owner's remedy; without one, check the Machine first.
+      const cause = failure?.failureCause?.errorCode;
+      const recovery = cause ? readDeploymentRefusalRecoveryV1(cause) : null;
+      return { tone: 'warning', text: recovery?.remedy ?? t('projects.deployments.unknownBody') };
+    }
     case 'running_unverified':
       return {
         tone: 'warning',
