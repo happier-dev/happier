@@ -3,6 +3,9 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { withSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { core } from 'zod/mini';
 
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { classifyAgentSessionComposerNonSteerablePayload } from '@/agents/registry/registryUiBehavior';
@@ -44,6 +47,31 @@ function isSubmitAccountLifetimeCurrent(opts: SubmitSessionUserMessageOptions): 
     return opts.accountLifetime?.isCurrent() !== false;
 }
 
+async function blockPendingInputAfterWakeFailure(
+    port: SessionSubmitPort,
+    opts: SubmitSessionUserMessageOptions,
+    localId: string,
+    errorCode?: string,
+    errorDetail?: unknown,
+): Promise<void> {
+    if (!isSubmitAccountLifetimeCurrent(opts) || opts.actionContext?.signal?.aborted) return;
+    // A person's Stop hold refuses automatic launch until that person resumes:
+    // the row stays queued so the composer offers "Stopped by you" + Resume.
+    if (readSessionAutoResumeRefusalV1(errorDetail) === 'held_by_person') return;
+    try {
+        // Home alone decides whether this exact input is still unclaimed. A
+        // late wake failure cannot overwrite delivery already owned by a runner.
+        await port.blockPendingDelivery(opts.sessionId, localId,
+            errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED ? 'runtime_config_blocked' : 'session_input_target_unavailable', {
+            ...(opts.serverId ? { serverId: opts.serverId } : {}),
+            ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
+        });
+    } catch {
+        // Keep the original visible wake failure. Home retains custody when a
+        // concurrent claim wins or the settlement request cannot be completed.
+    }
+}
+
 function accountScopeRetiredResult(
     type: 'rejected' | 'send_failed' = 'rejected',
     persistence: SubmitPersistence = 'none',
@@ -76,6 +104,8 @@ function getErrorCode(error: unknown): string | undefined {
 }
 
 function getSubmitSendFailure(error: unknown, fallback: string): Pick<SubmitSessionUserMessageResult, 'errorCode' | 'errorMessage'> {
+    // Keep validation failures typed; the caller owns translated send-failure copy.
+    if (error instanceof core.$ZodError) return { errorCode: 'invalid_parameters' };
     const errorCode = getErrorCode(error);
     return {
         ...(errorCode ? { errorCode } : {}),
@@ -624,6 +654,7 @@ async function enqueuePending(
         ...wakeOpts,
         ...(opts.serverId ? { serverId: opts.serverId } : {}),
         ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
+        ...(opts.actionContext ? { actionContext: opts.actionContext } : {}),
     };
 
     try {
@@ -645,6 +676,7 @@ async function enqueuePending(
             return { type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'pending' }, localId };
         }
         if (wakeResult.type === 'error') {
+            await blockPendingInputAfterWakeFailure(port, opts, localId, wakeResult.errorCode, wakeResult.errorDetail);
             await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
             if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
             return {
@@ -664,6 +696,7 @@ async function enqueuePending(
     } catch (error) {
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
         const errorMessage = getErrorMessage(error, 'Failed to resume session');
+        await blockPendingInputAfterWakeFailure(port, opts, localId);
         await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         return {
@@ -795,6 +828,7 @@ export async function submitSessionUserMessage(
                 ...((effectiveOpts.serverId || effectiveOpts.accountLifetime) ? [{
                     ...(effectiveOpts.serverId ? { serverId: effectiveOpts.serverId } : {}),
                     ...(effectiveOpts.accountLifetime ? { accountLifetime: effectiveOpts.accountLifetime } : {}),
+                    ...(effectiveOpts.actionContext ? { actionContext: effectiveOpts.actionContext } : {}),
                 }] as const : [] as const),
             );
             if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
@@ -845,8 +879,10 @@ export async function submitSessionUserMessage(
                     type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'pending' }, localId,
                 };
                 if (wakeResult.type === 'error') {
+                    await blockPendingInputAfterWakeFailure(port, effectiveOpts, localId, wakeResult.errorCode, wakeResult.errorDetail);
+                    if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
                     return {
-                        type: 'wake_pending',
+                        type: 'wake_failed',
                         persistence: 'pending',
                         wake: { attempted: true, state: 'failed', errorMessage: wakeResult.errorMessage },
                         errorCode: wakeResult.errorCode,
@@ -856,9 +892,12 @@ export async function submitSessionUserMessage(
                     };
                 }
             } catch (error) {
+                if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
                 const errorMessage = getErrorMessage(error, 'Failed to resume session');
+                await blockPendingInputAfterWakeFailure(port, effectiveOpts, localId);
+                if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
                 return {
-                    type: 'wake_pending',
+                    type: 'wake_failed',
                     persistence: 'pending',
                     wake: { attempted: true, state: 'failed', errorMessage },
                     errorMessage,

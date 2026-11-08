@@ -5,6 +5,19 @@ import { storage } from '@/sync/domains/state/storage';
 const initialStorageState = storage.getState();
 
 describe('outgoing user message projection', () => {
+    it.each(['codex', 'claude', 'opencode'])('sends Use CLI settings without a per-message override for %s', async agentId => {
+        const { buildOutgoingUserTextRecord } = await import('./outgoingUserMessage');
+        const selection = { agentTargetKey: `agent:happier.agent.${agentId}/${agentId}`, providerConnectionId: null, modelId: 'default' };
+        const raw = buildOutgoingUserTextRecord({
+            text: 'hello', agentId, modelMode: 'default', permissionMode: 'default', settings: {},
+            session: { modelMode: 'default', modelModeUpdatedAt: 20,
+                metadataLayoutVersion: 1, metadata: { v: 1, agentPresentation: { agentId } },
+                ownerMetadataView: null, composerOptionsInput: { modelSelectionIntentV1: { v: 1, updatedAt: 20, selection } } },
+        });
+        expect(raw.content).toEqual({ type: 'text', text: 'hello' });
+        expect(raw.meta).not.toHaveProperty('modelSelectionV1');
+        expect(raw.meta).not.toHaveProperty('model');
+    });
     it('uses the admitted permission mode after caller overrides, without changing unrestricted messages', async () => {
         const { buildOutgoingUserTextRecord } = await import('./outgoingUserMessage');
         const send = (permissionMode: 'yolo' | 'safe-yolo', allowedPermissionModes: readonly ('default' | 'safe-yolo')[] | null) => buildOutgoingUserTextRecord({

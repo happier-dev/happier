@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getModelOverrideForSpawn } from './modelOverride';
 import type { Session } from '../state/storageTypes';
-import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 
 function buildSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -31,6 +31,16 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('getModelOverrideForSpawn', () => {
+    it.each([null, 'pc_work'])('omits persisted native default without losing a Provider model named default (connection=%s)', providerConnectionId => {
+        const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId, modelId: 'default' };
+        const result = getModelOverrideForSpawn(buildSession({
+            modelMode: 'default', modelModeUpdatedAt: 20,
+            composerOptionsInput: { modelSelectionIntentV1: { v: 1, updatedAt: 20, selection } },
+        }), selection.agentTargetKey);
+        expect(result).toEqual(providerConnectionId === null ? null : {
+            modelSelection: { v: 1, updatedAt: 20, ref: selection },
+        });
+    });
     it('preserves sealed composer selection when complete owner metadata is unavailable', () => {
         const intent = SessionModelSelectionIntentV1Schema.parse({ v: 1, updatedAt: 20,
             selection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'sealed-model' } });

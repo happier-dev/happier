@@ -5,6 +5,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { DirectMessageSubmitResult, SessionSubmitPort } from './types';
 import { submitSessionUserMessage } from './submitSessionUserMessage';
 import { buildOutgoingUserTextRecord } from '@/sync/domains/messages/outgoingUserMessage';
+import { SessionMessageModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 function createSession(overrides: Partial<Session> = {}): Session {
     return {
@@ -35,6 +36,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
 function createPort() {
     const enqueuePendingMessage = vi.fn<SessionSubmitPort['enqueuePendingMessage']>(async () => ({ localId: 'pending-1', accepted: true }));
     const updatePendingRequestedAction = vi.fn(async () => undefined);
+    const blockPendingDelivery = vi.fn(async (_sessionId: string, _localId: string, _reason: string, _options?: unknown) => undefined);
     const ensureSessionRuntimeForPendingInput = vi.fn(async () => ({ type: 'success' as const }));
     const shouldDelegatePendingActivationToDaemon = vi.fn(async () => false);
     const isMachineReachable = vi.fn(() => false);
@@ -42,13 +44,14 @@ function createPort() {
     const port: SessionSubmitPort = {
         enqueuePendingMessage,
         updatePendingRequestedAction,
+        blockPendingDelivery,
         ensureSessionRuntimeForPendingInput,
         shouldDelegatePendingActivationToDaemon,
         isMachineReachable,
         sendMessage,
         isSessionTargetRemoteToActiveServer: () => false,
     };
-    return { port, enqueuePendingMessage, updatePendingRequestedAction, ensureSessionRuntimeForPendingInput, shouldDelegatePendingActivationToDaemon, isMachineReachable, sendMessage };
+    return { port, enqueuePendingMessage, updatePendingRequestedAction, blockPendingDelivery, ensureSessionRuntimeForPendingInput, shouldDelegatePendingActivationToDaemon, isMachineReachable, sendMessage };
 }
 
 function submitOptions(session: Session) {
@@ -79,6 +82,102 @@ function createAccountLifetime(scope = { serverId: 'server-1', accountId: 'accou
 }
 
 describe('submitSessionUserMessage Pending action ownership', () => {
+    it.each([false, true])('returns a typed send failure without schema diagnostics (direct=%s)', async forceImmediate => {
+        const session = createSession();
+        const harness = createPort();
+        const refuse = async () => {
+            SessionMessageModelSelectionV1Schema.parse({ v: 1, updatedAt: 20,
+                ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' } });
+            return { localId: 'unreachable' };
+        };
+        harness.sendMessage.mockImplementation(refuse);
+        harness.enqueuePendingMessage.mockImplementation(refuse);
+        const result = await submitSessionUserMessage(harness.port, { ...submitOptions(session), forceImmediate });
+        expect(result).toMatchObject({ type: 'send_failed', persistence: 'none', errorCode: 'invalid_parameters' });
+        // The existing Composer presenter uses its translated send-failure fallback.
+        expect(result.errorMessage).toBeUndefined();
+    });
+    it('blocks an existing durable input in its original Account when automatic wake is definitely refused', async () => {
+        const session = createSession({ active: false, presence: 0,
+            metadata: { ...createSession().metadata!, flavor: 'claude' } });
+        const harness = createPort();
+        const { lifetime } = createAccountLifetime();
+        harness.port.ensureSessionRuntimeForPendingInput = async () => ({ type: 'error',
+            errorCode: 'forbidden', errorMessage: 'Automatic Session resume refused' });
+        const result = await submitSessionUserMessage(harness.port, {
+            ...submitOptions(session), serverId: 'server-1', accountLifetime: lifetime,
+            localId: 'accepted-input', existingDurablePendingMessage: true,
+            requestedAction: { v: 1, kind: 'send_now' },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.blockPendingDelivery).toHaveBeenCalledWith('s1', 'accepted-input', 'session_input_target_unavailable', {
+            serverId: 'server-1', accountLifetime: lifetime,
+        });
+        expect(result).toMatchObject({ type: 'wake_failed', persistence: 'pending', localId: 'accepted-input',
+            errorCode: 'forbidden', wake: { attempted: true, state: 'failed' } });
+        expect(harness.enqueuePendingMessage).not.toHaveBeenCalled();
+        expect(harness.sendMessage).not.toHaveBeenCalled();
+    });
+    it.each([false, true])('keeps a pool-refused input as a runtime failure, not a missing conversation (existing=%s)', async existingDurablePendingMessage => {
+        const session = createSession({ active: false, presence: 0,
+            metadata: { ...createSession().metadata!, flavor: 'claude' } });
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        const errorDetail = { kind: 'launch_error' as const, code: 'no_eligible_member', message: 'No connected account is available',
+            connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex', excluded: [
+                { profileId: 'private-profile', reason: 'auth_invalid' as const },
+            ] } };
+        harness.port.ensureSessionRuntimeForPendingInput = async () => ({ type: 'error',
+            errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'no_eligible_member', errorDetail });
+        const result = await submitSessionUserMessage(harness.port, {
+            ...submitOptions(session), sessionInactiveResumePolicy: 'online_only',
+            localId: 'accepted-input', existingDurablePendingMessage,
+            requestedAction: { v: 1, kind: 'send_now' },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.blockPendingDelivery).toHaveBeenCalledWith('s1', existingDurablePendingMessage ? 'accepted-input' : 'pending-1',
+            'runtime_config_blocked', expect.anything());
+        expect(result).toMatchObject({ type: 'wake_failed', persistence: 'pending', errorDetail });
+        expect(harness.sendMessage).not.toHaveBeenCalled();
+    });
+    it.each([false, true])('preserves accepted custody when its wake is cancelled (existing input=%s)', async existingDurablePendingMessage => {
+        const session = createSession({ active: false, presence: 0,
+            metadata: { ...createSession().metadata!, flavor: 'claude' } });
+        const harness = createPort();
+        const controller = new AbortController();
+        harness.isMachineReachable.mockReturnValue(true);
+        harness.port.ensureSessionRuntimeForPendingInput = async () => {
+            controller.abort();
+            throw controller.signal.reason;
+        };
+        const result = await submitSessionUserMessage(harness.port, {
+            ...submitOptions(session), localId: 'accepted-input', existingDurablePendingMessage,
+            sessionInactiveResumePolicy: 'online_only', requestedAction: { v: 1, kind: 'send_now' },
+            actionContext: { surface: 'ui', signal: controller.signal },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(result).toMatchObject({ persistence: 'pending', localId: existingDurablePendingMessage ? 'accepted-input' : 'pending-1' });
+        expect(harness.blockPendingDelivery).not.toHaveBeenCalled();
+    });
+    it('retains the original Action child custody when accepted input needs its runtime', async () => {
+        const session = createSession({ active: false, presence: 0 });
+        const harness = createPort();
+        harness.isMachineReachable.mockReturnValue(true);
+        const actionContext = { surface: 'ui' as const, actionRequestId: 'original-send', hostReviewedChild: {
+            invoke: async () => ({ ok: true as const, result: {} }),
+        } };
+        let receivedContext: unknown;
+        harness.port.ensureSessionRuntimeForPendingInput = async options => {
+            receivedContext = Reflect.get(options, 'actionContext');
+            return { type: 'success' };
+        };
+        expect(await submitSessionUserMessage(harness.port, {
+            ...submitOptions(session), actionContext, sessionInactiveResumePolicy: 'online_only',
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        })).toMatchObject({ type: 'success', persistence: 'pending' });
+        expect(receivedContext).toBe(actionContext);
+    });
+
     it('keeps an ordinary message pending and returns the typed person hold from launch admission', async () => {
         const session = createSession({ active: false, presence: 0,
             metadata: { ...createSession().metadata!, flavor: 'claude' } });
@@ -94,6 +193,9 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             errorCode: 'SPAWN_VALIDATION_FAILED',
             errorDetail: { kind: 'launch_error', code: 'held_by_person' },
             wake: { attempted: true, state: 'failed' }, localId: 'pending-1' });
+        // A person's Stop hold leaves the row queued behind "Stopped by you" + Resume;
+        // blocking it would hide that Resume and strand the input (P03-LIFECYCLE-FIX).
+        expect(harness.blockPendingDelivery).not.toHaveBeenCalled();
         expect(harness.sendMessage).not.toHaveBeenCalled();
         expect(harness.updatePendingRequestedAction).not.toHaveBeenCalled();
     });
@@ -1062,12 +1164,13 @@ describe('submitSessionUserMessage Pending action ownership', () => {
                 requestedAction: { v: 1, kind: 'send_now' },
                 resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
             })).resolves.toMatchObject({
-                type: 'wake_pending',
+                type: 'wake_failed',
                 persistence: 'pending',
                 localId: 'durable-wake-failed',
                 wake: { attempted: true, state: 'failed' },
             });
             expect(wakeFailure.updatePendingRequestedAction).toHaveBeenCalledBefore(wakeFailure.port.ensureSessionRuntimeForPendingInput as ReturnType<typeof vi.fn>);
+            expect(wakeFailure.blockPendingDelivery).toHaveBeenCalledWith('s1', 'durable-wake-failed', 'session_input_target_unavailable', {});
         }
     });
 });

@@ -1,4 +1,5 @@
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type {
     BusySteerSendPolicy,
@@ -9,15 +10,22 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { ResumeSessionOptions, PendingInputRuntimeEnsureResult } from '@/sync/ops/sessions';
+import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import type {
-    PendingRequestedActionV1,
-    ParticipantRecipientV1,
-    ProviderBoundModelRef,
-    SessionPermissionMode,
-    SessionInactiveResumePolicy,
-    SessionInputAdmissionRejectionCodeV1,
+    PendingRequestedActionV1} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type {
+    ParticipantRecipientV1} from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type {
+    ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type {
+    SessionPermissionMode} from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import type {
+    SessionInactiveResumePolicy} from '@happier-dev/protocol/account/settings/accountSettings';
+import type {
+    SessionInputAdmissionRejectionCodeV1} from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import type {
     SpawnSessionErrorDetail,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/spawnSession';
 
 export const SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE =
     'session_input_target_update_required' satisfies SessionInputAdmissionRejectionCodeV1;
@@ -115,6 +123,8 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     serverId?: string | null;
     /** Exact route credential lifetime; authoritative for every asynchronous admission effect. */
     accountLifetime?: ServerAccountScopeLifetime;
+    /** Original in-process Action custody; never persisted with pending input. */
+    actionContext?: ActionExecutorContext;
     requestRemoteControlAfterPendingEnqueue?: boolean;
     onOutboundHandoff?: (handoff: SubmitSessionOutboundHandoff) => void;
     callerSurface?: SessionMessageCallerSurface | null;
@@ -168,6 +178,15 @@ export type DirectMessageLocalPendingProjection = Readonly<{
 export type DirectMessageBypassReason = SessionMessageDirectBypassReason;
 
 export interface SessionSubmitPort {
+    blockPendingDelivery(
+        sessionId: string,
+        localId: string,
+        reason: PendingDeliveryBlockedReason,
+        options?: Readonly<{
+            serverId?: string | null;
+            accountLifetime?: ServerAccountScopeLifetime;
+        }>,
+    ): Promise<void>;
     enqueuePendingMessage(
         sessionId: string,
         text: string,

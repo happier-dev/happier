@@ -8,6 +8,13 @@ const modelIdFor = (
 ): string => resolveSessionMessageModel(params).modelId;
 
 describe('resolveSessionMessageModel', () => {
+  it.each(['canonical', 'legacy'])('omits a persisted native default on an inactive Session (%s)', shape => {
+    const metadata = { flavor: 'codex', ...(shape === 'canonical'
+      ? { modelSelectionIntentV1: { v: 1, updatedAt: 20,
+          selection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' } } }
+      : { modelOverrideV1: { v: 1, updatedAt: 20, modelId: 'default' } }) };
+    expect(resolveSessionMessageModel({ metadata, sessionActive: false })).toEqual({ modelId: '', selection: null });
+  });
   it('projects a canonical provider-bound session selection to the final prompt model selector', () => {
     expect(modelIdFor({
       metadata: {

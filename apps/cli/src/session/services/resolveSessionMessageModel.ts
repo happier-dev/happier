@@ -116,6 +116,9 @@ export function resolveSessionMessageModel(params: Readonly<{
     return { modelId: '', selection: null };
   }
   const intent = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
+  if (intent?.selection && isNativeAutomaticModelSelectionInputV1(intent.selection)) {
+    return { modelId: '', selection: null };
+  }
   return {
     modelId: intent?.selection?.modelId ?? '',
     selection: intent?.selection

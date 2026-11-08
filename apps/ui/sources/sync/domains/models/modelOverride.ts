@@ -1,4 +1,4 @@
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { isNativeAutomaticModelSelectionInputV1, SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 
 import type { Session } from '../state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -30,7 +30,7 @@ export function getModelOverrideForSpawn(session: Session, agentTargetKey: strin
     }
 
     if (localUpdatedAt === null || localUpdatedAt <= metadataUpdatedAt) {
-        if (!metadataIntent?.selection) return null;
+        if (!metadataIntent?.selection || isNativeAutomaticModelSelectionInputV1(metadataIntent.selection)) return null;
         return {
             modelSelection: SessionModelSelectionV1Schema.parse({
                 v: 1,
@@ -41,10 +41,8 @@ export function getModelOverrideForSpawn(session: Session, agentTargetKey: strin
     }
 
     const modelId = localModelId;
-    if (!modelId) return null;
-
-    // Spawn-time override uses `--model <id>`, which must never be the sentinel "default".
-    if (modelId === 'default') return null;
+    // Native Automatic carries no override for spawn or per-message sends.
+    if (isNativeAutomaticModelSelectionInputV1({ modelId })) return null;
 
     return {
         modelSelection: SessionModelSelectionV1Schema.parse({
