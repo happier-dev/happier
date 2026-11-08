@@ -75,7 +75,7 @@ import {
 } from '@/sync/ops/sessionUsageLimitRecovery';
 import { completeActionResult, createActionExecutor, readHostReviewedParentV1, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
 import { resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
-import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
 import { projectUiAccountRequesterInvocation } from './accountActionTransport';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -90,7 +90,7 @@ import { readDetectedProviderConfirmation } from '@/components/approvals/provide
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, type CurrentSessionPresentationActionResultV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUiProviderActionExecuteV1 } from './providerActionDeps';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { SessionSpawnNewActionInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -4530,11 +4530,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const response = await accountContext.request(`/v2/sessions/${encodeURIComponent(sessionId)}/messages/by-local-id/${encodeURIComponent(requestLocalId)}/reply`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reviewDecision), ...(signal ? { signal } : {}) });
       accountContext.assertCurrent();
-      const parsed = SessionMessageReplyMutationResultV1Schema.safeParse(await response.json());
+      const payload: unknown = await response.json();
+      const parsed = SessionMessageReplyMutationResultV1Schema.safeParse(payload);
       accountContext.assertCurrent();
       if (!response.ok) {
         const error = parsed.success && !parsed.data.ok ? parsed.data.error : 'unavailable';
-        return { ok: false, errorCode: error, error };
+        const failure: ActionExecuteFailure = readActionFailureEnvelope(payload) ?? { ok: false, errorCode: error, error };
+        const code = payload && typeof payload === 'object'
+          ? 'code' in payload ? payload.code : 'error' in payload ? payload.error : error
+          : error;
+        return { ...failure, failureCause: failure.failureCause ?? projectActionFailureCauseV1({
+          name: 'HttpStatusError', code, status: response.status,
+        }, 'session.message.reply') };
       }
       return parsed.success ? parsed.data : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
     },

@@ -78,6 +78,8 @@ import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/proto
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { artifactReadResponse } from '@/testkit/http/artifactHome';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { sealSessionStoredContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionStoredContentCodec';
 
 const processIdentityBoundary = vi.hoisted(() => vi.fn());
 // Process inspection is the OS boundary. Tests that do not configure the
@@ -212,36 +214,63 @@ describe('daemon Session Account authority', () => {
     expect(harness.delivered).toEqual([]);
   });
 
-  it.each(['doc.comment.reply', 'doc.edit.propose'] as const)('publishes %s through exact Session custody and rejects substituted child metadata', async actionId => {
+  it.each(['doc.comment.reply', 'doc.edit.propose', 'compact-proposal', 'compact-e2ee-proposal', 'compact-reviewed-proposal'] as const)(
+    'admits %s through exact Session custody and rejects substituted child metadata', async scenario => {
+    const compact = scenario.startsWith('compact-');
+    const reviewed = scenario === 'compact-reviewed-proposal';
+    const actionId = scenario === 'doc.comment.reply' ? scenario : 'doc.edit.propose';
     const serverId = 'alice-home';
     const serverHttpBaseUrl = 'https://alice-home.test';
+    const credentials = { token: 'token', encryption: scenario === 'compact-e2ee-proposal'
+      ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } : null };
+    const key = await createResourceDataKey({ credentials, mode: credentials.encryption ? 'e2ee' : 'plain' });
+    const crypto: SessionStoredContentCryptoContext = key.mode === 'plain' ? { mode: 'plain', ctx: null }
+      : { mode: 'e2ee', ctx: { encryptionKey: key.dataKey, encryptionVariant: 'dataKey' } };
     const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Clarify' }] };
     const target = { ref: { kind: 'doc' as const, artifactId: 'doc-1', serverId },
       revision: { headerVersion: 1, bodyVersion: 2 }, range: { start: 0, end: 3 }, quote: 'old' };
-    const input = actionId === 'doc.comment.reply' ? { target, localId: 'doc-root', content }
+    const input = compact
+      ? { localId: 'doc-proposal', discussionRef: { serverId: 'srv_home', discussionId: 'discussion-1' }, after: 'new' }
+      : actionId === 'doc.comment.reply' ? { target, localId: 'doc-root', content }
       : { target, localId: 'doc-proposal', discussionRef: { serverId, discussionId: 'discussion-1' },
         baseRevision: target.revision, before: 'old', after: 'new', reason: 'Clarify' };
-    const summary = DiscussionSummaryV1Schema.parse({ id: 'discussion-1', ownerAccountId: 'owner', encryptionMode: 'plain',
-      anchor: null, access: 'owner', keyReadiness: true, dataEncryptionKey: null, creationLocalId: 'creation-1',
-      titleContent: { t: 'plain', v: { v: 1, title: 'Discussion' } },
+    const docOperation: Operation = { ...operation, actionId, input, witness: { ...operation.witness,
+      ...(compact ? { discussionAddressing: { discussionId: 'discussion-1', messageId: 'root-1', throughSeq: 1,
+        participantSessionId: 'bob-session' } } : {}) } };
+    const summary = DiscussionSummaryV1Schema.parse({ id: 'discussion-1', ownerAccountId: 'owner', encryptionMode: key.mode,
+      anchor: null, access: 'owner', keyReadiness: true, dataEncryptionKey: key.dataEncryptionKey, creationLocalId: 'creation-1',
+      titleContent: sealSessionStoredContent({ ...crypto, payload: { v: 1, title: 'Discussion' } }),
       latestMessage: { id: 'root-1', localId: 'root-1', seq: 1, authorAccountId: 'owner',
         accountActor: { v: 1, accountId: 'owner', profile: null }, producerV1: null, createdAt: 1 }, messageSeq: 1,
       lastReadSeq: 0, unreadCount: 0, unreadMentionCount: 0, recentAuthorAccountIds: [], archivedAt: null,
       capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true,
         sendToSession: true, manageAccess: true, leave: false } });
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
-    vi.spyOn(axios, 'request').mockImplementation(async request => {
+    const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
       const path = new URL(String(request.url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200,
         data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (path === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: summary } };
+      if (path === '/v1/discussions/discussion-1/messages') return { status: 200, data: {
+        messages: [{ id: 'root-1', discussionId: summary.id, localId: 'root-1', seq: 1,
+          authorAccountId: 'owner', accountActor: { v: 1, accountId: 'owner', profile: null }, producerV1: null,
+          content: sealSessionStoredContent({ ...crypto, payload: { kind: 'doc_passage_comment', passage: target, content } }),
+          replyTarget: { kind: 'doc_passage', doc: { ref: target.ref, revision: target.revision } },
+          mentionedAccountIds: [], createdAt: 1 }], messageSeq: 1, hasMoreOlder: false,
+      } };
       throw new Error(`Unexpected Doc custody HTTP ${path}`);
     });
     const publications: DiscussionAgentPublisherRequestV1[] = [];
     const denied: unknown[] = [];
+    let stored: ApprovalRequest | undefined;
     const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token: 'token',
+      credentials,
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } },
+        capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } },
+      }) }),
       postAgentDiscussionMessage: async (raw, witness) => {
-        expect(witness).toEqual(operation.witness);
+        expect(witness).toEqual(docOperation.witness);
         publications.push(raw);
         const created = 'operation' in raw ? DiscussionAgentCreateRequestV1Schema.parse(raw) : null;
         const message = created ? created.request.firstMessage : DiscussionAgentPostRequestV1Schema.parse(raw).request;
@@ -254,7 +283,11 @@ describe('daemon Session Account authority', () => {
           : { v: 1, ok: true, value: { message: stored, messageSeq: 2 } };
       },
       createExecutor: (_depth, _current, publisher) => {
-        const real = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createDiscussionActionDeps({ credentials: { token: 'token', encryption: null },
+        const real = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+          // Approval Artifact persistence and Session notification are boundaries; admission and passage preparation stay real.
+          approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'doc-proposal-review' }; },
+          sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
+          ...createDiscussionActionDeps({ credentials,
           serverId, serverHttpBaseUrl, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
             features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
           }) }), ...(publisher ? { postAgentMessage: async (request, options) => {
@@ -273,10 +306,20 @@ describe('daemon Session Account authority', () => {
             return publisher(request, options);
           } } : {}) }) });
         return { execute: (id, args, context) => real.execute(id, args, { ...context,
-          actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } }) }) };
+          runtimeAccountId: 'owner', serverIdentityId: 'srv_home', defaultSessionMachineId: 'machine-1',
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: reviewed ? {} : { [actionId]: ['agent'] } }) }) };
       },
     });
-    expect(await execute({ ...operation, actionId, input }, { sessionId: 'bob-session', isCurrent: async () => true }))
+    const result = await execute(docOperation, { sessionId: 'bob-session', isCurrent: async () => true });
+    if (compact) expect(http.mock.calls.filter(([request]) => new URL(String(request.url)).pathname.endsWith('/messages'))).toHaveLength(1);
+    if (reviewed) {
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(stored?.actionArgs).toMatchObject({ target: { ...target, ref: { ...target.ref, serverId: 'srv_home' } },
+        baseRevision: target.revision, before: 'old', after: 'new', reason: '' });
+      expect(publications).toEqual([]);
+      return;
+    }
+    expect(result)
       .toMatchObject({ ok: true, result: { message: { producerV1: { kind: 'agent', sessionId: 'bob-session' }, content: {
         kind: actionId === 'doc.comment.reply' ? 'doc_passage_comment' : 'doc_edit_proposal',
       } } } });

@@ -3,6 +3,7 @@ import { getCurrentAuth } from '@/auth/context/currentAuth';
 
 import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
@@ -22,7 +23,7 @@ import { TeamLinkDelivery } from '@/components/settings/teams/TeamLinkDelivery';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
-import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { recordResourceProposalDeclines } from '@/components/approvals/resourceProposal/recordResourceProposalDeclines';
 import { t } from '@/text';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -59,6 +60,7 @@ export function presentApprovalFailure(
     const code = typeof error === 'object' && error !== null
         ? 'errorCode' in error ? error.errorCode : 'code' in error ? error.code : null
         : error;
+    const diagnosticCode = typeof code === 'string' && /^[a-z][a-z0-9_]*$/.test(code) ? code : null;
     const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
     if (providerCode.success && providerCode.data.startsWith('provider_')) {
         return { reason: t(presentProviderError(providerCode.data).descriptionKey), code: null };
@@ -80,9 +82,16 @@ export function presentApprovalFailure(
         }
     }
     // Only a confirmed no-effect refusal may promise that nothing changed.
-    const transient = readTransientAvailabilityFailure(code);
+    const failureCause = readActionFailureCauseV1(typeof error === 'object' && error !== null && 'failureCause' in error
+        ? error.failureCause : undefined);
+    const transient = readTransientAvailabilityFailure(code) ?? readTransientAvailabilityFailure(failureCause.errorCode);
     if (transient && !(error instanceof ApprovalExecutionError)) {
-        return { reason: transient.effectMayHaveApplied ? t('errors.scmOutcomeUnknown') : transient.message, code: transient.code };
+        return { reason: transient.effectMayHaveApplied ? t('errors.scmOutcomeUnknown') : transient.message, code: diagnosticCode ?? transient.code };
+    }
+    // A Service Unavailable response cannot establish whether the Home saved
+    // this decision. Ask the person to inspect it before submitting it again.
+    if (code === 'unavailable' && failureCause.httpStatus === 503 && !(error instanceof ApprovalExecutionError)) {
+        return { reason: t('errors.scmOutcomeUnknown'), code };
     }
     // Detail pages may pass the stored executor diagnostic as their fallback.
     // Keep machine codes as diagnostics after readable copy on every Action.
@@ -90,8 +99,7 @@ export function presentApprovalFailure(
         : /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)*$/.test(fallbackMessage.trim())
             ? neutralReason : fallbackMessage;
     // Retain the typed code, never opaque transport prose or private details.
-    return { reason: resolveActionExecutionErrorMessage({ code }, reason),
-        code: typeof code === 'string' && /^[a-z][a-z0-9_]*$/.test(code) ? code : null };
+    return { reason: resolveActionExecutionErrorMessage({ code }, reason), code: diagnosticCode };
 }
 
 /**
@@ -110,7 +118,13 @@ export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: s
 export function alertApprovalFailure(error: unknown, fallbackMessage = t('approvals.decisionError')): void {
     const { reason, code } = presentApprovalFailure(error, fallbackMessage);
     const disclosedCode = code && !(error instanceof ApprovalExecutionError) ? code : null;
-    alertActionFailure({ reason, code: disclosedCode });
+    const failureCause = typeof error === 'object' && error !== null && 'failureCause' in error && error.failureCause !== undefined
+        ? readActionFailureCauseV1(error.failureCause) : undefined;
+    const details = typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined;
+    alertActionFailure({ reason, code: disclosedCode, context: {
+        ...readSafeFailureDetails(details),
+        ...failureCause,
+    } });
 }
 
 /** Distinguishes a settled effect failure from a decision that could not be saved. */
@@ -320,7 +334,9 @@ export function useApprovalDecisionHandler(
                     if (serverId) publishHomeAccountChange(serverId, [artifact.id], { changeKinds: ['artifact'] });
                 }
             }
-            if (!result.ok && outcome === null) throw new HappyError(result.error, false, { code: result.errorCode });
+            if (!result.ok && outcome === null) throw new HappyError(result.error, false, {
+                code: result.errorCode, details: result.details, failureCause: result.failureCause,
+            });
             // A decision can be recorded successfully while its execution was refused.
             // Never let a stale receipt become an optimistic "Approved" answer.
             const execution = typeof outcome === 'object' && outcome !== null && 'execution' in outcome

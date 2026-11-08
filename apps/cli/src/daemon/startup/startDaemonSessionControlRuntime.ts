@@ -33,6 +33,7 @@ import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/
 import { retireObservedSessionRunnerMetadata } from '../sessions/plainRunnerRetirement';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { PendingSessionResumeAdmission, PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
 import { DiscussionAgentPublisherResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import type { DiscussionAgentPublisherPrivateRequestV1 } from '@/discussions/discussionAgentPublisher';
@@ -296,7 +297,7 @@ import {
   resolveTrackedAgentRuntimeDaemonServiceAuthority,
   type AgentRuntimeDaemonServiceRoutes,
 } from '../controlServer';
-import { createDaemonSessionAccountActionExecutor, logDaemonSessionAccountActionRefusalV1 } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
+import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
 import { createOnDaemonSessionStartupFailure } from '../sessions/onHappySessionWebhook';
 import {
   AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
@@ -11966,14 +11967,15 @@ export async function startDaemonSessionControlRuntime(
             return { ok: false, errorCode: error.code, error: error.code };
           const carriedFailure = readActionFailureEnvelope(error instanceof Error ? error.cause : error);
           if (carriedFailure) return carriedFailure;
-          const refusalPhase = requesterResolved ? 'credentialed_factory' : 'requester_runtime';
-          const refusalReason = requesterResolved ? 'credentialed_factory_failed' : 'requester_runtime_unavailable';
-          logDaemonSessionAccountActionRefusalV1(operation, authority.sessionId, {
-            reason: 'action_executor_refused', errorCode: 'target_unavailable', refusalCode: 'target_unavailable',
-            refusalPhase, refusalReason,
-            elapsedSubphasesMs: { [refusalPhase]: Math.max(0, Date.now() - requesterStartedAt) },
+          const phase = requesterResolved ? 'session_account.credentialed_factory' : 'session_account.requester_runtime';
+          const failure = normalizeActionExecutorThrownError(error, phase);
+          if (failure.errorCode === 'target_unavailable') {
+            return { ok: false, ...failure, error: 'target_unavailable' };
+          }
+          logger.warnLocalFile('[Session Account Action] Failed', {
+            actionId: operation.actionId, failureCause: failure.failureCause,
           });
-          return actionStartTargetUnavailableV1(undefined, refusalPhase, refusalReason);
+          return { ok: false, errorCode: 'internal_error', error: 'internal_error', failureCause: failure.failureCause };
         } finally {
           await releaseSessionAccountContext(requesterRuntime);
         }

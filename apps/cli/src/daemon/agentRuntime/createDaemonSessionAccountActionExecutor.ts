@@ -33,6 +33,8 @@ import { DiscussionAgentPublisherResponseV1Schema, type DiscussionAgentPublisher
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { bindDiscussionDraftReply } from '@/discussions/bindDiscussionDraftReply';
 import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
+import { prepareDocEditProposalInputV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isDiscussionDocEditProposalContentV1, readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/discussions/content';
 import { readRequesterHomeWithinActionLifetime } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { bindScmActionToSessionWorkspace } from '@/scm/actions/placement';
@@ -284,6 +286,19 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         operation = { ...operation, actionId: ActionIdSchema.parse(bound.actionId), input: StrictJsonValueSchema.parse(bound.input),
           requestId: bound.context.actionRequestId };
       }
+    }
+    if (operation.actionId === 'doc.edit.propose') {
+      context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
+      // Bind the passage once before signing and deriving the child publication
+      // metadata. The executor retains this same reviewed basis on replay.
+      const prepared = await prepareDocEditProposalInputV1(operation.input, context,
+        params.credentials ? createDiscussionActionDeps({ credentials: params.credentials,
+          serverId: params.serverId, serverIdentityId: context.serverIdentityId, serverHttpBaseUrl: params.serverHttpBaseUrl,
+          resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }).discussionAction : undefined,
+        (left, right) => areServerProfileIdentifiersEquivalent(left, right,
+          id => id === params.serverId || id === context.serverIdentityId ? context.serverIdentityId : undefined));
+      if (!prepared.ok) return prepared;
+      operation = { ...operation, input: StrictJsonValueSchema.parse(prepared.input) };
     }
     let sessionActionOrigin: SessionActionRpcOriginV1;
     try { sessionActionOrigin = resolveSessionRoleRpcOrigin(context); }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createUiApprovalRequest, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { createAgentApprovalRequest, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ApprovalExecutionV1Schema, ApprovalRequestSchema, ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -11,6 +11,7 @@ import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/appro
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -93,6 +94,44 @@ describe('built-in approval decisions through the canonical owner', () => {
         } finally { await hook.unmount(); }
     });
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
+    it('retains the Home cause when declining a private Discussion draft fails', async () => {
+        const serverId = await harness.addHome({ name: 'Draft Home', serverUrl: 'https://draft-decline.test',
+            serverIdentityId: 'srv_draft_decline', accountId: 'bob', currentAccount: true });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
+        const actionArgs = { discussionId: 'discussion', localId: 'draft-reply',
+            content: { v: 1, parts: [{ t: 'text', text: 'A private draft' }] },
+            replyTarget: { kind: 'message', messageId: 'question' } };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent',
+            actionId: 'discussion.reply', actionArgs, discussionDraftReview: true, summary: 'Review the answer',
+            executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'discussion.reply', input: actionArgs,
+                targetSessionId: null, context: { surface: 'agent', authority: 'account_automation', serverId,
+                    serverIdentityId: 'srv_draft_decline', runtimeAccountId: 'bob', actionCaller: { kind: 'host' },
+                    defaultSessionId: 'source', defaultSessionMachineId: 'machine', actionRequestId: 'draft-reply',
+                    discussionReplyReturn: { serverId: 'srv_draft_decline', requestLocalId: 'question', acceptedTurnId: 'turn' } } }),
+        });
+        const artifact = { id: 'draft-decline', header: buildApprovalRequestArtifactHeaderV1(request) };
+        await harness.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            ...artifact, header: encodePlainArtifactStoredContent(artifact.header),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }) });
+        const failureCause = { phase: 'session.message.reply', errorClass: 'HttpStatusError',
+            errorCode: 'database_transaction_timeout', httpStatus: 503 } as const;
+        // The Home HTTP transport is the boundary; the draft routing, decision
+        // executor and presentation beneath it remain real.
+        const reviewPath = '/v2/sessions/source/messages/by-local-id/question/reply';
+        harness.answer(serverId, reviewPath, { status: 503,
+            body: { error: 'database_transaction_timeout', statusCode: 503 } });
+        const hook = await renderHook(() => useApprovalDecisionHandler(artifact, request, 'source', serverId));
+        try {
+            const onExecution = vi.fn();
+            const failure: unknown = await hook.getCurrent()('reject', { onExecution }).catch((error: unknown) => error);
+            expect(harness.requestsFor(reviewPath)).toHaveLength(1);
+            expect(failure).toMatchObject({ code: 'unavailable', failureCause });
+            expect(presentApprovalFailure(failure).reason).toBe(t('errors.scmOutcomeUnknown'));
+            expect(onExecution).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
     it('recovers a lost daemon decision receipt from the public approval projection without replay authority', async () => {
         const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://approval-settlement.test',
             serverIdentityId: 'srv_approval-settlement', accountId: 'bob', currentAccount: true });
@@ -152,7 +191,7 @@ describe('built-in approval decisions through the canonical owner', () => {
             accountId: 'bob', teamsEnabled: true });
         await harness.requireUiApproval(serverId, 'teams.update');
         harness.answer(serverId, '/v1/teams/update', { status: 409, body: { error: 'team_archived' } });
-        const artifactId = await createUiApprovalRequest({ serverId, actionId: 'teams.update',
+        const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'teams.update',
             actionInput: { v: 1, teamId: 'team-1', name: 'Garden' }, actionRequestId: 'rename-effect-refused' });
         const context = await captureActionAccountContext(serverId);
         try {
@@ -168,7 +207,7 @@ describe('built-in approval decisions through the canonical owner', () => {
                 expect(presentApprovalFailure(failure).code).toBe('team_archived');
                 expect(onExecution).toHaveBeenCalledOnce();
                 expect(onExecution).toHaveBeenCalledWith(expect.objectContaining({
-                    ok: false, errorCode: 'team_archived', effectAttempted: true,
+                    ok: false, errorCode: 'team_archived',
                 }));
                 expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).toMatchObject({
                     status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'team_archived' },
@@ -180,7 +219,7 @@ describe('built-in approval decisions through the canonical owner', () => {
         const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://stale-effect.test',
             accountId: 'bob', teamsEnabled: true });
         await harness.requireUiApproval(serverId, 'teams.update');
-        const artifactId = await createUiApprovalRequest({ serverId, actionId: 'teams.update',
+        const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'teams.update',
             actionInput: { v: 1, teamId: 'team-1', name: 'Garden' }, actionRequestId: 'stale-effect' });
         const request = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
         // The daemon/other app already settled the request. Store its receipt
@@ -239,7 +278,7 @@ describe('built-in approval decisions through the canonical owner', () => {
             serverIdentityId: 'srv_terminal-cancel', accountId: 'bob', currentAccount: true });
         harness.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
         await harness.requireUiApproval(serverId, 'machines.terminal.open');
-        const artifactId = await createUiApprovalRequest({ serverId, actionId: 'machines.terminal.open',
+        const artifactId = await createAgentApprovalRequest({ serverId, actionId: 'machines.terminal.open',
             actionInput: { serverId, machineId: 'machine', terminalKey: 'owned-member', cwd: '/accepted' }, actionRequestId: 'open-own-member' });
         const context = await captureActionAccountContext(serverId);
         try {

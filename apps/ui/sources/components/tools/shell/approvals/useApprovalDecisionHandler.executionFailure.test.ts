@@ -11,6 +11,21 @@ import { t } from '@/text';
 import { alertApprovalFailure, assertApprovalExecutionSucceeded } from './useApprovalDecisionHandler';
 
 describe('approval decision execution outcome', () => {
+    it.each(['database_transaction_timeout', 'unavailable'])('shows an uncertain %s decision next step and discloses its cause without private payloads', errorCode => {
+        alert.mockClear();
+        alertApprovalFailure(new HappyError('private transport text', false, { code: 'unavailable',
+            failureCause: { phase: 'approval.request.decide', errorClass: 'HttpStatusError',
+                errorCode, httpStatus: 503 },
+            details: { reason: 'database_transaction_timeout', token: 'PRIVATE_TOKEN', payload: { text: 'PRIVATE_DRAFT' } },
+        }));
+        const [, message, buttons] = alert.mock.calls[0]!;
+        expect(message).toBe(t('errors.scmOutcomeUnknown'));
+        const details = (buttons as Array<{ text: string; onPress?: () => void }>).find(button => button.text === t('approvals.technicalDetails'));
+        details!.onPress!();
+        expect(JSON.parse(alert.mock.calls[1]![1])).toMatchObject({ code: 'unavailable', phase: 'approval.request.decide',
+            errorClass: 'HttpStatusError', errorCode, httpStatus: 503 });
+        expect(JSON.stringify(alert.mock.calls)).not.toMatch(/PRIVATE_TOKEN|PRIVATE_DRAFT|private transport text/);
+    });
     it('surfaces a recorded execution failure instead of accepting the decision as success', () => {
         const execution = {
             executedAtMs: 1,
