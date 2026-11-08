@@ -136,6 +136,14 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
 })));
 export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisionerContributionV1Schema>;
 
+/** Selectors a person can edit before supplying this conditionally required credential. */
+export function readMachineProvisionerCredentialPurposeSelectorPathsV1(
+  descriptor: Pick<MachineProvisionerContributionV1, 'credentialPurposeRequirements'>, purpose: string,
+): readonly string[] {
+  const requirement = descriptor.credentialPurposeRequirements?.find(entry => entry.purpose === purpose);
+  return requirement ? readInputPredicatePaths(requirement.optionalWhen) : [];
+}
+
 /** One purpose requirement owner shared by acquisition, retained roles and configuration. */
 export function isMachineProvisionerCredentialPurposeRequiredV1(
   descriptor: Pick<MachineProvisionerContributionV1, 'credentialPurposeRequirements'>, purpose: string, launch: unknown,

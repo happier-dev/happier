@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readMachineProvisionerCredentialPurposeSelectorPathsV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -176,6 +177,9 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         const repairAction = check?.prerequisites?.find(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction)?.repairAction;
         const missingExecutable = check?.prerequisites?.some(prerequisite => prerequisite.status !== 'available');
         const noAccount = check?.code === 'credential_unavailable' || outcome?.kind === 'failed' && outcome.code === 'credential_unavailable';
+        // Conditionally credentialed providers enter their selector form before offering account setup.
+        const connectPurpose = noAccount ? provisioner.credentialPurposes?.find(({ purpose }) =>
+            readMachineProvisionerCredentialPurposeSelectorPathsV1(provisioner.descriptor, purpose.purpose).length === 0)?.purpose.purpose : undefined;
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
         const unreadable = outcome?.kind === 'failed' && !noAccount;
         const caveat = check?.available === true && check.code === 'home_not_guest_reachable';
@@ -216,8 +220,8 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
                     if (outcome.ok) catalog.refresh(); else setRepairFailure({ id, binding, controller, outcome });
                 }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setRepairFailure({ id, binding, controller,
                     outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); });
-            } } : { kind: 'choose', label: t(noAccount ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
-                onPress: () => open(id, placement.controller, noAccount ? provisioner.credentialPurposes?.[0]?.purpose.purpose : undefined),
+            } } : { kind: 'choose', label: t(connectPurpose ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
+                onPress: () => open(id, placement.controller, connectPurpose),
                 // Retained checks describe the card; the current controller catalog admits the handoff.
                 ...(!catalog.current || hostPending || unreadable || check?.available === false && missingExecutable
                     ? { disabled: true } : {}) } }];

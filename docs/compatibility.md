@@ -2,6 +2,25 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Managed provisioner check qualification (unreleased 0.3)
+
+The closed `machines.provisioners.check` V1 input adds optional `selectors`, using
+the existing plugin JSON value grammar. Configuration readers project only paths
+referenced by the provisioner's credential-purpose requirements; unrelated launch
+options keep the same shared availability answer. The existing credential owner
+uses these values at admission. Missing selectors keep conditional purposes
+required, including broad picker reads. Selectors qualify credentials only: the
+native check Action still receives its declared empty input, while options receive
+their selected query.
+
+New readers accept requests without this field. Older strict development readers
+reject it, so Protocol, SDK projections, UI and daemon source must reload together
+under the unpublished 0.3 direct cut. No persisted format, migration, runtime ABI
+or wire epoch changes. The inspected `../0.2` frontier at
+`a730ff7d94352baa194bcccae957aadf5474149a`, including scoped staged and unstaged
+changes, has no corresponding managed Action contract; no released adapter or
+reverse-development rollback direction is introduced.
+
 ## Trigger Event subject projection (unreleased 0.3)
 
 The closed `workflow.trigger.list` Event detail adds optional `subject`, using

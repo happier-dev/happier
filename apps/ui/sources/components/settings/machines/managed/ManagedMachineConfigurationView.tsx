@@ -10,7 +10,7 @@ import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -482,6 +482,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const credentials = credentialSelections;
         const input = { homeId: catalog.homeId, ...(controller ? { controller } : {}), contribution: catalogProvisioner.contribution, ...(credentials.length ? { credentials } : {}) };
         void readManagedConfiguration({ binding, client: catalog.client, nativeInput: input, occurrenceId: catalogProvisioner.occurrenceId,
+            provisioner: catalogProvisioner.descriptor,
             ...(optionsInput.kind === 'ready' && readSelectors !== null ? { selectors: readSelectors } : {}),
             signal: abort.signal, onApprovalPending }).then(result => {
             if (result.kind === 'retired') return;
@@ -788,7 +789,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             {approval.approvalId ? <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
                 action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
             {errorNotice}
-            {setupOnlyDraft ? <MachineSetupSection testID="managed-config.setup" setup={setupOnlyDraft.setup}
+            {setupOnlyDraft ? <MachineSetupSection testID="managed-config.setup" setup={setupOnlyDraft.setup} name={setupOnlyDraft.name}
                 editable={!busy && teamWritable} scope={activeBinding?.scope ?? null}
                 onChange={setup => setSetupOnlyDraft(current => current ? { ...current, setup } : current)} />
                 : error ? null : <ItemGroup surface="none"><SurfaceStateCard kind="loading" size="line" title={t('machinePresets.loading')}
@@ -824,8 +825,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const awaitsRequiredInput = launchFields.some(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
     // A failed read leaves nothing to fill a blank required field from: the failure takes the fields' place, not a column of empty boxes.
     const readFailed = error?.during === 'read';
-    // A new launch waits for its account: the choices are read through it, and the Account section above already leads there.
-    const awaitsAccount = !draft?.preset && !!credentialPurposes?.length && !credentialsReady;
+    // A conditional purpose needs its launch selectors before an account: choosing a native variant can waive it.
+    // Mandatory-account providers still lead with Connect; native reads keep using the shared requiredness decision.
+    const awaitsAccount = !draft?.preset && !!credentialPurposes?.length && !credentialsReady
+        && !credentialPurposes.some(({ purpose }) => readMachineProvisionerCredentialPurposeSelectorPathsV1(
+            provisioner.descriptor, purpose.purpose).length > 0);
     // A preset's launch is fixed here (only its editor changes it): its choices read as the chosen rows, not as locked fields.
     const presetLocked = !!preset && !props.presetOnly;
     // While its choices load it shows nothing the answer would then take over.
@@ -993,7 +997,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             declared={draft.enrollmentIdentityDefaulted ? managedConfiguratorEnrollmentDefault(draft) : undefined}
             onChange={next => setDraft(current => current ? { ...current, enrollmentIdentity: next } : current)} /> : null}
         {/* Setup belongs to a preset revision; a one-off Create never runs it, so only the preset editor offers it. */}
-        {draft && props.presetOnly ? <MachineSetupSection testID="managed-config.setup" setup={draft.setup}
+        {draft && props.presetOnly ? <MachineSetupSection testID="managed-config.setup" setup={draft.setup} name={draft.name}
             editable={!!catalogProvisioner && catalogPlacementAvailable && !busy} scope={activeBinding?.scope ?? null}
             onChange={setup => setDraft(current => current ? { ...current, setup } : current)} /> : null}
         {/* Who can use it and how many may run belong to a preset, never to a one-off machine (lab m-presets). */}

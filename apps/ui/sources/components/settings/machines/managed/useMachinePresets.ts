@@ -191,7 +191,8 @@ export function useMachinePresetConfiguration(input: Readonly<{
             refreshManagedProvisionerAvailability(binding, actionInput);
             refreshedAvailability.current = [refreshRevision, input.refreshRevision];
         }
-        void readManagedConfiguration({ binding, client, nativeInput: actionInput, occurrenceId: provisioner.occurrenceId, selectors,
+        void readManagedConfiguration({ binding, client, nativeInput: actionInput, occurrenceId: provisioner.occurrenceId,
+            provisioner: provisioner.descriptor, selectors,
             signal: abort.signal, onApprovalPending }).then(result => {
             if (result.kind === 'retired') return;
             setState(current => {

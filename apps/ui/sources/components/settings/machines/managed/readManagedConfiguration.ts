@@ -1,5 +1,8 @@
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineProvisionerCheckResultV1, MachineProvisionerOptionsResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readMachineProvisionerCredentialPurposeSelectorPathsV1,
+    type MachineProvisionerContributionV1, type MachineProvisionerCheckResultV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -22,8 +25,9 @@ export async function readManagedConfiguration(input: Readonly<{
     client: ReturnType<typeof createManagedProvisionerClient>;
     nativeInput: ManagedMachineActionInputV1<'machines.provisioners.check'>;
     occurrenceId: string;
+    provisioner?: Pick<MachineProvisionerContributionV1, 'credentialPurposeRequirements'>;
     selectors?: NativeSelectors | ((signal: AbortSignal) => Promise<MachinePresetCollectionSettledResult<NativeSelectors>>);
-    /** Detail reviews resolve a retained query only after the native runtime is available. */
+    /** Detail reviews defer options until availability; credential qualifiers resolve before that check. */
     optionsAfterAvailableCheck?: true;
     signal: AbortSignal;
     onApprovalPending: (approval: ActionApprovalRegistration) => void;
@@ -36,13 +40,30 @@ export async function readManagedConfiguration(input: Readonly<{
     try {
         if (!current()) return { kind: 'retired' };
         const options = { signal: abort.signal, onApprovalPending: input.onApprovalPending };
-        const checkRead = readManagedProvisionerAvailability({ ...input, ...options });
+        const provisioner = input.provisioner;
+        const credentialPaths = provisioner?.credentialPurposeRequirements?.flatMap(requirement =>
+            readMachineProvisionerCredentialPurposeSelectorPathsV1(provisioner, requirement.purpose)) ?? [];
+        const qualificationSelection = credentialPaths.length > 0 && typeof input.selectors === 'function'
+            ? await input.selectors(abort.signal) : undefined;
+        if (!current()) return { kind: 'retired' };
+        if (qualificationSelection?.kind === 'failed') return { kind: 'settled', options: null,
+            failure: { code: qualificationSelection.code } };
+        const selectedValues = qualificationSelection?.kind === 'succeeded' ? qualificationSelection.value : input.selectors;
+        let qualifiers: Record<string, unknown> = {};
+        for (const path of credentialPaths) {
+            const value = readInputPath(selectedValues, path);
+            if (value !== undefined) qualifiers = writeInputPath(qualifiers, path, value);
+        }
+        // Only declared credential qualifiers affect the shared availability question.
+        const nativeInput = credentialPaths.length > 0
+            ? { ...input.nativeInput, selectors: qualifiers as NativeSelectors } : input.nativeInput;
+        const checkRead = readManagedProvisionerAvailability({ ...input, ...options, nativeInput });
         const readChoices = async () => {
             if (input.optionsAfterAvailableCheck) {
                 const check = await checkRead;
                 if (check.kind === 'failed' || !check.value.available || !current()) return null;
             }
-            const selection = typeof input.selectors === 'function' ? await input.selectors(abort.signal) : undefined;
+            const selection = qualificationSelection ?? (typeof input.selectors === 'function' ? await input.selectors(abort.signal) : undefined);
             if (!current()) return null;
             if (selection?.kind === 'failed') return { ...selection, nativeCause: undefined };
             const selectors = selection?.kind === 'succeeded' ? selection.value : input.selectors;

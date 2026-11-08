@@ -70,7 +70,7 @@ export async function prepareUiManagedProvisionerAdmission(
         const requests = localId && resolvePluginActionConnectedAccountUseRequestsV2(selected.manifest, localId);
         if (!entry || !localId || !requests) return { ok: false, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
         const identity = { pluginId: input.contribution.pluginId, localId };
-        const roleInput = PluginJsonValueV2Schema.parse('selectors' in input ? input.selectors ?? {} : {});
+        const roleInput = PluginJsonValueV2Schema.parse(actionId === 'machines.provisioners.options' ? input.selectors ?? {} : {});
         let authorizations;
         try {
             authorizations = bindManagedMachineRoleCredentials({
@@ -78,7 +78,7 @@ export async function prepareUiManagedProvisionerAdmission(
                     ...scope, purpose: { consumer: identity, purpose: scope.purpose },
                 })),
                 providerPluginId: identity.pluginId, credentials: input.credentials,
-                qualification: { descriptor: entry.descriptor, launch: roleInput },
+                qualification: { descriptor: entry.descriptor, launch: input.selectors },
             });
         } catch (error) {
             if (!(error instanceof ManagedMachineControllerError)) throw error;

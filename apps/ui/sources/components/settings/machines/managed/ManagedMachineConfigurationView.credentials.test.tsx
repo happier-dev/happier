@@ -672,6 +672,37 @@ describe('managed provisioner credential purposes', () => {
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         await screen.unmount();
     });
+    it('lets a new launch choose credential-free selectors before connecting an account', async () => {
+        const serverId = await setupHome();
+        const local = { ...provisioner, descriptor: { ...provisioner.descriptor,
+            credentialPurposeRequirements: [cloudPurpose, cuaPurpose].map(({ purpose }) => ({
+                purpose, optionalWhen: { op: 'eq' as const, path: 'cpu', value: 2 },
+            })) }, credentialPurposes: provisioner.credentialPurposes!.map(entry => ({ ...entry, options: [] })) };
+        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true,
+                result: { controller, provisioners: [local] } } } };
+        } });
+        const action = projectionReply.projection.actionsById[buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId: 'options' })]!;
+        action.occurrenceId = local.occurrenceId;
+        action.inputHints = { fields: [{ path: 'cpu', title: 'CPU cores', widget: 'integer', required: true }] };
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull());
+        expect(actionInputs('machines.provisioners.options')).toHaveLength(0);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:cpu')).not.toBeNull());
+        await act(async () => screen.changeTextByTestId('managed-config.field:cpu', '2'));
+        await waitForHomeGovernance(() => expect(actionInputs('machines.provisioners.options')).toContainEqual(expect.objectContaining({ selectors: { cpu: 2 } })));
+        expect(actionInputs('machines.provisioners.options').every(input => !input || typeof input !== 'object' || !('credentials' in input))).toBe(true);
+        expect(screen.findByTestId('managed-config.connect:cloud-account')).toBeNull();
+        // Returning to the credentialed variant restores the account requirement before another read.
+        const reads = actionInputs('machines.provisioners.options').length;
+        await act(async () => screen.changeTextByTestId('managed-config.field:cpu', '3'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.connect:cloud-account')).not.toBeNull());
+        expect(actionInputs('machines.provisioners.options')).toHaveLength(reads);
+        await screen.unmount();
+    });
     it('uses a qualified credentialless native variant through current catalog, options and the shared configuration view', async () => {
         const serverId = await setupHome();
         const local = { ...provisioner, descriptor: { ...provisioner.descriptor, credentialPurposeRequirements: [cloudPurpose, cuaPurpose].map(({ purpose }) => ({

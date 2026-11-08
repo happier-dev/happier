@@ -104,6 +104,7 @@ export type DiscoveryActionInputById = {
                             contextMode?: 'follow' | 'own' | undefined;
                             required?: boolean | undefined;
                             requireExplicitSelection?: boolean | undefined;
+                            allowCustomValue?: boolean | undefined;
                             listSeparator?: 'comma' | 'newline' | undefined;
                             maxSelections?: number | undefined;
                             defaultValue?: unknown;
@@ -244,6 +245,7 @@ export type DiscoveryActionResultById = {
                     contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
+                    allowCustomValue?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
                     maxSelections?: number | undefined;
                     defaultValue?: JsonValue | undefined;
@@ -407,6 +409,7 @@ export type DiscoveryActionResultById = {
                     contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
+                    allowCustomValue?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
                     maxSelections?: number | undefined;
                     defaultValue?: JsonValue | undefined;
@@ -895,6 +898,7 @@ export type DiscoveryActionResultById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -1881,6 +1885,7 @@ export type DiscoveryActionResultById = {
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
+                        allowCustomValue?: boolean | undefined;
                         listSeparator?: 'comma' | 'newline' | undefined;
                         maxSelections?: number | undefined;
                         defaultValue?: JsonValue | undefined;
@@ -2473,6 +2478,7 @@ export type DiscoveryActionResultById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {

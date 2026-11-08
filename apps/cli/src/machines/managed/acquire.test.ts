@@ -2952,6 +2952,30 @@ describe('managed acquisition durable custody', () => {
         expect(native.effects()).toBe(0);
         expect(post).not.toHaveBeenCalled();
     });
+    it('qualifies the direct Crabbox check without requiring its optional coordinator account', async () => {
+        const native = nativeFixture({ fixtureManifest: normalizePluginManifestV2(CRABBOX_PLUGIN.manifest),
+            nativeCredentialService: true, nativeRoleResults: { check: { available: true } },
+            createHostServiceBinding: (occurrence, id) => createPluginInvocationServiceBinding(occurrence, id),
+            hostServiceAdapters: {
+                exec: { resolveExecutable: unavailableTransport, resolvePath: unavailableTransport },
+                http: createStablePluginHttpHost({ adapter: { request: unavailableTransport, openWebSocket: unavailableTransport } }),
+                connectedAccounts: createStablePluginConnectedAccountsHost(createConnectedAccountPurposeBindingOwner({
+                    store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
+                    selectTarget: unavailableTransport, resolveTarget: unavailableTransport, materializeAccount: unavailableTransport,
+                    projectTargetAccounts: unavailableTransport, assertTargetAccountMaterializable: unavailableTransport,
+                })),
+            } });
+        const reader = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example',
+            homeId: 'home', controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs });
+        const probe = { homeId: 'home', controller, contribution: { pluginId: 'happier.machine.crabbox', localId: 'crabbox' } };
+        await expect(reader.execute('machines.provisioners.check', { ...probe,
+            selectors: { transport: 'direct', backendId: 'local-container' },
+        }, { requestId: 'local-check' })).resolves.toEqual({ available: true });
+        for (const selectors of [undefined, { transport: 'direct' }, { transport: 'coordinator', backendId: 'local-container' }]) {
+            await expect(reader.execute('machines.provisioners.check', { ...probe, ...(selectors ? { selectors } : {}) },
+                { requestId: 'unqualified-check' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        }
+    });
     it('passes native options selectors in the declared Action grammar without fabricating a wrapper', async () => {
         const post = vi.spyOn(axios, 'post');
         const native = nativeFixture({ privateNative: true });

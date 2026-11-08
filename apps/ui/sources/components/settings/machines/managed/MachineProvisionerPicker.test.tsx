@@ -750,6 +750,7 @@ describe('provisioner picker demand', () => {
     { location: 'cloud', credentialFailure: false },
     { location: 'unknown', credentialFailure: false },
     { location: 'cloud', credentialFailure: true },
+    { location: 'cloud', credentialFailure: true, optionalCredential: true },
     { location: 'cloud', credentialFailure: false, checkFailure: true },
     { location: 'local', credentialFailure: false, caveat: true },
     { location: 'local', credentialFailure: false, nativeStatus: true },
@@ -759,6 +760,7 @@ describe('provisioner picker demand', () => {
       const checkFailure = 'checkFailure' in rest;
       const caveat = 'caveat' in rest;
       const nativeStatus = 'nativeStatus' in rest;
+      const optionalCredential = 'optionalCredential' in rest;
       const serverId = await harness.addHome({
         name: 'Build',
         serverUrl: 'https://build.example',
@@ -800,9 +802,11 @@ describe('provisioner picker demand', () => {
           },
           launchSchema: {
             type: 'object',
-            properties: {},
+            properties: optionalCredential ? { cpu: { type: 'integer' } } : {},
             additionalProperties: false,
           },
+          ...(optionalCredential ? { credentialPurposeRequirements: [{ purpose: 'cloud-account',
+            optionalWhen: { op: 'eq', path: 'cpu', value: 2 } }] } : {}),
           resourceSchema: {
             type: 'object',
             properties: {},
@@ -951,7 +955,7 @@ describe('provisioner picker demand', () => {
         expect(cards[0].status.label).toBe(t('managedMachines.add.status.noAccount'));
         // An optional service nobody connected yet does not need the person: no amber dot (lab m-add).
         expect(cards[0].status.tone).toBe('none');
-        expect(cards[0].action.label).toBe(t('managedMachines.add.action.connect'));
+        expect(cards[0].action.label).toBe(t(optionalCredential ? 'managedMachines.add.action.choose' : 'managedMachines.add.action.connect'));
       }
       expect(screen.findByTestId('managed-picker.unavailable')?.props.diagnosticCode).toBeUndefined();
       await act(async () =>
@@ -963,7 +967,7 @@ describe('provisioner picker demand', () => {
         serverId,
         provisioner: buildQualifiedPluginContributionKey(contribution),
         controller: { machineId: 'controller', installationId: 'installation' },
-        ...(credentialFailure ? { connectPurpose: 'cloud-account' } : {}),
+        ...(credentialFailure && !optionalCredential ? { connectPurpose: 'cloud-account' } : {}),
       });
       expect(
         harness.requests.some((request) =>

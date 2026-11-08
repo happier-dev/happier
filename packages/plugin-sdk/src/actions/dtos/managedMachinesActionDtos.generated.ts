@@ -43,6 +43,7 @@ export type ManagedMachinesActionInputById = {
                 accountId: string;
             };
         }[];
+        selectors?: unknown;
     };
     readonly "machines.provisioners.options": {
         homeId: string;
@@ -5859,6 +5860,7 @@ export type ManagedMachinesActionInputById = {
                         path: string;
                         agentUsername: string;
                         id: string;
+                        state?: 'absent' | 'present' | undefined;
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -6705,6 +6707,7 @@ export type ManagedMachinesActionInputById = {
                         path: string;
                         agentUsername: string;
                         id: string;
+                        state?: 'absent' | 'present' | undefined;
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -8054,6 +8057,7 @@ export type ManagedMachinesActionInputById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -8902,6 +8906,7 @@ export type ManagedMachinesActionInputById = {
                 path: string;
                 agentUsername: string;
                 id: string;
+                state?: 'absent' | 'present' | undefined;
                 requiredFacts?: ({
                     kind: 'administrator';
                 } | {
@@ -14460,6 +14465,7 @@ export type ManagedMachinesActionResultById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -15310,6 +15316,7 @@ export type ManagedMachinesActionResultById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -16838,6 +16845,7 @@ export type ManagedMachinesActionResultById = {
                     path: string;
                     agentUsername: string;
                     id: string;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
                         kind: 'administrator';
                     } | {
@@ -17755,6 +17763,7 @@ export type ManagedMachinesActionResultById = {
                             path: string;
                             agentUsername: string;
                             id: string;
+                            state?: 'absent' | 'present' | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -18605,6 +18614,7 @@ export type ManagedMachinesActionResultById = {
                             path: string;
                             agentUsername: string;
                             id: string;
+                            state?: 'absent' | 'present' | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {
@@ -20133,6 +20143,7 @@ export type ManagedMachinesActionResultById = {
                             path: string;
                             agentUsername: string;
                             id: string;
+                            state?: 'absent' | 'present' | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {

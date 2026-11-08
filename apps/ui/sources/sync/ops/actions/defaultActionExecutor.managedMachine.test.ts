@@ -64,6 +64,34 @@ beforeAll(loadSyncSingletonForTests);
 afterEach(() => { resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); actionOperationStore.reset(); clearPluginAccountAvailabilityProjection(); vi.restoreAllMocks(); });
 
 describe('managed native UI Action frontdoor', () => {
+    it('keeps check qualification selectors outside the Account role’s closed input', async () => {
+        const target = await upsertServerProfile({ serverUrl: 'https://account-check-qualifiers.test' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_account_check_qualifiers');
+        const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'account-a', tokenEpoch: 3,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'account-a' },
+            snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+        setRuntimeFetch(async rawUrl => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            return Response.json({ error: 'unsupported' }, { status: 404 });
+        });
+        const { prepareUiManagedProvisionerAdmission } = await import('./managedProvisionerAction');
+        const account = await captureLazyActionAccountContext(target.id);
+        const contribution = { pluginId: 'happier.machine.vercel', localId: 'vercel' };
+        try {
+            const prepared = await prepareUiManagedProvisionerAdmission({ actionId: 'machines.provisioners.check',
+                input: { homeId: 'srv_account_check_qualifiers', contribution, selectors: { image: 'node22' },
+                    credentials: [{ purpose: { consumer: contribution, purpose: 'cloud-api' },
+                        account: { service: { pluginId: contribution.pluginId, localId: 'vercel-account' }, accountId: 'selected' } }] },
+                context: { serverId: target.id, surface: 'ui' } }, account);
+            if (!prepared || !('children' in prepared)) throw new Error('Expected Account role admission');
+            expect(prepared.children).toEqual([{ action: { pluginId: contribution.pluginId, localId: 'check' },
+                role: 'check', input: {} }]);
+        } finally { account.dispose(); }
+    });
     it.each(['forged-exec', 'forged-provider', 'authentic', 'native-selected'] as const)('admits only the host-selected provisioner before role review (%s)', async variant => {
         const target = await upsertServerProfile({ serverUrl: 'https://selected-provisioner-admission.test' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_selected_provider');

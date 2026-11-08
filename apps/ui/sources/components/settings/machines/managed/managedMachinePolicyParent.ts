@@ -78,6 +78,7 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
     } : undefined;
     refreshManagedProvisionerAvailability(binding, nativeInput);
     const native = await readManagedConfiguration({ binding, client, nativeInput, occurrenceId: provisioner.occurrenceId,
+        provisioner: provisioner.descriptor,
         ...(readSelectors ? { selectors: readSelectors, optionsAfterAvailableCheck: true } : {}),
         signal, onApprovalPending: input.onApprovalPending });
     if (native.kind === 'retired') return { kind: 'failed', code: 'action_account_scope_changed' };

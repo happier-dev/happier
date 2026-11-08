@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Linking } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
@@ -193,6 +194,9 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         globalThis.executableContinuityFixture.enteredActivation = true;
         api.actions.register('hold', async function(input, context) {
             globalThis.executableContinuityFixture.signal = context.signal;
+            if (${options.managedRepair === true}) {
+                await context.ui.executeAction('links.openExternal', { url: 'https://docs.docker.com/ai/sandboxes/install/' }, { signal: context.signal });
+            }
             if (${options.searchProvider === true}) return { items: [{ id: 'match', title: input.query,
                 command: { kind: 'openSurface', destination: 'details' } }], truncated: false };
             return await globalThis.executableContinuityFixture.pending.promise;
@@ -415,6 +419,9 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
 }
 
 it('dispatches a controller prerequisite repair through the mounted managed catalog and AppShell activation', async () => {
+    // The answering platform is the only boundary replaced; the nested host
+    // Action must retain normal scope, admission and policy through the dispatcher.
+    const opened = vi.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
     const fixture = await mountClientExecutableFixture({ managedRepair: true, waitForAdmission: false });
     await vi.waitFor(async () => {
         await flushHookEffects();
@@ -426,7 +433,8 @@ it('dispatches a controller prerequisite repair through the mounted managed cata
     const binding = fixture.readMountedLifetime();
     if (!binding) throw new Error('Missing routed repair lifetime');
     const result = await fixture.readManagedPresentation()?.repair({ action: { pluginId, localId: actionId }, input: null }, binding);
-    expect(result).toMatchObject({ ok: true, result: 'install reviewed' });
+    expect(result, JSON.stringify(result)).toEqual({ ok: true, result: 'install reviewed' });
+    expect(opened).toHaveBeenCalledExactlyOnceWith('https://docs.docker.com/ai/sandboxes/install/');
 });
 
 it('withdraws executable authority before AppShell unmount cleanup yields to a successor', async () => {

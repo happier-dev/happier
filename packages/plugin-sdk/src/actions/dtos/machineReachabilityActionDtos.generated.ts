@@ -702,6 +702,7 @@ export type MachineReachabilityActionInputById = {
                         path: string;
                         agentUsername: string;
                         id: string;
+                        state?: 'absent' | 'present' | undefined;
                         requiredFacts?: ({
                             kind: 'administrator';
                         } | {
@@ -1965,6 +1966,7 @@ export type MachineReachabilityActionResultById = {
                             path: string;
                             agentUsername: string;
                             id: string;
+                            state?: 'absent' | 'present' | undefined;
                             requiredFacts?: ({
                                 kind: 'administrator';
                             } | {

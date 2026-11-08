@@ -34,6 +34,7 @@ import type { PluginSurfaceActionDispatchOutcome } from '@/components/plugins/su
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 
 export type ManagedProvisionerRepairFailure = Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>;
 
@@ -199,6 +200,8 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         const result = await launchPluginSurfaceAction({ action: action.action, input: action.input,
             contributedAction: { machineId: controller.machineId, serverId: input.serverId, accountLifetime: binding },
             clientAction: {},
+            hostAction: { execute: scopedHomeActionExecutor(binding.scope),
+                context: { serverId: binding.scope.serverId, expectedAccountId: binding.scope.accountId } },
             pluginUiProjection: uiProjection, resolveContributedAction: createPluginUiProjectedActionResolver(uiProjection.actionsById),
             ...(signal ? { signal } : {}),
             isCurrent: () => binding.isCurrent() && currentController.current?.machineId === controller.machineId
