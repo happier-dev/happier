@@ -50,6 +50,7 @@ describe('daemon release-less declaration publication', () => {
         const credentials = { token: 'declaration-account', encryption: null } satisfies StoredCredentials;
         const events: string[] = [];
         const claims: unknown[] = [];
+        const claimsByPlugin = new Map<string, number>();
         let accountPluginEnabled = startupMode === 'normal';
         let accountReadable = true;
         const accountReadStates: boolean[] = [];
@@ -104,6 +105,7 @@ describe('daemon release-less declaration publication', () => {
                     post: async (url, body) => {
                         expect(url).toBe('https://declaration.example.test/v1/plugins/availability/collection-writers/claim');
                         const claim = JSON.parse(body);
+                        claimsByPlugin.set(claim.manifest.id, (claimsByPlugin.get(claim.manifest.id) ?? 0) + 1);
                         if (claim.manifest.id === manifest.id) { claims.push(claim); events.push('lima-claim'); }
                         return { status: 200, data: {} };
                     },
@@ -140,6 +142,21 @@ describe('daemon release-less declaration publication', () => {
                 await vi.waitFor(() => expect(claims).toEqual([{ manifest: publishedManifest }]));
                 expect(events.indexOf('lima-claim')).toBeGreaterThan(events.indexOf('materializations'));
             } else expect(claims).toEqual([]);
+            await runtime.claimReleaseLessDeclarations();
+            expect(claimsByPlugin.size).toBeGreaterThan(1);
+            expect([...claimsByPlugin.values()]).toEqual(Array.from(claimsByPlugin, () => 1));
+            const startupClaims = new Map(claimsByPlugin);
+            // Machine-online transport recovery reports the current inventory.
+            // N admitted declarations must produce zero further claim requests.
+            for (let reconnect = 0; reconnect < 3; reconnect += 1) {
+                await owner.reportCurrentAvailability();
+                await runtime.claimReleaseLessDeclarations();
+                expect(claimsByPlugin).toEqual(startupClaims);
+            }
+            console.info('WRITER_CLAIM_RECONNECT_MEASUREMENT', JSON.stringify({ plugins: startupClaims.size,
+                startupClaims: [...startupClaims.values()].reduce((sum, count) => sum + count, 0),
+                reconnects: 3, additionalClaims: [...claimsByPlugin.values()].reduce((sum, count) => sum + count, 0)
+                    - [...startupClaims.values()].reduce((sum, count) => sum + count, 0) }));
             expect(controller.getState().activeRegistry?.activatedPluginIds.has(manifest.id)).toBe(false);
             const assertServingAvailability = async () => {
                 expect((await owner!.readCatalog()).find(entry => entry.pluginId === manifest.id))

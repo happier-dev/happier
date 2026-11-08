@@ -1,0 +1,49 @@
+# writers-claim-tx-1108
+
+**Verdict: implemented with measured RED→GREEN; final compiler verdicts and MySQL validation remain [blocked].** Constructed real-PostgreSQL RED→GREEN removes repeated wide declaration reads and bulk JSON preparation from Account serialization. SQLite preparation exposed and verified a raw-number/bigint revision mismatch, now normalized by the existing intent reader. Compiler operations remain pending on their original handles; MySQL needs primary-checkout Docker. The unrelated SQLite Triage assertion was excluded from the final rerun. No shared development database was written. Process deviation: a delegate printed synthetic harness fixture values during inspection despite the redaction rule; no real credentials were exposed, and subsequent inspection was filtered.
+
+## Result and owner
+
+- `apps/server/sources/app/plugins/availability/operations.ts#claimCollectionWriters` reuses `intentReadRows.ts` compact identities and `currentDeclaration.ts#mergeReleaseLessDeclarationV2`; unchanged rejoins take no Account lock.
+- Changed claims capture, merge and encode the complete Machine declaration store before admission. After admission, one revision-only read uses the existing transaction replay owner if the captured intent changed. Account-before-resource ordering, quotas, promotion and publication remain at their existing owners.
+- `transitionIntentTx` uses `intentWriteRows.ts` to bind captured JSON directly to the existing revision-fenced update. It returns admitted metadata without rereading its own wide JSON write. The same transition serves present-user release selection and writer claims; no competing write path was added.
+- The PostgreSQL identity projection is never persisted. Other Machine entries survive changed claims. SQLite/MySQL retain their existing full-text reader fallback outside Account serialization.
+- `docs/plugin-platform.md` documents the owner, compact rejoins and admission/CAS behavior. No wire/schema or user-facing contract changed, so published documentation needs no change.
+
+## Reproduced cost and count evidence
+
+Disposable PostgreSQL 17; fixture: 490 Machine envelopes, approximately 65 MB. Instrumentation observes real Prisma transactions/query durations and encodes result-size measurements only after closure. Lock timing covers acquisition return through callback settlement; commit time is excluded. Driver query duration includes transport/driver work and is not server-only CPU time. No SQL parameters or declaration contents are recorded.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Observed locked callback tenure | 5,320.84 ms | 2,636.19 ms |
+| Observed database calls while held | 15 | 14 |
+| Serialized result bytes while held | 130,662,652 | 1,635 |
+| Manifest bodies returned while held | 980 | 0 |
+| Driver-reported SQL time while held | 1,996 ms | 1,018 ms |
+| App gaps before held calls | 334.26 ms | 9.96 ms |
+| Physical SQL statements, whole transaction | 25 | 25 |
+
+- Before: the two held intent reads each returned 490 bodies. The stage cleanup was followed by 322.37 ms of app work before Prisma `updateMany`; that call took 2,950.19 ms wall / 933 ms SQL. After: one 16-byte revision read; preencoded raw update took 2,594.37 ms wall / 1,000 ms SQL. Remaining driver/binding and database JSON rewrite cost is visible, not claimed eliminated.
+- Unchanged rejoin: four observed calls, 173,817 result bytes, zero manifest bodies, zero Account locks. No arbitrary duration ceiling was introduced; duration is measured, and shape/bytes are asserted.
+- Raw artifacts: `.project/tmp/writers-claim-tx-1108/{before-valid,green}.json`; deciding logs: `red-valid-postgres.log` (`expected 980 to be +0`), `green-postgres.log` (`16 passed`). Initial instrumentation missed the unsafe lock method; its earlier failure is not RED evidence.
+
+## Producer and same-shape sweep
+
+- Observed: daemon `runtimeOwner.ts` shares `writerClaims` for its lifetime; `accountPluginDataStorage.ts` owns pending/successful claims per Account/plugin declaration. Commit `4ab7dffb04` already preserved claims across unchanged reactivation; `cf4a131b1c` limits startup to Account-scoped eligible plugins. Demand-driven UI storage consumes the same claim owner.
+- Composed production-owner test: N=28 normal / 27 pluginRecovery plugins, one claim per plugin at startup; three reconnect reports add zero claims in each mode (`producer-reconnect-final.log`, 2/2 passed). This guards regressions; no new cache or producer mechanism was needed. Storage-owner adjacency: two passed, 100 unrelated tests skipped (`producer-storage-count.log`).
+- Request tags alone cannot identify whether the observed busy stacks were restarting or reconnecting. Correlate existing `collection.writer_claim.start` producer PID/kind/reason diagnostics with the live tags before proposing another fanout fix. No shared-stack restart or retained-database write was performed.
+- **Same-shape sweep:** both callers of `transitionIntentTx` consume the one write owner; the claim's duplicate held full reads/readback are removed. `candidatePreparationLifecycle.ts` already deletes a set by Account/plugin or source-row IDs; promotion calls it once per page, not per row. No DELETE batching change was warranted. The constructed claim asserts one final stage cleanup. The second producer, Machine heartbeat/daemon-state Account locking, is routed to **O-MACH** by Systemic.
+- Systemic's read-only 17:44–18:44Z sampler reports 527 waits ≥3 s (max 15 s): Machine daemon-state Account lockers (67), untagged holders (60), Machine presence-heartbeat updates (59), unspecified lockers (47), and plugin intent reads (8). This is a second producer, routed by Systemic to **O-MACH**; no Machine behavior is changed here. These are supplied sampler findings, not independently attributed causal measurements. Evidence copied to `.project/tmp/writers-claim-tx-1108/pg-blockers-1108.log`.
+- Retained full reads in present-user `setIntent` preserve the complete store needed for a deliberate mutation; release/current-declaration readers and preparation bindings serve different outputs. Prior list/materialization/webhook/current-declaration leads remain with Systemic/PLUGIN-AVAIL2 rather than gaining consumer-local checks here.
+
+## Validation, delivery and residual risk
+
+- PostgreSQL contention: 16/16 passed, including concurrent first claim replay, populated preparation, release selection and Account locking. Adjacent database contract suite: 9/9 passed (`green-postgres-transition-final.log`), including the added persistence/JSON clearing contract. Its first fixture omitted required publication/selection input fields; canonical typed inputs corrected the fixture, with no production change.
+- Three pre-existing PostgreSQL expectations assumed the removed semver declaration heuristic and failed on the baseline. They now test the canonical Machine/unsigned-declaration merge: an unsigned edit may replace the legacy declaration, and repeating that exact declaration rejoins without locking. No production version arbitration was introduced.
+- SQLite composed operations: initial 68/70 passed; one new preparation replay defect was reproduced (`bigint 0` versus `number 0`) and fixed in `decodeIntentReadRow`. Rerun: 69 passed, one deliberately excluded pre-operation Triage hard-coded digest assertion. Original failure is at `operations.composed.integration.spec.ts:1938`, before the changed operation; not a claim correctness result.
+- Added provider-neutral database contract checks changed declaration persistence, timestamp continuity and clearing JSON on selected-release transition. **[blocked] MySQL execution has not run:** its `migrate:mysql:deploy` invokes `schema:sync --quiet`, which writes tracked schemas/enums (`apps/server/scripts/schemaSync.ts:1034`). Canonical package-policy correctly requires primary placement (`remote_commands.mjs:1150`); Docker is unavailable there. Next action: provide primary-checkout Docker, then run the canonical MySQL harness. No routing bypass or schema change was made.
+- Earlier server touched typecheck: added 0 / removed 0; public package compiler exit 2 with 6,335 unattributed diagnostics against `.project/tmp/systemic-orch/server-1103.locs`. **[blocked] final compiler verdicts:** the server rerun after typed fixture corrections (session `75384`, `server-typecheck-final.log`) and CLI touched check (session `81678`, `cli-typecheck.log`, baseline `.project/tmp/fin-typecheck-1108/cli.observed.locs`) remain pending. Systemic/integration must collect terminal results from these existing handles/logs; neither was killed, timed out or re-pinned. These are not successful final compiler checks. Entry-loads: 7/7 passed (`entry-loads.log`, terminal exit 0). Logs are in `.project/tmp/writers-claim-tx-1108/`.
+- Delivery: this report and the scoped implementation are committed together through a private index and compare-and-swap; find the commit by subject `fix(server): shorten collection writer claim Account locks`. An addressed RESULT carries the exact commit ID on the shared handoff board.
+- Net mechanism delta: checks +1 revision equality / −1 duplicate locked merge; replay reasons +1 / −0, using existing replay policy and budget; write encoders +1 / −1 Prisma object-encoding path; held full reads +0 / −2. New timers, retry policies, pools, caches, states, wire errors and persisted formats: +0 / −0. New source files +1 (`intentWriteRows.ts`, measured JSON-walk cost); test additions exercise real storage and reconnect counts.
+- Residual risk: one constructed sample is not live incident closure. A changed 65 MB declaration still rewrites one JSON value under serialization; the remaining 2.64 s is measured. MySQL dialect validation, final compiler verdicts and live producer attribution remain open as stated above. Machine heartbeat/daemon-state serialization is owned by O-MACH.

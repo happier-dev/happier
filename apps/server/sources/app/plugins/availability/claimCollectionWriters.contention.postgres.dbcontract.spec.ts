@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionOutputV1Schema, PluginAccountCollectionContributionV1Schema, PluginManifestV2Schema, normalizePluginAccountCollectionContractsV1 } from "@happier-dev/protocol";
@@ -13,6 +15,7 @@ import { inTx, type Tx } from "@/storage/inTx";
 import { registerPluginAvailabilityRoutes } from "./routes";
 import { resolveCurrentPluginDeclarationsTx } from "./currentDeclaration";
 import { createPluginAvailabilityOperations } from "./operations";
+import { createReleaseLessDeclarationV1 } from "./currentDeclaration";
 import { acquireAccountSessionOwnerMetadataFenceInTx, acquireAccountSessionOwnerMetadataFencesInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { pagePluginCollectionCandidatePreparationSource, stagePluginCollectionCandidatePreparation } from "@/app/plugins/data/collections/candidatePreparation";
 
@@ -95,6 +98,93 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         await competitor;
     }
 
+    it("keeps 490 Machine declaration bodies outside Account serialization on a changed claim", async () => {
+        const { account, manifest, ref } = await fixture();
+        // Match the retained Account census: 490 envelopes, about 65 MB of manifests.
+        const marker = "claim-locked-body";
+        const declaration = createReleaseLessDeclarationV1(PluginManifestV2Schema.parse({
+            ...manifest, metadata: { measuredBody: marker + "x".repeat(128 * 1024) },
+        }));
+        const stored = { schemaVersion: 2, machines: Array.from({ length: 490 }, (_, index) => ({
+            machineId: `machine-${index}`, machineInstallationId: `installation-${index}`, declaration,
+        })), legacyDeclaration: null };
+        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
+            enabled: true, writableCollections: [ref], releaseLessDeclaration: stored } });
+        const client = new PrismaClient({ errorFormat: "minimal", log: [{ emit: "event", level: "query" }] });
+        const transaction = db.$transaction;
+        const statements: Array<{ label: string; held: boolean; appBeforeMs: number; wallMs: number; sqlMs: number; result: unknown }> = [];
+        let physicalMs = 0;
+        let physicalCount = 0;
+        let held = false;
+        let last = 0;
+        let lockedAt = 0;
+        let lockedMs = 0;
+        client.$on("query", (event: Prisma.QueryEvent) => { physicalMs += event.duration; physicalCount++; });
+        await client.$connect();
+        // Genuine database adapter observation: internal claim, merge and promotion stay real.
+        db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args: unknown[]) {
+            const callback = args[0];
+            if (typeof callback !== "function") return Reflect.apply(client.$transaction, client, args);
+            return Reflect.apply(client.$transaction, client, [async (tx: Tx) => {
+                held = false;
+                last = performance.now();
+                const observe = async (target: object, method: (...values: unknown[]) => unknown, values: unknown[], label: string) => {
+                    const start = performance.now();
+                    const appBeforeMs = start - last;
+                    const beforeSql = physicalMs;
+                    const result = await Reflect.apply(method, target, values);
+                    const end = performance.now();
+                    const sql = values[0] as { text?: string; sql?: string } | string | undefined;
+                    const lock = label.startsWith("$queryRaw") && /FROM "Account".*FOR NO KEY UPDATE/s.test(
+                        typeof sql === "string" ? sql : sql?.text ?? sql?.sql ?? "");
+                    statements.push({ label, held, appBeforeMs, wallMs: end - start, sqlMs: physicalMs - beforeSql, result });
+                    if (lock && !held) { held = true; lockedAt = end; }
+                    last = performance.now();
+                    return result;
+                };
+                const proxy = new Proxy(tx, { get(target, key, receiver) {
+                    const value = Reflect.get(target, key, receiver);
+                    if (typeof value === "function" && String(key).startsWith("$")) {
+                        return (...values: unknown[]) => observe(target, value, values, String(key));
+                    }
+                    const model = String(key);
+                    if (value && typeof value === "object" && !model.startsWith("_")) return new Proxy(value, { get(delegate, key, receiver) {
+                        const method = Reflect.get(delegate, key, receiver);
+                        return typeof method === "function" ? (...values: unknown[]) => observe(delegate, method, values, `${model}.${String(key)}`) : method;
+                    } });
+                    return value;
+                } });
+                try { return await callback(proxy); }
+                finally { if (held) lockedMs = performance.now() - lockedAt; }
+            }, ...args.slice(1)]);
+        } });
+        try {
+            const result = await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: account.id,
+                input: { manifest: { ...manifest, version: "1.0.1" } } });
+            // Encode measurements only after transaction closure; instrumentation must not extend the lock.
+            const measured = statements.map(({ result, ...statement }) => {
+                const text = JSON.stringify(result, (_key, value) => typeof value === "bigint" ? String(value) : value) ?? "";
+                return { ...statement, bytes: Buffer.byteLength(text), bodies: text.split(marker).length - 1 };
+            });
+            console.info("CLAIM_LOCK_MEASUREMENT", JSON.stringify({ lockedMs, physicalCount, statements: measured }));
+            expect(result.intent.revision).toBe("1");
+            expect(held, "The changed claim must exercise Account serialization").toBe(true);
+            expect(measured.filter(step => step.held).reduce((sum, step) => sum + step.bodies, 0)).toBe(0);
+            expect(measured.filter(step => step.held && step.label === "accountPluginIntent.findUnique")).toHaveLength(1);
+            expect(measured.filter(step => step.held && step.label === "pluginCollectionCandidatePreparationStage.deleteMany")).toHaveLength(1);
+            const persisted = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: account.id, pluginId: manifest.id } } });
+            expect((persisted.releaseLessDeclaration as { machines: unknown[] }).machines).toHaveLength(490);
+            const start = statements.length;
+            await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: account.id,
+                input: { manifest: { ...manifest, version: "1.0.1" } } });
+            const rejoin = statements.slice(start);
+            const rejoinText = JSON.stringify(rejoin.map(step => step.result), (_key, value) => typeof value === "bigint" ? String(value) : value);
+            console.info("CLAIM_REJOIN_MEASUREMENT", JSON.stringify({ statements: rejoin.length, bytes: Buffer.byteLength(rejoinText), bodies: rejoinText.split(marker).length - 1 }));
+            expect(rejoin.some(step => step.held)).toBe(false);
+            expect(rejoinText).not.toContain(marker);
+        } finally { db.$transaction = transaction; await client.$disconnect(); }
+    });
+
     it.each([false, true])("rejoins an unchanged claim without Account serialization (prepare: %s)", async prepare => {
         const { account, manifest, headers } = await fixture();
         const pending: Promise<unknown>[] = [];
@@ -122,7 +212,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         } finally { await Promise.allSettled(pending); }
     });
 
-    it.each([false, true])("rejoins a lagging declaration with accumulated writers without Account serialization (prepare: %s)", async prepare => {
+    it.each([false, true])("rejoins an exact declaration with accumulated writers without Account serialization (prepare: %s)", async prepare => {
         const { account, manifest, ref, headers } = await fixture();
         const newerManifest = PluginManifestV2Schema.parse({ ...manifest, version: "2.0.0", contributes: {
             accountCollections: [{ ...manifest.contributes.accountCollections[0]!, id: "other-items" }],
@@ -134,7 +224,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
                     method: "POST", url: route, headers, payload: { manifest: value, ...(prepareClaim ? { prepare: true } : {}) },
                 });
                 expect((await claim(manifest)).statusCode).toBe(200);
-                const latest = await claim(newerManifest);
+                expect((await claim(newerManifest)).statusCode).toBe(200);
+                // The current declaration owner has no version heuristic:
+                // an unsigned development edit replaces the legacy declaration.
+                const latest = await claim(manifest);
                 expect(latest.statusCode, latest.body).toBe(200);
                 expect(latest.json().intent.writableCollections).toContainEqual(ref);
                 expect(latest.json().intent.writableCollections).toHaveLength(2);
@@ -439,7 +532,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         expect(interleavings).toBeGreaterThan(0);
     });
 
-    it("merges concurrent first claims and retains the newer declaration when the older daemon rejoins", async () => {
+    it("merges concurrent first claims and retains the last unsigned development declaration", async () => {
         const { account, manifest, ref, headers } = await fixture();
         const newerManifest = PluginManifestV2Schema.parse({ ...manifest, version: "2.0.0", contributes: {
             accountCollections: [{ ...manifest.contributes.accountCollections[0]!, id: "other-items" }],
@@ -477,7 +570,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
                 }
                 const declarations = await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id,
                     refs: [{ pluginId: manifest.id, version: manifest.version }, { pluginId: newerManifest.id, version: newerManifest.version }] }));
-                expect([...declarations.values()].map(value => value.manifest.version)).toEqual([newerManifest.version]);
+                expect([...declarations.values()].map(value => value.manifest.version)).toEqual([manifest.version]);
             });
         } finally { await Promise.allSettled(pending); }
         expect(observed).toBe(true);

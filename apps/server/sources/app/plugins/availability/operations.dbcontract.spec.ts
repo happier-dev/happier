@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, PluginReleaseFactsV1Schema } from "@happier-dev/protocol";
+import type { PluginAvailabilityIntentSetActionInputV1, PluginAvailabilityReleasePublishActionInputV1 } from "@happier-dev/protocol/plugins/availability/actions";
 import { decodeBase64 } from "privacy-kit";
 
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
@@ -57,6 +58,33 @@ describe("plugin Availability report transaction contract", () => {
 
     afterAll(async () => {
         await db.$disconnect();
+    });
+
+    it("persists changed writer claims and clears declarations on release selection", async () => {
+        const accountId = `${accountIdPrefix}${randomUUID()}`;
+        activeAccountId = accountId;
+        await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        const pluginId = `com.acme.intent-write-${randomUUID()}`;
+        const manifest = { schemaVersion: 2 as const, id: pluginId, version: "1.0.0",
+            displayName: "Intent storage", engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 }, contributes: {} };
+        const operations = createPluginAvailabilityOperations();
+        await operations.claimCollectionWriters({ accountId, input: { manifest } });
+        const initial = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
+        const changed = await operations.claimCollectionWriters({ accountId, input: { manifest: { ...manifest, version: "1.0.1" } } });
+        expect(changed.intent).toMatchObject({ revision: "1", desiredVersion: null, enabled: true, writableCollections: [] });
+        const stored = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
+        expect(stored.releaseLessDeclaration).toMatchObject({ manifest: { version: "1.0.1" } });
+        expect(stored.updatedAt.getTime()).toBeGreaterThanOrEqual(initial.updatedAt.getTime());
+        const facts = PluginReleaseFactsV1Schema.parse({ ref: { pluginId, version: manifest.version },
+            archiveDigestSha256: `sha256:${"a".repeat(64)}`, normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+            packageAssetArchive: { archiveDigestSha256: `sha256:${"b".repeat(64)}`, resources: [] } });
+        await operations.publishRelease({ accountId, input: { facts, sourceClass: "registryPackage" } satisfies PluginAvailabilityReleasePublishActionInputV1 });
+        const selected = await operations.setIntent({ accountId, input: { pluginId, desiredVersion: manifest.version,
+            enabled: true, offlineUiHosting: "disabled", writableCollections: [], expectedRevision: changed.intent.revision } satisfies PluginAvailabilityIntentSetActionInputV1 });
+        expect(selected.intent).toMatchObject({ revision: "2", desiredVersion: manifest.version });
+        const released = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
+        expect(released.releaseLessDeclaration).toBeNull();
+        expect(released.writableCollections).toEqual([]);
     });
 
     it.skipIf(provider !== "postgres").each([

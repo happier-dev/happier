@@ -74,7 +74,8 @@ export type TransactionReplayReason = "session-account-audience-changed"
     | "pending-activation-target-changed"
     | "transaction-account-audience-changed"
     | "directory-source-currentness-changed"
-    | "usage-runtime-order-changed";
+    | "usage-runtime-order-changed"
+    | "plugin-intent-changed";
 
 /** Abort the current transaction when its fenced audience no longer matches its reads. */
 export class TransactionReplayRequiredError extends Error {

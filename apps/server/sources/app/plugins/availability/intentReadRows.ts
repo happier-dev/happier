@@ -13,7 +13,7 @@ type IntentReadRow = Readonly<{
     writableCollectionsText: string;
     releaseLessDeclarationText: string | null;
     releaseLessDeclarationSummaryText?: string | null;
-    revision: bigint;
+    revision: bigint | number;
 }>;
 
 /**
@@ -142,6 +142,6 @@ export function decodeIntentReadRow(row: IntentReadRow) {
         offlineUiHosting: row.offlineUiHosting,
         writableCollections: JSON.parse(row.writableCollectionsText) as unknown,
         releaseLessDeclaration: row.releaseLessDeclarationText === null ? null : JSON.parse(row.releaseLessDeclarationText) as unknown,
-        revision: row.revision,
+        revision: BigInt(row.revision),
     };
 }
