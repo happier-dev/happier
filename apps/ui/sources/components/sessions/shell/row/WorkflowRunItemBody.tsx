@@ -67,6 +67,11 @@ export type WorkflowRunItemProps = Readonly<{
     statusWords?: boolean;
     /** The list's `sessionListActiveColorMode`, read once by the list for every row. */
     activeColorMode?: SessionListActiveColorModeV1;
+    /**
+     * The list mixes Runs with Sessions, so the Run glyph tells this row apart. A Runs-only list leaves it out
+     * and the name starts on the list's edge (LIST-ICONS-1108).
+     */
+    kindMark?: boolean;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
@@ -225,7 +230,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered}
-                identity={<Icon name={WORKER_KIND_GLYPHS.workflow_run} size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                identity={props.kindMark === true ? <Icon name={WORKER_KIND_GLYPHS.workflow_run} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined}
                 // A Run's title takes the ink a Session row in the same state takes: primary while it runs or
                 // asks, quiet once it has stopped.
                 title={<CollectionRowTitle density={rowDensity} touchCompact={readablePhone} textScale={fontScale}

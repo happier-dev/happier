@@ -281,6 +281,11 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     dimmed?: boolean;
     /** A tree item's semantics and roving focus, from the shared tree interaction owner (a column tree). */
     treeItem?: Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'accessibilityExpanded' | 'accessibilityPositionInSet' | 'accessibilitySetSize' | 'pressableRef' | 'onFocus' | 'onBlur' | 'onKeyDown'>;
+    /**
+     * A mark that tells this row from its neighbours: one the person or a plugin set, a built-in's own, an Agent or
+     * Provider, a per-row state. A kind glyph every row of the list would repeat is left out (LIST-ICONS-1108):
+     * without a mark the row keeps no glyph column and its title starts on the list's text edge.
+     */
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
     leftElementWhenHovered?: React.ReactNode;

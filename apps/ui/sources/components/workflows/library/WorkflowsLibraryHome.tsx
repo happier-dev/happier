@@ -359,12 +359,13 @@ function renderLibraryPageScroller(children: React.ReactNode): React.ReactNode {
 }
 
 function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
-    const { theme } = useUnistyles();
     return React.useMemo(() => ({
         wrapItem: (row, children) => isAccountRow(row) ? <AccountWorkflowHomeRow row={row}>{children}</AccountWorkflowHomeRow>
             : <WorkflowDefinitionDragRow row={row}>{children}</WorkflowDefinitionDragRow>,
-        // The page row's one icon size, as on the Built-in and every other sheet below it.
-        glyph: () => <Icon name="tree-structure" size={HAPPIER_PAGE_METRICS.rowIconGlyphPx} color={theme.colors.text.secondary} />,
+        // Every saved row would repeat the same workflow glyph, so none draws one and the names start on the
+        // sheet's text edge; the Built-in sheet below keeps its purpose marks (LIST-ICONS-1108).
+        glyph: () => null,
+        loadingGlyph: false,
         title: rowTitle,
         where: (row) => {
             if (isAccountRow(row)) {
@@ -400,7 +401,7 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
         columnTitles: { title: t('workflows.title'), titleMeta: t('common.next') },
-    }), [theme.colors.text.secondary]);
+    }), []);
 }
 
 function useLibraryRowActions(row: LibraryRow): CollectionRowActions {

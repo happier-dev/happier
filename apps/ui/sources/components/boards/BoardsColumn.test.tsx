@@ -135,6 +135,11 @@ describe('BoardsColumn collection search', () => {
         const navigation = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('boards-column:board:'));
         expect(navigation).toHaveLength(2);
         expect(navigation.every(node => node.props.rowRole === 'item' && node.props.titleLines === 1)).toBe(true);
+        // Every Board would carry the same Boards glyph, so no row draws a leading mark and the names start on
+        // the list's edge (LIST-ICONS-1108); the creation row keeps its "+".
+        expect(navigation.flatMap(node => node.findAll(child => typeof child.props.name === 'string').map(child => child.props.name))).toEqual([]);
+        expect(screen.findAll(node => node.props.testID === 'boards-column:new-row')[0]!
+            .findAll(child => child.props.name === 'plus').length).toBeGreaterThan(0);
 
         screen.changeTextByTestId('boards-column:search', '  ALPHA  ');
         await flushHookEffects();

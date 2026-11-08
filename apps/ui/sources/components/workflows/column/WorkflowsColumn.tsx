@@ -259,7 +259,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                 count={split.sharedWithYou.length} />
             {split.sharedWithYou.map((definition) => <CollectionNavigationRow key={definition.definitionId}
                 href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
-                title={formatWorkflowDefinitionLibraryTitle(definition)} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
+                title={formatWorkflowDefinitionLibraryTitle(definition)} selected={selectedDefinitionId === definition.definitionId}
                 {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
                 onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />)}
         </> : null}
@@ -270,7 +270,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             {split.fromPlugins.map((workflow) => <CollectionNavigationRow key={workflow.workflow}
                 rowRole="item"
                 href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
-                title={workflow.title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === workflow.workflow}
+                title={workflow.title} selected={selectedDefinitionId === workflow.workflow}
                 onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />)}
         </> : null}
     </>;
@@ -299,7 +299,7 @@ const ColumnDefinitionRow = React.memo(function ColumnDefinitionRow(props: Reado
     const subtitle = definitionSubtitle(definition);
     return <CollectionNavigationRow
         href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:library:${definition.definitionId}`}
-        title={title} icon={<Icon name="tree-structure" />} selected={props.selected}
+        title={title} selected={props.selected}
         {...(subtitle === null ? {} : { subtitle })}
         {...lifeProps(life, title, `workflow-definition-${definition.definitionId}`)}
         onPress={onPress} />;
@@ -323,7 +323,7 @@ function ColumnAccountWorkflowRow(props: Readonly<{ row: AccountWorkflowLibraryR
     const life: ReturnType<typeof readDefinitionLife> = reviewRequired ? { kind: 'needsYou' } : readAccountWorkflowLife(row.lastRunSummary);
     const line = formatAccountWorkflowLine(row);
     return <CollectionNavigationRow testID={`workflows-column:library:${row.key}`}
-        title={row.name} icon={<Icon name="tree-structure" />} selected={false}
+        title={row.name} selected={false}
         {...(line === null ? {} : { subtitle: line })}
         dimmed={isAccountWorkflowOff(row) && !reviewRequired}
         {...lifeProps(life, row.name, `workflow-account-${row.accountTrigger.automationId}`, reviewRequired ? line ?? undefined : undefined)}

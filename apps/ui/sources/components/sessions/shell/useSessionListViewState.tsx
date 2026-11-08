@@ -2282,14 +2282,17 @@ export function useSessionListViewStateFromPaneState(
         unscopedSelectionIsUnique,
     ]);
 
+    // A Run's glyph tells it from the Sessions beside it; showing Runs alone, every row would repeat it.
+    const runsAmongSessions = filterController.displayFilters.show !== 'runs';
     const renderWorkflowRunItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'workflow_run' }>) => (
         <SessionListViewportWorkflowRunItem rowViewport={rowViewport} nodeId={buildSessionListIndexNodeId(item)}
             surfaceDataActive={surfaceOwnership.dataActive} runId={item.runId} serverId={item.serverId}
             density={densityViewState.compact ? densityViewState.compactMinimal ? 'minimal' : 'compact' : 'default'}
             selected={effectivePathname === `/workflows/runs/${encodeURIComponent(item.runId)}`}
             reportsDepth={item.reportsDepth} statusWords={sessionListStatusWords === true}
-            activeColorMode={normalizeSessionListActiveColorMode(sessionListActiveColorMode)} />
-    ), [densityViewState.compact, densityViewState.compactMinimal, effectivePathname, rowViewport, sessionListActiveColorMode, sessionListStatusWords, surfaceOwnership.dataActive]);
+            activeColorMode={normalizeSessionListActiveColorMode(sessionListActiveColorMode)}
+            kindMark={runsAmongSessions} />
+    ), [densityViewState.compact, densityViewState.compactMinimal, effectivePathname, rowViewport, runsAmongSessions, sessionListActiveColorMode, sessionListStatusWords, surfaceOwnership.dataActive]);
 
     const virtualizedNodeCacheRef = React.useRef(new Map<string, Readonly<{
         item: SessionListIndexItem;

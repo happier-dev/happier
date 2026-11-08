@@ -41,7 +41,6 @@ const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: W
             subtitleLeading={line.needYou > 0
                 ? <View testID={`boards-column:board:${props.board.id}:need-you`} style={collectionListStyles.troubleDot} />
                 : undefined}
-            icon={<Icon name="squares-four" />}
             selected={props.selected}
             onPress={props.onPress}
         />
@@ -59,7 +58,6 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
             href={createBoardRoute(summary.id)}
             title={summary.name}
             subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : undefined}
-            icon={<Icon name="squares-four" />}
             selected={props.selected}
             onPress={onPress}
         />

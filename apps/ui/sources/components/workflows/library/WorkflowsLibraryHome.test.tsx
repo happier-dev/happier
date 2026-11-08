@@ -1026,6 +1026,8 @@ describe('workflow library page anatomy', () => {
         const saved = screen.findAll((node) => node.props.testID === 'workflows-home:row:10000000-0000-4000-8000-000000000005'
             && Array.isArray(node.props.secondaryActions))[0]!;
         expect(saved.findAll((node) => node.props.name === 'caret-right')).toHaveLength(0);
+        // Every saved row would carry the same workflow glyph, so none does; built-ins keep their purpose marks (LIST-ICONS-1108).
+        expect(saved.findAll((node) => node.props.name === 'tree-structure')).toHaveLength(0);
         const { ContextMenu } = await import('@happier-dev/plugin-ui');
         expect(saved.findByType(ContextMenu).props.triggerIcon).toBe('more');
         // A built-in row is a quiet destination: its page holds Run now / Choose a session… (lab `nav-N1`).

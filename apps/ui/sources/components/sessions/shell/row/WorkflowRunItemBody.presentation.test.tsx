@@ -13,6 +13,7 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 
 import { WorkflowRunItemBody } from './WorkflowRunItemBody';
+import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { SessionListHeaderItem } from '../sessionListHeaderItem';
 import { buildSessionListProjectHeaderViewModels } from '../sessionListProjectHeaderViewModels';
 import { useSessionListGroupMachineFacts } from '../useSessionListGroupMachineFacts';
@@ -146,4 +147,19 @@ it('follows status words like a Session row: a failed Run is the rose dot, its w
     standardCleanup();
     const worded = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId="home" density="minimal" statusWords />);
     expect(worded.getTextContent()).toContain(status.word!);
+});
+
+it('leads with the Run glyph only among Sessions; a Runs-only list starts the name on its edge (LIST-ICONS-1108)', async () => {
+    const run = createWorkflowRunSummaryFixture({ id: 'kind-mark-run', state: 'succeeded' });
+    storage.setState({ profileScope: RUN_SCOPE });
+    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run,
+        { kind: 'available', value: { title: 'Release review' } })], RUN_SCOPE);
+    const glyphs = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll(node => node.props.testID === `workflow-run-sheet:${run.id}`)[0]!
+        .findAll(node => node.props.name === WORKER_KIND_GLYPHS.workflow_run);
+    const alone = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId="home" />);
+    expect(alone.getTextContent()).toContain('Release review');
+    expect(glyphs(alone)).toHaveLength(0);
+    standardCleanup();
+    const amongSessions = await renderScreen(<WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId="home" kindMark />);
+    expect(glyphs(amongSessions).length).toBeGreaterThan(0);
 });

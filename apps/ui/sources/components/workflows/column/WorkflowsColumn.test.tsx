@@ -231,6 +231,11 @@ describe('WorkflowsColumn', () => {
         const libraryRows = screen.findAll(node => typeof node.props?.testID === 'string' && typeof node.props.onPress === 'function'
             && /^workflows-column:library:/.test(node.props.testID) && node.props.title !== undefined).map(node => node.props.testID as string);
         expect([...new Set(libraryRows)]).toEqual(['workflows-column:library:account-trigger:digest', `workflows-column:library:${definitionId}`]);
+        // Every Library row would carry the same workflow glyph, so none draws a leading mark: the names start
+        // on the list's edge, while built-ins keep their own marks (LIST-ICONS-1108).
+        const libraryMarks = screen.findAll(node => /^workflows-column:library:/.test(String(node.props?.testID ?? '')) && node.props.title !== undefined)
+            .flatMap(row => row.findAll(node => typeof node.props.name === 'string').map(node => node.props.name));
+        expect(libraryMarks).toEqual([]);
         // The Account Workflow's trigger is its quiet line; it carries no switch of its own.
         expect(screen.findAll(node => node.props?.testID === 'workflows-column:library:account-trigger:digest' && 'subtitle' in node.props)[0]
             ?.props.subtitle).toBe('workflows.triggers.summary.everyDayAt(time=9:00 AM)');
@@ -621,6 +626,10 @@ describe('WorkflowsColumn', () => {
         expect(screen.tree.root.findAll((node) => /^workflows-history:view:/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
         const rows = screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-row:run-waiting' && typeof node.props.onPress === 'function');
         expect(rows.length).toBeGreaterThan(0);
+        // Runs only: every row would lead with the same Run glyph, so none does (LIST-ICONS-1108).
+        const { WORKER_KIND_GLYPHS } = await import('@/components/sessions/work/workerKindGlyphs');
+        expect(screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-sheet:run-waiting')[0]!
+            .findAll((node) => node.props.name === WORKER_KIND_GLYPHS.workflow_run)).toHaveLength(0);
         await act(async () => { rows[0]!.props.onPress(); });
         expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting?serverId=unified-column.test');
     });
