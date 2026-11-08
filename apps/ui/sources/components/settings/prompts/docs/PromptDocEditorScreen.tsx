@@ -136,7 +136,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     if (next && promptFoldersRef.current) {
       try {
         organization = resolveArtifactOrganizationHeaderV1({ artifactId, header: next.artifact.header ?? {},
-          owned: next.artifact.owned === true, artifactHeadersById: promptFoldersRef.current.artifactHeadersById });
+          owned: next.artifact.owned === true, organization: promptFoldersRef.current });
       } catch { /* Unavailable organization does not discard the admitted document. */ }
     }
     if (next) documentRef.current = { ...next, organization };
@@ -236,11 +236,17 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
   const dirty = changed;
   const organizationAvailable = promptFoldersV1 !== null && foldersStatus === 'ready' && !foldersStale
     && (isNew || documentRef.current?.organization != null);
-  const canSave = (isNew ? organizationAvailable : documentRef.current !== null)
+  const canSave = (isNew || documentRef.current !== null)
     && title.trim().length > 0 && !saving && !isLoading && (isNew || changed);
 
   const save = React.useCallback(async (): Promise<boolean> => {
-    if ((isNew && !organizationAvailable) || title.trim().length === 0 || saving) return false;
+    if (title.trim().length === 0 || saving) return false;
+    if (!organizationAvailable && (isNew
+      ? folderName.trim().length > 0 || normalizePromptTags(tagsText).length > 0
+      : folderField.changed || tagsField.changed)) {
+      Modal.alert(t('common.error'), t('promptLibrary.saveError'));
+      return false;
+    }
 
     const account = accountRef.current;
     const expectedRevision = revisionRef.current;
@@ -320,7 +326,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     } finally {
       setSaving(false);
     }
-  }, [applyExternalFolderName, applyExternalMarkdown, applyExternalTagsText, applyExternalTitle, execute, folderName, foldersRevision, markdown, organizationAvailable, promptFoldersV1, props.artifactId, saving, setPristineFolderName, setPristineMarkdown, setPristineTagsText, setPristineTitle, tagsText, title]);
+  }, [applyExternalFolderName, applyExternalMarkdown, applyExternalTagsText, applyExternalTitle, execute, folderField.changed, folderName, foldersRevision, isNew, markdown, organizationAvailable, promptFoldersV1, props.artifactId, saving, setPristineFolderName, setPristineMarkdown, setPristineTagsText, setPristineTitle, tagsField.changed, tagsText, title]);
 
   const reviewCurrentVersion = React.useCallback(async () => {
     const account = accountRef.current;
@@ -367,6 +373,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     const artifactId = props.artifactId;
     return [
       { id: 'duplicate', testID: 'promptDoc.duplicate', title: t('common.duplicate'), onSelect: () => entryActions.duplicate(artifactId) },
+      { id: 'export', testID: 'promptDoc.export', title: t('actionPresentation.titles.artifact_export'), onSelect: () => entryActions.exportDocument(artifactId) },
       {
         id: 'delete',
         testID: 'promptDoc.delete',

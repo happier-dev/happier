@@ -11,6 +11,11 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiArtifactAction } from './artifactActionDeps';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { encodeBase64 } from '@/encryption/base64';
+import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
+import { createPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
@@ -28,6 +33,81 @@ const role = RoleArtifactV1Schema.parse({ name: 'Reviewer', instructions: 'Revie
     runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
 const profile = LaunchProfileArtifactV1Schema.parse({ kind: 'launch-profile.v1',
     profile: { id: 'portable-profile', name: 'Review environment', createdAt: 1, updatedAt: 1 } });
+
+it.each([
+    { title: 'Review instructions', markdown: '# Review\n\nKeep café ☕ intact.\n', fileName: 'Review instructions.md' },
+    { title: 'Empty.MD', markdown: '', fileName: 'Empty.MD' },
+])('exports a saved Markdown document, including an empty body ($title)', async ({ title, markdown, fileName }) => {
+    fixture = await createPlainArtifactHomeFixture('https://markdown-export.test');
+    account = await captureLazyActionAccountContext(fixture.home.id);
+    const { artifactId } = await createPromptDocInLibrary({
+        store: createUiPromptLibraryArtifactStore(account.workflowArtifacts, account), request: { title, markdown },
+    });
+    const blobs: Blob[] = [];
+    const downloaded: string[] = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:markdown'; });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('document', { body: { appendChild() {} }, createElement: () => {
+        const anchor = { download: '', style: {}, remove() {}, click() { downloaded.push(anchor.download); } };
+        return anchor;
+    } });
+    const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(account) })));
+    const result = await execute('artifact.export', { artifactId, destination: 'client' }, {
+        surface: 'agent', authority: 'account_automation', serverId: fixture.home.id,
+        runtimeAccountId: account.accountId, bypassApprovals: true,
+    });
+    expect(result).toMatchObject({ ok: true, result: { artifactId, destination: 'client', status: 'saved',
+        fileName, sizeBytes: new TextEncoder().encode(markdown).length } });
+    expect(downloaded).toEqual([fileName]);
+    expect(blobs[0]?.type).toBe('text/markdown;charset=utf-8');
+    expect(await blobs[0]?.text()).toBe(markdown);
+});
+
+it('downloads admitted binary bytes on the answering client through the agent Action', async () => {
+    const bytes = new Uint8Array([0, 255, 128]);
+    const reference = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62', mime: 'application/pdf',
+        sizeBytes: bytes.length, sha256: hashArtifactBinaryContent(bytes) };
+    const previousBytes = new Uint8Array([42, 0, 127, 255]);
+    const previousReference = { ...reference, blobId: 'c6a4bb92-8b93-4b18-b8b4-230041388a62',
+        sizeBytes: previousBytes.length, sha256: hashArtifactBinaryContent(previousBytes) };
+    fixture = await createPlainArtifactHomeFixture('https://binary-export.test', { handleRequest: async path =>
+        path.includes('/blobs/') ? new Response(JSON.stringify(path.endsWith(previousReference.blobId)
+            ? { blobId: previousReference.blobId, content: { t: 'plain', v: encodeBase64(previousBytes) } }
+            : { blobId: reference.blobId, content: { t: 'plain', v: encodeBase64(bytes) } })) : null });
+    fixture.boundary.replaceStoredRow({ id: 'binary', ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent({ title: 'Report.pdf' }), headerVersion: 1,
+        body: encodePlainArtifactStoredContent({ body: reference }), bodyVersion: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        seq: 1, createdAt: 1, updatedAt: 1 });
+    account = await captureLazyActionAccountContext(fixture.home.id);
+    const blobs: Blob[] = [];
+    const downloaded: string[] = [];
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:binary'; });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('document', { body: { appendChild() {} }, createElement: () => {
+        const anchor = { download: '', style: {}, remove() {}, click() { downloaded.push(anchor.download); } };
+        return anchor;
+    } });
+    const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({ artifactAction: createUiArtifactAction(account) })));
+    const input = { artifactId: 'binary', destination: 'client' };
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+        serverId: fixture.home.id, runtimeAccountId: account.accountId, bypassApprovals: true };
+    expect(resolveActionExecutionPlacementForInput(getActionSpec('artifact.export'), input)).toBe('client');
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.export', spec: getActionSpec('artifact.export'), input,
+        context: { ...context, bypassApprovals: false } }).required).toBe(true);
+    const result = await execute('artifact.export', input, context);
+    expect(result).toMatchObject({ ok: true, result: { artifactId: 'binary', destination: 'client', status: 'saved', fileName: 'Report.pdf', sizeBytes: bytes.length } });
+    if (result.ok) expect(ArtifactActionOutputSchemasV1['artifact.export'].safeParse(result.result).success).toBe(true);
+    expect(downloaded).toEqual(['Report.pdf']);
+    expect(new Uint8Array(await blobs[0]!.arrayBuffer())).toEqual(bytes);
+    // The History surface names its exact admitted blob; a current-head read must not replace it.
+    expect(await execute('artifact.export', { ...input, reference: previousReference, fileName: 'Earlier.pdf' }, context))
+        .toMatchObject({ ok: true, result: { status: 'saved', fileName: 'Earlier.pdf', sizeBytes: previousBytes.length } });
+    expect(downloaded).toEqual(['Report.pdf', 'Earlier.pdf']);
+    expect(new Uint8Array(await blobs[1]!.arrayBuffer())).toEqual(previousBytes);
+    expect(await execute('artifact.export', { ...input, reference: { ...reference, sha256: '0'.repeat(64) } }, context))
+        .toMatchObject({ ok: false });
+    expect(downloaded).toHaveLength(2);
+});
 
 it.each([
     { portable: { kind: 'role' as const, document: role }, fileName: 'Reviewer.role.json', document: role },

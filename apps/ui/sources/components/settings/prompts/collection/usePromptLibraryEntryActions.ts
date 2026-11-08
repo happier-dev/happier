@@ -16,7 +16,7 @@ import { promptCollectionItemHref } from './promptCollectionModel';
 
 /**
  * The rare operations on a saved prompt, offered by its editor's `⋯` menu: duplicate it
- * (opening the copy), and delete it through the Action's approval policy.
+ * (opening the copy), export its saved content, and delete it through the Action's approval policy.
  * References stay authoritative: a required missing document must be explicitly repaired or detached.
  */
 export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope | null,
@@ -94,5 +94,17 @@ export function usePromptLibraryEntryActions(requestedScope?: ServerAccountScope
         } finally { retirement?.dispose(); context?.dispose(); }
     }, [router, serverId, accountId, execute, review?.assertCurrent]);
 
-    return { remove, duplicate } as const;
+    const exportDocument = React.useCallback(async (artifactId: string) => {
+        try {
+            review?.assertCurrent?.();
+            const result = await execute('artifact.export', { artifactId, destination: 'client' });
+            if (!result.ok && isActionApprovalDeclinedErrorCode(result.errorCode)) return;
+            if (!result.ok) throw new Error(result.errorCode);
+            ArtifactActionOutputSchemasV1['artifact.export'].parse(result.result);
+        } catch {
+            Modal.alert(t('common.error'), t('errors.unknownError'));
+        }
+    }, [execute, review?.assertCurrent]);
+
+    return { remove, duplicate, exportDocument } as const;
 }

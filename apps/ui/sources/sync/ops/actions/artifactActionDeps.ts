@@ -1,7 +1,7 @@
 import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
-import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkIssuedV1, type ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { artifactActionListSelectionV1, listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { assembleArtifactHtmlBundleV1, isArtifactHtmlBundleEntrypointV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
 import { workspaceListDirectory, type WorkspaceListDirectoryResponse } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -19,20 +19,26 @@ import { downloadDaemonWorkspaceFileToDestination } from '@/sync/domains/transfe
 import { createBufferedTransferDestination } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/createBufferedTransferDestination';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import { assertAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { prepareAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptHostInputV1Schema, DocEditAcceptTransportInputV1Schema,
     DocEditDeclineTransportInputV1Schema, DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
-import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { readArtifactWorkspaceSourceSessionId } from './artifactWorkspaceSource';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { documentFileName, saveWorkflowDocument } from '@/sync/domains/workflows/workflowDocumentFile';
+import { exportArtifactToClient } from './artifactClientExport';
+import { createArtifactPublicLinkRequest } from '@/sync/api/artifacts/artifactPublicLinkRequest';
+import { resolvePreferredShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
 
 /** Artifact-backed Actions use the captured Account transport and canonical sync codecs. */
 export function createUiArtifactAction(account: LazyActionAccountContext, options?: Readonly<{
     onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
+    consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
+    onArtifactSignedInLinkOpened?: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
     workspaceDownload?: typeof downloadDaemonWorkspaceFileToDestination;
     /** One confined directory listing on the source machine (the daemon's filesystem Action). */
     workspaceList?: (request: Readonly<{ machineId: string; rootPath: string; agentRootPath?: string; path: string;
@@ -138,24 +144,34 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
     };
     const publicLinks = createArtifactPublicLinkActionsV1({
         read: account.readArtifactPublicLinkResource, randomBytes: getRandomBytes,
+        shareableServerUrl: resolvePreferredShareableServerUrl({ preferredShareableServerUrl: account.shareableServerUrl,
+            canonicalServerUrl: account.endpointUrl, activeServerUrl: account.endpointUrl }),
         onPublicLinkIssued: options?.onPublicLinkIssued,
-        request: async ({ method, path, body, signal }) => {
-            account.assertCurrent();
-            const response = await account.request(path, { method, signal,
-                headers: { Authorization: `Bearer ${account.credentials.token}`, 'Content-Type': 'application/json' },
-                ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-            account.assertCurrent();
-            if (!response.ok) {
-                const payload: unknown = await response.json().catch(() => null);
-                account.assertCurrent();
-                const code = payload && typeof payload === 'object' && !Array.isArray(payload)
-                    && Reflect.get(payload, 'error') === 'public_share_isolation_unavailable'
-                    ? 'public_share_isolation_unavailable' : 'public_share_request_failed';
-                throw Object.assign(new Error(code), { code });
-            }
-            return await response.json();
-        },
+        request: createArtifactPublicLinkRequest(account),
     });
+    const joinSignedInLink = options?.consumeArtifactSignedInLinkSecret && options.onArtifactSignedInLinkOpened
+        ? createArtifactSignedInLinkJoinActionV1({
+            request: createArtifactPublicLinkRequest(account), randomBytes: getRandomBytes,
+            consumeSecret: options.consumeArtifactSignedInLinkSecret, onOpened: options.onArtifactSignedInLinkOpened,
+            resolveRecipient: async signal => {
+                const { accountMode, encryption } = await account.resolveAccountEncryption(signal);
+                account.assertCurrent(); signal?.throwIfAborted();
+                return { accountId: account.accountId, mode: accountMode, contentPublicKey: encryption?.contentDataKey ?? null };
+            },
+            openContent: async ({ read, dataKey }) => {
+                if (read.content.kind !== 'artifact') throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+                const codec = dataKey ? new ArtifactEncryption(dataKey) : null;
+                const header = read.encryptionMode === 'plain' ? decodePlainArtifactStoredContent(read.content.header)
+                    : await codec!.decryptHeaderRaw(read.content.header);
+                const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(read.encryptionMode === 'plain'
+                    ? decodePlainArtifactStoredContent(read.content.body) : await codec!.decryptBody(read.content.body));
+                if (!header || typeof header !== 'object' || Array.isArray(header) || !body.success)
+                    throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+                return { artifactId: read.artifactId, ownerAccountId: read.authorAccountId,
+                    header: ArtifactDocumentV1Schema.shape.header.parse(header),
+                    body: body.data.body, revision: { headerVersion: read.content.headerVersion, bodyVersion: read.content.bodyVersion } };
+            },
+        }) : null;
     return async invocation => {
         const { actionId, input, context, signal } = invocation;
         try {
@@ -165,6 +181,9 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
             switch (actionId) {
                 case 'artifact.export': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
+                    if ('destination' in args) {
+                        return await exportArtifactToClient(account, args, signal);
+                    }
                     if (!('portable' in args)) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:artifact.export' };
                     const portable = args.portable;
                     const name = portable.kind === 'role' ? portable.document.name : portable.document.profile.name;
@@ -239,7 +258,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 }
                 case 'artifact.list': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
-                    const page = await listArtifactHeadersV1({ options: { ...args, sort: args.sort ?? 'updated_desc', signal },
+                    const page = await listArtifactHeadersV1({ options: artifactActionListSelectionV1({ ...args, signal }),
                         readPage: (options) => account.listArtifacts(options ?? {}), encodeCursor: account.encodeArtifactListCursor });
                     // Native document lists also carry retained body metadata. The ordinary
                     // Action publishes only its existing strict header projection.
@@ -257,9 +276,14 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     const rawSettings = await account.readRawSettings();
                     account.assertCurrent();
                     signal?.throwIfAborted();
-                    await assertAccountRoleArtifactDeletionV1({ artifactId: args.artifactId, accountId: account.accountId, rawSettings,
+                    let target: ReturnType<typeof account.workflowArtifacts.read> | undefined;
+                    const readTarget = () => target ??= account.workflowArtifacts.read(args.artifactId, { signal });
+                    await prepareAccountRoleArtifactDeletionV1({ artifactId: args.artifactId, accountId: account.accountId, rawSettings,
+                        expectedRevision: args.expectedRevision, signal,
+                        mutateRawAccountSettings: async (mutate, signal) => { await account.mutateRawSettings(mutate, { signal }); },
+                        readTargetArtifactRevision: async () => (await readTarget())?.revision,
                         readTargetArtifactKind: async () => {
-                            const target = await account.workflowArtifacts.read(args.artifactId, { signal });
+                            const target = await readTarget();
                             account.assertCurrent();
                             signal?.throwIfAborted();
                             return typeof target?.header.kind === 'string' ? target.header.kind : undefined;
@@ -278,6 +302,9 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 case 'artifact.public_link.revoke':
                 case 'artifact.public_link.audit':
                     return await publicLinks({ actionId, input, signal });
+                case 'artifact.public_link.join':
+                    return joinSignedInLink ? await joinSignedInLink({ input, signal })
+                        : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:artifact.public_link.join' };
                 case 'artifact.revisions.list': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     return await account.listArtifactRevisions(args.artifactId, signal);
@@ -296,7 +323,8 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 return { ok: false, errorCode: 'quota_exceeded', error: 'quota_exceeded', details: error.quota };
             const code = error instanceof HappyError && error.status === 404 ? 'not_found'
                 : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed';
-            return { ok: false, errorCode: code, error: error instanceof Error ? error.message : code };
+            return { ok: false, errorCode: code, error: error instanceof Error ? error.message : code,
+                ...(error instanceof Error && 'reason' in error && typeof error.reason === 'string' ? { details: { reason: error.reason } } : {}) };
         }
     };
 }

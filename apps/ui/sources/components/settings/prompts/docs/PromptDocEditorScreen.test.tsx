@@ -7,9 +7,10 @@ import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/prompt
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { resetPromptLibraryCatalogEngineForTests } from '@/sync/engine/settings/promptLibraryCatalogEngine';
-import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
+import { beginPromptLibraryCatalogRowsLoad, getPromptLibraryCatalogValue, resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
-import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { storage } from '@/sync/domains/state/storage';
+import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { PromptDocEditorScreen } from './PromptDocEditorScreen';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -61,6 +62,123 @@ async function home(records: readonly PromptLibraryRecordV1[] = []) {
 }
 
 describe('PromptDocEditorScreen', () => {
+  it('exports the saved Markdown through the editor menu without changing its unsaved draft', async () => {
+    const f = await home();
+    const markdown = '# Saved instructions\n\nReview the change.\n';
+    const id = await createPromptDoc({ title: 'Review instructions', markdown });
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={id} />);
+    await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Review instructions'); });
+    await act(async () => { screen.changeTextByTestId('promptDoc.title', 'Unsaved title'); });
+    const blobs: Blob[] = [];
+    const downloaded: string[] = [];
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:prompt'; });
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('document', { body: { appendChild() {} }, createElement: () => {
+      const anchor = { download: '', style: {}, remove() {}, click() { downloaded.push(anchor.download); } };
+      return anchor;
+    } });
+    try {
+      const menu = screen.findByType(PageHeaderMenu).props.actions as readonly PageHeaderMenuAction[];
+      const exportAction = menu.find(action => action.id === 'export');
+      expect(exportAction).toBeDefined();
+      await act(async () => { await exportAction!.onSelect(); });
+      expect(downloaded).toEqual(['Review instructions.md']);
+      expect(await blobs[0]?.text()).toBe(markdown);
+      expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Unsaved title');
+      expect(f.boundary.list()).toHaveLength(1);
+      expect(modal.alert).not.toHaveBeenCalled();
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
+  });
+  it.each(['unavailable', 'stale'] as const)('saves a new unfiled document with a %s folder catalog', async state => {
+    const f = state === 'stale' ? await home() : await createPlainArtifactHomeFixture('https://prompt-editor-folder-outage.test', {
+      handleRequest: async (path, init) => path.startsWith('/v1/account/entity-rows/prompt-library')
+        ? Response.json({ error: 'unavailable' }, { status: 503 }) : catalog.handle(path, init),
+    });
+    fixture = f;
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={null} />);
+    await vi.waitFor(() => expect(screen.findByTestId('promptDoc.title')?.props.editable).toBe(true));
+    if (state === 'stale') {
+      await vi.waitFor(() => expect(screen.findByTestId('promptDoc.folderName')?.props.editable).toBe(true));
+      await act(async () => {
+        screen.changeTextByTestId('promptDoc.folderName', '  ');
+        screen.changeTextByTestId('promptDoc.tags', ', ');
+        beginPromptLibraryCatalogRowsLoad(storage.getState().profileScope!, ['folders']);
+      });
+    } else {
+      await vi.waitFor(() => expect(getPromptLibraryCatalogValue(storage.getState().profileScope, 'folders').status).toBe('unavailable'));
+    }
+    expect(screen.findByTestId('promptDoc.folderName')?.props.editable).toBe(false);
+    expect(screen.findByTestId('promptDoc.tags')?.props.editable).toBe(false);
+    await act(async () => { screen.changeTextByTestId('promptDoc.title', 'Unfiled draft'); });
+    expect(screen.findByTestId('promptDoc.save')?.props.disabled).toBe(false);
+    await screen.pressByTestIdAsync('promptDoc.save');
+    await vi.waitFor(() => expect(f.boundary.list()).toHaveLength(1));
+    expect(JSON.parse(f.boundary.readPlainBody(f.boundary.list()[0].id)!)).toMatchObject({ markdown: '' });
+    expect(navigation.replace).toHaveBeenCalled();
+    expect(modal.alert).not.toHaveBeenCalled();
+  });
+
+  it.each(['folderName', 'tags'] as const)('visibly refuses a retained %s draft while its catalog is stale', async field => {
+    const f = await home();
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={null} />);
+    await vi.waitFor(() => expect(screen.findByTestId(`promptDoc.${field}`)?.props.editable).toBe(true));
+    await act(async () => {
+      screen.changeTextByTestId('promptDoc.title', 'Placed draft');
+      screen.changeTextByTestId(`promptDoc.${field}`, 'Keep placement');
+      beginPromptLibraryCatalogRowsLoad(storage.getState().profileScope!, ['folders']);
+    });
+    expect(screen.findByTestId(`promptDoc.${field}`)?.props.editable).toBe(false);
+    await screen.pressByTestIdAsync('promptDoc.save');
+    expect(modal.alert).toHaveBeenCalledWith('common.error', 'promptLibrary.saveError');
+    expect(f.boundary.list()).toHaveLength(0);
+    expect(screen.findByTestId(`promptDoc.${field}`)?.props.value).toBe('Keep placement');
+    expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('preserves existing placement during refresh when its clearing draft is %s', async clearPlacement => {
+    const f = await home([{ key: 'folders', value: { v: 1, folders: [{ id: 'ops', name: 'Ops' }] } }]);
+    const id = await createPromptDoc({ title: 'Filed prompt', markdown: 'Saved content', folderId: 'ops' });
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={id} />);
+    await vi.waitFor(() => expect(screen.findByTestId('promptDoc.folderName')?.props.value).toBe('Ops'));
+    await act(async () => {
+      if (clearPlacement) screen.changeTextByTestId('promptDoc.folderName', '');
+      else screen.changeTextByTestId('promptDoc.title', 'Content-only edit');
+      beginPromptLibraryCatalogRowsLoad(storage.getState().profileScope!, ['folders']);
+    });
+    await screen.pressByTestIdAsync('promptDoc.save');
+    if (clearPlacement) {
+      expect(modal.alert).toHaveBeenCalledWith('common.error', 'promptLibrary.saveError');
+      expect(screen.findByTestId('promptDoc.folderName')?.props.value).toBe('');
+    } else {
+      expect(modal.alert).not.toHaveBeenCalled();
+      expect(decodePlainArtifactStoredContent(f.boundary.read(id)!.header)).toMatchObject({ title: 'Content-only edit' });
+    }
+    expect(catalog.read('folders')).toMatchObject({ value: { artifactHeadersById: { [id]: { folderId: 'ops' } } } });
+    expect(JSON.parse(f.boundary.readPlainBody(id)!)).toMatchObject({ markdown: 'Saved content' });
+  });
+
+  it('refuses an unconfirmed editor snapshot while preserving the prompt draft and saved bytes', async () => {
+    const f = await home();
+    const id = await createPromptDoc({ title: 'Instructions', markdown: 'Saved markdown' });
+    const screen = await renderScreen(<PromptDocEditorScreen artifactId={id} />);
+    await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Instructions'); });
+    await act(async () => { screen.changeTextByTestId('promptDoc.title', 'Draft title'); });
+    const { MarkdownCodeEditorField } = await import('@/components/ui/markdown/editor/MarkdownCodeEditorField');
+    const handle = screen.findByType(MarkdownCodeEditorField).props.editorRef.current;
+    const flush = vi.spyOn(handle, 'flushPendingChange').mockRejectedValueOnce(new Error('snapshot_unconfirmed'));
+    try {
+      await screen.pressByTestIdAsync('promptDoc.save');
+      expect(modal.alert).toHaveBeenCalledWith('common.error', 'promptLibrary.saveError');
+      expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Draft title');
+      expect(JSON.parse(f.boundary.readPlainBody(id)!)).toMatchObject({ markdown: 'Saved markdown' });
+      expect(navigation.replace).not.toHaveBeenCalled();
+      expect(navigation.back).not.toHaveBeenCalled();
+    } finally { flush.mockRestore(); await screen.unmount(); }
+  });
+
   it('creates a real new draft and opens its saved document without an unsaved-navigation decision', async () => {
     const f = await home();
     const screen = await renderScreen(<PromptDocEditorScreen artifactId={null} />);
@@ -97,7 +215,7 @@ describe('PromptDocEditorScreen', () => {
     expect(screen.findAllByTestId('promptDoc.link.0')).toHaveLength(0);
     expect(screen.findAllByTestId('promptDoc.manageExternalAssets')).toHaveLength(0);
     expect(screen.findAllByType(PageHeaderMenu)[0]?.props.actions.map((action: PageHeaderMenuAction) => action.id))
-      .toEqual(['duplicate', 'delete']);
+      .toEqual(['duplicate', 'export', 'delete']);
     expect(screen.findAll(node => Array.isArray(node.props.meta)
       && node.props.meta.some((fact: Readonly<{ key: string }>) => fact.key === 'exports'))).toHaveLength(0);
     expect(catalog.read('external-links')).toMatchObject({ value: { links: [{ id: 'link', assetTypeId: 'claude.command' }] } });
@@ -198,7 +316,7 @@ describe('PromptDocEditorScreen', () => {
     expect(screen.findByTestId('promptDoc.title')?.props.value).toBe('Retained draft');
     await screen.pressByTestIdAsync('promptDoc.save');
     await vi.waitFor(async () => { await flushHookEffects(); expect(JSON.parse(f.boundary.readPlainBody(id)!)).toMatchObject({ markdown: 'Current' }); });
-    expect(screen.findByTestId('promptDoc.conflict')).toBeFalsy();
+    await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('promptDoc.conflict')).toBeFalsy(); });
     expect(modal.alert).not.toHaveBeenCalled();
   });
 });
