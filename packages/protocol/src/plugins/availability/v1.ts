@@ -541,10 +541,15 @@ export type PluginAccountCurrentDeclarationV1 = Readonly<{
   manifest: PluginPortableReleaseManifestV1;
   declarationDigestSha256: PluginUiArtifactDigestV1;
 }>;
-export const PluginAccountCurrentDeclarationV1Schema: z.ZodMiniType<PluginAccountCurrentDeclarationV1> = lazyZodSchema(() => z.strictObject({
-  manifest: PluginManifestV2LoadSchema,
+// A Machine body is opaque until an exact consumer admits it. Account-current
+// declarations are consumed by discovery and retain full ingress admission.
+const PluginAccountDeclarationEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
+  manifest: z.nonoptional(z.unknown()),
   declarationDigestSha256: PluginUiArtifactDigestV1Schema,
 }));
+export const PluginAccountCurrentDeclarationV1Schema: z.ZodMiniType<PluginAccountCurrentDeclarationV1> = lazyZodSchema(() => z.extend(
+  PluginAccountDeclarationEnvelopeV1Schema, { manifest: PluginManifestV2LoadSchema },
+));
 
 export type PluginAccountAvailabilityIntentReadResponseV1 = {
   availabilityCursor: number;
@@ -553,11 +558,11 @@ export type PluginAccountAvailabilityIntentReadResponseV1 = {
   release: PluginReleaseFactsV1 | null;
   /** Omitted by older producers; null explicitly means no Account-selected declaration. */
   currentDeclaration?: PluginAccountCurrentDeclarationV1 | null;
-  /** Authenticated release-less declarations, scoped to their supplying installation. */
+  /** Authenticated envelopes; their opaque manifest bodies require admission before use. */
   machineDeclarations?: readonly Readonly<{
     machineId: string;
     machineInstallationId: string;
-    declaration: PluginAccountCurrentDeclarationV1;
+    declaration: z.infer<typeof PluginAccountDeclarationEnvelopeV1Schema>;
   }>[];
   uiArtifacts: readonly PluginAccountPluginUiArtifactLinkV1[];
   packageAssets: readonly PluginAccountPluginPackageAssetLinkV1[];
@@ -573,7 +578,7 @@ export const PluginAccountAvailabilityIntentReadResponseV1Schema: z.ZodMiniType<
   machineDeclarations: z.optional(z.readonly(z.array(z.strictObject({
     machineId: z.string().check(z.minLength(1)),
     machineInstallationId: z.string().check(z.minLength(1)),
-    declaration: PluginAccountCurrentDeclarationV1Schema,
+    declaration: PluginAccountDeclarationEnvelopeV1Schema,
   })))),
   uiArtifacts: z.readonly(z.array(PluginAccountPluginUiArtifactLinkV1Schema)),
   packageAssets: z.readonly(z.array(PluginAccountPluginPackageAssetLinkV1Schema)),

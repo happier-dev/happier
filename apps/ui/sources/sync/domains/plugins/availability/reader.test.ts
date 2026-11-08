@@ -167,6 +167,9 @@ describe('Plugin Account Availability reader', () => {
         expect(reader.readCurrentAutomationEventContribution({ ...request, machineId: 'absent-machine' })).toBeNull();
         publish([entry('machine-a', smaller), entry('machine-b')]);
         expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
+        publish([{ ...entry('machine-a'), declaration: { ...entry('machine-a').declaration,
+            manifest: { ...full, version: 'invalid-semver' } } }]);
+        expect(reader.readCurrentAutomationEventContribution(request)).toBeNull();
         const legacy = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ ...base,
             currentDeclaration: entry('machine-a').declaration });
         store.replace({ scope, snapshot: snapshot({ intentReads: [{ pluginId: full.id, response: legacy }] }) });

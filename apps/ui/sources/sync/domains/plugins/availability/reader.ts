@@ -33,6 +33,7 @@ import { projectPluginSkillDeclarationV1 } from '@happier-dev/protocol/plugins/c
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { readAutomationEligibleEventContributionV1, type AutomationEligibleEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest/load';
 import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
 
 import {
@@ -2218,8 +2219,10 @@ function createBoundReader(input: Readonly<{
             // Release-less reads require the server's claim, never a local bundle.
             const machineDeclaration = response.machineDeclarations?.find(entry => entry.machineId === request.machineId
                 && (request.machineInstallationId === undefined || entry.machineInstallationId === request.machineInstallationId));
+            const admittedMachineManifest = response.intent.desiredVersion === null && machineDeclaration
+                ? PluginManifestV2LoadSchema.safeParse(machineDeclaration.declaration.manifest) : null;
             const manifest = response.intent.desiredVersion === null && response.machineDeclarations !== undefined
-                ? machineDeclaration?.declaration.manifest
+                ? admittedMachineManifest?.success ? admittedMachineManifest.data : null
                 : response.currentDeclaration === undefined
                 ? response.release && response.intent.desiredVersion === response.release.ref.version ? response.release.normalizedManifest : null
                 : response.currentDeclaration?.manifest;

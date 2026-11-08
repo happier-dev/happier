@@ -1288,6 +1288,14 @@ retained results and freshness checks.
 
 ### Bundled manifest admission (0.3 development source)
 
+Account Availability reads admit current declarations and portable releases at
+HTTP ingress because AppShell discovery consumes them. Per-Machine release-less
+declarations retain closed Machine, installation and digest envelopes, with an
+explicitly unadmitted manifest body. The exact guided Automation Event reader
+admits that body through the same Protocol load ingester before using its Event
+declaration. Listing those envelopes does not admit every Machine's manifest.
+Publication and claim admission remain strict; this changes no wire fields.
+
 Bundled first-party file declarations are admitted by the bundled-plugin publisher
 and serialized inside the same shipped CLI closure. Runtime locator and packaged
 activation readers consume that result through the canonical ingester's typed

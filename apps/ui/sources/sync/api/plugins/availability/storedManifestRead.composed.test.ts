@@ -62,6 +62,60 @@ afterEach(() => {
 });
 
 describe('stored manifest Account Availability read', () => {
+    it('admits only consumed manifests on a 91-intent first load, then admits an exact Machine declaration on demand', async () => {
+        const base = intentRead().release!.normalizedManifest;
+        // #97 census: 91 intents, 32 current declarations, 28 rows with two
+        // Machine declarations each. The guided Automation editor is their
+        // only body consumer; Changes/AppShell do not consume those 56 bodies.
+        const intentReads = Array.from({ length: 91 }, (_, index) => {
+            const id = `com.acme.list-${String(index).padStart(2, '0')}`;
+            const declaration = { manifest: { ...base, id }, declarationDigestSha256: `sha256:${'c'.repeat(64)}` };
+            return { pluginId: id, response: { availabilityCursor: 1, hostingCapability: { enabled: false },
+                intent: { pluginId: id, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled',
+                    writableCollections: [], revision: '1' }, release: null, uiArtifacts: [], packageAssets: [],
+                currentDeclaration: index < 32 ? declaration : null,
+                ...(index < 28 ? { machineDeclarations: ['machine-a', 'machine-b'].map(machineId => ({
+                    machineId, machineInstallationId: `${machineId}-installation`,
+                    declaration: { ...declaration, manifest: { ...declaration.manifest } },
+                })) } : {}),
+            } };
+        });
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: () => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }),
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async path => jsonResponse(path === materializationsPath
+                ? { availabilityCursor: 1, snapshots: [], releases: [] }
+                : { availabilityCursor: 1, pluginIds: intentReads.map(row => row.pluginId), failedPluginIds: [], intentReads }) }),
+        });
+        const fullParses = vi.spyOn(PluginManifestV2Schema, 'safeParse');
+        try {
+            const first = await hydrator.refresh();
+            if (!first) throw new Error('Availability did not publish');
+            const store = createPluginAccountAvailabilityReaderStore();
+            store.replace(first);
+            const reader = store.bind(scope);
+            reader.readInstalledPlugins();
+            reader.readUiProjectionInputs();
+            reader.readCurrentAccountExecutionDeclarations();
+            expect(fullParses).toHaveBeenCalledTimes(32);
+            const selected = { pluginId: intentReads[0]!.pluginId, version: base.version,
+                machineId: 'machine-a', machineInstallationId: 'machine-a-installation',
+                eventLocalId: 'absent', sourceContractVersion: 1 };
+            expect(reader.readCurrentAutomationEventContribution({ ...selected, machineId: 'missing' })).toBeNull();
+            expect(fullParses).toHaveBeenCalledTimes(32);
+            expect(reader.readCurrentAutomationEventContribution(selected)).toBeNull();
+            expect(fullParses).toHaveBeenCalledTimes(33);
+            // Unconsumed malformed bodies do not refuse unrelated list rows;
+            // selecting that exact body still fails at full manifest admission.
+            intentReads[0]!.response.machineDeclarations![0]!.declaration.manifest.version = 'invalid-semver';
+            const changed = await hydrator.refresh();
+            if (!changed) throw new Error('Changed availability did not publish');
+            store.replace(changed);
+            expect(reader.readCurrentAutomationEventContribution(selected)).toBeNull();
+            expect(fullParses).toHaveBeenCalledTimes(66);
+        } finally { fullParses.mockRestore(); }
+    });
+
     it('admits a manifest revision once at ingress and zero times across availability publications and view reads', async () => {
         const response = intentRead();
         if (!response.release) throw new Error('Missing fixture release');
@@ -122,7 +176,7 @@ describe('stored manifest Account Availability read', () => {
         } finally { fullParses.mockRestore(); }
     });
 
-    it('validates each wire manifest once and carries admitted declarations through publication without another full parse', async () => {
+    it('validates each consumed wire manifest once and carries admitted declarations through publication without another full parse', async () => {
         const response = intentRead();
         if (!response.release) throw new Error('Missing fixture release');
         const declaration = { manifest: response.release.normalizedManifest,
@@ -148,10 +202,10 @@ describe('stored manifest Account Availability read', () => {
         try {
             const refreshed = await hydrator.refresh();
             if (!refreshed) throw new Error('Availability did not publish');
-            expect(fullParses).toHaveBeenCalledTimes(5);
+            expect(fullParses).toHaveBeenCalledTimes(4);
             const store = createPluginAccountAvailabilityReaderStore();
             store.replace(refreshed);
-            expect(fullParses).toHaveBeenCalledTimes(5);
+            expect(fullParses).toHaveBeenCalledTimes(4);
             expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{
                 pluginId, installations: [{ declaration: { displayName: 'Stored plugin' } }],
             }] });
@@ -159,7 +213,7 @@ describe('stored manifest Account Availability read', () => {
             expect(store.bind(scope).readInstalledPlugins()).toMatchObject({ kind: 'available', plugins: [{
                 pluginId, installations: [{ declaration: { displayName: 'Stored plugin' } }],
             }] });
-            expect(fullParses).toHaveBeenCalledTimes(5);
+            expect(fullParses).toHaveBeenCalledTimes(4);
         } finally { fullParses.mockRestore(); }
     });
 
