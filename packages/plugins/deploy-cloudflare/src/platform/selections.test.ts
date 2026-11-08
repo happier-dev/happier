@@ -259,6 +259,19 @@ it('preserves host HTTP PluginError codes and causes while authoring missing rea
   } finally { await state.kit.dispose(); }
 });
 
+it('preserves a refused client HTTP adapter while giving a zones read typed recovery', async () => {
+  const state = await fixture();
+  try {
+    const failureCause = { phase: 'plugin.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null } as const;
+    state.fail(new PluginError({ code: 'plugin_fetch_adapter_unavailable', failureCause }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'plugin_fetch_adapter_unavailable',
+      data: { failureCause, details: { requiredFact: 'cloudflareHttpTransport', remedy: expect.any(String) } } });
+    const details = { requiredFact: 'hostHttpTransport', remedy: 'Retry from the connected client.', source: 'owner' };
+    state.fail(new PluginError({ code: 'plugin_fetch_adapter_unavailable', details }));
+    await expect(state.invoke(zoneListInput)).rejects.toMatchObject({ code: 'plugin_fetch_adapter_unavailable', data: { details } });
+  } finally { await state.kit.dispose(); }
+});
+
 it('keeps a pending read pending and propagates cancellation before publishing choices', async () => {
   const state = await fixture();
   let release = () => {};

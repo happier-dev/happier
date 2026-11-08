@@ -2,8 +2,36 @@ import { describe, expect, it } from 'vitest';
 import { createStablePluginHttpHost } from './service.js';
 import { createProviderRedactionLease } from './redaction.js';
 import { createConnectedAccountHttpPurposeHost } from './connectedAccountPurpose.js';
+import { PluginError } from '../errors.js';
 
 describe('portable HTTP finite custody', () => {
+    it.each(['request', 'requestStream'] as const)('retains an admitted safe failure cause without exposing transport content (%s)', async method => {
+        const token = 'synthetic-fixture-token';
+        const url = 'https://api.example.test/private-request';
+        const failureCause = { phase: 'plugin.http.execute', errorClass: 'TypeError',
+            errorCode: 'ECONNRESET', httpStatus: null } as const;
+        const fail = async () => { throw new PluginError({ code: 'plugin_fetch_adapter_unavailable',
+            message: `${url} ${token}`, details: { url, token }, failureCause }); };
+        // The HTTP adapter and credential materialization are genuine external boundaries.
+        const host = createStablePluginHttpHost({
+            purposeHost: createConnectedAccountHttpPurposeHost({ bind: () => ({
+                async materialize() { return { kind: 'httpHeaders' as const, headers: { authorization: `Bearer ${token}` } }; },
+            }) }),
+            adapter: { request: fail, requestStream: fail, async openWebSocket() { throw new Error('Not used'); } },
+        });
+        const http = host.bind({ plugin: { id: 'example.portable' }, signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true }, {});
+        let failure: unknown;
+        try { await http[method]({ url, redirect: 'error', credentialBinding: {
+            kind: 'connectedAccountPurpose', purpose: 'read', origin: 'https://api.example.test',
+            method: 'GET', headerNames: ['authorization'],
+        } }); } catch (error) { failure = error; }
+        expect(failure).toMatchObject({ code: 'plugin_fetch_adapter_unavailable',
+            message: 'plugin_fetch_adapter_unavailable', data: { failureCause } });
+        expect(JSON.stringify(failure)).not.toContain(token);
+        expect(JSON.stringify(failure)).not.toContain(url);
+    });
+
     it.each(['request', 'requestStream'] as const)('applies a matching request interceptor without a Node operation context (%s)', async method => {
         const contribution = { id: 'headers', origins: ['https://api.example.test'] };
         const host = createStablePluginHttpHost({ adapter: {

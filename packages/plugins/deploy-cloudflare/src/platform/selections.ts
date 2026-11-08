@@ -39,6 +39,8 @@ function selectionRecovery(reason: string): { requiredFact: string; remedy: stri
       remedy: 'Cloudflare refused access to the selected zone or tunnels. Check the token permissions and resource access, then retry.' };
     case 'network_unavailable': return { requiredFact: 'cloudflareNetwork',
       remedy: 'The request could not reach Cloudflare. Check the connection, then retry.' };
+    case 'plugin_fetch_adapter_unavailable': return { requiredFact: 'cloudflareHttpTransport',
+      remedy: "This Happier client couldn't complete the Cloudflare request. Check the connection, then retry." };
     case 'account_id_unavailable': return { requiredFact: 'cloudflareAccountId',
       remedy: 'The selected connection has no Cloudflare Account ID. Reconnect that account, or supply its Account ID in Advanced.' };
     case 'hostname_outside_zone': return { requiredFact: 'cloudflareHostnameZone',
@@ -150,7 +152,7 @@ const readSelections: typeof readSelectionsImpl = async (input, context) => {
   catch (error) {
     context.signal.throwIfAborted();
     if (!isPluginError(error)) throw error;
-    const reason = error.code === 'credential_unavailable' ? 'credential_unavailable'
+    const reason = error.code === 'credential_unavailable' || error.code === 'plugin_fetch_adapter_unavailable' ? error.code
       : error.code === 'outcome_unknown' && error.data.failureCause?.phase === 'connected_account.http.execute'
         ? 'network_unavailable' : undefined;
     if (reason === undefined) throw error;

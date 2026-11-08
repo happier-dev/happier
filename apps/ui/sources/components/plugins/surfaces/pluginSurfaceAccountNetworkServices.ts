@@ -1,8 +1,11 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createFetchPluginHttpRuntime, createStablePluginHttpHost, createProviderRedactionLease,
-    redactPluginHttpResponse, wrapPluginHttpStream, readCredentialRedactionValues } from '@happier-dev/cli-common/plugins/http';
+    redactPluginHttpResponse, wrapPluginHttpStream, readCredentialRedactionValues,
+    createConnectedAccountHttpPurposeHost } from '@happier-dev/cli-common/plugins/http';
 import { resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { PluginDirectSecretDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -19,6 +22,7 @@ export function createPluginSurfaceAccountNetworkServices(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
     isCurrent(): boolean;
+    connectedAccounts?: () => Pick<ConnectedAccountsService, 'materialize'>;
 }>): Readonly<{ http: HttpService;
     secrets: SecretsService;
     /** Host invocation custody only; never exposed through plugin services. */
@@ -106,13 +110,18 @@ export function createPluginSurfaceAccountNetworkServices(input: Readonly<{
         async saveShared() { throw new PluginError({ code: 'plugin_secret_save_not_admitted' }); },
     };
     const transport = createFetchPluginHttpRuntime(runtimeFetchManualResponse);
-    const http = createStablePluginHttpHost({ adapter: {
+    const http = createStablePluginHttpHost({
+        ...(input.connectedAccounts ? { purposeHost: createConnectedAccountHttpPurposeHost({
+            bind: input.connectedAccounts,
+        }) } : {}),
+        adapter: {
         ...transport,
         async request(request, options) {
             try { return redactPluginHttpResponse(await transport.request(request, options), lease.redact); }
             catch (error) {
                 if (error instanceof PluginError && !lease.containsSensitiveValue(error.code)) throw error;
-                throw new PluginError({ code: options?.signal?.aborted ? 'plugin_action_aborted' : 'plugin_fetch_adapter_unavailable' });
+                throw new PluginError({ code: options?.signal?.aborted ? 'plugin_action_aborted' : 'plugin_fetch_adapter_unavailable',
+                    failureCause: projectActionFailureCauseV1(error, 'plugin.http.execute') });
             }
         },
         async requestStream(request, options) {

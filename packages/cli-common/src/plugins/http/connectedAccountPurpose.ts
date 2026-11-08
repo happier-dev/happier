@@ -1,4 +1,5 @@
 import { isPluginError, PluginError } from '../errors.js';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ConnectedAccountMaterialization } from '../../connectedAccounts/establishedRuntimeTypes.js';
 import { ConnectedAccountHttpHeadersRequestSchema, type ConnectedAccountMaterializationRequest } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { CredentialRequestRedirectError } from '../../homeTarget/index.js';
@@ -39,7 +40,9 @@ export function createConnectedAccountHttpPurposeHost<
         if (error instanceof CredentialRequestRedirectError) throw error;
         const code = isPluginError(error) && !containsSensitiveValue(error.code)
             ? error.code : entered ? 'outcome_unknown' : 'credential_unavailable';
-        throw new PluginError({ code });
+        const failureCause = isPluginError(error) && error.data.failureCause !== undefined
+            ? readActionFailureCauseV1(error.data.failureCause) : undefined;
+        throw new PluginError({ code, ...(failureCause === undefined ? {} : { failureCause }) });
     });
     // A finite invocation spends the binding admitted by its first acquisition.
     // The incumbent refresh owner requires a current revisioned snapshot and a
