@@ -116,18 +116,35 @@ describe('Session server-start candidate selection', () => {
         const rows = presentSessionPlacementCandidates({ candidates, accountScope: { serverId: 'srv_raw_home_id', accountId: 'account-1' }, activeServerId: 'srv_raw_home_id',
             activeMachines: [live, twin, asleep, removed], machineListByServerId: { srv_raw_home_id: [live, twin, asleep, removed] },
             machineListStatusByServerId: { srv_raw_home_id: 'idle' } });
-        expect(rows.map(row => row.title)).toEqual(['app', 'site', 'notes', 'retired', 'past']);
+        // A removed Machine's checkout is no launch choice (owner ruling 11-08); offline stays, after the live ones.
+        expect(rows.map(row => row.title)).toEqual(['app', 'site', 'notes', 'retired']);
         // Each row still answers for the candidate it stands for, whatever the order.
-        expect(rows.map(row => row.index)).toEqual([2, 3, 1, 0, 4]);
+        expect(rows.map(row => row.index)).toEqual([2, 3, 1, 0]);
         expect(rows[2]).toMatchObject({ availability: 'unavailable', subtitle: 'Offline · Laptop · ~/notes' });
         expect(rows[3]).toMatchObject({ availability: 'unavailable', subtitle: 'Unlisted machine · /old/retired' });
-        expect(rows[4]).toMatchObject({ availability: 'unavailable', subtitle: 'Removed machine · Old box · ~/past' });
         // Two machines with one name are told apart the way Sessions and Search do it.
         expect(rows[0]!.subtitle).not.toBe(rows[1]!.subtitle?.replace('~/site', '~/app'));
         for (const row of rows) {
             expect(row.subtitle).not.toContain('srv_raw_home_id');
             expect(row.subtitle).not.toContain(row.candidate.machineId);
         }
+    });
+
+    it('never offers a removed or replaced Machine\'s checkout, yet keeps the one a draft already names as its unavailable value (owner ruling 11-08)', () => {
+        const live = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now() });
+        const removed = createMachineFixture({ id: 'machine-removed', active: true, activeAt: Date.now(), revokedAt: 1,
+            metadata: { host: 'old', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/home/o/.happier', homeDir: '/home/o', displayName: 'Old box' } });
+        const replaced = { ...createMachineFixture({ id: 'machine-replaced', active: true, activeAt: Date.now() }), replacedByMachineId: live.id };
+        const at = (machineId: string, rootPath: string) => ({ projectKey: { id: rootPath }, serverId: 'home', machineId, rootPath, reachable: true, worktrees: [] });
+        const candidates = [at(removed.id, '/home/o/past'), at(replaced.id, '/srv/before'), at(live.id, '/srv/app')];
+        const context = { candidates, accountScope: { serverId: 'home', accountId: 'account-1' }, activeServerId: 'home',
+            activeMachines: [live, removed, replaced], machineListByServerId: { home: [live, removed, replaced] },
+            machineListStatusByServerId: { home: 'idle' as const } };
+        expect(presentSessionPlacementCandidates(context).map(row => row.index)).toEqual([2]);
+        // The draft's own choice is not swapped silently: it stays, unavailable, with its reason.
+        const kept = presentSessionPlacementCandidates({ ...context, currentIndex: 0 });
+        expect(kept.map(row => row.index)).toEqual([2, 0]);
+        expect(kept[1]).toMatchObject({ availability: 'unavailable', subtitle: 'Removed machine · Old box · ~/past' });
     });
 
     it('claims nothing about a Machine whose Home has not answered yet', () => {

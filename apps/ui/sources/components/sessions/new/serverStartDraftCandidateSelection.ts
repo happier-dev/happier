@@ -5,6 +5,7 @@ import { getServerProfileById, readServerProfileHomeName } from '@/sync/domains/
 import { t } from '@/text';
 import { leafFolderName } from '@/utils/path/pathUtils';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
@@ -103,6 +104,11 @@ function placementUnavailableReason(readiness: ReturnType<typeof resolveMachineS
  * What the saved-project rows say, for every New Session entry: which project, then line 2 with a reason that
  * leads when it cannot start there, the Machine (named as a set, as Sessions and Search do) and its folder. Live
  * rows come first. Raw Machine and Home ids are never shown. A list that has not answered claims nothing.
+ *
+ * A checkout on a removed or replaced Machine is never a launch choice, for every consumer (owner ruling 11-08); an
+ * offline one stays, ranked after the live ones. `activeMachines` therefore carries the Home's full records so a
+ * removed Machine is known as removed. The candidate a draft already names (`currentIndex`) stays as its current,
+ * unavailable value, so the draft's choice is never swapped silently.
  */
 export function presentSessionPlacementCandidates(params: Readonly<{
     candidates: readonly Candidate[];
@@ -112,6 +118,8 @@ export function presentSessionPlacementCandidates(params: Readonly<{
     machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
     machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
     nowMs?: number;
+    /** The candidate the draft already names; kept even where it is no longer a launch choice. */
+    currentIndex?: number;
 }>): readonly SessionPlacementCandidateRow[] {
     const resolved = params.candidates.map((candidate, index) => ({ candidate, index, machine: resolveExactServerScopedMachine({
         machineId: candidate.machineId,
@@ -120,7 +128,7 @@ export function presentSessionPlacementCandidates(params: Readonly<{
         activeMachines: params.activeMachines,
         machineListByServerId: params.machineListByServerId,
         machineListStatusByServerId: params.machineListStatusByServerId,
-    }) }));
+    }) })).filter(({ index, machine }) => index === params.currentIndex || machine === null || isMachineVisibleForLaunchSelection(machine));
     const spansHomes = new Set(params.candidates.map((candidate) => candidate.serverId)).size > 1;
     const namesByServerId = new Map<string, ReadonlyMap<string, string>>();
     const machineNames = (serverId: string) => {

@@ -34,6 +34,29 @@ describe('useSessionPlacementCandidateRows', () => {
         } finally { storage.setState(previous); }
     });
 
+    it('drops a removed Machine\'s checkout from what the active Home offers, unless the draft already names it (owner ruling 11-08)', async () => {
+        const previous = storage.getState();
+        const { getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = getActiveServerId();
+        const live = createMachineFixture({ id: 'machine-live', activeAt: Date.now() });
+        const removed = createMachineFixture({ id: 'machine-removed', activeAt: Date.now(), revokedAt: 1,
+            metadata: { host: 'old', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/o/.happier', homeDir: '/o', displayName: 'Old box' } });
+        const candidates = [
+            { projectKey: { id: 'past' }, serverId, machineId: removed.id, rootPath: '/o/past', reachable: true, worktrees: [] },
+            { projectKey: { id: 'app' }, serverId, machineId: live.id, rootPath: '/h/app', reachable: true, worktrees: [] },
+        ];
+        try {
+            await act(async () => { storage.setState({ machines: { [live.id]: live, [removed.id]: removed },
+                machineListByServerId: { [serverId]: [live, removed] }, machineListStatusByServerId: { [serverId]: 'idle' } }); });
+            const offered = await renderHook(() => useSessionPlacementCandidateRows(candidates));
+            expect(offered.getCurrent().map(row => row.index)).toEqual([1]);
+            const current = await renderHook(() => useSessionPlacementCandidateRows(candidates, 0));
+            expect(current.getCurrent().map(row => [row.index, row.subtitle])).toEqual([
+                [1, expect.any(String)], [0, 'Removed machine · Old box · ~/past'],
+            ]);
+        } finally { storage.setState(previous); }
+    });
+
     it('reads nothing without candidates and returns one stable empty list', async () => {
         const hook = await renderHook(() => useSessionPlacementCandidateRows(undefined));
         const first = hook.getCurrent();

@@ -72,6 +72,11 @@ function sortVisibleMachines(a: Machine, b: Machine): number {
     return a.id.localeCompare(b.id);
 }
 
+/** Every Machine record of the active Home, removed and replaced ones included, for owners that decide visibility themselves. */
+export function resolveMachinesForActiveServerFromState(state: MachineInventoryState, scope?: MachineServerScope): readonly Machine[] {
+    return resolveActiveServerMachineSource(state, scope) ?? emptyMachines;
+}
+
 export function resolveVisibleMachinesForActiveServerFromState(state: MachineInventoryState, scope?: MachineServerScope): Machine[] {
     const activeServerMachines = resolveActiveServerMachineSource(state, scope);
     const sourceMachines = Array.isArray(activeServerMachines) ? activeServerMachines : emptyMachines;

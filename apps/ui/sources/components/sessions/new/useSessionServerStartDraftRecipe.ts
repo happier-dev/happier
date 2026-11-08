@@ -243,7 +243,8 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
             return null;
         }
     }, [canSubmit, directory, directoryEdited, edited, existingDraft, organization.placement, props, selectedTarget, selection]);
-    const placementRows = useSessionPlacementCandidateRows(props.seed.candidates);
+    // The candidate this draft names stays drawn even when its Machine is no longer a launch choice.
+    const placementRows = useSessionPlacementCandidateRows(props.seed.candidates, directoryCandidateIndex < 0 ? undefined : directoryCandidateIndex);
     return { canSubmit, resolveDraft, selectedTarget, selectedPlacement, machine, directory, setDirectory,
         setDirectoryEdited, directoryCandidateIndex, setSelectedCandidateIndex, error, setError, facts, agentTargets,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
