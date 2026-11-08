@@ -12,6 +12,7 @@ import { createMachinePresenceDeadlineOwner, createSessionPresenceDeadlineOwner,
 import { registerPresenceDeadlineNotifications } from '@/app/presence/presenceDeadlineNotification';
 import { publishPresenceDeadline } from '@/app/presence/presenceRedisQueue';
 import { persistMachinePresence } from '@/app/presence/persistMachinePresence';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { auth } from '@/app/auth/auth';
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -235,7 +236,7 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
         }
     });
 
-    it("disconnects the exact Runner Session and Machine sockets on another replica when control-loss expiry revokes them", async () => {
+    it("preserves Runner access after presence expiry and disconnects exact sockets across replicas on terminal revocation", async () => {
         const resolvedRedis = await resolveRedisAdapterValidationRedisUrl({ env: process.env });
         redisMemory = resolvedRedis.redisMemory;
         harness.resetEnv({
@@ -246,10 +247,10 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
             HAPPY_SERVER_FLAVOR: "full",
         });
 
-        const controlLossFence = new Date(Date.now() - 30 * 60 * 1000);
+        const expiredPresenceAt = new Date(Date.now() - 30 * 60 * 1000);
         const fixture = await createMaterializedEphemeralRunnerFixture({
             sessionActive: true,
-            sessionLastActiveAt: controlLossFence,
+            sessionLastActiveAt: expiredPresenceAt,
         });
         // An ordinary persistent Machine on the same Account proves the revoke
         // targets the exact Machine room rather than the Account fanout.
@@ -261,7 +262,7 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
         const redisA = new Redis(resolvedRedis.redisUrl);
         const redisB = new Redis(resolvedRedis.redisUrl);
         redisClients.push(redisA, redisB);
-        // Replica B starts last, so the timeout owner publishes through B while the
+        // Replica B starts last, so the terminal owner publishes through B while the
         // Runner sockets stay admitted on A: the disconnect must cross the adapter.
         const replicaA = await startReplica({ instanceId: "runner-revocation-replica-a", redis: redisA });
         const replicaB = await startReplica({ instanceId: "runner-revocation-replica-b", redis: redisB });
@@ -321,7 +322,7 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
             waitForConnection(humanSession),
         ])).resolves.toEqual(["connected", "connected", "connected", "connected", "connected"]);
 
-        // Transport loss before the control-loss transition is not revocation:
+        // Transport loss before the terminal transition is not revocation:
         // the same bearer is still admitted on reconnect.
         runnerSession.close();
         const runnerSessionAfterTransientLoss = createClient({
@@ -336,15 +337,33 @@ describe("ephemeral Runner revocation with the configured Redis adapter", () => 
         clients.push(runnerSessionAfterTransientLoss);
         await expect(waitForConnection(runnerSessionAfterTransientLoss)).resolves.toBe("connected");
 
-        const disconnected = Promise.all([
-            waitForDisconnect(runnerSessionAfterTransientLoss, "Runner Session socket"),
-            waitForDisconnect(runnerMachine, "Runner Machine socket"),
-        ]);
         await runPresenceTimeoutTick({
             sessionTimeoutMs: 60_000,
             machineTimeoutMs: 60_000,
             tickMs: 60_000,
         });
+        expect((await db.session.findUniqueOrThrow({ where: { id: fixture.sessionId } })).active).toBe(false);
+        expect((await db.machine.findUniqueOrThrow({ where: { id: fixture.machineId } })).revokedAt).toBeNull();
+        expect(await db.accessKey.count({
+            where: { accountId: fixture.accountId, machineId: fixture.machineId },
+        })).toBe(1);
+        expect(runnerSessionAfterTransientLoss.connected).toBe(true);
+        expect(runnerMachine.connected).toBe(true);
+
+        // Presence loss is recoverable. Explicit terminal cleanup revokes the
+        // binding; these open-ended sockets close and later admissions fail.
+        const publisher = createSessionPublisherPresence();
+        const terminal = await publisher.captureMachineSessionTerminal({ binding: {
+            accountId: fixture.accountId, sessionId: fixture.sessionId, machineId: fixture.machineId,
+        } });
+        expect(terminal.status).toBe("captured");
+        if (terminal.status !== "captured") throw new Error("Expected the exact Runner terminal binding");
+        const disconnected = Promise.all([
+            waitForDisconnect(runnerSessionAfterTransientLoss, "Runner Session socket"),
+            waitForDisconnect(runnerMachine, "Runner Machine socket"),
+        ]);
+        await expect(publisher.finalizeMachineSessionTerminal({ target: terminal.target }))
+            .resolves.toEqual({ status: "already_inactive" });
         await disconnected;
 
         expect(creator.connected).toBe(true);
