@@ -222,7 +222,7 @@ function createSessionMessageActionSpecs() {
     description: 'Send information or ask an agent Session for one answer. reply none creates no answer obligation; wait observes the exact answer inline; return retains a later answer to the admitted source Session. A timeout stops observation without cancelling accepted work. Session selectors grant no access.',
     safety: 'safe',
     placements: ['voice_panel'],
-    // Its full routing schema is discovered on demand, then used by action_execute.
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'sendSessionMessage', mcpToolName: 'session_message_send' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","message":"Please inspect the latest changes.","reply":"wait"}' },
@@ -335,3 +335,4 @@ function createSessionMessageActionSpecs() {
 }
 
 export const SESSION_MESSAGE_ACTION_SPECS: ReturnType<typeof createSessionMessageActionSpecs> = lazyActionSpecArray(createSessionMessageActionSpecs);
+

@@ -64,6 +64,19 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result).toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
   });
 
+  it.each([
+    { t: 'listSessions', args: { limit: 20, query: { title: 'VOICE-RUN96 R118 approval target' } }, field: 'query' },
+    { t: 'sendSessionMessage', args: { sessionId: 'cmw806d1u006bmcraf5efazah', message: { text: 'private request content' } }, field: 'message' },
+  ])('identifies the invalid $t input field without disclosing its value', ({ t, args, field }) => {
+    const result = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({ actions: [{ t, args }] })}</voice_actions>`);
+    expect(result.actions).toEqual([]);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.assistantText).toContain(t);
+    expect(result.assistantText).toContain(field);
+    expect(result.assistantText).not.toContain('private request content');
+    expect(result.assistantText).not.toContain('VOICE-RUN96 R118 approval target');
+  });
+
   it('strips an unterminated action block from the first opening tag', () => {
     const input = ['Hello', '<voice_actions>', '{"actions": ['].join('\n');
     expect(extractVoiceActionsFromAssistantText(input)).toEqual({
@@ -73,12 +86,20 @@ describe('extractVoiceActionsFromAssistantText', () => {
     });
   });
 
-  it.each(['null', '[]', '{"actions":{}}', '{"actions":[{"t":"spawnSession","args":{}}]}'])(
+  it.each(['null', '[]', '{"actions":{}}'])(
     'does not retain creation narration when the action block cannot execute: %s', (block) => {
       expect(extractVoiceActionsFromAssistantText(`Creating the Session now. <voice_actions>${block}</voice_actions>`))
         .toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
     },
   );
+
+  it('replaces creation narration with the invalid creation fields', () => {
+    const result = extractVoiceActionsFromAssistantText('Creating the Session now. <voice_actions>{"actions":[{"t":"spawnSession","args":{}}]}</voice_actions>');
+    expect(result.actions).toEqual([]);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.assistantText).toContain('spawnSession');
+    expect(result.assistantText).not.toContain('Creating the Session now');
+  });
 
   it('supports session targeting actions for global voice', () => {
     const input = [

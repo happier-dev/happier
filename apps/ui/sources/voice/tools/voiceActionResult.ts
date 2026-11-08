@@ -58,6 +58,8 @@ export function serializeVoiceActionExecuteResult(
     const errorDetail = normalizeSpawnSessionErrorDetail(details.errorDetail);
     return jsonError(result.errorCode, result.errorCode, {
       actionId,
+      // The Action-input owner has already projected these content-free repair facts.
+      ...(Array.isArray(details.issues) ? { details: { issues: details.issues } } : {}),
       ...(typeof details.sessionId === 'string' ? { sessionId: details.sessionId } : {}),
       ...(errorDetail ? { errorDetail } : {}),
       ...(options?.failurePayload ?? {}),

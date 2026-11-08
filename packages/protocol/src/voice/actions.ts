@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../actions/actionSpecs.js';
+import { projectActionInputIssues } from '../actions/executor/actionInputValidation.js';
 
 export const VOICE_ACTIONS_TAG = 'voice_actions' as const;
 
@@ -152,7 +153,7 @@ function coerceVoiceActionValueForSchema(value: unknown, schema: z.core.$ZodType
   return coerceVoiceActionScalarStrings(value);
 }
 
-function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | null {
+function parseVoiceAssistantAction(rawAction: unknown): { action: VoiceAssistantAction } | { invalidInput: string } | null {
   if (!rawAction || typeof rawAction !== 'object') return null;
 
   const rawToolName = typeof (rawAction as { t?: unknown }).t === 'string' ? (rawAction as { t: string }).t.trim() : '';
@@ -166,13 +167,17 @@ function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | n
   const rawArgs = (rawAction as { args?: unknown }).args;
   const direct = inputSchema.safeParse(rawArgs);
   if (direct.success) {
-    return { t: toolName, args: direct.data };
+    return { action: { t: toolName, args: direct.data } };
   }
 
   const coercedArgs = coerceVoiceActionValueForSchema(rawArgs, inputSchema);
   const coerced = inputSchema.safeParse(coercedArgs);
-  if (!coerced.success) return null;
-  return { t: toolName, args: coerced.data };
+  if (!coerced.success) {
+    const fields = [...new Set(projectActionInputIssues(coerced.error)
+      .map((issue) => `${issue.path.join('.') || 'args'} (${issue.message ?? issue.code})`))];
+    return { invalidInput: `${toolName}: ${fields.join(', ')}.` };
+  }
+  return { action: { t: toolName, args: coerced.data } };
 }
 
 export function extractVoiceActionsFromAssistantText(
@@ -212,12 +217,14 @@ export function extractVoiceActionsFromAssistantText(
     }
 
     const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
-    const actions = rawActions
-      .map((rawAction) => parseVoiceAssistantAction(rawAction))
-      .filter((action): action is VoiceAssistantAction => action !== null);
+    const parsedActions = rawActions.map(parseVoiceAssistantAction);
+    const actions = parsedActions.flatMap((parsed) => parsed && 'action' in parsed ? [parsed.action] : []);
 
     if (rawActions.length > 0 && actions.length === 0) {
-      return invalidActionBlock;
+      const invalidInputs = parsedActions.flatMap((parsed) => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
+      return invalidInputs.length > 0
+        ? { ...invalidActionBlock, assistantText: `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}` }
+        : invalidActionBlock;
     }
 
     return { assistantText: stripped.trim(), actions };

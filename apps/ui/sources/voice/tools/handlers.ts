@@ -2,6 +2,7 @@ import { CurrentUiContextCommandInvokeInputSchema, getActionSpec, listVoiceToolA
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import {
   PluginUiJsonValueV1Schema,
@@ -375,7 +376,9 @@ export function createVoiceToolHandlers(
       // Tool arguments cannot select their own human source or supply authority.
       // The existing person approval owns admission of this captured operand.
       if (Object.prototype.hasOwnProperty.call(input, 'returnToSessionId')) {
-        return jsonError('invalid_parameters', 'invalid_parameters');
+        return serializeVoiceActionExecuteResult(actionId, actionInputIssueFailure({
+          code: 'custom', path: ['returnToSessionId'],
+        }));
       }
       if (!boundAddress) return jsonError('session_not_selected', 'session_not_selected');
       if (ctx?.serverId && !areServerProfileIdentifiersEquivalent(ctx.serverId, boundAddress.serverId)) {
@@ -675,7 +678,7 @@ export function createVoiceToolHandlers(
       ? await handler(target.input, context)
       : await execute(target.toolName, target.input, context, true));
     const failure = asPlainObject(result);
-    if (!isOverride && failure?.ok === true) return JSON.stringify(result);
+    if (!isOverride) return JSON.stringify(result);
     return JSON.stringify(failure?.ok === false
       ? { ok: false, errorCode: failure.errorCode, error: failure.errorCode, details: result }
       : { ok: true, result });

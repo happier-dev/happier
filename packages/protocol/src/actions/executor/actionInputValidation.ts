@@ -62,7 +62,12 @@ function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | numb
 
 /** Never echo rejected values, unknown-key lists, or custom issue prose. */
 export function actionInputValidationFailure(error: core.$ZodError): ActionExecuteFailure {
-  return actionInputIssueFailure(...error.issues.flatMap(issue => projectIssue(issue)));
+  return actionInputIssueFailure(...projectActionInputIssues(error));
+}
+
+/** Shared content-free repair facts for Action results and Voice refusals. */
+export function projectActionInputIssues(error: core.$ZodError): readonly ActionInputIssue[] {
+  return error.issues.flatMap(issue => projectIssue(issue));
 }
 
 /** Read the canonical compiler's last failure; never revalidate or copy input/prose. */

@@ -1088,7 +1088,9 @@ describe('voice tool handlers', () => {
       currentSessionAddress: { serverId: homeA, sessionId: 's1' } });
     const result = JSON.parse(await tools.sendSessionMessage({ sessionId: 's2', message: 'Return it elsewhere.',
       reply: 'return', returnToSessionId: 'unrelated-session' }, { effectId: 'voice-forged-return' }));
-    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
+      issues: expect.arrayContaining([expect.objectContaining({ path: ['returnToSessionId'] })]),
+    } });
     expect(account.artifacts.list()).toEqual([]);
     expect(pendingEnqueue).not.toHaveBeenCalled();
   });
@@ -2323,13 +2325,37 @@ describe('voice tool handlers', () => {
   });
 
   it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
+    const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
+    const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
+    const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
+    const documented = prompt.match(/^- sendSessionMessage:.* Args: (\{.*\})\.$/m);
+    expect(documented, 'Voice must list the Session-send contract without requiring discovery').not.toBeNull();
+    const input = { ...JSON.parse(documented![1]!), sessionId: 's2', message: 'hello', reply: 'none' };
+    const parsed = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({
+      actions: [{ t: 'sendSessionMessage', args: input }],
+    })}</voice_actions>`);
+    expect(parsed.actions).toHaveLength(1);
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
+    const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
 
-    const result = await tools.sendSessionMessage({ sessionId: 's2', message: 'hello' });
+    const action = parsed.actions[0]!;
+    const result = await tools[action.t]!(action.args, { serverId: homeA, effectId: 'run96-session-send' });
 
     expect(JSON.parse(result), result).toMatchObject({ ok: true });
     expectVoicePendingInput('s2', 'hello');
+    expect(pendingEnqueue.mock.calls.every(([request]) => request.sessionId === 's2')).toBe(true);
+  });
+
+  it.each(['named', 'discovered'] as const)('retains the invalid Session-message field through the real Voice action (%s)', async route => {
+    const tools = createVoiceToolHandlers({ currentServerId: homeA, resolveSessionId: explicit => explicit || 's1' });
+    const input = { sessionId: 's2', message: { text: 'private request content' }, reply: 'none' };
+    const result = await (route === 'named' ? tools.sendSessionMessage(input)
+      : tools.action_execute({ actionId: 'session.message.send', input }));
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: {
+      issues: expect.arrayContaining([expect.objectContaining({ path: ['message'] })]),
+    } });
+    expect(result).not.toContain('private request content');
+    expect(pendingEnqueue).not.toHaveBeenCalled();
   });
 
   it('can set the primary action session', async () => {
