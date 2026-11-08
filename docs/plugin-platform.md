@@ -280,6 +280,12 @@ Loaded UI and actual MySQL engine checks remain unverified.
 
 ## Finite HTTP metadata (0.3 development source)
 
+The shared Fetch transport revalidates HTTP cache entries for finite and streaming
+reads. A browser can reuse a validated response, but cannot satisfy an explicit
+native re-observation solely from a fresh cached response after an Action writes
+to a different provider URL. This uses Fetch's `no-cache` mode at the transport
+owner; callers keep their existing read and post-mutation completion paths.
+
 The public Account-purpose credential binding carries the issued `origin` and
 required `method: HttpMethod` alongside `purpose` and `headerNames`. Finite
 snapshots preserve these fields; streaming requests reuse the same binding arm.

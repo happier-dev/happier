@@ -61,6 +61,69 @@ describe.each([['Node', globalThis.fetch], ['browser', browserFetch]] as const)(
     });
 });
 
+it.each(['request', 'requestStream'] as const)('observes the second removal within the browser cache lifetime (%s)', async method => {
+    // GitHub's observed private max-age=60 lets a browser retain /pulls/54
+    // across mutations at the distinct /issues/54/assignees endpoint.
+    const maxAgeSeconds = 60;
+    let nowMs = 0;
+    let assignees: string[] = [];
+    let revision = 0;
+    let networkReads = 0;
+    const origin = await listen((request, response) => {
+        if (request.url === '/issues/54/assignees') {
+            assignees = request.method === 'POST' ? ['leeroybrun'] : [];
+            revision += 1;
+            response.end('{}');
+            return;
+        }
+        networkReads += 1;
+        const etag = `"${revision}"`;
+        response.setHeader('cache-control', `private, max-age=${maxAgeSeconds}, s-maxage=${maxAgeSeconds}`);
+        response.setHeader('etag', etag);
+        if (request.headers['if-none-match'] === etag) {
+            response.writeHead(304);
+            response.end();
+            return;
+        }
+        response.end(JSON.stringify({ assignees }));
+    });
+    // Only Fetch's HTTP cache is substituted; the HTTP owner and network are real.
+    const cache = new Map<string, { body: string; headers: Headers; expiresAtMs: number }>();
+    const cachedBrowserFetch: typeof fetch = async (input, init) => {
+        const request = new Request(input, init);
+        if (request.method !== 'GET') return globalThis.fetch(request);
+        const cached = request.cache === 'no-store' ? undefined : cache.get(request.url);
+        if (cached && request.cache === 'default' && nowMs < cached.expiresAtMs) {
+            return new Response(cached.body, { headers: cached.headers });
+        }
+        if (cached && request.cache !== 'reload') {
+            request.headers.set('if-none-match', cached.headers.get('etag')!);
+        }
+        const response = await globalThis.fetch(request);
+        const body = response.status === 304 && cached ? cached.body : await response.text();
+        if (request.cache !== 'no-store') {
+            cache.set(request.url, { body, headers: response.headers,
+                expiresAtMs: nowMs + Number(/max-age=(\d+)/.exec(response.headers.get('cache-control')!)![1]) * 1_000 });
+        }
+        return new Response(body, { headers: response.headers });
+    };
+    const http = createPluginHttpService({ adapter: createFetchPluginHttpRuntime(cachedBrowserFetch) });
+    const readAssignees = async () => {
+        const response = await http[method]({ url: `${origin}/pulls/54`, redirect: 'error' });
+        const chunks: Uint8Array[] = [];
+        if ('body' in response) chunks.push(response.body);
+        else for await (const chunk of response.chunks) chunks.push(chunk);
+        return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))).assignees;
+    };
+    for (const [index, mutation] of (['POST', 'DELETE', 'POST', 'DELETE'] as const).entries()) {
+        if (index > 0) nowMs += index === 3 ? 1 : maxAgeSeconds * 1_000 + 1;
+        await http.request({ url: `${origin}/issues/54/assignees`, method: mutation, redirect: 'error' });
+        expect(await readAssignees(), `membership after mutation ${index + 1}`).toEqual(mutation === 'POST' ? ['leeroybrun'] : []);
+    }
+    expect(await readAssignees()).toEqual([]);
+    expect(networkReads).toBe(5);
+});
+
 it('keeps custom secret headers and secret bodies on the inspected-hop path', async () => {
     const destinationHeaders: string[][] = [];
     const target = await listen((request, response) => {

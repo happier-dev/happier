@@ -22,7 +22,7 @@ import {
   GITHUB_PLUGIN_ID,
 } from '../../observations/githubProviderContracts.js';
 import { encodeGithubTriageConfiguration } from '../../triage/configuration.js';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
+import { GITHUB_TRIAGE_ACTION_IDS_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from '../../triage/contribution.js';
 import {
   GithubChangedFilesInputV1Schema,
   GithubChangedFilesResultV1Schema,
@@ -38,6 +38,13 @@ import {
   type StubHttpResponse,
 } from '../../triage/testkit/githubTriage.test-support.js';
 import { renderSurface } from '../renderSurface.js';
+import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { useTriagePostMutationRow } from '../../../../triage/src/ui/detail/useTriagePostMutationRow.js';
+import { readTriageSelectedObservationV1 } from '../../../../triage/src/ui/window/selectedObservation.js';
+import { reobserveTriageEntry } from '../../../../triage/src/actions/reobserveEntry.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryInputV1Schema } from '../../../../triage/src/actions/reobserveEntryProtocol.js';
+import { toTriageWireObservation } from '../../../../triage/src/projection/listWindowWire.js';
+import type { TriageAdmittedSourceV1 } from '../../../../triage/src/actions/listEntries.js';
 import { GithubEntryPropertyPicker } from './entryPropertyPicker.js';
 import { createTriageEphemeralSharedScopeFixture, createTriageEphemeralSharedScopeOriginFixture } from '../../../../triage/src/ui/window/ephemeralSharedScope.test-support.js';
 import { SourcePanelActionsFixture, invokeSourcePanelFixtureAction } from '../../../../triage/src/ui/sourcePanelActions.test-support.js';
@@ -264,6 +271,103 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
+  it('settles current after the second Unassign through the native completion owner', async () => {
+    let assigned = false;
+    let writes = 0;
+    let nativeReads = 0;
+    const transport = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/assignees') && request.method !== 'GET') {
+        writes++;
+        assigned = request.method === 'POST';
+        return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, assignees: assigned ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [] } };
+      }
+      if (path.endsWith('/assignees')) return { status: 200, body: [GITHUB_PULL_REQUEST_RESPONSE.user] };
+      if (path.endsWith('/labels')) return { status: 200, body: [] };
+      if (path.endsWith('/pulls/1284') || path.endsWith('/issues/1284')) return { status: 200, body: {
+        ...GITHUB_PULL_REQUEST_RESPONSE, assignees: assigned ? [GITHUB_PULL_REQUEST_RESPONSE.user] : [], labels: [],
+      } };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const opening = launchInput();
+    const instance = opening.instance;
+    const selection = { sectionId: null, entryRef: opening.observation.entryRef, sourceInstanceId: instance.instance.sourceInstanceId };
+    // The host supplies opaque admitted operation handles; all native reads and folds beneath it are real.
+    const admitted = [{ contributor: { pluginId: GITHUB_PLUGIN_ID, contributionId: 'github-forge' },
+      descriptor: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1, operations: { get: {} } }] as unknown as readonly TriageAdmittedSourceV1[];
+    const lanes = Object.freeze([]);
+    function Entry({ context }: { context: Parameters<typeof renderSurface>[0] }) {
+      const detail = useTriagePostMutationRow(null, lanes, selection);
+      const selected = detail.row === null ? null : readTriageSelectedObservationV1(detail.row);
+      if (selected === null) return <Text value="Opening PR" />;
+      const input = { ...opening, panel: 'actions' as const, observation: selected.observation,
+        ...(detail.exactRead?.detailData === undefined ? {} : { detailData: detail.exactRead.detailData }) };
+      return <TriagePostMutationCompletionProvider onComplete={detail.completePostMutation}>
+        <Tabs value="entry" onValueChange={() => {}} ariaLabel="Native entry">
+          <Tabs.Item value="entry" title="Entry">
+            <Story input={input} />
+            {renderSurface({ ...context, launchInput: input }) as React.ReactNode}
+          </Tabs.Item>
+        </Tabs>
+      </TriagePostMutationCompletionProvider>;
+    }
+    function Story({ input }: { input: ReturnType<typeof launchInput> }) {
+      const overview = useGithubOverview(input, { readWhenActive: true });
+      return <Text value={`Story current:${overview.value?.assignees?.join(',') ?? 'reading'}`} />;
+    }
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({ identity: { instanceId: 'repeated-removal', mountNonce: 'repeated-removal' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(context => <Entry context={context} />),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+        handlers: { executeAction: async request => {
+          if (typeof request.action !== 'string') return plugin.invokeAction(request.action.localId, request.input!, { surface: 'ui', signal: request.signal });
+          if (request.action !== TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) throw new Error(`Unexpected Action ${request.action}`);
+          nativeReads++;
+          const input = TriageReobserveEntryInputV1Schema.parse(request.input);
+          const result = await reobserveTriageEntry({ ...input, lastKnownLocator: opening.observation.locator }, {
+            readConfiguredInstance: async () => instance, readAdmittedSources: async () => admitted,
+            executeGet: async (_operation, getInput, options) => plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, getInput,
+              { surface: 'ui', signal: options?.signal }), nowMs: () => Date.now(), signal: request.signal,
+          });
+          if (result.kind !== 'observed') throw new Error(result.kind);
+          const { entryRef, ...observation } = result.observation;
+          return { ...result, entryRef, observation: toTriageWireObservation(observation) };
+        } },
+      });
+    });
+    mounted.push(detail);
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(document.body.textContent).not.toContain('Opening PR');
+      await expect(detail.getByRole('button', { name: 'Assignees, None' })).resolves.toBeDefined();
+    });
+    for (const [index, next] of [true, false, true, false].entries()) {
+      const current = next ? 'None' : GITHUB_PULL_REQUEST_RESPONSE.user.login;
+      if (await detail.queryByRole('menuitemcheckbox', {}) !== undefined) {
+        await act(async () => { await detail.press(await detail.getByRole('button', { name: `Assignees, ${current}` })); });
+      }
+      await act(async () => { await detail.press(await detail.getByRole('button', { name: `Assignees, ${current}` })); });
+      const choices = await detail.getAllByRole('menuitemcheckbox');
+      await act(async () => { await detail.press(choices[0]!); });
+      await vi.waitFor(async () => { await act(async () => {}); expect(writes, document.body.textContent ?? '').toBe(index + 1); });
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(await detail.queryByRole('button', { name: `Assignees, ${next ? GITHUB_PULL_REQUEST_RESPONSE.user.login : 'None'}` }),
+          `current after mutation ${index + 1}; provider assigned=${assigned}; ${document.body.textContent}`).toBeDefined();
+        await expect(detail.getByRole('button', { name: 'Labels, None' })).resolves.toBeDefined();
+        await expect(detail.getByText(`Story current:${next ? GITHUB_PULL_REQUEST_RESPONSE.user.login : ''}`)).resolves.toBeDefined();
+      });
+    }
+    expect(nativeReads).toBe(5);
+  });
+
   it.each(['remounted reader', 'unchanged provider revision'] as const)('keeps both property editors and current membership after a settled write with %s', async (change) => {
     const scope = createTriageEphemeralSharedScopeFixture();
     let assigned = false;
