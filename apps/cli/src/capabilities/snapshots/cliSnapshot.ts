@@ -9,6 +9,7 @@ import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCli
 import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthStatus } from '@/capabilities/cliAuth/types';
 import { CapabilityError } from '@/capabilities/errors';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
 import { resolveCliSnapshotProbeTimeoutMs } from './cliSnapshotProbeTimeout';
 import {
@@ -238,8 +239,8 @@ function getFirstLine(value: string): string | null {
 
 function extractSemver(value: string | null): string | null {
     if (!value) return null;
-    const match = value.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/);
-    return match?.[0] ?? null;
+    const match = value.match(/\b[vV]?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/);
+    return match?.[1] ?? null;
 }
 
 function extractTmuxVersion(value: string | null): string | null {
@@ -354,7 +355,10 @@ async function probeCliExecution(params: { name: DetectCliName; resolvedPath: st
                         timeoutMs,
                         signal: params.signal,
                     })
-                    : await (params.execFile ?? execFileWithDeadline)(file, args, options);
+                    : await (params.execFile ?? execFileWithDeadline)(file, args, {
+                        ...options,
+                        terminateOnAbort: terminateProcessTree,
+                    });
                 installed = true;
                 return { stdout: asString(stdout), stderr: asString(stderr), error: null };
             } catch (error) {
@@ -728,16 +732,16 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest, fact
                         : null)
                 : null;
 
-            const installed = versionResult.installed;
             const platform = resolvePlatformFromNodePlatform(process.platform);
-            const update = installed && platform
+            const update = platform
                 ? classifyAgentCliInstall({ runtimeSpec: resolveAgentCliRuntimeSpecForLookupId(name), command: resolvedPath, source: resolutionSource, platform, env: process.env })
                 : null;
 
             const entry: DetectCliEntry = {
                 available: true,
-                ...(installed !== undefined ? { installed } : {}),
-                ...(versionResult.detectionError ? { detectionError: versionResult.detectionError } : {}),
+                // The launch resolver already established a runnable installation.
+                // Optional version metadata cannot revoke that executable fact.
+                installed: true,
                 ...setupFacts,
                 signIn: {
                     status: authStatus?.state === 'logged_in' ? 'signedIn' : authStatus?.state === 'logged_out' ? 'signedOut' : 'unknown',

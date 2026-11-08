@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PluginManifestV2Schema, PluginManagedDependencyContributionV2Schema, projectMachineAgentsDetectResponse, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import * as processBoundary from '@happier-dev/cli-common/process';
 
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -12,13 +13,14 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { detectCliSnapshotOnDaemonPath } from './cliSnapshot';
 import { initialMachineMetadata, refreshMachineMetadataForCurrentDaemon } from '@/daemon/machine/metadata';
-import { projectMachineAgentInventoryFromCliSnapshot } from './machineAgentInventory';
+import { createMachineAgentInventoryPublication, projectMachineAgentInventoryFromCliSnapshot } from './machineAgentInventory';
 import { MachinePublishedMetadataV1Schema, StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { SkillRuleV1Schema } from '@happier-dev/protocol/reach/reachRuleV1';
 import { projectReachForMachinesV1 } from '@happier-dev/protocol/reach/projectReachV1';
 import { readInstalledMachineAgentIds } from '../../../../ui/sources/sync/domains/capabilities/reach/installedMachineAgents';
 import { createWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
+import { createDeferred } from '@/testkit/async/deferred';
 
 function publishSnapshot(snapshot: Awaited<ReturnType<typeof detectCliSnapshotOnDaemonPath>>) {
     const current = { ...initialMachineMetadata,
@@ -33,6 +35,53 @@ function publishSnapshot(snapshot: Awaited<ReturnType<typeof detectCliSnapshotOn
 
 afterEach(() => vi.unstubAllEnvs());
 
+it('publishes zero membership changes for repeated native inventory observations before daemon runtime admission', async () => {
+    expect(pluginReloadController.getState().activeRegistry).toBeNull();
+    const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['custom-acp'], bypassCache: true });
+    const publish = createMachineAgentInventoryPublication();
+    const admitted = { checkedAt: 1, installedAgentIds: ['claude', 'custom-acp'] };
+    let published = admitted;
+    let membershipChanges = 0;
+    for (let arrival = 0; arrival < 128; arrival++) {
+        const next = publish({ snapshot, checkedAt: arrival + 2, observedAgentIds: ['custom-acp'] }, published)!;
+        if (next !== published) membershipChanges++;
+        published = next;
+    }
+    expect(membershipChanges).toBe(0);
+    expect(published).toBe(admitted);
+    expect(snapshot.clis['custom-acp']).toMatchObject({
+        detectionError: { code: 'cli-detection-failed' },
+    });
+    expect(snapshot.clis['custom-acp']?.installed).toBeUndefined();
+    expect(() => buildCliCapabilityData({ request: { id: 'cli.custom-acp' }, entry: snapshot.clis['custom-acp'] }))
+        .toThrow(expect.objectContaining({ code: 'cli-detection-failed' }));
+
+    const fixture = await createProbeTempDir('happier-agent-inventory-cold-runtime');
+    try {
+        vi.stubEnv('HAPPIER_HOME_DIR', fixture.dir);
+        vi.stubEnv('HOME', fixture.dir);
+        vi.stubEnv('USERPROFILE', fixture.dir);
+        vi.stubEnv('PATH', '');
+        vi.stubEnv('HAPPIER_CODEX_PATH', join(fixture.dir, 'missing-codex'));
+        vi.stubEnv('HAPPIER_CLAUDE_PATH', join(fixture.dir, 'missing-claude'));
+        const absent = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['claude', 'codex', 'custom-acp'], bypassCache: true });
+        expect(absent.clis.claude).toMatchObject({ installed: false, available: false });
+        expect(absent.clis.claude?.detectionError).toBeUndefined();
+        expect(absent.clis.codex).toMatchObject({ installed: false, available: false });
+        expect(absent.clis.codex?.detectionError).toBeUndefined();
+        expect(absent.clis['custom-acp']).toMatchObject({ detectionError: { code: 'cli-detection-failed' } });
+        const cliPath = join(fixture.dir, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+        await writeExecutableScript(cliPath, process.platform === 'win32' ? '@echo off\r\necho 1.2.3\r\n' : '#!/bin/sh\necho 1.2.3\n');
+        vi.stubEnv('HAPPIER_CODEX_PATH', cliPath);
+        const mixed = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['claude', 'codex', 'custom-acp'], bypassCache: true });
+        expect(mixed.clis.claude).toMatchObject({ installed: false, available: false });
+        expect(mixed.clis.codex).toMatchObject({ installed: true, version: '1.2.3' });
+        expect(mixed.clis['custom-acp']).toMatchObject({ detectionError: { code: 'cli-detection-failed' } });
+    } finally {
+        await fixture.cleanup();
+    }
+});
+
 describe('machine agent inventory on the daemon', () => {
     const runtimeFixtures: Array<Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>> = [];
     beforeAll(async () => {
@@ -46,6 +95,72 @@ describe('machine agent inventory on the daemon', () => {
         for (const fixture of runtimeFixtures) await fixture.dispose();
     });
 
+    it('uses the admitted parent factory observation in a requester effect instead of reacquiring daemon authority', async () => {
+        const observed = await observeCurrentAgentSessionFactory('custom-acp');
+        expect(observed).not.toBeNull();
+        const source = { observations: { 'custom-acp': observed && {
+            nativeAuthenticationRequired: observed.nativeAuthenticationRequired,
+        } }, isCurrent: () => true };
+        expect(await observeCurrentAgentSessionFactory('custom-acp', source)).toMatchObject({
+            nativeAuthenticationRequired: observed!.nativeAuthenticationRequired,
+        });
+        // An admitted absence must not borrow a different factory from this
+        // process, even when that process happens to host an active daemon.
+        expect(await observeCurrentAgentSessionFactory('custom-acp', {
+            observations: { 'custom-acp': null }, isCurrent: () => true,
+        })).toBeNull();
+        await expect(observeCurrentAgentSessionFactory('custom-acp', {
+            observations: {}, isCurrent: () => true,
+        })).rejects.toThrow('Parent factory observation is unavailable');
+        const retired = await observeCurrentAgentSessionFactory('custom-acp', {
+            ...source, isCurrent: () => false,
+        });
+        expect(retired?.isCurrent()).toBe(false);
+    });
+
+    it('keeps native install membership when its factory retires during a sibling CLI probe', async () => {
+        const fixture = await createProbeTempDir('happier-agent-inventory-retirement');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const execFile = processBoundary.execFileWithDeadline;
+        let probe: ReturnType<typeof detectCliSnapshotOnDaemonPath> | undefined;
+        // Pause only the OS process boundary; native factory acquisition,
+        // retirement, snapshot classification and publication remain real.
+        const spy = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async (...args) => {
+            entered.resolve();
+            await release.promise;
+            return execFile(...args);
+        });
+        try {
+            vi.stubEnv('HAPPIER_HOME_DIR', fixture.dir);
+            vi.stubEnv('HOME', fixture.dir);
+            vi.stubEnv('USERPROFILE', fixture.dir);
+            vi.stubEnv('PATH', '');
+            const cliPath = join(fixture.dir, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+            await writeExecutableScript(cliPath, process.platform === 'win32' ? '@echo off\r\necho 1.2.3\r\n' : '#!/bin/sh\necho 1.2.3\n');
+            vi.stubEnv('HAPPIER_CODEX_PATH', cliPath);
+            probe = detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex', 'custom-acp'], bypassCache: true });
+            await entered.promise;
+            runtimeFixtures[0]!.registry.retireConsumers();
+            release.resolve();
+            const observed = await probe;
+            const current = { checkedAt: 1, installedAgentIds: ['codex', 'custom-acp'] };
+            expect(projectMachineAgentInventoryFromCliSnapshot({ snapshot: observed, current, checkedAt: 2,
+                observedAgentIds: ['codex', 'custom-acp'] })).toBe(current);
+            expect(observed.clis['custom-acp']).toMatchObject({ detectionError: { code: 'cli-detection-failed' } });
+        } finally {
+            release.resolve();
+            await probe?.catch(() => {});
+            spy.mockRestore();
+            await fixture.cleanup();
+            // Restore the daemon's admitted factory for subsequent observations.
+            runtimeFixtures.push(await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+                runtimeOptions: { pluginIds: ['happier.agent.antigravity', 'happier.agent.codex', 'happier.agent.custom-acp'] } }));
+        }
+        const recovered = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['custom-acp'] });
+        expect(recovered.clis['custom-acp']).toMatchObject({ installed: true });
+    });
+
     it.each([true, false])('uses the same observed Codex installation for Session and detached Workflow admission: %s', async (installed) => {
         const fixture = await createProbeTempDir('happier-workflow-agent-installation');
         try {
@@ -54,9 +169,9 @@ describe('machine agent inventory on the daemon', () => {
             vi.stubEnv('USERPROFILE', fixture.dir);
             vi.stubEnv('PATH', '');
             const cliPath = join(fixture.dir, process.platform === 'win32' ? 'codex.cmd' : 'codex');
-            await writeExecutableScript(cliPath, process.platform === 'win32'
-                ? `@echo off\r\necho 1.2.3\r\nexit /b ${installed ? 0 : 1}\r\n`
-                : `#!/bin/sh\necho 1.2.3\nexit ${installed ? 0 : 1}\n`);
+            if (installed) await writeExecutableScript(cliPath, process.platform === 'win32'
+                ? '@echo off\r\necho 1.2.3\r\n'
+                : '#!/bin/sh\necho 1.2.3\n');
             vi.stubEnv('HAPPIER_CODEX_PATH', cliPath);
             const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], bypassCache: true });
             const response = { protocolVersion: 1, results: {
@@ -99,29 +214,6 @@ describe('machine agent inventory on the daemon', () => {
         } finally {
             await fixture.cleanup();
         }
-    });
-
-    it('uses the admitted parent factory observation in a requester effect instead of reacquiring daemon authority', async () => {
-        const observed = await observeCurrentAgentSessionFactory('custom-acp');
-        expect(observed).not.toBeNull();
-        const source = { observations: { 'custom-acp': observed && {
-            nativeAuthenticationRequired: observed.nativeAuthenticationRequired,
-        } }, isCurrent: () => true };
-        expect(await observeCurrentAgentSessionFactory('custom-acp', source)).toMatchObject({
-            nativeAuthenticationRequired: observed!.nativeAuthenticationRequired,
-        });
-        // An admitted absence must not borrow a different factory from this
-        // process, even when that process happens to host an active daemon.
-        expect(await observeCurrentAgentSessionFactory('custom-acp', {
-            observations: { 'custom-acp': null }, isCurrent: () => true,
-        })).toBeNull();
-        await expect(observeCurrentAgentSessionFactory('custom-acp', {
-            observations: {}, isCurrent: () => true,
-        })).rejects.toThrow('Parent factory observation is unavailable');
-        const retired = await observeCurrentAgentSessionFactory('custom-acp', {
-            ...source, isCurrent: () => false,
-        });
-        expect(retired?.isCurrent()).toBe(false);
     });
 
     it('keeps healthy native CLI facts when a sibling Agent has no native CLI probe', async () => {

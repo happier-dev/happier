@@ -157,7 +157,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     expect(entry.version).toBe(version);
   });
 
-  it('does not count a resolved CLI that fails to run as installed', async () => {
+  it('keeps a resolved CLI installed when optional version metadata fails', async () => {
     const codexPath = makeExecutableShim({
       dir: workDir,
       name: 'codex-broken',
@@ -165,10 +165,10 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     });
     setEnv('HAPPIER_CODEX_PATH', codexPath);
     const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
-    expect(snapshot.clis.codex.installed).toBe(false);
+    expect(snapshot.clis.codex.installed).toBe(true);
   });
 
-  it.skipIf(process.platform === 'win32')('reports a timed-out CLI probe as unavailable observation and retries after recovery', async () => {
+  it.skipIf(process.platform === 'win32')('keeps resolved installation when version metadata times out, while install verification still fails', async () => {
     const codexPath = makeExecutableShim({
       dir: workDir,
       name: 'codex-slow',
@@ -178,9 +178,8 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', '100');
 
     const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
-    expect(snapshot.clis.codex.installed).toBeUndefined();
-    expect(() => buildCliCapabilityData({ request: { id: 'cli.codex' }, entry: snapshot.clis.codex }))
-      .toThrow(expect.objectContaining({ code: 'cli-detection-timeout' }));
+    expect(buildCliCapabilityData({ request: { id: 'cli.codex' }, entry: snapshot.clis.codex }))
+      .toMatchObject({ installed: true, resolvedPath: codexPath });
     await expect(probeAgentCliForInstall({
       runtimeSpec: {
         id: 'codex', title: 'Codex', binaryName: 'codex',
@@ -191,7 +190,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     })).rejects.toMatchObject({ code: 'cli-detection-timeout' });
 
     writeFileSync(codexPath, '#!/bin/sh\necho "codex 1.2.3"\n', { mode: 0o755 });
-    const recovered = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'] });
+    const recovered = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], bypassCache: true });
     expect(recovered.clis.codex).toMatchObject({ installed: true, version: '1.2.3' });
   });
 
@@ -274,21 +273,24 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     },
   );
 
-  it.skipIf(process.platform === 'win32')(
-    'detects OpenCode in ~/.opencode/bin even when it is not on PATH',
-    async () => {
+  it.skipIf(process.platform === 'win32').each([
+    ['0.4.1', '0.4.1'],
+    ['opencode v2.2.5', '2.2.5'],
+  ])(
+    'detects OpenCode in ~/.opencode/bin with version output %s',
+    async (output, version) => {
       const opencodeBinDir = join(homeDir, '.opencode', 'bin');
       mkdirSync(opencodeBinDir, { recursive: true });
       const opencodePath = makeExecutableShim({
         dir: opencodeBinDir,
         name: 'opencode',
-        stdout: 'echo "0.4.1"',
+        stdout: `echo "${output}"`,
       });
 
-      const snapshot = await detectCliSnapshotOnDaemonPath({});
+      const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['opencode'] });
       expect(snapshot.clis.opencode.available).toBe(true);
       expect(snapshot.clis.opencode.resolvedPath).toBe(opencodePath);
-      expect(snapshot.clis.opencode.version).toBe('0.4.1');
+      expect(snapshot.clis.opencode.version).toBe(version);
     },
   );
 

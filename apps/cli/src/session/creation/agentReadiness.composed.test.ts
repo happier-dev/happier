@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { FeaturesResponseSchema, SessionSpawnNewInputV2Schema, accountSettingsParse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
@@ -12,11 +13,17 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createApiSessionSocketStub, bindApiSessionSocketMock } from '@/testkit/backends/apiSessionSocketHarness';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
+import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
+import { detectCliSnapshotOnDaemonPath } from '@/capabilities/snapshots/cliSnapshot';
+import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetServerFeaturesClientForTests(); });
 
 it.each([
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, versionProbeFails: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null },
   { role: 'use', installed: false, outdated: false, acquireAllowed: false, refusal: 'agent_cli_missing' },
   { role: 'use', installed: true, outdated: true, acquireAllowed: false, refusal: null },
@@ -28,12 +35,36 @@ it.each([
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
   { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
-] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated)', async testCase => {
+] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, versionProbeFails=$versionProbeFails)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
   const updateInUse = 'updateInUse' in testCase && testCase.updateInUse;
   const updatePending = 'updatePending' in testCase && testCase.updatePending;
   const dependencyMissing = 'dependencyMissing' in testCase && testCase.dependencyMissing;
+  const hostPath = 'hostPath' in testCase && testCase.hostPath;
+  const versionProbeFails = 'versionProbeFails' in testCase && testCase.versionProbeFails;
+  let hostExecutablePath: string | undefined;
+  if (hostPath) {
+    const fixture = await createProbeTempDir('happier-session-host-cli');
+    onTestFinished(fixture.cleanup);
+    vi.stubEnv('HAPPIER_HOME_DIR', fixture.dir);
+    vi.stubEnv('HOME', fixture.dir);
+    vi.stubEnv('USERPROFILE', fixture.dir);
+    vi.stubEnv('CODEX_HOME', fixture.dir);
+    vi.stubEnv('HAPPIER_CODEX_PATH', '');
+    vi.stubEnv('HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', '');
+    vi.stubEnv('PATH', fixture.dir);
+    hostExecutablePath = join(fixture.dir, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+    await writeExecutableScript(hostExecutablePath, process.platform === 'win32'
+      ? versionProbeFails
+        ? '@echo off\r\nif "%~1"=="--version" exit /b 1\r\nif "%~1"=="version" exit /b 1\r\nif "%~1"=="-v" exit /b 1\r\nexit /b 0\r\n'
+        : '@echo off\r\necho codex 1.2.3\r\n'
+      : versionProbeFails
+        ? '#!/bin/sh\ncase "$1" in --version|version|-v) exit 1;; esac\nexit 0\n'
+        : '#!/bin/sh\nprintf "codex 1.2.3\\n"\n');
+    // The isolated Home has no managed installation; PATH is the only CLI source.
+    expect(resolveAgentCliLaunchSpec('codex', { processEnv: { ...process.env, PATH: '' } })).toBeNull();
+  }
   const accountId = 'requester';
   const machineId = 'machine-1';
   const sessionId = 'readiness-session';
@@ -73,7 +104,12 @@ it.each([
         codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
       } } };
     } else if (method === RPC_METHODS.CAPABILITIES_DETECT) {
-      result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: facts } } };
+      // Keep physical detection/projection real behind the Machine network boundary.
+      const data = hostPath ? buildCliCapabilityData({ request: { id: 'cli.codex', params: { includeLoginStatus: true } },
+        entry: (await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['codex'], requestedTools: [],
+          includeLoginStatus: true, bypassCache: true })).clis.codex }) : facts;
+      if (hostPath) expect(data).toMatchObject({ resolutionSource: 'system', resolvedPath: hostExecutablePath });
+      result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data } } };
     } else if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) {
       events.push(outdated ? 'update' : 'install');
       result = updateInUse ? { ok: false, errorCode: 'in_use', error: 'The installed Agent is in use' } : { ok: true, jobId: 'acquisition-job' };
@@ -135,6 +171,7 @@ it.each([
       directoryKind: 'path', directoryCreationRequired: false, checkout: null }), spawnedSession: {
       // The native process boundary performs birth and launch together.
       spawn: async () => {
+        if (hostPath) expect(resolveAgentCliLaunchSpec('codex')).toMatchObject({ source: 'system', resolvedPath: hostExecutablePath });
         // Runnable installations never spend pre-birth work on an optional update,
         // including an update that would be busy, pending, or failed.
         if (installed && !dependencyMissing) expect(acquisitionRequests).toHaveLength(0);

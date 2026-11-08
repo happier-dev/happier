@@ -18,7 +18,9 @@ export function projectMachineAgentInventoryFromCliSnapshot(input: MachineAgentI
   current?: MachinePublishedMetadataV1['agentInventory'];
 }>): MachineAgentInventory {
   const previous = new Set(input.current?.installedAgentIds ?? []);
-  const installed = new Set(input.observedAgentIds ? previous : []);
+  // Failed census reads cannot establish that omitted catalog members were removed.
+  const partial = input.observedAgentIds !== undefined || Object.values(input.snapshot.clis).some(fact => fact.detectionError);
+  const installed = new Set(partial ? previous : []);
   for (const agentId of input.observedAgentIds ?? Object.keys(input.snapshot.clis)) {
     const fact = input.snapshot.clis[agentId];
     if (!fact || fact.detectionError || fact.installed === undefined) {
