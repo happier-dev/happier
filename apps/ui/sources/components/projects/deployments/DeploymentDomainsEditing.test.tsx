@@ -506,3 +506,32 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Environment → Domains: a Find zones refusal names its own cause (PAGE-ACCEPT-88 N13)', () => {
+  it.each(['hostname_outside_zone', 'denied'])('shows the zones cause, not deploy recovery, with Retry (%s)', async (reason) => {
+    const { readDeploymentFailureRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const inspectPlatformTarget = vi.fn(async () => ({ ok: true as const, value: { kind: 'unavailable', options: [], reason } }));
+    const { screen, controller, settle } = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+          account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } }, null);
+      });
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
+      expect(card?.props.diagnosticCode).toBe(reason);
+      // The deployment refusal fallback ("Check deployment history…") is not a zones cause.
+      expect(card?.props.title).not.toBe(readDeploymentFailureRecoveryV1('').remedy);
+      expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);
+      expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

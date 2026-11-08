@@ -43,6 +43,13 @@ type DeploymentEditorsTranslations = Readonly<{
   reachCaddy: (params: { machine: string }) => string;
   zonesFinding: string;
   readStopped: string;
+  cfCredential: string;
+  cfDenied: string;
+  cfAccountId: string;
+  cfOutsideZone: string;
+  cfNetwork: string;
+  cfProvider: string;
+  cfUnknown: string;
   addReference: string;
   addReferenceHint: string;
   addReferenceTitle: string;
@@ -114,6 +121,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy on ${machine} · public`,
     zonesFinding: 'Finding zones…',
     readStopped: 'Stopped. Nothing was read.',
+    cfCredential: 'Cloudflare didn\'t accept this account\'s sign-in. Reconnect it, then retry.',
+    cfDenied: 'This Cloudflare account isn\'t allowed to read this. Check its access, then retry.',
+    cfAccountId: 'Cloudflare didn\'t say which account to use. Set the account ID under Advanced, then retry.',
+    cfOutsideZone: 'This address isn\'t in that zone. Choose its zone or change the address.',
+    cfNetwork: 'Couldn\'t reach Cloudflare. Check the connection, then retry.',
+    cfProvider: 'Cloudflare didn\'t answer as expected. Retry in a moment.',
+    cfUnknown: 'Couldn\'t read from Cloudflare. Retry, or open Details.',
   },
   ru: {
     approvalsTitle: 'Подтверждения',
@@ -172,6 +186,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy на ${machine} · публично`,
     zonesFinding: 'Ищем зоны…',
     readStopped: 'Остановлено. Ничего не прочитано.',
+    cfCredential: 'Cloudflare не принял вход этого аккаунта. Подключите его заново и повторите.',
+    cfDenied: 'Этому аккаунту Cloudflare нельзя это читать. Проверьте доступ и повторите.',
+    cfAccountId: 'Cloudflare не сообщил, какой аккаунт использовать. Укажите ID аккаунта в разделе «Дополнительно» и повторите.',
+    cfOutsideZone: 'Этот адрес не входит в эту зону. Выберите его зону или измените адрес.',
+    cfNetwork: 'Не удалось связаться с Cloudflare. Проверьте соединение и повторите.',
+    cfProvider: 'Cloudflare ответил неожиданно. Повторите чуть позже.',
+    cfUnknown: 'Не удалось прочитать данные Cloudflare. Повторите или откройте подробности.',
   },
   pl: {
     approvalsTitle: 'Zatwierdzenia',
@@ -229,6 +250,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy na ${machine} · publicznie`,
     zonesFinding: 'Szukam stref…',
     readStopped: 'Zatrzymano. Nic nie odczytano.',
+    cfCredential: 'Cloudflare nie przyjął logowania tego konta. Połącz je ponownie i spróbuj jeszcze raz.',
+    cfDenied: 'To konto Cloudflare nie może tego odczytać. Sprawdź dostęp i spróbuj ponownie.',
+    cfAccountId: 'Cloudflare nie wskazał konta. Ustaw ID konta w sekcji Zaawansowane i spróbuj ponownie.',
+    cfOutsideZone: 'Ten adres nie należy do tej strefy. Wybierz jego strefę lub zmień adres.',
+    cfNetwork: 'Nie udało się połączyć z Cloudflare. Sprawdź połączenie i spróbuj ponownie.',
+    cfProvider: 'Cloudflare odpowiedział nieoczekiwanie. Spróbuj za chwilę.',
+    cfUnknown: 'Nie udało się odczytać danych z Cloudflare. Spróbuj ponownie lub otwórz szczegóły.',
   },
   es: {
     approvalsTitle: 'Aprobaciones',
@@ -287,6 +315,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy en ${machine} · público`,
     zonesFinding: 'Buscando zonas…',
     readStopped: 'Detenido. No se leyó nada.',
+    cfCredential: 'Cloudflare no aceptó el inicio de sesión de esta cuenta. Vuelve a conectarla y reintenta.',
+    cfDenied: 'Esta cuenta de Cloudflare no puede leer esto. Revisa su acceso y reintenta.',
+    cfAccountId: 'Cloudflare no indicó qué cuenta usar. Pon el ID de cuenta en Avanzado y reintenta.',
+    cfOutsideZone: 'Esta dirección no está en esa zona. Elige su zona o cambia la dirección.',
+    cfNetwork: 'No se pudo contactar con Cloudflare. Revisa la conexión y reintenta.',
+    cfProvider: 'Cloudflare respondió de forma inesperada. Reintenta en un momento.',
+    cfUnknown: 'No se pudo leer de Cloudflare. Reintenta o abre los detalles.',
   },
   fr: {
     approvalsTitle: 'Approbations',
@@ -345,6 +380,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy sur ${machine} · public`,
     zonesFinding: 'Recherche des zones…',
     readStopped: 'Arrêté. Rien n’a été lu.',
+    cfCredential: 'Cloudflare n’a pas accepté la connexion de ce compte. Reconnectez-le, puis réessayez.',
+    cfDenied: 'Ce compte Cloudflare n’a pas le droit de lire ceci. Vérifiez son accès, puis réessayez.',
+    cfAccountId: 'Cloudflare n’a pas indiqué quel compte utiliser. Renseignez l’ID du compte dans Avancé, puis réessayez.',
+    cfOutsideZone: 'Cette adresse n’est pas dans cette zone. Choisissez sa zone ou changez l’adresse.',
+    cfNetwork: 'Impossible de joindre Cloudflare. Vérifiez la connexion, puis réessayez.',
+    cfProvider: 'Cloudflare a répondu de façon inattendue. Réessayez dans un instant.',
+    cfUnknown: 'Lecture impossible depuis Cloudflare. Réessayez ou ouvrez les détails.',
   },
   it: {
     approvalsTitle: 'Approvazioni',
@@ -403,6 +445,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy su ${machine} · pubblico`,
     zonesFinding: 'Ricerca delle zone…',
     readStopped: 'Interrotto. Non è stato letto nulla.',
+    cfCredential: 'Cloudflare non ha accettato l’accesso di questo account. Ricollegalo e riprova.',
+    cfDenied: 'Questo account Cloudflare non può leggere questo. Controlla l’accesso e riprova.',
+    cfAccountId: 'Cloudflare non ha indicato quale account usare. Imposta l’ID account in Avanzate e riprova.',
+    cfOutsideZone: 'Questo indirizzo non è in quella zona. Scegli la sua zona o cambia indirizzo.',
+    cfNetwork: 'Impossibile raggiungere Cloudflare. Controlla la connessione e riprova.',
+    cfProvider: 'Cloudflare ha risposto in modo inatteso. Riprova tra poco.',
+    cfUnknown: 'Impossibile leggere da Cloudflare. Riprova o apri i dettagli.',
   },
   pt: {
     approvalsTitle: 'Aprovações',
@@ -460,6 +509,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy em ${machine} · público`,
     zonesFinding: 'A procurar zonas…',
     readStopped: 'Parado. Nada foi lido.',
+    cfCredential: 'O Cloudflare não aceitou o início de sessão desta conta. Volte a ligá-la e tente de novo.',
+    cfDenied: 'Esta conta Cloudflare não pode ler isto. Verifique o acesso e tente de novo.',
+    cfAccountId: 'O Cloudflare não indicou que conta usar. Defina o ID da conta em Avançado e tente de novo.',
+    cfOutsideZone: 'Este endereço não está nessa zona. Escolha a sua zona ou mude o endereço.',
+    cfNetwork: 'Não foi possível contactar o Cloudflare. Verifique a ligação e tente de novo.',
+    cfProvider: 'O Cloudflare respondeu de forma inesperada. Tente daqui a pouco.',
+    cfUnknown: 'Não foi possível ler do Cloudflare. Tente de novo ou abra os detalhes.',
   },
   ca: {
     approvalsTitle: 'Aprovacions',
@@ -518,6 +574,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy a ${machine} · públic`,
     zonesFinding: 'Cercant zones…',
     readStopped: 'Aturat. No s’ha llegit res.',
+    cfCredential: 'Cloudflare no ha acceptat l’inici de sessió d’aquest compte. Torna’l a connectar i reintenta.',
+    cfDenied: 'Aquest compte de Cloudflare no pot llegir això. Revisa’n l’accés i reintenta.',
+    cfAccountId: 'Cloudflare no ha indicat quin compte fer servir. Posa l’ID del compte a Avançat i reintenta.',
+    cfOutsideZone: 'Aquesta adreça no és en aquesta zona. Tria’n la zona o canvia l’adreça.',
+    cfNetwork: 'No s’ha pogut contactar amb Cloudflare. Revisa la connexió i reintenta.',
+    cfProvider: 'Cloudflare ha respost de manera inesperada. Reintenta d’aquí a poc.',
+    cfUnknown: 'No s’ha pogut llegir de Cloudflare. Reintenta o obre els detalls.',
   },
   de: {
     approvalsTitle: 'Freigaben',
@@ -575,6 +638,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `Caddy auf ${machine} · öffentlich`,
     zonesFinding: 'Zonen werden gesucht…',
     readStopped: 'Gestoppt. Nichts wurde gelesen.',
+    cfCredential: 'Cloudflare hat die Anmeldung dieses Kontos nicht akzeptiert. Verbinde es neu und versuche es erneut.',
+    cfDenied: 'Dieses Cloudflare-Konto darf das nicht lesen. Prüfe den Zugriff und versuche es erneut.',
+    cfAccountId: 'Cloudflare hat nicht gesagt, welches Konto gilt. Trage die Konto-ID unter Erweitert ein und versuche es erneut.',
+    cfOutsideZone: 'Diese Adresse liegt nicht in dieser Zone. Wähle ihre Zone oder ändere die Adresse.',
+    cfNetwork: 'Cloudflare ist nicht erreichbar. Prüfe die Verbindung und versuche es erneut.',
+    cfProvider: 'Cloudflare hat unerwartet geantwortet. Versuche es gleich noch einmal.',
+    cfUnknown: 'Lesen von Cloudflare fehlgeschlagen. Versuche es erneut oder öffne die Details.',
   },
   'zh-Hans': {
     approvalsTitle: '审批',
@@ -632,6 +702,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy · 公开`,
     zonesFinding: '正在查找区域…',
     readStopped: '已停止，未读取任何内容。',
+    cfCredential: 'Cloudflare 未接受此账号的登录。请重新连接后重试。',
+    cfDenied: '此 Cloudflare 账号无权读取这些内容。请检查其权限后重试。',
+    cfAccountId: 'Cloudflare 没有说明要使用哪个账号。请在“高级”中填写账号 ID 后重试。',
+    cfOutsideZone: '此地址不在该区域中。请选择其区域或更改地址。',
+    cfNetwork: '无法连接 Cloudflare。请检查网络后重试。',
+    cfProvider: 'Cloudflare 的响应不符合预期。请稍后重试。',
+    cfUnknown: '无法从 Cloudflare 读取。请重试或查看详情。',
   },
   'zh-Hant': {
     approvalsTitle: '審核',
@@ -689,6 +766,13 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy · 公開`,
     zonesFinding: '正在尋找區域…',
     readStopped: '已停止，未讀取任何內容。',
+    cfCredential: 'Cloudflare 未接受此帳號的登入。請重新連線後重試。',
+    cfDenied: '此 Cloudflare 帳號無權讀取這些內容。請檢查其權限後重試。',
+    cfAccountId: 'Cloudflare 沒有說明要使用哪個帳號。請在「進階」中填寫帳號 ID 後重試。',
+    cfOutsideZone: '此位址不在該區域中。請選擇其區域或變更位址。',
+    cfNetwork: '無法連線到 Cloudflare。請檢查網路後重試。',
+    cfProvider: 'Cloudflare 的回應不符合預期。請稍後重試。',
+    cfUnknown: '無法從 Cloudflare 讀取。請重試或查看詳細資料。',
   },
   ja: {
     approvalsTitle: '承認',
@@ -746,5 +830,12 @@ export const deploymentEditorsTranslations = {
     reachCaddy: ({ machine }) => `${machine} の Caddy · 公開`,
     zonesFinding: 'ゾーンを検索中…',
     readStopped: '停止しました。何も読み取っていません。',
+    cfCredential: 'Cloudflare がこのアカウントのサインインを受け付けませんでした。再接続してから再試行してください。',
+    cfDenied: 'この Cloudflare アカウントには読み取る権限がありません。アクセス権を確認して再試行してください。',
+    cfAccountId: 'Cloudflare が使用するアカウントを示しませんでした。「詳細」でアカウント ID を設定して再試行してください。',
+    cfOutsideZone: 'このアドレスはそのゾーンに含まれていません。ゾーンを選ぶかアドレスを変更してください。',
+    cfNetwork: 'Cloudflare に接続できませんでした。接続を確認して再試行してください。',
+    cfProvider: 'Cloudflare から予期しない応答がありました。少し待って再試行してください。',
+    cfUnknown: 'Cloudflare から読み取れませんでした。再試行するか詳細を開いてください。',
   },
 } satisfies Record<SupportedLanguage, DeploymentEditorsTranslations>;

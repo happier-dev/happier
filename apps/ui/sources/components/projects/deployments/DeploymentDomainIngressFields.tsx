@@ -39,6 +39,26 @@ const selectionAction = 'happier.deploy.cloudflare/actions/cloudflare-named/sele
 const binding = relayAccessProviderDescriptorsById.cloudflareNamed!.homeUi!.credentialBindings![0]!;
 const id = 'project-deployments.environment.domains.add.ingress';
 
+/**
+ * A Cloudflare read's cause in the person's words. The deployment recovery owner's typed remedy wins when it has one
+ * (a producer-authored remedy or a known code); its generic deploy fallback ("check deployment history") is not a
+ * zones or tunnels cause, so the selection read's own reason is named instead (PAGE-ACCEPT-88 N13).
+ */
+function cloudflareReadRemedy(reason: string, details?: unknown): string {
+  const owner = readDeploymentFailureRecoveryV1(reason, details).remedy;
+  if (owner !== readDeploymentFailureRecoveryV1('').remedy) return owner;
+  switch (reason) {
+    case 'credential_unavailable': return t('projects.deployments.editors.cfCredential');
+    case 'denied': return t('projects.deployments.editors.cfDenied');
+    case 'account_id_unavailable': return t('projects.deployments.editors.cfAccountId');
+    case 'hostname_outside_zone': return t('projects.deployments.editors.cfOutsideZone');
+    case 'network_unavailable': return t('projects.deployments.editors.cfNetwork');
+    case 'provider_unavailable':
+    case 'invalid_provider_output': return t('projects.deployments.editors.cfProvider');
+    default: return t('projects.deployments.editors.cfUnknown');
+  }
+}
+
 /** Read provider-owned choices only on a deliberate press. Input edits retire the old choice locally. */
 export function useDeploymentDomainIngressFields(props: Readonly<{
   hostname: string;
@@ -108,7 +128,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const diagnosticDetail = providerStatus ? `HTTP ${providerStatus}`
         : cause ? `${cause.phase}: ${cause.errorCode ?? cause.errorClass}` : undefined;
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: readDeploymentFailureRecoveryV1(reason, result.ok ? value : result.details).remedy,
+        remedy: cloudflareReadRemedy(reason, result.ok ? value : result.details),
         ...(diagnosticDetail ? { diagnosticDetail } : {}) };
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
@@ -140,7 +160,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const failure = readDeploymentActionError(error);
       const reason = failure.kind === 'refused' ? failure.code : 'unknown_error';
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: readDeploymentFailureRecoveryV1(reason, failure.kind === 'refused' ? failure.failure?.details : undefined).remedy };
+        remedy: cloudflareReadRemedy(reason, failure.kind === 'refused' ? failure.failure?.details : undefined) };
       if (kind === 'zones') {
         setZones({ key: zoneKey, credentialKey, ...unavailable });
         setZoneChoice(null);
@@ -212,8 +232,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           <FieldTextInput testID={`${id}.zoneId`} value={explicitZoneId} onChangeText={setExplicitZoneId}
             accessibilityLabel={t('projects.deployments.domainIngressZoneId')} autoCapitalize="none" editable={!props.busy} monospace />
         </FieldItem>
-      ) : currentZones?.kind === 'unavailable' ? <SurfaceStateCard testID={`${id}.zones.error`} size="line" kind="error"
-        title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail} /> : null}
+      ) : currentZones?.kind === 'unavailable' && reading !== 'zones' ? <SurfaceStateCard testID={`${id}.zones.error`} size="line" kind="error"
+        title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail}
+        action={{ label: t('common.retry'), testID: `${id}.zones.retry`, onPress: () => { void inspect('zones'); } }} /> : null}
       {zoneId ? (
         <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')}
           icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
@@ -227,8 +248,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
             disabled={props.busy || currentTunnels.options.length === 0} />
           {currentTunnels.options.length === 0 ? <Text>{t('projects.deployments.domainIngressEmpty')}</Text> : null}
         </FieldItem>
-      ) : currentTunnels?.kind === 'unavailable' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
-        title={currentTunnels.remedy} diagnosticCode={currentTunnels.reason} diagnosticDetail={currentTunnels.diagnosticDetail} /> : null}
+      ) : currentTunnels?.kind === 'unavailable' && reading !== 'tunnels' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
+        title={currentTunnels.remedy} diagnosticCode={currentTunnels.reason} diagnosticDetail={currentTunnels.diagnosticDetail}
+        action={{ label: t('common.retry'), testID: `${id}.tunnels.retry`, onPress: () => { void inspect('tunnels'); } }} /> : null}
     </View>
   ) : null };
 }
