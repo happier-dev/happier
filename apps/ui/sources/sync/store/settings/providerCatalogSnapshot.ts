@@ -173,8 +173,41 @@ export function beginProviderConnectionCheckRead(scope: ServerAccountScope, cred
     }
     const publish = beginModelDisplayRead(scope, credentialKey, queryKey);
     const accountCatalog = getProviderCatalogSnapshot(scope)?.data ?? null;
-    return value => publish({ kind: 'connection-check', value: reconcileConnectionCheck(value, accountCatalog,
-        getProviderCatalogSnapshot(scope)?.data ?? null), accountCatalog: getProviderCatalogSnapshot(scope)?.data ?? null });
+    // Keys are produced by providerConnectionCheckQueryKey in this module.
+    const [, machineId] = JSON.parse(queryKey) as readonly [string, string, string | null];
+    return value => {
+        const catalog = getProviderCatalogSnapshot(scope)?.data ?? null;
+        value = reconcileConnectionCheck(value, accountCatalog, catalog);
+        const peerKeys = new Set([providerConnectionCheckQueryKey(machineId),
+            ...value.connections.map(row => providerConnectionCheckQueryKey(machineId, row.connectionId))]);
+        const peers = [...peerKeys].map(peerKey => modelProjections.get(modelProjectionKey(scope, credentialKey, peerKey)))
+            .filter((peer): peer is ModelProjectionSnapshot => peer?.data?.kind === 'connection-check');
+        // A delayed collection read cannot replace a newer detail observation.
+        for (const peer of peers) {
+            if (peer.data?.kind === 'connection-check') value = mergeConnectionChecks(value, peer.data.value);
+        }
+        if (!publish({ kind: 'connection-check', value, accountCatalog: catalog })) return;
+        for (const peer of peers) {
+            if (peer === target || peer.data?.kind !== 'connection-check') continue;
+            const merged = mergeConnectionChecks(peer.data.value, value);
+            if (merged === peer.data.value) continue;
+            peer.data = { ...peer.data, value: merged };
+            for (const listener of [...peer.listeners]) listener();
+        }
+    };
+}
+
+function mergeConnectionChecks(current: ConnectionCheck, incoming: ConnectionCheck): ConnectionCheck {
+    const byId = new Map(incoming.connections.map(row => [row.connectionId, row]));
+    let changed = false;
+    const connections = current.connections.map(row => {
+        const next = byId.get(row.connectionId);
+        if (!next || (next.runtime.checkedAt ?? -Infinity) < (row.runtime.checkedAt ?? -Infinity)
+            || sameStrictJsonValue(row, next)) return row;
+        changed = true;
+        return next;
+    });
+    return changed ? { ...current, connections } : current;
 }
 
 function connectionCheckAccountFacts(catalog: ProviderConnectionsCatalogV1, connectionId: ProviderConnectionId) {
@@ -217,18 +250,19 @@ function reconcileConnectionChecks(scope: ServerAccountScope, catalog: ProviderC
         }
     }
 }
-function beginModelDisplayRead(scope: ServerAccountScope, credentialKey: string, queryKey: string): (data: ModelDisplay) => void {
+function beginModelDisplayRead(scope: ServerAccountScope, credentialKey: string, queryKey: string): (data: ModelDisplay) => boolean {
     const key = modelProjectionKey(scope, credentialKey, queryKey);
     const target = ensureModelProjectionSnapshot(scope, key);
     const request = ++target.requested;
     return data => {
         // A later successful revalidation wins over an older delayed reply.
         // Cancellation/failure of a newer borrower does not discard a still-valid answer.
-        if (modelProjections.get(key) !== target || request < target.accepted) return;
+        if (modelProjections.get(key) !== target || request < target.accepted) return false;
         target.accepted = request;
-        if (target.data && sameStrictJsonValue(target.data, data)) return;
+        if (target.data && sameStrictJsonValue(target.data, data)) return true;
         target.data = data;
         for (const listener of [...target.listeners]) listener();
+        return true;
     };
 }
 export function applyAcknowledgedProviderCatalog(scope: ServerAccountScope, data: ProviderConnectionsCatalogV1, revision: number,

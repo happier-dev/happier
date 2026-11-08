@@ -10,6 +10,8 @@ export type ConnectedServicesServiceBinding =
         selection?: 'profile' | 'group';
         profileId?: string;
         groupId?: string;
+        /** Runtime observation; never a desired account selection. */
+        appliedProfileId?: string;
       }>
     | TeamResourceConnectedServiceSelectionV2;
 
@@ -58,6 +60,8 @@ export function parseConnectedServicesServiceBinding(
             selection: 'group',
             groupId,
             ...(profileId ? { profileId } : {}),
+            ...(mode === 'stored' && typeof record.appliedProfileId === 'string' && record.appliedProfileId.trim()
+                ? { appliedProfileId: record.appliedProfileId } : {}),
         };
     }
     return {

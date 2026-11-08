@@ -1,6 +1,7 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedAccountServiceKey } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type {
     ConnectedServicesAccountGroupOption,
@@ -8,8 +9,9 @@ import type {
 } from '@happier-dev/agents';
 
 import type { ConnectedAccountIdentityPresenter } from './maskAccountEmail';
-import { presentQualifiedConnectedAccountTarget, resolveQualifiedConnectedAccountGroupLabel } from './qualifiedConnectedAccountTargetPresentation';
+import { presentConnectedAccountNames, resolveQualifiedConnectedAccountGroupLabel } from './qualifiedConnectedAccountTargetPresentation';
 import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfilePreferences';
+import { humanizeConnectedServiceIdentity } from './connectedServiceIdentityLabel';
 
 /**
  * The one V4 → session-options projection shared by every Session
@@ -41,14 +43,26 @@ export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: 
 }>): Readonly<Record<string, ConnectedServicesProfileOption[]>> {
     const supported = new Set<string>(params.supportedServiceIds);
     const options: Record<string, ConnectedServicesProfileOption[]> = {};
+    // Name the visible list together, once: isolated projections cannot distinguish matching names.
+    const names = params.presentIdentity ? presentConnectedAccountNames(params.accounts.flatMap(account => {
+        const serviceKey = buildQualifiedPluginContributionKey(account.ref.service);
+        if (!supported.has(serviceKey)) return [];
+        return [{
+            key: connectedEntitySubjectKeyV1({ kind: 'account', account: account.ref }),
+            serviceTitle: params.resolveServiceTitle?.(serviceKey) ?? humanizeConnectedServiceIdentity(account.ref.service.localId),
+            userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey: params.labelsByKey,
+                service: account.ref.service, accountId: account.ref.accountId }),
+            displayName: account.displayName,
+            email: account.providerIdentity?.email,
+            providerAccountId: account.providerIdentity?.accountId,
+            accountId: account.ref.accountId,
+            presentIdentity: params.presentIdentity,
+        }];
+    })) : null;
     for (const account of params.accounts) {
         const serviceKey = buildQualifiedPluginContributionKey(account.ref.service);
         if (!supported.has(serviceKey)) continue;
-        const presentation = params.presentIdentity ? presentQualifiedConnectedAccountTarget({
-            target: { kind: 'account', account: account.ref }, accounts: [account], groups: [],
-            labelsByKey: params.labelsByKey, serviceTitle: params.resolveServiceTitle?.(serviceKey) ?? null,
-            presentIdentity: params.presentIdentity,
-        }) : null;
+        const presentation = names?.get(connectedEntitySubjectKeyV1({ kind: 'account', account: account.ref }));
         const email = account.providerIdentity?.email ?? null;
         (options[serviceKey] ??= []).push({
             profileId: account.ref.accountId,

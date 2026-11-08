@@ -10,9 +10,9 @@ export type CredentialsSecretsState = 'loading' | 'failed' | 'empty' | 'ready';
 export function presentCredentialsSecretsState(input: Readonly<{
     status: SavedSecretCatalogProjection['status'];
     stale: boolean;
-    ownedCount: number;
+    entryCount: number;
 }>): CredentialsSecretsState {
-    if (input.ownedCount > 0) return 'ready';
+    if (input.entryCount > 0) return 'ready';
     if (input.status === 'error') return 'failed';
     return input.status === 'ready' && !input.stale ? 'empty' : 'loading';
 }

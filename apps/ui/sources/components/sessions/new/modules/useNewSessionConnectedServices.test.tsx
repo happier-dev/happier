@@ -259,7 +259,9 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     const { en } = await import('@/text/translations/en');
     return createTextModuleMock({
-        translate: (key: string, params) => key === 'connectedServices.authChip.runsThrough' && typeof params?.source === 'string'
+        translate: (key: string, params) => key === 'machineAgents.useConnectedAccount' && typeof params?.account === 'string'
+            ? en.machineAgents.useConnectedAccount({ account: params.account })
+            : key === 'connectedServices.authChip.runsThrough' && typeof params?.source === 'string'
             ? en.connectedServices.authChip.runsThrough({ source: params.source })
             : key === 'connectedServices.authChip.runsThroughOwnSignIn'
                 ? en.connectedServices.authChip.runsThroughOwnSignIn
@@ -455,6 +457,8 @@ describe('New Session purpose catalog authority', () => {
 
     it.each([
         { native: 'signedOut' as const, connected: true, selected: 'native', ready: false },
+        { native: 'signedOut' as const, connected: true, selected: 'native', ready: false, poolRecovery: true },
+        { native: 'signedOut' as const, connected: true, selected: 'native', ready: false, duplicateNames: true },
         { native: 'signedIn' as const, connected: true, selected: 'native', ready: true },
         { native: 'signedOut' as const, connected: true, selected: 'connected', ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'native', ready: false },
@@ -466,16 +470,33 @@ describe('New Session purpose catalog authority', () => {
         const bridge = await loadSyncSingletonForTests();
         const accountId = 'selected-launch-credential';
         const status = 'status' in scenario ? scenario.status : 'connected';
+        const poolRecovery = 'poolRecovery' in scenario;
+        const duplicateNames = 'duplicateNames' in scenario;
         const push = vi.fn();
         const features = buildServerFeaturesResponse();
         features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
-        const value: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: scenario.selected === 'inherited' ? [{
+        features.features.connectedServices.accountGroups.enabled = true;
+        const value: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: poolRecovery ? [{
+            purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
+            target: { kind: 'group', service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, groupId: 'primary' },
+        }] : scenario.selected === 'inherited' ? [{
             purpose: { consumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, purpose: 'primary' },
             target: { kind: 'account', account: { service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work' } },
         }] : [] };
         const profile = AccountProfileSchema.parse({ id: accountId, connectedAccountsV4: scenario.connected
-            ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work', displayName: 'Work', kind: 'token' }),
-                revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`, authenticationModeId: 'api-key', status }] : [] });
+            ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service, accountId: 'work', displayName: 'Work', kind: 'token', email: 'work@example.com' }),
+                revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`, authenticationModeId: 'api-key', status },
+                ...(poolRecovery || duplicateNames ? [{ ...v4Account({ ...CLAUDE_CONNECTED_ACCOUNTS[0]!.service,
+                    accountId: 'backup', displayName: duplicateNames ? 'Work' : 'Backup', email: 'backup@example.com', kind: 'token' }),
+                    revisionSemantics: 'revisioned', credentialRevision: `csr_${'b'.repeat(22)}`, authenticationModeId: 'api-key' }] : [])] : [],
+            connectedAccountGroupsV4: poolRecovery ? [{ v: 1,
+                ref: { service: CLAUDE_CONNECTED_ACCOUNTS[0]!.service, groupId: 'primary' },
+                incarnation: 'primary:1', displayName: 'Primary pool', policy: {}, activeConnectedAccountId: 'backup',
+                generation: 1, runtimeStateRevision: 1, state: { status: 'ready' }, createdAt: 0, updatedAt: 0,
+                members: ['work', 'backup'].map(connectedAccountId => ({ v: 1, connectedAccountId, priority: 0,
+                    enabled: true, state: {}, createdAt: 0, updatedAt: 0 })),
+            }] : [],
+        });
         const http = createHomeHubArtifactHttpBoundary(accountId, profile);
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://selected-launch-credential.test', accountId,
             request: (input, init) => {
@@ -501,6 +522,10 @@ describe('New Session purpose catalog authority', () => {
                 'agent:happier.agent.claude/claude': { connectedServicesBindingsByServiceId: {
                     [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                 } },
+            } : poolRecovery ? {
+                'agent:happier.agent.claude/claude': { connectedServicesBindingsByServiceId: {
+                    [CLAUDE_SERVICE_KEY]: { source: 'native' },
+                } },
             } : {});
             return useNewSessionConnectedServicesAgentOptions({ staticAgentId: 'claude', runtimeCarrierAgentId: 'claude', selectedMachineId: 'devbox',
                 targetServerId: connection.home.id, selectedBackendTargetKey: 'agent:happier.agent.claude/claude',
@@ -510,6 +535,8 @@ describe('New Session purpose catalog authority', () => {
         });
         try {
             await waitForHomeGovernance(() => expect(hook.getCurrent().connectedAccountDefaultsStatus).toBe('ready'));
+            if (poolRecovery) await waitForHomeGovernance(() =>
+                expect(hook.getCurrent().connectedServicesRecoveryAction?.testID).toBe('new-session-agent-blocker.connected'));
             expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(scenario.ready);
             // Aggregate Machine/Agent rows retain their "any usable credential" contract.
             expect(isMachineAgentReady(machineAgent)).toBe((scenario.connected && status !== 'needs_reauth') || scenario.native === 'signedIn');
@@ -528,11 +555,15 @@ describe('New Session purpose catalog authority', () => {
                 expect(push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ accountId: 'work' }) }));
             }
             if (line && canRecover) {
+                if (poolRecovery) expect(line.action.label).toContain('Primary pool');
+                if (duplicateNames) expect(line.action.label).toContain('work@example.com');
                 expect(line.secondaryAction?.testID).toBe('new-session-agent-blocker.action');
                 await act(async () => { line.action.onPress(); });
                 expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(true);
                 expect(hook.getCurrent().agentNewSessionOptions).toMatchObject({ connectedServices: { bindingsByServiceId: {
-                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+                    [CLAUDE_SERVICE_KEY]: poolRecovery
+                        ? { source: 'connected', selection: 'group', groupId: 'primary' }
+                        : { source: 'connected', selection: 'profile', profileId: 'work' },
                 } } });
                 const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
                 expect(getConnectedAccountCatalogValue(scope, 'purposes').value).toEqual(value);

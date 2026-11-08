@@ -101,7 +101,7 @@ import {
 } from './detail/ProviderConnectionDetailSections';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
 import { providerConnectionDetailRoute, providerConnectionModelsRoute, readProviderGatewayPurposeDeclarations,
-    providerConnectionEditRoute, readProviderGatewayViewDeclarations, resolveProviderConnectionIcon } from './collection/providerCollectionModel';
+    providerConnectionEditRoute, readProviderGatewayViewDeclarations, resolveProviderConnectionIcon, isProviderGatewayOn } from './collection/providerCollectionModel';
 import { createCustomProviderDraftFromTemplate } from '@/providers/authoring/state';
 import { ConnectedServiceGatewayUsedBy } from '@/components/settings/connectedServices/ConnectedServiceGatewayUsedBy';
 import { ProviderGatewaySections, resolveProviderGatewayChosenMachine, type ProviderGatewayHubReachability,
@@ -435,13 +435,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             if (result.status === 'error') {
                 setProbeState('idle');
                 setProbeError(result.error);
-                const refreshed = await query.refresh();
-                if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
-                const checked = refreshed?.connections.find(row => row.connectionId === props.connectionId);
-                // Keep structured diagnostics alongside the committed endpoint
-                // observation; the detail presenter retires them after recovery.
-                setProbeError(checked?.runtime.endpoints.some(endpoint => endpoint.errorCode === result.error.code)
-                    && !result.error.failureCause?.phase.startsWith('providers.probe.') ? null : result.error);
+                await query.refresh();
                 return;
             }
             setProbeState(result.status === 'success' ? 'idle' : 'notSupported');
@@ -885,6 +879,20 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }), 'enable:connection');
     }, [invalidateProbe, machineId, mutation, props.connectionId]);
 
+    // A gateway's one switch turns it on where it runs: the Account admits it, and the machine it runs
+    // on (its chosen machine, or this one for a per-session gateway) enables it. Off clears both.
+    const gatewayGrants = connection?.grants;
+    const setGatewayEnabled = React.useCallback(async (next: boolean) => {
+        if (!next || !gatewayGrants) {
+            await setConnectionEnabled(next);
+            return;
+        }
+        if (!gatewayGrants.accountEnabled) await setConnectionEnabled(true);
+        if (gatewayHubMachineId && !gatewayGrants.enabledMachineIds.includes(gatewayHubMachineId)) {
+            await setMachineEnabled(gatewayHubMachineId, true);
+        }
+    }, [gatewayGrants, gatewayHubMachineId, setConnectionEnabled, setMachineEnabled]);
+
     const openWebsite = React.useCallback(async (url: string) => {
         let opened = false;
         try {
@@ -946,9 +954,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         && displayFailure.error !== mutation.error && presentProviderError(displayFailure.error).scope === 'account'
         && (connection?.scope === 'account' || connection?.grants.accountState !== 'absent');
     // An off gateway is said once, by its header line and switch (its one enable control), not by a
-    // second "not enabled here" card with its own Enable.
-    const gatewayOff = Boolean(gateway) && connection != null
-        && !connection.grants.accountEnabled && connection.grants.enabledMachineIds.length === 0;
+    // second "not enabled here" card with its own Enable. On means running somewhere: the Account
+    // admits it and a machine runs it, the two grants its switch writes together.
+    const gatewayOff = Boolean(gateway) && connection != null && !isProviderGatewayOn({
+        accountEnabled: connection.grants.accountEnabled,
+        enabledMachineCount: connection.grants.enabledMachineIds.length,
+    });
     const displayError = accountGrantStaleShownAtControl
         || (gatewayOff && displayFailure?.error.code === 'provider_not_enabled_on_machine')
         ? null : displayFailure?.error ?? null;
@@ -994,7 +1005,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const managedTargetMachineName = managedDeployment
         ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
         : null;
-    const connectionEnabled = presentation.enabled;
+    const connectionEnabled = gateway ? !gatewayOff : presentation.enabled;
     // Healthy, untested or off says nothing here: test results live in the Test row, off in the switch.
     const statusQuiet = presentation.status === 'available' || presentation.status === 'notChecked'
         || presentation.status === 'disabled';
@@ -1055,7 +1066,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const lastCheck = check
         ? {
             text: [check.errorCode
-                ? t(presentProviderError(check.errorCode).descriptionKey)
+                ? t(presentProviderError(check.error ?? check.errorCode).descriptionKey)
                 : t(PROVIDER_CONNECTION_STATUS_KEY[check.status]),
             t('connectedServicesCollection.checkedAt', { time: formatAsOfTime(check.checkedAt, Date.now()) })].join(' · '),
             failed: check.failed,
@@ -1341,8 +1352,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             label={t('settingsProvidersCollection.enabled')}
                             accessibilityHint={t('settingsProvidersCollection.enabledDescription')}
                             value={connectionEnabled}
-                            busy={mutation.isPending('enable:connection')}
-                            onValueChange={(next) => { void setConnectionEnabled(next); }}
+                            busy={mutation.isPending('enable:connection')
+                                || (gateway !== null && Boolean(gatewayHubMachineId) && mutation.isPending(`machine:${gatewayHubMachineId}`))}
+                            onValueChange={(next) => { void (gateway ? setGatewayEnabled(next) : setConnectionEnabled(next)); }}
                         />
                         <PageHeaderMenu testID="provider-connection-menu" actions={menuActions} />
                     </ProviderHeaderActions>

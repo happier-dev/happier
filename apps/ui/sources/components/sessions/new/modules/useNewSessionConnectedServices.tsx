@@ -226,8 +226,13 @@ export function useNewSessionConnectedServices(params: Readonly<{
       .map(resolveQualifiedConnectedAccountServiceKey));
     return supportedConnectedServiceIds.some(serviceId => !suppressed.has(serviceId));
   }, [hasExplicitBindings, selectedProviderRoute, supportedConnectedServiceIds]);
-  const purposeCatalog = useConnectedAccountCatalog('purposes', inheritsPurposeDefaults ? purposeScope : null,
-    { sourceMachineId: params.sourceMachineId, enabled: inheritsPurposeDefaults });
+  const needsNativeSignInRecovery = supportedConnectedServiceIds.length > 0
+    && params.machineAgent?.signIn.native?.status === 'signedOut'
+    && !selectedProviderRoute?.ready
+    && Object.values(explicitBindings ?? {}).every(binding => !binding || binding.source === 'native');
+  const needsPurposeCatalog = inheritsPurposeDefaults || needsNativeSignInRecovery;
+  const purposeCatalog = useConnectedAccountCatalog('purposes', needsPurposeCatalog ? purposeScope : null,
+    { sourceMachineId: params.sourceMachineId, enabled: needsPurposeCatalog });
   const connectedAccountDefaultsStatus: NewSessionConnectedServicesResult['connectedAccountDefaultsStatus'] = !inheritsPurposeDefaults
     ? 'ready'
     : !purposeScope || !defaultAuthAgentId || !defaultAuthConsumer
@@ -652,6 +657,21 @@ export function useNewSessionConnectedServices(params: Readonly<{
     groupOptionsByServiceId: connectedServiceAccountGroupOptionsByServiceId,
     teamCredentialResources: params.teamCredentialResources,
   }), [params.machineAgent, connectedServicesBindingsPayload, selectedProviderRoute, connectedServiceAccountGroupOptionsByServiceId, params.teamCredentialResources]);
+  const recoveryDefaultBindings = React.useMemo(() => {
+    if (!needsNativeSignInRecovery || !defaultAuthAgentId || !defaultAuthConsumer
+      || purposeCatalog.status !== 'ready' || purposeCatalog.stale || !purposeCatalog.value) return null;
+    return resolveAgentConnectedServicesDefaultBindings({
+      settings: {
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
+      },
+      purposeBindings: purposeCatalog.value,
+      agentId: defaultAuthAgentId, consumer: defaultAuthConsumer, declarations: connectedAccounts,
+      managedSessionDefaults: params.managedSessionDefaults, agentTargetKey: params.nativeAgentTargetKey,
+    }).bindingsByServiceId;
+  }, [needsNativeSignInRecovery, defaultAuthAgentId, defaultAuthConsumer, purposeCatalog.status, purposeCatalog.stale,
+    purposeCatalog.value, settings.connectedServicesDefaultAuthByAgentIdV1, settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
+    connectedAccounts, params.managedSessionDefaults, params.nativeAgentTargetKey]);
   const connectedServicesRecoveryAction = React.useMemo<SessionInstrumentStripLineAction | null>(() => {
     const failure = selectedCredentialMachineAgent?.signIn.connectedAccountFailure;
     if (connectedAccountDefaultsStatus === 'ready' && failure) return {
@@ -661,21 +681,37 @@ export function useNewSessionConnectedServices(params: Readonly<{
     };
     if (connectedAccountDefaultsStatus !== 'ready' || selectedCredentialMachineAgent?.state !== 'needsSignIn'
         || selectedCredentialMachineAgent.signIn.native?.status !== 'signedOut'
+        || !recoveryDefaultBindings
         || Object.values(connectedServicesBindingsPayload?.bindingsByServiceId ?? {}).some((binding) => binding.source !== 'native')) return null;
     for (const serviceId of supportedConnectedServiceIds) {
       const service = params.machineAgent?.signIn.connectedServices.find((service) => service.serviceId === serviceId && service.healthy);
-      const option = connectedServiceProfileOptionsByServiceId[serviceId]?.find((option) => service?.profiles?.some((profile) => profile.profileId === option.profileId && profile.healthy));
+      const configured = recoveryDefaultBindings[serviceId];
+      if (configured?.source === 'team_resource') continue;
+      const group = configured?.source === 'connected' && configured.selection === 'group'
+        ? connectedServiceAccountGroupOptionsByServiceId[serviceId]?.find(group => group.groupId === configured.groupId) : null;
+      if (configured?.source === 'connected' && configured.selection === 'group'
+        && (!accountGroupsFeatureEnabled || !group?.activeProfileId)) continue;
+      const selectedProfileId = configured?.source === 'connected'
+        ? configured.selection === 'group' ? group?.activeProfileId : configured.profileId : null;
+      const option = connectedServiceProfileOptionsByServiceId[serviceId]?.find((option) => (
+        (!selectedProfileId || option.profileId === selectedProfileId)
+        && service?.profiles?.some((profile) => profile.profileId === option.profileId && profile.healthy)
+      ));
       if (option) return {
         // The line says this route needs sign-in; the account is one tap away, so the action says so.
-        label: t('machineAgents.useConnectedAccount', { account: option.label ?? option.providerEmail ?? resolveServiceTitle(serviceId) }),
+        label: t('machineAgents.useConnectedAccount', { account: [group?.label,
+          option.label ?? option.providerEmail ?? resolveServiceTitle(serviceId)].filter(Boolean).join(' · ') }),
         testID: 'new-session-agent-blocker.connected',
         truncates: true,
-        onPress: () => { void setBindingForService(serviceId, { source: 'connected', selection: 'profile', profileId: option.profileId }); },
+        onPress: () => { void setBindingForService(serviceId, group
+          ? { source: 'connected', selection: 'group', groupId: group.groupId }
+          : { source: 'connected', selection: 'profile', profileId: option.profileId }); },
       };
     }
     return null;
   }, [connectedAccountDefaultsStatus, selectedCredentialMachineAgent, connectedServicesBindingsPayload, supportedConnectedServiceIds,
-    params.machineAgent, connectedServiceProfileOptionsByServiceId, resolveServiceTitle, setBindingForService, router, connectedServicesRegistry.entries]);
+    params.machineAgent, connectedServiceProfileOptionsByServiceId, connectedServiceAccountGroupOptionsByServiceId,
+    accountGroupsFeatureEnabled, recoveryDefaultBindings, resolveServiceTitle, setBindingForService, router, connectedServicesRegistry.entries]);
 
   const nativeSourceLabel = supportedConnectedServiceIds.length > 0
     ? presentNativeRouteSourceLabel({ label: authLabel.label, authSource: nativeAuthSource }) : null;

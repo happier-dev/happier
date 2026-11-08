@@ -3546,7 +3546,7 @@ describe('usage query captured Resource adapter', () => {
         await expect.poll(() => phone.getSnapshot().pending).toBe('idle');
         // An addressable record with no witnessed replacement is not an
         // observation of zero, and cannot erase the previous last-read date.
-        records[0] = ProviderAccountUsageSnapshotV1Schema.parse({ ...records[0], state: 'not_loaded',
+        records[0] = ProviderAccountUsageSnapshotV1Schema.parse({ ...records[0], state: 'loaded_empty',
           observedAtMs: 0, fetchedAtMs: 0, meters: [] });
         await phone.refresh();
         expect.soft(phoneProjection().accounts[0]?.observedAtMs, 'unobserved replacement retains the last witnessed read').toBe(now);

@@ -91,6 +91,8 @@ import { captureComposerTransientInputStateForOutboundHandoff, clearComposerAfte
 import { useSessionAgentInputComposerPersistence } from "@/hooks/session/useSessionAgentInputComposerPersistence";
 import { useSessionGuardDraftActivity } from "@/hooks/session/useSessionGuardDraftActivity";
 import { useFeatureEnabled } from "@/hooks/server/useFeatureEnabled";
+import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useHomeTeamCredentialModelCatalog } from "@/hooks/teams/useHomeTeamCredentialModelCatalog";
 import { teamCredentialDetailPath } from "@/components/settings/teams/teamsRoutes";
 import type { TeamCredentialProviderModelSelectionV1 } from "@happier-dev/protocol/teams";
@@ -2004,6 +2006,9 @@ export function useSessionComposerController({
         connectedServicesV2: profile?.connectedServicesV2,
         connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
     }));
+    const connectedAccountTransport = resolveConnectedAccountUiNegotiation(
+        useServerFeaturesSnapshotForServerId(sessionRouteServerId),
+    );
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
     const sessionProviderUsageGaugeWindowModes = useSetting('sessionProviderUsageGaugeWindowModes');
@@ -2021,9 +2026,12 @@ export function useSessionComposerController({
             metadata: ownerMetadata,
             agentId: agentId ?? '',
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+            accountProfileConnectedAccountGroupsV4: connectedAccountTransport === 'legacy'
+                ? undefined : accountProfile?.connectedAccountGroupsV4 ?? [],
             connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, agentId, currentSessionAgentCatalogEntry?.connectedAccounts, ownerMetadata]);
+    ), [accountProfile?.connectedServicesV2, accountProfile?.connectedAccountGroupsV4, connectedAccountTransport,
+        agentId, currentSessionAgentCatalogEntry?.connectedAccounts, ownerMetadata]);
     const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
         connectedServiceQuotaProfileRef
             ? [{

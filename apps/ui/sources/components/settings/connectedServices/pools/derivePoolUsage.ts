@@ -32,6 +32,8 @@ export type PoolMemberUsageState = Readonly<{
 
 /** One window of "Left across the pool": the members' average, the earliest reset. */
 export type PoolUsageWindow = Readonly<{
+    /** A meter id may be reused for different provider-reported windows. */
+    key: string;
     meterId: string;
     label: string;
     remainingPct: number;
@@ -52,6 +54,7 @@ export type PoolUsage = Readonly<{
 type ComparableReading = Readonly<{
     meterId: string;
     label: string;
+    windowDurationMs: number | null;
     remainingPct: number;
     resetsAt: number | null;
     exhausted: boolean;
@@ -79,6 +82,7 @@ function readComparable(meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>, now
         return [{
             meterId: entry.meterId,
             label: entry.label,
+            windowDurationMs: entry.meter.windowDurationMs ?? null,
             remainingPct: entry.remainingPct,
             resetsAt: resetPassed ? null : resetsAt,
             exhausted,
@@ -98,7 +102,7 @@ export function derivePoolUsage(input: Readonly<{
     members: readonly PoolMemberUsageInput[];
     now: number;
 }>): PoolUsage {
-    const windows = new Map<string, { label: string; sum: number; count: number; resetsAt: number | null; estimated: boolean }>();
+    const windows = new Map<string, { meterId: string; label: string; sum: number; count: number; resetsAt: number | null; estimated: boolean }>();
     const memberByAccountId: Record<string, PoolMemberUsageState> = {};
     let withRoom = 0;
     let reporting = 0;
@@ -154,20 +158,23 @@ export function derivePoolUsage(input: Readonly<{
             }
         }
         for (const reading of readings) {
-            const current = windows.get(reading.meterId) ?? { label: reading.label, sum: 0, count: 0, resetsAt: null, estimated: false };
+            // `primary` describes the provider's slot, not its period. Average only the same reported window.
+            const key = JSON.stringify([reading.meterId, reading.label, reading.windowDurationMs]);
+            const current = windows.get(key) ?? { meterId: reading.meterId, label: reading.label, sum: 0, count: 0, resetsAt: null, estimated: false };
             current.sum += reading.remainingPct;
             current.count += 1;
             current.estimated ||= reading.estimated;
             if (reading.resetsAt !== null && (current.resetsAt === null || reading.resetsAt < current.resetsAt)) {
                 current.resetsAt = reading.resetsAt;
             }
-            windows.set(reading.meterId, current);
+            windows.set(key, current);
         }
     }
 
     return {
-        windows: Array.from(windows, ([meterId, window]) => ({
-            meterId,
+        windows: Array.from(windows, ([key, window]) => ({
+            key,
+            meterId: window.meterId,
             label: window.label,
             remainingPct: Math.round(window.sum / window.count),
             resetsAt: window.resetsAt,

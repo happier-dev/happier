@@ -100,7 +100,7 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
         <UsageMeterStack testID={`${props.testID}:meters`}>
             {usage.windows.map((window) => (
                 <UsageMeterRow
-                    key={window.meterId}
+                    key={window.key}
                     label={window.label}
                     remainingPct={window.remainingPct}
                     resetsAt={window.resetsAt}

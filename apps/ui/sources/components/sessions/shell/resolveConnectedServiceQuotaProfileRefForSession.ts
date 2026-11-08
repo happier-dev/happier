@@ -1,7 +1,8 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import type { QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
@@ -25,8 +26,9 @@ type AccountProfileConnectedService = AccountProfile['connectedServicesV2'][numb
  * The session quota/recovery corridor's resolved Connected Account binding.
  * `serviceKey` is the canonical qualified identity the resolution decided in;
  * `legacyServiceId` is its exact released scalar projection for the released
- * V2/V3 quota lookups (transport selection, recovery-credit consume wire, V2
- * group facts). Novel external services have no scalar projection and no
+ * V2/V3 quota lookups (transport selection and recovery-credit consume wire).
+ * Pool identity comes from applied runtime evidence or the current pool owner.
+ * Novel external services have no scalar projection and no
  * quota/recovery capability in this corridor — they fail closed upstream and
  * never reach this shape.
  */
@@ -140,6 +142,8 @@ function resolveBindingProfile(params: Readonly<{
     optionBinding: ConnectedServicesServiceBinding | undefined;
     payloadBinding: ConnectedServicesServiceBinding | undefined;
     accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
+    accountProfileConnectedAccountGroupsV4?: ReadonlyArray<QualifiedConnectedAccountGroupV4>;
+    serviceKey: string;
     legacyServiceId: ConnectedServiceId | null;
 }>): Readonly<{ profileId: string; groupId?: string }> | null {
     const optionBinding = readConnectedBinding(params.optionBinding);
@@ -147,22 +151,26 @@ function resolveBindingProfile(params: Readonly<{
     const explicitProfileId =
         readTrimmedString(optionBinding?.profileId)
         ?? readTrimmedString(payloadBinding?.profileId);
-    if (explicitProfileId) {
-        const selection = optionBinding?.selection ?? payloadBinding?.selection;
-        const groupId = readTrimmedString(optionBinding?.groupId)
-            ?? readTrimmedString(payloadBinding?.groupId);
-        return {
-            profileId: explicitProfileId,
-            ...(selection === 'group' && groupId ? { groupId } : {}),
-        };
-    }
-
-    const selection = optionBinding?.selection ?? payloadBinding?.selection;
-    if (selection !== 'group') return null;
+    const selection = optionBinding ? optionBinding.selection : payloadBinding?.selection;
+    if (selection !== 'group') return explicitProfileId ? { profileId: explicitProfileId } : null;
 
     const groupId = readTrimmedString(optionBinding?.groupId)
         ?? readTrimmedString(payloadBinding?.groupId);
     if (!groupId) return null;
+
+    const appliedProfileId = payloadBinding?.selection === 'group' && payloadBinding.groupId === groupId
+        ? readTrimmedString(payloadBinding.appliedProfileId) : null;
+    if (appliedProfileId) return { profileId: appliedProfileId, groupId };
+
+    // The current pool owner already chose its active member. Retained V2 facts must not choose again.
+    if (params.accountProfileConnectedAccountGroupsV4) {
+        const group = params.accountProfileConnectedAccountGroupsV4.find(candidate => (
+            buildQualifiedPluginContributionKey(candidate.ref.service) === params.serviceKey
+            && candidate.ref.groupId === groupId
+        ));
+        return group?.activeConnectedAccountId ? { profileId: group.activeConnectedAccountId, groupId } : null;
+    }
+    if (explicitProfileId) return { profileId: explicitProfileId, groupId };
 
     // The V2 account lookup still speaks scalar service ids; convert the
     // already-resolved qualified binding locally and typed. A service without
@@ -180,6 +188,7 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
     metadata: Metadata | null | undefined;
     agentId: string;
     accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
+    accountProfileConnectedAccountGroupsV4?: ReadonlyArray<QualifiedConnectedAccountGroupV4>;
     /** Exact Agent-owned account declarations from the machine catalog projection, when available. */
     connectedAccounts?: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
 }>): ConnectedServiceSessionQuotaProfileRef | null {
@@ -204,8 +213,8 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
         })),
     );
     const connectedServicesPayload =
-        readObjectRecord(agentOptionState?.connectedServices)
-        ?? readObjectRecord(metadata.connectedServices)
+        readObjectRecord(metadata.connectedServices)
+        ?? readObjectRecord(agentOptionState?.connectedServices)
         ?? null;
     const payloadBindings = readQualifiedServiceBindingLookup(
         Object.entries(readObjectRecord(connectedServicesPayload?.bindingsByServiceId) ?? {}),
@@ -227,6 +236,8 @@ export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonl
             optionBinding,
             payloadBinding,
             accountProfileConnectedServicesV2: params.accountProfileConnectedServicesV2,
+            accountProfileConnectedAccountGroupsV4: params.accountProfileConnectedAccountGroupsV4,
+            serviceKey,
             legacyServiceId,
         });
         if (!binding) continue;

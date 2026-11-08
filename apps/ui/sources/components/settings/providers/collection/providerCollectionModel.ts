@@ -244,10 +244,32 @@ export function areProviderGatewayDeclarationsKnown(input: Readonly<{
 }
 
 /** Saved identity and admitted bundled declarations suffice; no machine projection is required. */
+/**
+ * The one "is this gateway on" fact: admitted for the Account and enabled on a machine to run on. The
+ * gateway's header switch writes both, so the rail, the gateway page and a pool's "Use in other agents"
+ * read the same answer.
+ */
+export function isProviderGatewayOn(grants: Readonly<{ accountEnabled: boolean; enabledMachineCount: number }>): boolean {
+    return grants.accountEnabled && grants.enabledMachineCount > 0;
+}
+
+/** `isProviderGatewayOn` from the Account catalog's saved grants. */
+export function isProviderGatewayOnInCatalog(input: Readonly<{
+    connectionId: string;
+    accountGrants: readonly Readonly<{ connectionId: string }>[];
+    machineGrants: readonly Readonly<{ connectionId: string }>[];
+}>): boolean {
+    return isProviderGatewayOn({
+        accountEnabled: input.accountGrants.some(grant => grant.connectionId === input.connectionId),
+        enabledMachineCount: input.machineGrants.filter(grant => grant.connectionId === input.connectionId).length,
+    });
+}
+
 export function buildProviderGatewayCollection(input: Readonly<{
     connections: readonly ProviderConnectionV1[];
     declarationContext: ProviderDeclarationContext;
     accountGrants: readonly Readonly<{ connectionId: string }>[];
+    machineGrants: readonly Readonly<{ connectionId: string }>[];
 }>): readonly ProviderGatewayCollectionRow[] {
     return input.connections.flatMap(connection => {
         const purposes = readProviderGatewayPurposeDeclarations(connection, input.declarationContext) ?? [];
@@ -256,7 +278,7 @@ export function buildProviderGatewayCollection(input: Readonly<{
         return [{ connectionId: connection.id, title: connection.displayName,
             detailRoute: providerConnectionDetailRoute(connection.id), revision: connection.revision,
             slotServices: purposes.filter(({ purpose }) => bound[purpose]).map(({ service }) => service),
-            enabled: input.accountGrants.some(grant => grant.connectionId === connection.id) }];
+            enabled: isProviderGatewayOnInCatalog({ connectionId: connection.id, accountGrants: input.accountGrants, machineGrants: input.machineGrants }) }];
     });
 }
 

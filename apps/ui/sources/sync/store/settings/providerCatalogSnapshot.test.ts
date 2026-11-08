@@ -12,6 +12,41 @@ import { applyAcknowledgedProviderCatalog, applyProviderCatalogSnapshot, beginPr
 
 afterEach(resetProviderCatalogSnapshotsForTests);
 describe('scoped Provider row publication', () => {
+    it('publishes one detail check into the mounted rail without changing other connections or scopes', () => {
+        const scope = { serverId: 'home', accountId: 'account' };
+        const railKey = providerConnectionCheckQueryKey('machine-a');
+        const detailKey = providerConnectionCheckQueryKey('machine-a', 'pc_a');
+        const otherMachineKey = providerConnectionCheckQueryKey('machine-b');
+        const original = createProviderConnectionViewFixture({ connectionId: 'pc_a',
+            runtime: { health: 'available', checkedAt: 100, modelCount: 2, endpoints: [] } });
+        const other = createProviderConnectionViewFixture({ connectionId: 'pc_b' });
+        const rail = createProviderConnectionsDescribeFixture({ connections: [original, other] });
+        beginProviderConnectionCheckRead(scope, 'credential', railKey)(rail);
+        beginProviderConnectionCheckRead(scope, 'credential', otherMachineKey)(rail);
+        beginProviderConnectionCheckRead(scope, 'other-credential', railKey)(rail);
+        const publishDelayedRail = beginProviderConnectionCheckRead(scope, 'credential', railKey);
+        const changed = vi.fn();
+        const release = subscribeProviderModelProjectionSnapshot(scope, 'credential', railKey, changed);
+        try {
+            const failed = createProviderConnectionViewFixture({ connectionId: 'pc_a',
+                runtime: { health: 'unreachable', checkedAt: 200, modelCount: 2, endpoints: [{
+                    endpointTemplateId: 'chat', status: 'unreachable', observedAt: 200, activity: 'idle',
+                    errorCode: 'provider_endpoint_unreachable', retryAt: null,
+                    failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null },
+                }] } });
+            beginProviderConnectionCheckRead(scope, 'credential', detailKey)(
+                createProviderConnectionsDescribeFixture({ connections: [failed] }));
+            const updated = getProviderConnectionCheckSnapshot(scope, 'credential', railKey)!;
+            expect(updated.connections[0]).toEqual(failed);
+            expect(updated.connections[1]).toBe(rail.connections[1]);
+            expect(changed).toHaveBeenCalledOnce();
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', otherMachineKey)).toBe(rail);
+            expect(getProviderConnectionCheckSnapshot(scope, 'other-credential', railKey)).toBe(rail);
+            publishDelayedRail(rail);
+            expect(getProviderConnectionCheckSnapshot(scope, 'credential', railKey)?.connections[0]).toEqual(failed);
+            expect(changed).toHaveBeenCalledOnce();
+        } finally { release(); }
+    });
     it('reconciles changed catalog rows without waking unchanged row consumers at scale', () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const template = buildCustomProviderTemplate({ ...createCustomProviderDraft('openai-chat'),

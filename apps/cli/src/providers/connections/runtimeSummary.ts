@@ -96,6 +96,7 @@ export function selectProviderConnectionRuntimeSummary(input: CurrentProviderEnd
         activity: state?.activity ?? 'idle',
         observedAt: state && 'observedAt' in state ? state.observedAt : null,
         errorCode: state && 'errorCode' in state ? state.errorCode : null,
+        ...(state && 'failureCause' in state && state.failureCause ? { failureCause: state.failureCause } : {}),
         retryAt: state && 'retryAt' in state ? state.retryAt ?? null : null,
       };
     }),

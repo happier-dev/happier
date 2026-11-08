@@ -421,7 +421,7 @@ it('names only pending accounts once in the held headline row, and drops it once
   expect((await render(settled)).findByTestId('capacity.reading')).toBeNull();
 });
 
-it.each([['loaded_data', true], ['not_loaded', false]] as const)('says only an account that reported no allowance has none to show (%s), never an unread placeholder (R5A-03)', async (state, observed) => {
+it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] as const)('says only an account that reported no allowance has none to show (%s, observed %s), never an unread placeholder (R5A-03)', async (state, observed) => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const recordKey = { providerId: 'anthropic', accountSubjectId: 'mail', subjectKind: 'account', quotaScope: 'account' } as const;
@@ -452,6 +452,7 @@ it.each([['loaded_data', true], ['not_loaded', false]] as const)('says only an a
     expect(screen.findByTestId('capacity.unread')).not.toBeNull();
     expect(screen.getTextContent()).toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
     expect(screen.findByTestId('capacity.unread')?.props.children).toContain('Mail plan');
+    expect(screen.getTextContent()).not.toContain('1970');
   }
 });
 

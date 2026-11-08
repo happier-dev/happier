@@ -7,8 +7,10 @@ import {
 import {
   presentQualifiedConnectedAccountTarget,
 } from './qualifiedConnectedAccountTargetPresentation';
-import { presentConnectedAccountIdentity } from './maskAccountEmail';
+import { presentConnectedAccountIdentity, type ConnectedAccountIdentityInput } from './maskAccountEmail';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { t } from '@/text';
 
 const service = Object.freeze({
   pluginId: 'example.external.gateway',
@@ -31,6 +33,19 @@ const group = Object.freeze({
 });
 
 describe('presentQualifiedConnectedAccountTarget', () => {
+  it('names the recorded vendor-native Team route without claiming direct disclosure', async () => {
+    const { presentConnectedAccountPurposeTeamResource } = await import('./qualifiedConnectedAccountTargetPresentation');
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team', displayName: 'Company Gateway', resourceRevision: 1,
+      readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: false,
+      allowedRoutes: ['vendor-native'], directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
+      sourcePresentation: { kind: 'connected_service', service },
+    });
+    const presentation = presentConnectedAccountPurposeTeamResource({ teamResource: { teamId: 'team',
+      selection: { resourceId: 'shared', deliveryMode: 'vendor-native' } }, teamResources: [resource], serviceTitle: null });
+    expect(presentation.accessibilityLabel).toContain(t('teams.credentials.delivery.vendorNative'));
+    expect(presentation.accessibilityLabel).not.toContain(t('teams.credentials.delivery.direct'));
+  });
+
   it('keeps retained account and pool names meaningful when their descriptor title is absent', () => {
     const unnamed = { ref: account.ref };
     const pool = { ref: group.ref };
@@ -220,6 +235,33 @@ describe('presentQualifiedConnectedAccountTarget', () => {
 });
 
 describe('presentConnectedAccountNames', () => {
+  it('distinguishes matching display names with their presented emails without repeating the identity', async () => {
+    const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
+    const entries = ['personal', 'work'].map(key => ({
+      key, serviceTitle: 'ChatGPT', displayName: 'Leeroy Brun', email: `${key}@example.com`,
+    }));
+    const names = presentConnectedAccountNames(entries);
+    expect(names.get('personal')).toMatchObject({ primaryLabel: 'Leeroy Brun · personal@example.com', identityLabel: null });
+    expect(names.get('work')).toMatchObject({ primaryLabel: 'Leeroy Brun · work@example.com', identityLabel: null });
+    expect(presentConnectedAccountNames(entries.slice(0, 1)).get('personal')?.primaryLabel).toBe('Leeroy Brun');
+  });
+
+  it('numbers indistinguishable names in stable key order after applying identity privacy', async () => {
+    const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
+    const entries = ['b', 'a'].map(key => ({ key, serviceTitle: 'ChatGPT', displayName: 'Leeroy Brun',
+      email: `leeroy+${key}@example.com`,
+      presentIdentity: (identity: ConnectedAccountIdentityInput) => presentConnectedAccountIdentity({
+        ...identity, label: identity.label ?? null, email: identity.email ?? null, accountId: identity.accountId ?? null, hidden: true,
+      }),
+    }));
+    for (const order of [entries, [...entries].reverse()]) {
+      const names = presentConnectedAccountNames(order);
+      expect(names.get('a')?.primaryLabel).toBe('Leeroy Brun 1');
+      expect(names.get('b')?.primaryLabel).toBe('Leeroy Brun 2');
+      expect([...names.values()].map(name => name.primaryLabel).join(' ')).not.toContain('@example.com');
+    }
+  });
+
   it('tells apart accounts that read as their service account by a stable order, never an id', async () => {
     const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
     const entry = (key: string, extra: Readonly<{ serviceTitle?: string; email?: string }> = {}) => ({

@@ -26,7 +26,7 @@ export const ConnectedAccountIdentityText = React.memo(function ConnectedAccount
         // inline, which is a soft wrap opportunity on either side of it (the text stays one string).
         const at = props.value.indexOf('@');
         return (
-            <Text testID={props.testID} style={props.style} numberOfLines={props.numberOfLines}>
+            <Text testID={props.testID} style={[props.style, Platform.OS === 'web' ? WORD_WRAP_STYLE : null]} numberOfLines={props.numberOfLines}>
                 {Platform.OS === 'web' && at > 0 && at < props.value.length - 1
                     ? <>{props.value.slice(0, at + 1)}<Text style={ATOMIC_STYLE}>{props.value.slice(at + 1)}</Text></>
                     : props.value}
@@ -36,7 +36,7 @@ export const ConnectedAccountIdentityText = React.memo(function ConnectedAccount
     return (
         <Text
             testID={props.testID}
-            style={props.style}
+            style={[props.style, WORD_WRAP_STYLE]}
             numberOfLines={props.numberOfLines}
             accessibilityLabel={t('connectedServicesCollection.identityHidden')}
         >
@@ -48,5 +48,7 @@ export const ConnectedAccountIdentityText = React.memo(function ConnectedAccount
 });
 
 const ATOMIC_STYLE = { display: 'inline-block' } as unknown as TextStyle;
+// RNW's emergency word breaks turn short account names into fragments in narrow quota columns.
+const WORD_WRAP_STYLE = { wordBreak: 'normal', overflowWrap: 'normal' } as unknown as TextStyle;
 // `filter` is a web style React Native's types do not list.
 const BLUR_STYLE = { filter: 'blur(3.5px)', userSelect: 'none' } as unknown as TextStyle;

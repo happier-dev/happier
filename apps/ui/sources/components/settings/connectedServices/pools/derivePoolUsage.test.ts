@@ -27,6 +27,29 @@ const fiveHour = (pct: number | null, resetsIn: number) => meter('5h', '5-hour',
 const weekly = (pct: number | null, resetsIn: number) => meter('wk', 'Weekly', pct, resetsIn, { windowDurationMs: 7 * 24 * 60 * MIN });
 
 describe('derivePoolUsage', () => {
+    it.each([true, false])('keeps reused primary meter ids separate by their window (duration reported: %s)', (reportsDuration) => {
+        const session = meter('primary', 'Session', 80, 60 * MIN,
+            reportsDuration ? { windowDurationMs: 5 * 60 * MIN } : {});
+        const week = meter('primary', 'Weekly', 10, 6000 * MIN,
+            reportsDuration ? { windowDurationMs: 7 * 24 * 60 * MIN } : {});
+        const usage = derivePoolUsage({ now: NOW, members: [
+            { accountId: 'session', enabled: true, credentialStatus: 'connected', meters: [session] },
+            { accountId: 'weekly', enabled: true, credentialStatus: 'connected', meters: [week] },
+        ] });
+        expect(usage.windows).toEqual([
+            expect.objectContaining({ meterId: 'primary', label: 'Session', remainingPct: 80, reportingCount: 1 }),
+            expect.objectContaining({ meterId: 'primary', label: 'Weekly', remainingPct: 10, reportingCount: 1 }),
+        ]);
+    });
+
+    it('does not average different reported durations even when their primary labels agree', () => {
+        const usage = derivePoolUsage({ now: NOW, members: [
+            { accountId: 'short', enabled: true, credentialStatus: 'connected', meters: [meter('primary', 'Session', 80, 60 * MIN, { windowDurationMs: 5 * 60 * MIN })] },
+            { accountId: 'long', enabled: true, credentialStatus: 'connected', meters: [meter('primary', 'Session', 10, 120 * MIN, { windowDurationMs: 24 * 60 * MIN })] },
+        ] });
+        expect(usage.windows.map((window) => window.remainingPct)).toEqual([80, 10]);
+    });
+
     it('counts every member and exposes credential health and current room in one member state', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
             { accountId: 'work', enabled: true, credentialStatus: 'connected', meters: [weekly(0, 60 * MIN)] },

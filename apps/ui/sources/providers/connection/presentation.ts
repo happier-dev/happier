@@ -1,5 +1,5 @@
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
-import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 
 export type ProviderConnectionPresentationStatus =
@@ -104,16 +104,28 @@ export function presentProviderConnectionDetail(connection: DaemonProviderConnec
         lastCheck: Readonly<{
             checkedAt: number;
             errorCode: DaemonProviderConnectionViewV1['runtime']['endpoints'][number]['errorCode'];
+            error: ProviderErrorV1 | null;
             status: ProviderConnectionPresentationStatus;
             failed: boolean;
         }> | null;
         probeError: ProviderErrorV1 | null;
     }> {
     const presentation = presentProviderConnection(connection);
-    const lastCheck = connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null
+    const endpoint = connection.runtime.endpoints.find(endpoint => endpoint.errorCode);
+    const errorCode = ProviderErrorCodeV1Schema.safeParse(endpoint?.errorCode);
+    const error = errorCode.success ? createProviderErrorV1(errorCode.data, {
+        ...(endpoint?.failureCause ? { failureCause: endpoint.failureCause } : {}),
+    }) : null;
+    const hasLastCheck = connection.runtime.health !== 'not_checked' && connection.runtime.checkedAt !== null;
+    const reflectedProbeError = hasLastCheck && connection.runtime.health !== 'available'
+        && endpoint?.errorCode === probeError?.code && probeError !== null;
+    const lastCheck = hasLastCheck
         ? {
-            checkedAt: connection.runtime.checkedAt,
-            errorCode: connection.runtime.endpoints.find(endpoint => endpoint.errorCode)?.errorCode ?? null,
+            checkedAt: connection.runtime.checkedAt!,
+            errorCode: endpoint?.errorCode ?? null,
+            // Older observations omit the cause; retain a matching Action's
+            // diagnostics until the next canonical check replaces that observation.
+            error: error?.failureCause ? error : reflectedProbeError ? probeError : error,
             status: connection.runtime.health === 'available' ? 'available' as const : presentation.status,
             failed: connection.runtime.health !== 'available',
         }
@@ -122,11 +134,8 @@ export function presentProviderConnectionDetail(connection: DaemonProviderConnec
         ...presentation,
         // Endpoint diagnostics describe the canonical failed observation; an
         // Action refusal is independent of endpoint health and remains visible.
-        probeError: probeError?.failureCause?.phase.startsWith('providers.probe.')
-            ? lastCheck?.failed === true
-                && connection.runtime.endpoints.some(endpoint => endpoint.errorCode === probeError.code)
-                ? probeError : null
-            : probeError,
+        probeError: reflectedProbeError || probeError?.failureCause?.phase.startsWith('providers.probe.')
+            ? null : probeError,
         lastCheck,
     };
 }

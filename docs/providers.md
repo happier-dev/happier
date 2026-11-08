@@ -452,6 +452,15 @@ remains in `failureCause`, including across a subsequent Action wrapper; raw
 exception prose is excluded. Stale Account and Machine grant repairs expose
 their respective scope through the Provider error presenter.
 
+Failed Machine endpoint observations in 0.3 development retain the optional typed
+`failureCause` through runtime-state persistence and connection descriptions. The
+connection presenter uses that observation for both reopening a detail and the
+result of Test; the Providers rail consumes the same check through the shared
+Machine-check snapshot. Endpoint access describes the configured route, not proof
+of reachability. Older observations without a cause remain readable and use the
+Provider error-code fallback. This additive development shape requires matching
+strict-schema UI and daemon peers; it does not change the runtime-state version.
+
 The 0.3 development storage contract groups connections, grants, bindings,
 manual models, visibility/confirmation choices and unresolved migration conflicts
 in one private Account catalog owned by `connections/connectionRowsV1.ts`.

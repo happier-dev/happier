@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AccountProfile } from '@happier-dev/protocol';
+import type { AccountProfile } from '@happier-dev/protocol/account/profile';
+import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 
@@ -56,6 +57,56 @@ const CODEX_V2_SERVICE = {
 } satisfies AccountProfile['connectedServicesV2'][number];
 
 describe('resolveConnectedServiceQuotaProfileRefForSession', () => {
+    it('follows an authored profile switch instead of a previous pool observation', () => {
+        const metadata = metadataWithBindings({ bindingsByServiceId: {
+            [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool-1', appliedProfileId: 'personal' },
+        } });
+        expect(resolveConnectedServiceQuotaProfileRefForSession({
+            metadata: { ...metadata, agentNewSessionOptionStateByAgentId: { codex: {
+                connectedServicesBindingsByServiceId: {
+                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
+                },
+            } } },
+            agentId: 'codex', accountProfileConnectedServicesV2: [CODEX_V2_SERVICE],
+        })).toMatchObject({ profileId: 'work' });
+    });
+
+    it.each([false, true])('uses the provider-observed pool member ahead of the authored fallback and next pool member (retained seed: %s)', retainedSeed => {
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' },
+            displayName: 'Codex pool', incarnation: 'pool-1:1', generation: 3, runtimeStateRevision: 1, policy: {},
+            activeConnectedAccountId: 'work', state: {}, createdAt: 0, updatedAt: 0, members: [],
+        });
+        const metadata = metadataWithBindings({ bindingsByServiceId: {
+                [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool-1',
+                    profileId: 'work', appliedProfileId: 'personal' },
+            } });
+        expect(resolveConnectedServiceQuotaProfileRefForSession({
+            metadata: retainedSeed ? { ...metadata, agentNewSessionOptionStateByAgentId: {
+                codex: { connectedServices: { v: 2, bindingsByServiceId: {
+                    [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool-1', profileId: 'work' },
+                } } },
+            } } : metadata,
+            agentId: 'codex', accountProfileConnectedServicesV2: [CODEX_V2_SERVICE],
+            accountProfileConnectedAccountGroupsV4: [group],
+        })).toMatchObject({ profileId: 'personal', groupId: 'pool-1' });
+    });
+
+    it('follows the qualified pool active member instead of a retained legacy pool selection', () => {
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'pool-1' },
+            displayName: 'Codex pool', incarnation: 'pool-1:1', generation: 3, runtimeStateRevision: 1, policy: {},
+            activeConnectedAccountId: 'personal', state: {}, createdAt: 0, updatedAt: 0, members: [],
+        });
+        expect(resolveConnectedServiceQuotaProfileRefForSession({
+            metadata: metadataWithBindings({ bindingsByServiceId: {
+                [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool-1' },
+            } }),
+            agentId: 'codex', accountProfileConnectedServicesV2: [CODEX_V2_SERVICE],
+            accountProfileConnectedAccountGroupsV4: [group],
+        })).toMatchObject({ profileId: 'personal', groupId: 'pool-1' });
+    });
+
     it('resolves the session-bound profile from canonical qualified bindings', () => {
         expect(resolveConnectedServiceQuotaProfileRefForSession({
             metadata: metadataWithBindings({

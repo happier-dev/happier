@@ -1,11 +1,13 @@
 import type { ConnectedAccountPurposeTargetEligibilityReason } from './connectedAccountPurposeTargetEligibility';
 import type {
-  PluginContributionIdentityV1,
-  QualifiedConnectedAccountPurposeBindingTargetV1,
+  PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
+  QualifiedConnectedAccountPurposeBindingTargetV1} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import type {
   QualifiedConnectedAccountRef,
-  TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
-import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { TeamCredentialResourceCatalogEntryV1, TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
+import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { t } from '@/text';
@@ -175,9 +177,9 @@ export type ConnectedAccountNameEntry = Parameters<typeof presentConnectedAccoun
 
 /**
  * The naming rule over a list shown together: accounts of one service that would all read as that
- * service's account are told apart by number ("Claude account", "Claude account 2"). The number follows
- * the stable key order, so it does not move when the list reorders (by usage left, say); creation time
- * is not in the client projection. Never an id.
+ * service's account are told apart by number ("Claude account", "Claude account 2"). Matching human
+ * names include their distinct, privacy-presented identity, or a number when that identity also matches.
+ * Numbers follow stable key order, so reordering by usage left does not rename accounts. Never an id.
  */
 export function presentConnectedAccountNames(entries: readonly ConnectedAccountNameEntry[]): ReadonlyMap<string, ConnectedAccountNamePresentation> {
   const names = new Map<string, ConnectedAccountNamePresentation>();
@@ -197,6 +199,34 @@ export function presentConnectedAccountNames(entries: readonly ConnectedAccountN
       if (index === 0) return;
       const name = names.get(key)!;
       names.set(key, { ...name, primaryLabel: t('connectedServicesCollection.accountLabelNumbered', { service, number: index + 1 }) });
+    });
+  }
+  const keysByName = new Map<string, string[]>();
+  for (const [key, name] of names) {
+    const keys = keysByName.get(name.primaryLabel) ?? [];
+    keys.push(key);
+    keysByName.set(name.primaryLabel, keys);
+  }
+  for (const keys of keysByName.values()) {
+    if (keys.length < 2) continue;
+    const identityCounts = new Map<string, number>();
+    for (const key of keys) {
+      const identity = names.get(key)!.identityLabel;
+      if (identity) identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+    }
+    const indistinguishable: string[] = [];
+    for (const key of keys) {
+      const name = names.get(key)!;
+      if (name.identityLabel && identityCounts.get(name.identityLabel) === 1) {
+        names.set(key, { ...name, primaryLabel: [name.primaryLabel, name.identityLabel].join(' · '), identityLabel: null });
+      } else {
+        indistinguishable.push(key);
+      }
+    }
+    if (indistinguishable.length < 2) continue;
+    [...indistinguishable].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)).forEach((key, index) => {
+      const name = names.get(key)!;
+      names.set(key, { ...name, primaryLabel: [name.primaryLabel, index + 1].join(' ') });
     });
   }
   return names;
@@ -329,7 +359,7 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
 export function presentConnectedAccountPurposeTeamResource(input: Readonly<{
   teamResource: Readonly<{
     teamId: string;
-    selection: Pick<TeamResourceConnectedServiceSelectionV2, 'resourceId' | 'deliveryMode'>;
+    selection: Readonly<{ resourceId: string; deliveryMode: TeamCredentialRouteV1 }>;
   }>;
   teamResources: readonly TeamCredentialResourceCatalogEntryV1[];
   teamNameById?: Readonly<Record<string, string>>;
@@ -352,9 +382,7 @@ export function presentConnectedAccountPurposeTeamResource(input: Readonly<{
     primaryLabel: nonEmptyText(resource.displayName) ?? serviceTitle,
     secondaryParts: [
       nonEmptyText(input.teamNameById?.[resource.teamId]),
-      t(input.teamResource.selection.deliveryMode === 'brokered'
-        ? 'teams.credentials.delivery.brokered'
-        : 'teams.credentials.delivery.direct'),
+      deliveryModeLabel(input.teamResource.selection.deliveryMode),
       serviceTitle,
     ],
   });

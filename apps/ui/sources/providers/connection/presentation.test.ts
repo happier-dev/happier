@@ -25,7 +25,9 @@ describe('provider connection presentation', () => {
             endpointTemplateId: 'chat', status: 'unreachable' as const, activity: 'idle' as const,
             observedAt: 1, errorCode: error.code, retryAt: null,
         }] } };
-        expect(presentProviderConnectionDetail(failed, error).probeError).toBe(error);
+        expect(presentProviderConnectionDetail(failed, error)).toMatchObject({
+            probeError: null, lastCheck: { error },
+        });
         expect(presentProviderConnectionDetail(base, error).probeError).toBeNull();
         const actionRefusal = createProviderErrorV1('agent_error', {
             failureCause: { phase: 'actions.execute', errorClass: 'Error', errorCode: 'EIO', httpStatus: null },

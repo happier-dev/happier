@@ -226,12 +226,12 @@ describe('buildProviderCollection', () => {
       },
     });
     const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
-      connections: [managed, external, ollama], accountGrants: [],
+      connections: [managed, external, ollama], accountGrants: [], machineGrants: [],
     });
     expect(resolveProviderConnectionIcon(managed, { kind: 'account' })).toBe(PROVIDER_GATEWAY_ICON);
     expect(resolveProviderConnectionIcon(managed, { kind: 'machine', projection: null })).toBeNull();
     expect(buildProviderGatewayCollection({ declarationContext: { kind: 'machine', projection: null },
-      connections: [managed], accountGrants: [],
+      connections: [managed], accountGrants: [], machineGrants: [],
     })).toEqual([]);
     expect(rows).toEqual([
       expect.objectContaining({
@@ -288,24 +288,28 @@ describe('buildProviderCollection', () => {
     });
 
     const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
-      connections: [gateway, unset], accountGrants: [],
+      connections: [gateway, unset], accountGrants: [], machineGrants: [],
     });
     expect(rows.map((row) => [row.connectionId, row.slotServices])).toEqual([
       ['pc_gateway', [codex]],
       ['pc_unset', []],
     ]);
   });
-  it('says whether each gateway is on from the Account grant its header switch writes', () => {
+  it('says a gateway is on only with the Account grant and a Machine grant its header switch writes together', () => {
     const gateway = ProviderConnectionV1Schema.parse({
       v: 1, id: 'pc_on', source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
       role: 'named', displayName: 'Main gateway', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
       revision: 1, createdAt: 1, updatedAt: 1,
     });
     const off = ProviderConnectionV1Schema.parse({ ...gateway, id: 'pc_off', displayName: 'Second gateway' });
+    // Admitted for the Account but enabled on no machine: it runs nowhere, so it is not "on".
+    const accountOnly = ProviderConnectionV1Schema.parse({ ...gateway, id: 'pc_account_only', displayName: 'Third gateway' });
     const rows = buildProviderGatewayCollection({ declarationContext: { kind: 'account' },
-      connections: [gateway, off], accountGrants: [{ connectionId: 'pc_on' }],
+      connections: [gateway, off, accountOnly],
+      accountGrants: [{ connectionId: 'pc_on' }, { connectionId: 'pc_account_only' }],
+      machineGrants: [{ connectionId: 'pc_on' }],
     });
-    expect(rows.map((row) => [row.connectionId, row.enabled])).toEqual([['pc_on', true], ['pc_off', false]]);
+    expect(rows.map((row) => [row.connectionId, row.enabled])).toEqual([['pc_on', true], ['pc_off', false], ['pc_account_only', false]]);
   });
   it('lists found servers that are not connections yet, once per contribution', () => {
     const data = createProviderConnectionsDescribeFixture({

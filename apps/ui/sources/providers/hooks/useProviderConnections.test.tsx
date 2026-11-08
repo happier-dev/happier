@@ -27,6 +27,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { presentProviderConnectionDetail } from '@/providers/connection/presentation';
+import { buildProviderCollection } from '@/components/settings/providers/collection/providerCollectionModel';
 import { createProviderConnectionSecurityFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { readProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -395,7 +396,7 @@ describe('useProviderConnections', () => {
         expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.machineId).sort()).toEqual(['machine-a', 'machine-b']);
     });
 
-    it('updates a mounted reader from a newer canonical Machine check without replacing its editor basis', async () => {
+    it('updates the mounted rail from a detail check without another read or replacing its editor basis', async () => {
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
             connections: [{ v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
                 ...createCustomProviderDraft('openai-chat'), name: 'Acme', baseUrl: 'https://models.example.test/v1', requiresApiKey: false,
@@ -416,7 +417,7 @@ describe('useProviderConnections', () => {
         ] }));
         const input = { enabled: true, machineId: 'machine-a', serverId, connectionId: 'pc_a' };
         const first = await renderHook(() => useProviderConnections(input));
-        const second = await renderHook(() => useProviderConnections(input));
+        const second = await renderHook(() => useProviderConnections({ ...input, connectionId: undefined }));
         await waitForHomeGovernance(() => {
             expect(first.getCurrent().data?.connections[0]?.runtime.checkedAt).toBe(100);
             expect(second.getCurrent().loading).toBe(false);
@@ -432,6 +433,9 @@ describe('useProviderConnections', () => {
             health: 'needs_attention', checkedAt: 200, modelCount: 466,
         });
         expect(first.getCurrent().catalog).toBe(editor);
+        const rail = second.getCurrent();
+        expect(buildProviderCollection({ data: rail.data, query: '', localDiscoveryEnabled: false,
+            declarationContext: rail.declarationContext }).connections[0]?.status).toBe('needsAttention');
         // Publishing a check wakes subscribers without triggering another read.
         expect(machineRpcWithServerScope.mock.calls.length).toBe(readsBefore + 1);
     });

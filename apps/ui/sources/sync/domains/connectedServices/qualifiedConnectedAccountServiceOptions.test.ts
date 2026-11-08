@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
-import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { connectedServiceProfileKey } from './connectedServiceProfilePreferences';
 import { presentConnectedAccountIdentity } from './maskAccountEmail';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -33,6 +33,24 @@ it('projects the qualified Account pool label into choices without changing its 
 });
 
 describe('buildQualifiedConnectedAccountProfileOptionsByServiceId privacy', () => {
+    it('keeps colliding account names distinct in the composer options using the list identity owner', () => {
+        const service = { pluginId: 'acme.review', localId: 'reviewer-service' };
+        const account = {
+            ref: { service, accountId: 'work' }, status: 'connected', authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
+            configurationReady: true, configurationRevision: null, scopes: [],
+            displayName: 'Leeroy Brun', providerIdentity: { email: 'work@example.com' },
+        } satisfies QualifiedConnectedAccountProfileV4;
+        const options = buildQualifiedConnectedAccountProfileOptionsByServiceId({
+            accounts: [account, { ...account, ref: { service, accountId: 'personal' }, providerIdentity: { email: 'personal@example.com' } }],
+            supportedServiceIds: [NOVEL_SERVICE_KEY], labelsByKey: {},
+            presentIdentity: input => presentConnectedAccountIdentity({ ...input, hidden: false,
+                label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null }),
+        });
+        expect(options[NOVEL_SERVICE_KEY]?.[0]?.label).toContain('work@example.com');
+        expect(options[NOVEL_SERVICE_KEY]?.[1]?.label).toContain('personal@example.com');
+    });
+
     it('uses the canonical user name before a provider display name and masks derived identities', () => {
         const service = { pluginId: 'acme.review', localId: 'reviewer-service' };
         const account = {

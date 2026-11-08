@@ -70,7 +70,7 @@ import type { ConnectedServiceCredentialHealthStatusV1, ConnectedServiceCredenti
 import { presentNewConnectedAccountDraftTitle } from '../setup/connectMoreBlocks';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { useCredentialsSecrets } from '../index/CredentialsSecretsGroup';
-import { savedSecretOwnedRowSummary, sharedSecretRowStatus, sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
+import { savedSecretOwnedRowSummary, sharedSecretProvenanceSegments, sharedSecretRowStatus, sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
 import type { CredentialsSecretsState } from '../index/credentialsSecretsState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
@@ -104,7 +104,7 @@ export type ConnectedServicesRailViewProps = Readonly<{
     onOpenAccount: (sheet: ConnectedServicesIndexSheet, accountId: string) => void;
     /** A service row's "+": add another account of that service (its draft beside the rail). */
     onAddAccount?: (sheet: ConnectedServicesIndexSheet, anchor?: PopoverAnchor) => void;
-    /** Saved Secrets you own, under their own group (Q2: a service's key appears only under its service). */
+    /** Owned and granted Saved Secrets (Q2: a service's key appears only under its service). */
     secrets?: Readonly<{ entries: readonly SavedSecretCatalogEntryV1[]; state: CredentialsSecretsState; onRetry: () => void }>;
     onOpenSecret?: (ref: string) => void;
     /** "+" on Secrets: the create form in a popover under it (owner 10-31); it renders its trigger. */
@@ -589,7 +589,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                             testID={`connected-services-rail:secret:${entry.ref}`}
                             surface="page"
                             title={entry.name ?? t('secrets.catalog.unavailableName')}
-                            subtitle={savedSecretOwnedRowSummary(entry)}
+                            subtitle={entry.relationship === 'recipient' ? sharedSecretProvenanceSegments(entry).join(' · ') : savedSecretOwnedRowSummary(entry)}
                             status={secretRowStatus(entry)}
                             icon={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
                             selected={selection.kind === 'secret' && selection.ref === entry.ref}
@@ -769,9 +769,9 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail(p
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
     const newPoolServices = React.useMemo(() => selectNewPoolServices(indexModel), [indexModel]);
     // Saved Secrets, folded into Credentials: the overview's own reading and state (names and access only).
-    const { owned: ownedSecrets, state: secretsState, retry: retrySecrets } = useCredentialsSecrets();
-    const secrets = React.useMemo(() => ({ entries: ownedSecrets, state: secretsState, onRetry: retrySecrets }),
-        [ownedSecrets, retrySecrets, secretsState]);
+    const { entries: secretEntries, state: secretsState, retry: retrySecrets } = useCredentialsSecrets();
+    const secrets = React.useMemo(() => ({ entries: secretEntries, state: secretsState, onRetry: retrySecrets }),
+        [secretEntries, retrySecrets, secretsState]);
 
     const open = React.useCallback((href: Parameters<typeof router.push>[0] | null, tag: string) => {
         if (!href) return;

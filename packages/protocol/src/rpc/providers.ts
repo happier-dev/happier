@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
@@ -290,6 +291,7 @@ const ProviderConnectionRpcRuntimeSummaryV1Schema = lazyZodSchema(() => z.strict
     activity: z.enum(['idle', 'checking']),
     observedAt: z.nullable(z.number().check(z.nonnegative())),
     errorCode: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     retryAt: z.nullable(z.number().check(z.nonnegative())),
   })).check(z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)), []),
 }));

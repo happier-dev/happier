@@ -15,7 +15,8 @@ export function providerProbeFailureHealthState(
   error: ProviderProbeClientError,
   timing: Readonly<{ observedAt: number }>,
 ): ProviderEndpointRuntimeStateV1 | null {
-  const common = { activity: 'idle' as const, observedAt: timing.observedAt };
+  const common = { activity: 'idle' as const, observedAt: timing.observedAt,
+    ...(error.failureCause ? { failureCause: error.failureCause } : {}) };
   switch (error.code) {
     case 'provider_endpoint_unreachable':
       return { ...common, status: 'unreachable', errorCode: error.code };

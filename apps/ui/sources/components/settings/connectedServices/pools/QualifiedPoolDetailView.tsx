@@ -11,7 +11,7 @@ import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settin
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -74,7 +74,8 @@ import { PoolQuotaLimitsSelectField, type PoolQuotaLimitCandidate } from './Pool
 import { computePoolMembershipDiff } from './poolMembershipDiff';
 import { derivePoolUsage, resolvePoolManualSwitchSuggestion, type PoolUsage } from './derivePoolUsage';
 import type { usePoolGatewayChoices } from './usePoolGatewayChoices';
-import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import { CredentialShareButton, useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
+import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import type { TeamCredentialSourceHint } from '@/components/settings/teams/teamsRoutes';
 import { PoolGatewaySection, type PoolGatewaySectionProps } from './PoolGatewaySection';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -326,7 +327,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const [advancedExpanded, setAdvancedExpanded] = React.useState(props.initialAdvancedExpanded === true);
     const [membersMenuOpen, setMembersMenuOpen] = React.useState(props.initialManageMembersOpen === true);
     const [recoveryOpen, setRecoveryOpen] = React.useState(false);
-    const [moreOpen, setMoreOpen] = React.useState(false);
     const [compact, setCompact] = React.useState(false);
     /** The pool meter shows the reset clock ("· 14:20") only where the row has room for it. */
     const [leftWide, setLeftWide] = React.useState(true);
@@ -618,12 +618,18 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         : [], [group.members, memberQuota, props.quotaLimitSelectionEnabled, quotaLimitSelection]);
     const quotaLoadingMemberCount = enabledMembers.filter((member) => memberQuota[member.ref.accountId]?.loading === true).length;
 
-    const moreItems: DropdownMenuItem[] = [
-        { id: 'rename', title: t('connectedServicesPool.rename') },
+    // The pool's operations are one entity menu (the navigation fold lifts it into the phone's one
+    // overflow). Wide pages keep Share and the hand switch as buttons beside it; a compact page has
+    // room for neither, so they become rows of the same menu: Share, Rename, Switch, Delete.
+    const share = useCredentialShareAction({ name: label, ...(props.shareSource ? { source: props.shareSource } : {}) });
+    const moreActions: PageHeaderMenuAction[] = [
+        ...(compact && share ? [{ id: 'share', title: t('secretsSettings.share'), testID: `${TEST_ID}:share`, onSelect: (intent?: { anchor?: PopoverAnchor }) => share(intent?.anchor) }] : []),
+        { id: 'rename', title: t('connectedServicesPool.rename'), testID: `${TEST_ID}:menu:rename`, onSelect: () => { void rename(); } },
+        ...(compact && nowAction ? [{ id: 'switch', title: nowAction.label, testID: nowAction.testID, onSelect: nowAction.onPress }] : []),
         // A personal label wins over the pool's own name, so renaming alone would change nothing visible.
         ...(props.onResetLabel && labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })]
-            ? [{ id: 'resetLabel', title: t('connectedServicesCollection.resetPoolLabel') }] : []),
-        { id: 'delete', title: t('connectedServices.pools.delete.title'), destructive: true },
+            ? [{ id: 'resetLabel', title: t('connectedServicesCollection.resetPoolLabel'), onSelect: () => props.onResetLabel?.() }] : []),
+        { id: 'delete', title: t('connectedServices.pools.delete.title'), destructive: true, onSelect: () => { void deletePool(); } },
     ];
 
     const orderedMembers = sortedMembers;
@@ -664,7 +670,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 title={label}
                 alwaysShowTitle
                 compactPresentation="centered"
-                primaryAction={compact ? { title: t('connectedServicesPool.rename'), onPress: () => { void rename(); } } : undefined}
                 leading={(
                     <PageHeaderMarkIcon name="stack" />
                 )}
@@ -702,31 +707,12 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 onPress={nowAction.onPress}
                             />
                         ) : null}
-                        {props.shareSource ? <CredentialShareButton testID={`${TEST_ID}:share`} name={label} source={props.shareSource} /> : null}
-                        <DropdownMenu
-                            open={moreOpen}
-                            onOpenChange={setMoreOpen}
-                            items={moreItems}
-                            selectedId={null}
-                            onSelect={(id) => {
-                                if (id === 'rename') void rename();
-                                if (id === 'resetLabel') props.onResetLabel?.();
-                                if (id === 'delete') void deletePool();
-                            }}
-                            variant="selectable"
-                            rowKind="item"
-                            showCategoryTitles={false}
-                            placement="bottom"
-                            popoverAnchorAlign="end"
-                            trigger={({ toggle }) => (
-                                <IconButton
-                                    testID={`${TEST_ID}:more`}
-                                    accessibilityLabel={t('connectedServicesPool.moreActions')}
-                                    iconName="dots-three"
-                                    variant="plain"
-                                    onPress={toggle}
-                                />
-                            )}
+                        {props.shareSource && !compact ? <CredentialShareButton testID={`${TEST_ID}:share`} name={label} source={props.shareSource} /> : null}
+                        <PageHeaderMenu
+                            testID={`${TEST_ID}:more-menu`}
+                            triggerTestID={`${TEST_ID}:more`}
+                            accessibilityLabel={t('connectedServicesPool.moreActions')}
+                            actions={moreActions}
                         />
                     </View>
                 )}
@@ -776,7 +762,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 </ItemGroup>
             ) : null}
 
-            {memberCount > 0 && !compact ? (
+            {memberCount > 0 ? (
                 <ItemGroup
                     title={t('connectedServicesPool.leftTitle')}
                     description={t('connectedServicesPool.leftDescription')}
@@ -787,7 +773,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                 <UsageMeterStack>
                                     {usage.windows.map((window) => (
                                         <UsageMeterRow
-                                            key={window.meterId}
+                                            key={window.key}
                                             testID={`${TEST_ID}:left:${window.meterId}`}
                                             label={window.label}
                                             remainingPct={window.remainingPct}

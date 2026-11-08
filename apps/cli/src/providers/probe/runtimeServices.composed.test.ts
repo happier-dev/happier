@@ -260,7 +260,31 @@ describe('runtime provider services', () => {
     const identity = { connectionId, machineId: 'machine-a' };
     const failure = { status: 'error', error: { code: 'provider_endpoint_unreachable',
       failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null } } };
-    await expect(services.models(identity)).resolves.toMatchObject(failure);
+    const initial = await services.models(identity);
+    expect(initial).toMatchObject(failure);
+    if (initial.status !== 'error') throw new Error('Expected unresolved host failure');
+    expect(resolveProbeAddresses).toHaveBeenCalledTimes(1);
+    expect(transport).not.toHaveBeenCalled();
+    // Fresh readers (including reopening the detail and its rail) consume the
+    // same persisted observation as manual Test, without another probe.
+    const stored = await createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' }).read();
+    expect(stored.endpointHealth[0]?.state).toMatchObject({ failureCause: failure.error.failureCause });
+    const summary = await services.summary(identity);
+    if (summary.status !== 'success') throw new Error('Expected current connection summary');
+    const view = DaemonProviderConnectionViewV1Schema.parse({ connectionId, contributionKey,
+      displayName: 'Static provider', providerName: 'Static provider', icon: null,
+      role: 'default', displayNameMode: 'automatic', sourceStatus: 'available',
+      grants: { accountEnabled: true, enabledMachineIds: [] }, scope: 'account',
+      probeCapability: 'catalog', manualModelPolicy: 'allowed', compatibility: [],
+      credential: null, endpoints: [], authorized: true, authorizationError: null,
+      revision: 0, runtime: summary.summary });
+    const opened = presentProviderConnectionDetail(view);
+    const tested = presentProviderConnectionDetail(view, initial.error);
+    expect(opened.lastCheck).toEqual(tested.lastCheck);
+    expect(opened).toMatchObject({ status: 'unreachable', lastCheck: { failed: true,
+      error: { code: failure.error.code, failureCause: failure.error.failureCause } } });
+    expect(presentProviderError(opened.lastCheck?.error).descriptionKey)
+      .toBe(presentProviderError(initial.error).descriptionKey);
     expect(resolveProbeAddresses).toHaveBeenCalledTimes(1);
     expect(transport).not.toHaveBeenCalled();
     unresolved = false;

@@ -757,6 +757,50 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
     });
 
+    it('turns a gateway on where it runs with its one header switch, never a second "Enable on machine" card', async () => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
+            source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+            role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
+            deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
+            revision: 3, createdAt: 1, updatedAt: 1 });
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
+        await account.restore({ accountId: 'account-gateway-half-on', catalog, machines,
+            waivedActions: ['providers.connections.update'] });
+        await account.home.selectHomes([account.serverId]);
+        await account.selectMachine(account.serverId, 'machine-a');
+        // Admitted for the Account, but enabled on no machine: it runs nowhere yet.
+        state.connection = createProviderConnectionViewFixture({ connectionId: saved.id,
+            contributionKey: saved.source.kind === 'contribution' ? saved.source.contributionKey : null,
+            revision: saved.revision, displayName: saved.displayName, displayNameMode: saved.displayNameMode, role: saved.role,
+            deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+            gatewayPlacement: saved.gatewayPlacement,
+            grants: { accountEnabled: true, enabledMachineIds: [], accountState: 'valid',
+                machineState: 'absent', effectiveState: 'absent' },
+            managedLocalOption: { targetMachineId: 'machine-a', connectedAccountPurposes: [{ purpose: 'upstream',
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, required: false }] },
+            authorizationError: createProviderErrorV1('provider_not_enabled_on_machine', { connectionId: saved.id, machineId: 'machine-a' }),
+            runtime: { health: 'available', modelCount: 3, checkedAt: 1, endpoints: [],
+                gateway: { status: 'idle', reachability: 'not_checked' } },
+        });
+        installDetailCatalog({ saved });
+        const screen = await renderReadyProviderDetail(<DetailNavigationBoundary>
+            <ProviderConnectionDetailScreen connectionId={saved.id} />
+        </DetailNavigationBoundary>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
+        // Not running anywhere reads as off, in the header, beside the one switch.
+        expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(false);
+        const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
+        expect(meta.map(row => [row.key, row.text])).toEqual([['gateway-status', 'settingsProvidersCollection.gateway.statusOff']]);
+        expect(screen.findAll(node => typeof node.props.enableOnMachine === 'function')).toHaveLength(0);
+        expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
+        // On enables it on the machine it runs on, the write the card's button made.
+        await act(async () => { await screen.findByTestId('provider-connection-enabled')?.props.onValueChange(true); });
+        await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(
+            expect.objectContaining({ action: 'setEnabled', scope: 'machine', machineId: 'machine-a', enabled: true }),
+            'machine:machine-a'));
+    });
+
     it.each(['none', 'offline'] as const)('edits gateway placement and helper pins through the Account writer with %s machine availability', async availability => {
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
@@ -2165,21 +2209,21 @@ describe('ProviderConnectionDetailScreen', () => {
             .toEqual([{ descriptionKey: 'settingsProviders.compatibility.reasons.unknown', known: false }]);
     });
 
-    it('says what the last check found, and when, before this session tests again', async () => {
+    it('retains the typed DNS cause when reopening a checked connection', async () => {
         const checkedAt = Date.now() - 5 * 60_000;
         state.connection = connection({
             probeCapability: 'catalog',
-            runtime: { health: 'needs_attention', modelCount: 2, checkedAt, endpoints: [{
-                endpointTemplateId: 'openai-chat', status: 'unauthorized', activity: 'idle', observedAt: checkedAt,
-                errorCode: 'provider_endpoint_unauthorized', retryAt: null,
+            runtime: { health: 'unreachable', modelCount: 2, checkedAt, endpoints: [{
+                endpointTemplateId: 'openai-chat', status: 'unreachable', activity: 'idle', observedAt: checkedAt,
+                errorCode: 'provider_endpoint_unreachable', retryAt: null,
+                failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null },
             }] },
         });
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect(findTestRow(screen)).toBeDefined());
-        // The header's "Needs attention" has its reason where the result belongs: the Test row.
         const result = findTestRow(screen)?.props.subtitle;
-        expect(result).toContain('settingsProviders.errors.unauthorizedDescription');
+        expect(result).toContain('settingsProviders.errors.hostNotFoundDescription');
         expect(result).toContain('connectedServicesCollection.checkedAt');
     });
 

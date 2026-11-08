@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 
 import {
   ProviderCatalogProbeModelV1Schema,
@@ -95,6 +96,10 @@ const observedStateShape = {
   observedAt: RuntimeTimestampSchema,
   staleAt: z.optional(RuntimeTimestampSchema),
 } as const;
+const failedStateShape = {
+  ...observedStateShape,
+  failureCause: z.optional(ActionFailureCauseV1Schema),
+} as const;
 
 export const ProviderEndpointRuntimeStateV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
@@ -107,30 +112,30 @@ export const ProviderEndpointRuntimeStateV1Schema = lazyZodSchema(() => z.discri
   }),
   z.strictObject({
     status: z.literal('unreachable'),
-    ...observedStateShape,
+    ...failedStateShape,
     errorCode: z.literal('provider_endpoint_unreachable'),
     retryAt: z.optional(RuntimeTimestampSchema),
   }),
   z.strictObject({
     status: z.literal('temporarily_unavailable'),
-    ...observedStateShape,
+    ...failedStateShape,
     errorCode: z.literal('provider_endpoint_unavailable'),
     retryAt: z.optional(RuntimeTimestampSchema),
   }),
   z.strictObject({
     status: z.literal('rate_limited'),
-    ...observedStateShape,
+    ...failedStateShape,
     errorCode: z.literal('provider_endpoint_rate_limited'),
     retryAt: z.optional(RuntimeTimestampSchema),
   }),
   z.strictObject({
     status: z.literal('unauthorized'),
-    ...observedStateShape,
+    ...failedStateShape,
     errorCode: z.enum(['provider_endpoint_auth_required', 'provider_endpoint_unauthorized']),
   }),
   z.strictObject({
     status: z.literal('invalid_response'),
-    ...observedStateShape,
+    ...failedStateShape,
     errorCode: z.literal('provider_probe_response_invalid'),
   }),
 ]).check(z.superRefine((value, ctx) => {

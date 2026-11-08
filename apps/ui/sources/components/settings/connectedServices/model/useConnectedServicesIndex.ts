@@ -1,14 +1,12 @@
-import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import * as React from 'react';
-import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
-import { useConnectedServicesAgentUses } from './useConnectedServicesAgents';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import {
     useProjectedConnectedServicesRegistry,
     useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {
-    getGeneratedLegacyConnectedServiceRegistryFallback,
+    getConnectedServiceRegistryIdentityFallback,
     getLegacyConnectedServiceRegistryEntry,
     type ConnectedServiceRegistrySnapshot,
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -16,84 +14,109 @@ import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedSe
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { useProfile } from '@/sync/store/hooks';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { getPreferredLanguage, t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
-import { buildProviderGatewayCollection, areProviderGatewayDeclarationsKnown, providerConnectionDetailRoute,
+import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { buildProviderGatewayCollection, areProviderGatewayDeclarationsKnown,
     type ProviderGatewayCollectionRow } from '../../providers/collection/providerCollectionModel';
-import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
-import { createProviderGateway, chooseProviderGatewayContributionV1 } from '@/providers/connection/gatewayConfiguration';
+import { chooseProviderGatewayContributionV1 } from '@/providers/connection/gatewayConfiguration';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
-import { randomUUID } from '@/platform/randomUUID';
+import { buildConnectedServicesGatewayRoute } from '../collection/connectedServicesCollectionRoutes';
 
 import {
     buildConnectedServicesIndexModel,
 } from './buildConnectedServicesIndexModel';
-import { presentConnectedServiceIndexDiagnostics } from './presentConnectedServiceIndexDiagnostics';
-import { resolveConnectedServiceRegistryEntryDisplayName, resolveQualifiedConnectedServiceRegistryDisplayName } from './resolveConnectedServiceDisplayName';
+import { useConnectedServicesAgentUses } from './useConnectedServicesAgents';
+import { presentConnectedServiceIndexDiagnostics, presentConnectedServiceRegistryReadState } from './presentConnectedServiceIndexDiagnostics';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from './resolveConnectedServiceDisplayName';
 
 /**
  * The Connected services index: which services have accounts (with who uses each and the roles each
  * account plays) and which services the agents on your machines accept that you have not connected
  * (G3). One owner for the page, its in-place catalog and the Home invitation.
  *
- * `agents: 'load'` may ask the app-shell machine for its agent projection (the settings page);
+ * `agents: 'load'` asks the selected Connected services Machine for its projection (the settings page);
  * `agents: 'cached'` only reads what this launch already holds, so a hub never asks a machine.
  */
 const NO_GATEWAYS: readonly ProviderGatewayCollectionRow[] = Object.freeze([]);
 const NO_ACCOUNTS = Object.freeze([]);
 
 /** A gateway row with what it draws on, as the rail and the phone's index show it. */
-export type ConnectedServicesGatewayRow = ProviderGatewayCollectionRow & Readonly<{ summary: string }>;
-const ADD_GATEWAY_KEY = 'gateway:add';
-const NO_MACHINE_TARGET = () => null;
+/** A gateway with the services it serves and the Agents whose saved default model goes through it. */
+export type ConnectedServicesGatewayRow = ProviderGatewayCollectionRow & Readonly<{
+    summary: string;
+    agents: readonly Readonly<{ agentId: string; title: string }>[];
+}>;
 
 export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached'; gateways?: boolean; registry?: ConnectedServiceRegistrySnapshot;
     targetSelection?: MachineAdministrationTargetSelectionV1; initialMachineTarget?: MachineAdministrationTargetV1 | null;
+    /** A focused setup flow reads only its service before joining accounts, pools and labels. */
     serviceKey?: string }>) {
-    const { scope, targetSelection, appShellProjection, agentEntries, agentsKnown, agentUses } = useConnectedServicesAgentUses(options);
+    const presented = useLayoutPresentationActive();
+    const pluginAvailability = useActivePluginAccountAvailabilityReader(undefined, { enabled: presented });
+    const pluginInstallationCensus = React.useMemo(() => {
+        const held = pluginAvailability?.readInstalledPlugins();
+        return held?.kind === 'available' ? {
+            pluginIds: new Set(held.plugins.map(plugin => plugin.pluginId)),
+            complete: held.completeness === 'complete',
+        } : null;
+    }, [pluginAvailability]);
+    const { scope, targetSelection, appShellProjection, daemonAgentProjection, agentEntries, agentsKnown, agentUses }
+        = useConnectedServicesAgentUses(options);
     // The Account catalog is the saved payload authority, independent of Machine admission.
-    const gatewayCatalog = useProviderCatalog(options.gateways ? scope : null);
+    const gatewayCatalog = useProviderCatalog(options.gateways ? scope : null, { enabled: presented });
     // The last loaded catalog stays listed while it reloads; only a current one may add another.
     const gatewayRows = React.useMemo(() => {
         if (!gatewayCatalog?.data) return null;
         const connections = gatewayCatalog.data.connections;
         if (!connections.some(connection => connection.deployment.kind === 'managedLocal')) return NO_GATEWAYS;
         return buildProviderGatewayCollection({ connections, declarationContext: { kind: 'account' },
-            accountGrants: gatewayCatalog.data.accountGrants });
+            accountGrants: gatewayCatalog.data.accountGrants, machineGrants: gatewayCatalog.data.machineGrants });
     }, [gatewayCatalog?.data]);
     const gatewayCatalogCurrent = gatewayCatalog?.status === 'ready' && !gatewayCatalog.stale;
     const gatewaysKnown = gatewayRows !== null && gatewayCatalogCurrent && areProviderGatewayDeclarationsKnown({
         connections: gatewayCatalog?.data?.connections ?? [], declarationContext: { kind: 'account' },
     });
-    // With no gateway yet the Gateways group offers one (D19): an Account write, no machine.
+    // Opening a gateway draft never starts a runtime or writes the Account catalog.
     const refreshGateways = React.useCallback(async () => {
         if (scope) await refreshProviderCatalog(scope);
     }, [scope]);
-    const gatewayMutation = useProviderConnectionMutation({ resolveTarget: NO_MACHINE_TARGET,
-        serverId: scope?.serverId ?? null, refresh: refreshGateways });
-    const runGatewayMutation = gatewayMutation.run;
-    const canAddGateway = gatewaysKnown && gatewayRows?.length === 0;
+    const canAddGateway = gatewaysKnown;
     const gatewayContributionChoice = React.useMemo(() => chooseProviderGatewayContributionV1(
         readAccountProviderDeclarations({ kind: 'account' }), {}), [gatewaysKnown]);
+    // Menu counts are Account catalog facts, even with several gateway contributions.
+    // Unknown/stale coverage is not a known zero; no Machine read or runtime activation.
+    const gatewayCountsByContributionKey = React.useMemo(() => {
+        if (!gatewaysKnown || !gatewayCatalog?.data || !gatewayRows) return null;
+        const choices = gatewayContributionChoice.status === 'selected'
+            ? [gatewayContributionChoice.contribution] : gatewayContributionChoice.choices;
+        const declaredKeys = new Map(choices.map(choice => [canonicalizeProviderContributionKeyV1(choice.contributionKey), choice.contributionKey]));
+        const counts: Record<string, number> = Object.fromEntries(choices.map(choice => [choice.contributionKey, 0]));
+        const listed = new Set(gatewayRows.map(row => row.connectionId));
+        for (const connection of gatewayCatalog.data.connections) {
+            if (!listed.has(connection.id) || connection.source.kind !== 'contribution') continue;
+            const key = declaredKeys.get(canonicalizeProviderContributionKeyV1(connection.source.contributionKey));
+            if (key) counts[key] = (counts[key] ?? 0) + 1;
+        }
+        return counts;
+    }, [gatewaysKnown, gatewayCatalog?.data, gatewayRows, gatewayContributionChoice]);
     // The group's place is known before its rows (D19): it holds a loading row while the catalog loads.
     const gatewaysLoading = options.gateways === true && (gatewayRows?.length ?? 0) === 0
         && (!gatewayCatalog || gatewayCatalog.status === 'loading');
     const addGateway = React.useMemo(() => {
         // Account gateway creation does not select an execution Machine.
         if (!canAddGateway || gatewayContributionChoice.status === 'unavailable') return null;
-        const allocatedConnectionId = `pc_${randomUUID()}`;
         return async (contributionKey?: string): Promise<string | null> => {
             const choice = chooseProviderGatewayContributionV1(readAccountProviderDeclarations({ kind: 'account' }), { contributionKey });
             if (choice.status !== 'selected') return null;
-            const contribution = choice.contribution;
-            const connectionId = await createProviderGateway({ run: runGatewayMutation, contribution,
-                connectionId: allocatedConnectionId, displayName: t('settingsProvidersCollection.gateway.mainGatewayName'),
-                slot: null, key: ADD_GATEWAY_KEY });
-            return connectionId ? providerConnectionDetailRoute(connectionId) : null;
+            return buildConnectedServicesGatewayRoute({ contributionKey: choice.contribution.contributionKey });
         };
-    }, [canAddGateway, gatewayContributionChoice, runGatewayMutation]);
+    }, [canAddGateway, gatewayContributionChoice]);
     // Feature-known place and catalog authority are separate facts. Refusal must
     // keep the place visible, without granting creation or replacing its reason.
     const gatewaySectionVisible = options.gateways === true;
@@ -104,21 +127,47 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
             : { kind: 'declaration' as const };
     const settings = useSettingsValues([
         'connectedServicesDefaultProfileByServiceId',
+        'providerDefaultModelSelectionsByAgentTargetKeyV1',
     ]);
     const focusedRegistry = useProjectedConnectedServicesRegistry();
     const registrySnapshot = options.registry ?? focusedRegistry;
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const locale = getPreferredLanguage();
-    // Under each gateway's name: the services it draws on, an Account fact (no machine is read here).
-    const gateways = React.useMemo((): readonly ConnectedServicesGatewayRow[] | null => gatewayRows?.map((row) => ({
-        ...row,
-        summary: row.slotServices.length > 0
-            ? row.slotServices.map((service) => resolveQualifiedConnectedServiceRegistryDisplayName(
-                registrySnapshot, service, t, localizePluginText)).join(' · ')
-            : t('connectedServices.purposeTargets.notSet'),
-    })) ?? null, [gatewayRows, registrySnapshot, localizePluginText, locale]);
     const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });
     const transport = resolveConnectedAccountUiNegotiation(serverFeatures);
+
+
+    // Slot assignments and saved Agent defaults describe configuration, not live usage.
+    // Reuse the catalog's targetability decision; contribution containers have no target key.
+    // Naming a consumer never requests a Machine.
+    const gateways = React.useMemo((): readonly ConnectedServicesGatewayRow[] | null => {
+        if (!gatewayRows) return null;
+        const agentsByConnectionId = new Map<string, Array<Readonly<{ agentId: string; title: string }>>>();
+        for (const agent of agentEntries) {
+            const key = agent.backendTargetKey;
+            if (!key) continue;
+            const connectionId = settings.providerDefaultModelSelectionsByAgentTargetKeyV1[key]?.ref.providerConnectionId;
+            if (!connectionId) continue;
+            const agents = agentsByConnectionId.get(connectionId) ?? [];
+            agents.push({ agentId: agent.agentId, title: agent.title });
+            agentsByConnectionId.set(connectionId, agents);
+        }
+        return gatewayRows.map((row) => {
+            const services = row.slotServices.map(service => resolveQualifiedConnectedServiceRegistryDisplayName(
+                registrySnapshot, service, t, localizePluginText)).join(' · ');
+            const consumers = agentsByConnectionId.get(row.connectionId) ?? [];
+            const agents = consumers.map(agent => agent.title).join(' · ');
+            return {
+                ...row, agents: consumers, detailRoute: buildConnectedServicesGatewayRoute({ connectionId: row.connectionId }),
+                // Off says so first (lab Providers rail "Off · ChatGPT"); serving claims are for a gateway that is on.
+                summary: !row.enabled ? t('connectedServicesCollection.railGatewayOff', { services })
+                    : !services ? t('connectedServices.purposeTargets.notSet')
+                    : agents ? t('connectedServicesCollection.railGatewayServesTo', { services, agents })
+                        : t('connectedServicesCollection.railGatewayServes', { services }),
+            };
+        });
+    }, [gatewayRows, agentEntries, settings.providerDefaultModelSelectionsByAgentTargetKeyV1,
+        registrySnapshot, localizePluginText, locale]);
 
     const legacyServices = useProfile(profile => options.serviceKey === undefined ? profile.connectedServicesV2
         : profile.connectedServicesV2.filter(service => {
@@ -152,26 +201,27 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         }
         return [...byQualifiedService.values()];
     }, [transport, registryEntries, legacyServices]);
-
     const indexModel = React.useMemo(() => buildConnectedServicesIndexModel({
         transport,
         entries: visibleRegistryEntries,
+        registryStatus: registrySnapshot.status,
         qualifiedAccounts,
         qualifiedGroups,
         legacyServices,
         defaultAccountByServiceKey: settings.connectedServicesDefaultProfileByServiceId,
-        resolveLabel: (entry) => entry
-            ? resolveConnectedServiceRegistryEntryDisplayName(entry, t, localizePluginText)
-            : t('connectedServices.fallbackName'),
-        resolveFallbackEntry: getGeneratedLegacyConnectedServiceRegistryFallback,
+        resolveLabel: (_entry, service) => resolveQualifiedConnectedServiceRegistryDisplayName(
+            { entries: visibleRegistryEntries }, service, t, localizePluginText),
+        resolveFallbackEntry: getConnectedServiceRegistryIdentityFallback,
         presentDiagnostics: (entry) => presentConnectedServiceIndexDiagnostics({
             entry,
         }),
         loadingLabel: t('common.loading'),
+        pluginInstallationCensus,
         agentUses,
     }), [
         transport,
         visibleRegistryEntries,
+        registrySnapshot.status,
         qualifiedAccounts,
         qualifiedGroups,
         legacyServices,
@@ -180,11 +230,20 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         locale,
         localizePluginText,
         agentUses,
+        pluginInstallationCensus,
     ]);
 
+    // A failed read of what the machines can add: the page's line and the "+" menu's notice say it once, with the
+    // same Retry of the exact projection read. Saved accounts stay listed and choosable.
+    const registryReadReason = presentConnectedServiceRegistryReadState(registrySnapshot);
+    const reloadRegistry = appShellProjection.reloadConnectedAccountProjection;
+    const registryReadFailure = React.useMemo(() => registryReadReason === null ? null
+        : { reason: registryReadReason, retry: reloadRegistry }, [registryReadReason, reloadRegistry]);
+
     return {
-        targetSelection,
         indexModel,
+        targetSelection,
+        registryReadFailure,
         gateways,
         gatewaysKnown,
         gatewaysLoading,
@@ -193,13 +252,12 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         retryGateways: refreshGateways,
         addGateway,
         gatewayContributionChoice,
-        addingGateway: gatewayMutation.isPending(ADD_GATEWAY_KEY),
-        addGatewayError: gatewayMutation.error,
-        gatewayApproval: gatewayMutation.pendingApproval,
+        gatewayCountsByContributionKey,
         gatewayCatalog,
         transport,
         agentEntries,
         agentsKnown,
+        agentProjection: daemonAgentProjection,
         qualifiedAccounts,
         qualifiedGroups,
         legacyServices,
