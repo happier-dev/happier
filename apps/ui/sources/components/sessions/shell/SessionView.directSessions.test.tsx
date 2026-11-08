@@ -1592,6 +1592,10 @@ describe('SessionView (direct sessions)', () => {
 
   function applyDirectSessionFixtures() {
     const state = storage.getState();
+    const fixtureProfile = AccountProfileSchema.parse({ ...state.profile, ...storageState.profile });
+    // Bootstrap and later profile refreshes must read the same Account facts as
+    // the mounted Session, rather than replacing its pools with an empty profile.
+    homes.answer(canonicalDraftScope.serverId, '/v1/account/profile', { body: fixtureProfile });
     const fixtureSettings = {
       ...settingsDefaults,
       experiments: true,
@@ -1717,7 +1721,7 @@ describe('SessionView (direct sessions)', () => {
     }
     storage.setState({
       isDataReady: true,
-      profile: { ...state.profile, ...storageState.profile },
+      profile: fixtureProfile,
       artifacts: storageState.artifacts,
       sessionPending: storageState.sessionPending,
       sessionMessages: Object.fromEntries(Object.keys(sessions).map((id) => [id,
@@ -3922,7 +3926,7 @@ describe('SessionView (direct sessions)', () => {
           v: 1,
           strategy: 'least_limited',
           autoSwitch: true,
-          quotaLimitSelection: { mode: 'all' },
+          quotaLimitSelection: { mode: 'all', providerLimitIds: [] },
           switchOn: {
             usageLimit: true,
             authExpired: true,

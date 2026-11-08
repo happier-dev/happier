@@ -12,6 +12,33 @@ import { applyAcknowledgedProviderCatalog, applyProviderCatalogSnapshot, beginPr
 
 afterEach(resetProviderCatalogSnapshotsForTests);
 describe('scoped Provider row publication', () => {
+    it('visits published connection identities linearly with retained detail snapshots', () => {
+        const measure = (count: number) => {
+            resetProviderCatalogSnapshotsForTests();
+            const scope = { serverId: 'home', accountId: 'account' };
+            const connectionIds = Array.from({ length: count }, (_, index) => `pc_${index}`);
+            for (const connectionId of connectionIds) {
+                beginProviderConnectionCheckRead(scope, 'credential', providerConnectionCheckQueryKey('machine-a', connectionId))(
+                    createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({
+                        connectionId, runtime: { health: 'available', checkedAt: 100, modelCount: 2, endpoints: [] },
+                    })] }));
+            }
+            const reply = createProviderConnectionsDescribeFixture({ connections: connectionIds.map(connectionId =>
+                createProviderConnectionViewFixture({ connectionId,
+                    runtime: { health: 'unreachable', checkedAt: 200, modelCount: 2, endpoints: [] } })) });
+            let visits = 0;
+            for (const row of reply.connections) {
+                const connectionId = row.connectionId;
+                Object.defineProperty(row, 'connectionId', { enumerable: true, get: () => { visits += 1; return connectionId; } });
+            }
+            beginProviderConnectionCheckRead(scope, 'credential', providerConnectionCheckQueryKey('machine-a'))(reply);
+            return visits;
+        };
+        const small = measure(16);
+        const large = measure(32);
+        expect(small).toBeGreaterThan(0);
+        expect(large).toBeLessThanOrEqual(small * 2);
+    });
     it('publishes one detail check into the mounted rail without changing other connections or scopes', () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const railKey = providerConnectionCheckQueryKey('machine-a');

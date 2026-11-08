@@ -178,18 +178,26 @@ export function beginProviderConnectionCheckRead(scope: ServerAccountScope, cred
     return value => {
         const catalog = getProviderCatalogSnapshot(scope)?.data ?? null;
         value = reconcileConnectionCheck(value, accountCatalog, catalog);
+        const observations = new Map(value.connections.map(row => [row.connectionId, row]));
         const peerKeys = new Set([providerConnectionCheckQueryKey(machineId),
-            ...value.connections.map(row => providerConnectionCheckQueryKey(machineId, row.connectionId))]);
+            ...[...observations.keys()].map(connectionId => providerConnectionCheckQueryKey(machineId, connectionId))]);
         const peers = [...peerKeys].map(peerKey => modelProjections.get(modelProjectionKey(scope, credentialKey, peerKey)))
             .filter((peer): peer is ModelProjectionSnapshot => peer?.data?.kind === 'connection-check');
         // A delayed collection read cannot replace a newer detail observation.
         for (const peer of peers) {
-            if (peer.data?.kind === 'connection-check') value = mergeConnectionChecks(value, peer.data.value);
+            if (peer.data?.kind !== 'connection-check') continue;
+            for (const row of peer.data.value.connections) {
+                const connectionId = row.connectionId;
+                const previous = observations.get(connectionId);
+                if (previous && (row.runtime.checkedAt ?? -Infinity) >= (previous.runtime.checkedAt ?? -Infinity)
+                    && !sameStrictJsonValue(previous, row)) observations.set(connectionId, row);
+            }
         }
+        value = mergeConnectionChecks(value, observations);
         if (!publish({ kind: 'connection-check', value, accountCatalog: catalog })) return;
         for (const peer of peers) {
             if (peer === target || peer.data?.kind !== 'connection-check') continue;
-            const merged = mergeConnectionChecks(peer.data.value, value);
+            const merged = mergeConnectionChecks(peer.data.value, observations);
             if (merged === peer.data.value) continue;
             peer.data = { ...peer.data, value: merged };
             for (const listener of [...peer.listeners]) listener();
@@ -197,13 +205,12 @@ export function beginProviderConnectionCheckRead(scope: ServerAccountScope, cred
     };
 }
 
-function mergeConnectionChecks(current: ConnectionCheck, incoming: ConnectionCheck): ConnectionCheck {
-    const byId = new Map(incoming.connections.map(row => [row.connectionId, row]));
+function mergeConnectionChecks(current: ConnectionCheck,
+    observations: ReadonlyMap<ProviderConnectionId, ConnectionCheck['connections'][number]>): ConnectionCheck {
     let changed = false;
     const connections = current.connections.map(row => {
-        const next = byId.get(row.connectionId);
-        if (!next || (next.runtime.checkedAt ?? -Infinity) < (row.runtime.checkedAt ?? -Infinity)
-            || sameStrictJsonValue(row, next)) return row;
+        const next = observations.get(row.connectionId);
+        if (!next || sameStrictJsonValue(row, next)) return row;
         changed = true;
         return next;
     });
