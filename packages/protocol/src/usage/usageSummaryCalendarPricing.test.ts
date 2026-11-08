@@ -1,12 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema,
-    type UsageAnalyticsContribution, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
+    type UsageAnalyticsContribution, type UsageAnalyticsQueryResponse, type UsagePricingPopulation } from './usageAnalyticsContracts.js';
 import { addUsageTokens, aggregateUsageContributionCosts, createEmptyUsageTokens } from './usageAggregation.js';
 import { projectUsageAgentAccountingCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse } from './usageCost.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { buildUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
-import { buildUsageSummaryCalendarPricing } from './usageSummaryCalendarPricing.js';
+import { buildUsageSummaryCalendarPricing, repriceUsageSummaryCalendarPricing } from './usageSummaryCalendarPricing.js';
+
+import { createUsagePricingReuse, type UsagePricingReuseCheckpoint } from './usagePricingReuse.js';
+import { readUsageMoney, serializeUsageMoneyProvenance, usageMoneyFromNumber, withUsageMoney } from './usageMoney.js';
 
 const startMs = Date.parse('2026-10-19T00:00:00Z');
 const dayMs = 86_400_000;
@@ -48,6 +51,92 @@ function calendar(value: UsageAnalyticsQueryResponse, mode: NonNullable<typeof q
 const wire = (value: UsageAnalyticsQueryResponse) => UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(value)));
 
 describe('compact calendar pricing', () => {
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'reuses exact %s calendar targets before traversing unchanged atomic groups', mode => {
+        const preciseTokens = withUsageMoney({ ...tokens }, { input: { units: 100000000000000003n, scale: 17 } });
+        const rows = [row(1, { tokens: preciseTokens, tokenCategories: preciseTokens,
+            cost: withUsageMoney({ reportedUsd: 0.1, estimatedUsd: 0.2, currency: 'USD', costSource: 'provider_reported' },
+                { reportedUsd: { units: 100000000000000003n, scale: 18 },
+                    estimatedUsd: { units: 200000000000000003n, scale: 18 } }) }),
+            row(2, { agentId: 'claude', modelId: 'second', observedAtMs: startMs + 8 * dayMs + 3_600_000 })];
+        const compact = wire(projectUsageAnalyticsSummary(response(rows), { ...query, costMode: mode }));
+        const { value, pricing } = compact.summary!.accountingCalendar!;
+        const first = createUsagePricingReuse(catalog, {}, mode);
+        const expected = repriceUsageSummaryCalendarPricing(value, pricing!, catalog, {}, mode, first);
+        const checkpoint: UsagePricingReuseCheckpoint = JSON.parse(JSON.stringify(first.snapshot()));
+        const next = createUsagePricingReuse(catalog, {}, mode, checkpoint);
+        let traversals = 0;
+        for (const population of Object.values(pricing!)) {
+            const originalIterator = population.groups[Symbol.iterator];
+            population.groups[Symbol.iterator] = function () { traversals++; return originalIterator.call(this); };
+        }
+        const actual = repriceUsageSummaryCalendarPricing(value, pricing!, catalog, {}, mode, next);
+        expect(traversals, 'restored targets skip the real merge traversal').toBe(0);
+        expect(next.stats).toMatchObject({ calendarTargetCalculations: 0, calendarTargetReuses: 23 });
+        expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
+        const actualCost = actual.hours.find(hour => hour.agents.some(agent => agent.agentId === 'codex'))!.totals.cost;
+        const expectedCost = expected.hours.find(hour => hour.agents.some(agent => agent.agentId === 'codex'))!.totals.cost;
+        expect(actualCost).not.toBeNull();
+        expect(serializeUsageMoneyProvenance(actualCost!)).toEqual(serializeUsageMoneyProvenance(expectedCost!));
+        expect(readUsageMoney(actualCost!, 'amountUsd', actualCost!.amountUsd))
+            .toEqual(readUsageMoney(expectedCost!, 'amountUsd', expectedCost!.amountUsd));
+        expect(readUsageMoney(expectedCost!, 'amountUsd', expectedCost!.amountUsd),
+            'fixture carries selected precision beyond its public number').not.toEqual(usageMoneyFromNumber(expectedCost!.amountUsd));
+
+        const legacy = { ...checkpoint };
+        delete legacy.calendar;
+        const legacyReuse = createUsagePricingReuse(catalog, {}, mode, legacy);
+        expect(JSON.stringify(repriceUsageSummaryCalendarPricing(value, pricing!, catalog, {}, mode, legacyReuse)))
+            .toBe(JSON.stringify(expected));
+        expect(legacyReuse.stats).toMatchObject({ calendarTargetCalculations: 23, calendarTargetReuses: 0 });
+        const changedCatalog = { ...catalog, models: { ...catalog.models,
+            first: { ...catalog.models.first!, inputUsdPerMillion: 7 } } };
+        for (const [prices, overrides, nextMode] of [[changedCatalog, {}, mode],
+            [catalog, { first: { kind: 'rates' as const, inputUsdPerMillion: 11, outputUsdPerMillion: 13 } }, mode],
+            [catalog, {}, mode === 'reported' ? 'auto' : 'reported']] as const) {
+            const invalidated = createUsagePricingReuse(prices, overrides, nextMode, checkpoint);
+            const actual = repriceUsageSummaryCalendarPricing(value, pricing!, prices, overrides, nextMode, invalidated);
+            expect(invalidated.stats).toMatchObject({ calendarTargetCalculations: 23, calendarTargetReuses: 0 });
+            expect(JSON.stringify(actual)).toBe(JSON.stringify(repriceUsageSummaryCalendarPricing(value, pricing!, prices, overrides, nextMode)));
+        }
+
+        const mutations: ReadonlyArray<(population: UsagePricingPopulation) => void> = [
+            population => { population.groups[0]!.categoryUnits.input = { units: '100000000000000007', scale: 17 }; },
+            population => { population.groups[0]!.costUnits.reportedUsd = { units: '100000000000000007', scale: 18 }; },
+            population => { population.groups[0]!.selection = { auto: 'unavailable', reported: 'unavailable', estimated: 'unavailable' }; },
+            population => { population.groups[0]!.asOfMs++; population.groups[0]!.complete = false;
+                population.groups[0]!.eventCount++; population.groups[0]!.contributionCount++; },
+        ];
+        for (const mutate of mutations) {
+            const changed: Record<string, UsagePricingPopulation> = JSON.parse(JSON.stringify(pricing));
+            const changedKey = Object.keys(changed)[0]!;
+            mutate(changed[changedKey]!);
+            let changedTraversals = 0;
+            let unchangedTraversals = 0;
+            for (const [key, population] of Object.entries(changed)) {
+                const originalIterator = population.groups[Symbol.iterator];
+                population.groups[Symbol.iterator] = function () {
+                    if (key === changedKey) changedTraversals++; else unchangedTraversals++;
+                    return originalIterator.call(this);
+                };
+            }
+            const reuse = createUsagePricingReuse(catalog, {}, mode, checkpoint);
+            const actual = repriceUsageSummaryCalendarPricing(value, changed, catalog, {}, mode, reuse);
+            expect(reuse.stats).toMatchObject({ calendarTargetCalculations: 12, calendarTargetReuses: 11 });
+            expect(changedTraversals, 'each affected target merges the changed atom once').toBe(12);
+            expect(unchangedTraversals, 'only the shared period target revisits the other atom').toBe(1);
+            const fresh = repriceUsageSummaryCalendarPricing(value, changed, catalog, {}, mode);
+            expect(JSON.stringify(actual)).toBe(JSON.stringify(fresh));
+            expect(serializeUsageMoneyProvenance(actual.periodSummary.totals.cost ?? {}))
+                .toEqual(serializeUsageMoneyProvenance(fresh.periodSummary.totals.cost ?? {}));
+        }
+        const reordered = { ...value, hours: [...value.hours].reverse() };
+        const reorderedReuse = createUsagePricingReuse(catalog, {}, mode, checkpoint);
+        expect(JSON.stringify(repriceUsageSummaryCalendarPricing(reordered, pricing!, catalog, {}, mode, reorderedReuse)))
+            .toBe(JSON.stringify(repriceUsageSummaryCalendarPricing(reordered, pricing!, catalog, {}, mode)));
+        expect(reorderedReuse.stats).toMatchObject({ calendarTargetCalculations: 1, calendarTargetReuses: 22 });
+    });
+
     it('reprices every calendar target exactly across private prices, catalog changes and clearing after JSON delivery', () => {
         const rows = [row(1), row(2, { agentId: 'claude', modelId: 'second',
             observedAtMs: startMs + dayMs + 3_600_000 }),

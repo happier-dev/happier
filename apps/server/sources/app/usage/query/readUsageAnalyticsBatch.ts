@@ -6,7 +6,7 @@ import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from 
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
 import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageSummary';
-import { repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
+import { createUsagePricingReuse, repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -74,8 +74,10 @@ function* prepareUsageBatchActivity(summary: CapturedUsageActivitySummary,
         yield;
         projected = advanceProjection();
     }
+    const reuse = createUsagePricingReuse(catalog, {}, summary.query.costMode ?? 'auto', summary.pricingReuse);
+    if (summary.compact && reuse.reusesPreviousPriceInputs) return projected.value;
     const pricing = repriceUsageAnalyticsResponseSteps(projected.value, catalog, {},
-        summary.query.costMode ?? 'auto', summary.query, shouldYield);
+        summary.query.costMode ?? 'auto', summary.query, shouldYield, reuse);
     const advancePricing = () => {
         sliceStartedAt = performance.now();
         return timing ? timing.measure('price', () => pricing.next()) : pricing.next();
@@ -85,6 +87,11 @@ function* prepareUsageBatchActivity(summary: CapturedUsageActivitySummary,
         yield;
         priced = advancePricing();
     }
+    summary.updatedPricingReuse = reuse.snapshot();
+    summary.stats.tariffCalculations = reuse.stats.tariffCalculations;
+    summary.stats.tariffReuses = reuse.stats.tariffReuses;
+    summary.stats.calendarTargetCalculations = reuse.stats.calendarTargetCalculations;
+    summary.stats.calendarTargetReuses = reuse.stats.calendarTargetReuses;
     return priced.value;
 }
 

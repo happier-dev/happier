@@ -114,8 +114,13 @@ are retained by local day, alongside reduced calendar, membership and grouped
 pricing facts. Changed subjects replace their operands; only affected days run
 contribution projection. The response merges retained day facts without restoring
 unchanged contributions. Only changed containers are serialized and published. Matching requests and safe
-end-only movement within the terminal local hour use the compact projection and
-current catalog pricing directly. Public populations and mixed rich/detail demands
+end-only movement within the terminal local hour reuse the already-priced compact
+projection when the money owner proves identical catalog content, overrides and
+pricing mode. A private read-owned checkpoint retains exact tariff operands and
+money provenance; changed projections calculate tariffs only for new operands.
+Calendar targets also reuse selected money when complete atomic pricing inputs
+and ordered membership are equal, skipping unchanged merges and money folds.
+Price-input changes reprice and replace that checkpoint without replaying events. Public populations and mixed rich/detail demands
 retain the ordinary path. Publication happens after the read snapshot, with
 conditional replacement and atomic source witnesses; startup and event writes
 perform no projection maintenance. No schema or migration change is required.

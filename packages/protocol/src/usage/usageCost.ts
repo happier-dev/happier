@@ -5,7 +5,7 @@ import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import { reprojectUsageLeadersSteps, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions } from './usageLeaderProjection.js';
 import { usageCostAggregationBasis } from './usageAggregation.js';
 import { addUsageMoney, subtractUsageMoney, multiplyUsageMoney, divideUsageMoneyByMillion, usageMoneyFromNumber,
-  usageMoneyToNumber, readUsageMoney, serializeUsageMoneyProvenance, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
+  usageMoneyToNumber, readUsageMoney, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
 import { resolveUsageCostBasis, resolveUsageCostFacts, readUsagePageCostProjectionBasis, usagePageCostProjectionBasis, type UsageCostMode } from './usageCostFacts.js';
 import { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './usageAnalyticsDemandProjection.js';
@@ -13,6 +13,8 @@ export { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './u
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { repriceUsageAnalyticsSummary } from './usageSummary.js';
 import { createUsagePricedPartitionBuilder, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
+import { usageModelCostOperandKey, type UsagePricingReuse } from './usagePricingReuse.js';
+export { createUsagePricingReuse, type UsagePricingReuse, type UsagePricingReuseCheckpoint } from './usagePricingReuse.js';
 export { projectUsageAnalyticsSummary, projectUsageAnalyticsSummarySteps } from './usageSummary.js';
 export { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, readUsageContributionProjection,
     encodeUsageAnalyticsBatchDelivery, readUsageContributionEncoding,
@@ -35,23 +37,23 @@ export function estimateUsageModelCost(modelId: string | null | undefined, categ
 }
 
 /** One projection resolves each model and calculates each distinct exact token operand once. */
-export function createUsageModelCostEstimator(catalog: UsageModelPriceCatalog, overrides: UsageModelPriceOverridesV1 = {}) {
-  const prices = new Map<string | null | undefined, { price: ResolvedUsageModelPrice | null; operands?: UsageModelCostOperands;
-    estimates: Map<string, UsageModelCostEstimate | null> }>();
-  return (modelId: string | null | undefined, categories: UsageObservationTokens | null): UsageModelCostEstimate | null => {
+export function createUsageModelCostEstimator(catalog: UsageModelPriceCatalog, overrides: UsageModelPriceOverridesV1 = {},
+  reuse?: UsagePricingReuse) {
+  const prices = new Map<string | null | undefined, { price: ResolvedUsageModelPrice | null; operands?: UsageModelCostOperands }>();
+  const calculate = (modelId: string | null | undefined, categories: UsageObservationTokens | null): UsageModelCostEstimate | null => {
     if (!prices.has(modelId)) {
       const price = resolveUsageModelPrice(modelId, catalog, overrides);
-      prices.set(modelId, { price, ...(price ? { operands: admitUsageModelCostOperands(price) } : {}), estimates: new Map() });
+      prices.set(modelId, { price, ...(price ? { operands: admitUsageModelCostOperands(price) } : {}) });
     }
     const resolved = prices.get(modelId)!;
-    if (!resolved.price || !categories) return null;
-    // Public token numbers alone can hide admitted decimal precision. Include
-    // its witnessed sidecar; the memo lives only for this projection's catalog.
-    const key = JSON.stringify([categories.input, categories.output, categories.reasoning,
-      categories.cacheRead, categories.cacheWrite, serializeUsageMoneyProvenance(categories)]);
-    if (!resolved.estimates.has(key)) resolved.estimates.set(key,
-      estimateResolvedUsageModelCost(resolved.price, categories, resolved.operands));
-    return resolved.estimates.get(key)!;
+    return estimateResolvedUsageModelCost(resolved.price, categories, resolved.operands);
+  };
+  const estimates = new Map<string, UsageModelCostEstimate | null>();
+  return (modelId: string | null | undefined, categories: UsageObservationTokens | null): UsageModelCostEstimate | null => {
+    if (reuse) return reuse.estimate(modelId, categories, () => calculate(modelId, categories));
+    const key = usageModelCostOperandKey(modelId, categories);
+    if (!estimates.has(key)) estimates.set(key, calculate(modelId, categories));
+    return estimates.get(key)!;
   };
 }
 
@@ -135,8 +137,9 @@ export function priceUsageObservation(rawCost: UsageObservationCost, modelId: st
 /** Recompute history from the admitted contribution projection, retaining the original money facts. */
 export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
-  rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>): UsageAnalyticsQueryResponse {
-  const steps = repriceUsageAnalyticsResponseSteps(value, catalog, overrides, mode, rankingDemand, () => false);
+  rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
+  reuse?: UsagePricingReuse): UsageAnalyticsQueryResponse {
+  const steps = repriceUsageAnalyticsResponseSteps(value, catalog, overrides, mode, rankingDemand, () => false, reuse);
   let next = steps.next();
   while (!next.done) next = steps.next();
   return next.value;
@@ -146,15 +149,15 @@ export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse
 export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
   rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
-  shouldYield: () => boolean = () => true): Generator<void, UsageAnalyticsQueryResponse, void> {
+  shouldYield: () => boolean = () => true, reuse?: UsagePricingReuse): Generator<void, UsageAnalyticsQueryResponse, void> {
   const completed = readUsagePageCostProjectionBasis(value);
-  if (!rankingDemand && completed?.mode === mode && completed.catalog === catalog && sameStrictJsonValue(completed.overrides, overrides)) return value;
-  if (value.summary && !value.contributions) return repriceUsageAnalyticsSummary(value, catalog, overrides, mode);
+  if (!reuse && !rankingDemand && completed?.mode === mode && completed.catalog === catalog && sameStrictJsonValue(completed.overrides, overrides)) return value;
+  if (value.summary && !value.contributions) return repriceUsageAnalyticsSummary(value, catalog, overrides, mode, reuse);
   if (!value.contributions) return { ...value, priceCatalog: catalog };
   const facts = createUsageSourceCostFacts();
   let cacheSavings = usageMoneyFromNumber(0);
   let cacheSavingsComplete = true;
-  const estimateCost = createUsageModelCostEstimator(catalog, overrides);
+  const estimateCost = createUsageModelCostEstimator(catalog, overrides, reuse);
   const contributions: UsageAnalyticsContribution[] = [];
   for (const row of value.contributions) {
     const categories = row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null);

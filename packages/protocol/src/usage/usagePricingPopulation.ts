@@ -1,6 +1,7 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
 import { addUsageCost, aggregateUsageCostPartitionsSteps, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
+import type { UsagePricingReuse } from './usagePricingReuse.js';
 import { hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
@@ -219,7 +220,7 @@ export function mergeUsagePricingPopulations(populations: readonly UsagePricingP
 
 /** Shared exact arithmetic owners price grouped operands just as they price rows. */
 export function priceUsagePricingPopulation(population: UsagePricingPopulation, catalog: UsageModelPriceCatalog,
-    overrides: UsageModelPriceOverridesV1, mode: UsageCostMode) {
+    overrides: UsageModelPriceOverridesV1, mode: UsageCostMode, reuse?: UsagePricingReuse) {
     let total = createEmptyUsageCost();
     let api = usageMoneyFromNumber(0);
     let savings = usageMoneyFromNumber(0);
@@ -228,7 +229,7 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
     let allPriced = true;
     const pricingSources = new Set<string>();
     const facts = createUsageSourceCostFacts();
-    const estimateCost = createUsageModelCostEstimator(catalog, overrides);
+    const estimateCost = createUsageModelCostEstimator(catalog, overrides, reuse);
     for (const group of population.groups) {
         const categories = group.categories ? restore(group.categories, group.categoryUnits) : null;
         const raw = restoreCost(group.cost, group.costUnits);

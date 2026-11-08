@@ -18,6 +18,7 @@ import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventR
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from './readUsageAnalyticsBatch';
 import { readUsageActivitySummaryChunks, readUsageActivitySummaryHead } from './usageActivitySummaryStore';
+import { UsageQueryTiming } from './usageQueryTiming';
 import type { ScopedUsageReplayFact } from './resolveScopedUsageContributions';
 import { usageActivityRoutingKey, usageActivitySubjectKey, usageActivityProjectionDayKey,
     type UsageActivityRoutingHead } from './usageActivitySummaryRouting';
@@ -29,10 +30,10 @@ const compactQuery = (range: { startMs?: number; endMs?: number } = { startMs, e
         activityResolution: 'both', includeSeries: false, includeInsights: false, includeLeaders: false,
         includeMessageStats: false, includeModelTimeline: false, breakdowns: [] });
 
-async function deliver(capture: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>, query: UsageAnalyticsQueryRequest) {
+async function deliver(capture: Awaited<ReturnType<typeof captureUsageAnalyticsBatchInTx>>, query: UsageAnalyticsQueryRequest, timing?: UsageQueryTiming) {
     const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query], includeContributions: false,
         contributionQueries: [], sessionQueries: [query] });
-    const batch = await projectUsageAnalyticsBatch(capture, [query], true, true, undefined, input);
+    const batch = await projectUsageAnalyticsBatch(capture, [query], true, true, timing, input);
     const delivery = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(batch, input, false));
     return { capture, delivery, serialized: JSON.stringify(delivery) };
 }
@@ -44,8 +45,8 @@ async function capture(accountId: string, query: UsageAnalyticsQueryRequest, sum
         : captureUsageAnalyticsBatchInTx(tx, accountId, [query]));
 }
 
-async function read(accountId: string, query: UsageAnalyticsQueryRequest, summary = true) {
-    return deliver(await capture(accountId, query, summary), query);
+async function read(accountId: string, query: UsageAnalyticsQueryRequest, summary = true, timing?: UsageQueryTiming) {
+    return deliver(await capture(accountId, query, summary), query, timing);
 }
 
 function expectSameWire(actual: string, expected: string) {
@@ -176,11 +177,14 @@ describe('compact Usage activity summary read cache', () => {
         expectSameWire(cold.serialized, control.serialized);
         expect(cold.capture.activitySummary?.stats).toMatchObject({ eventsRead: 3, discoveryEventsRead: 3,
             historyEventsRead: 0, subjectCount: 2, replayedSubjects: 2 });
-        const warm = await read(account.id, query);
+        const warmTiming = new UsageQueryTiming();
+        const warm = await read(account.id, query, true, warmTiming);
         expectSameWire(warm.serialized, control.serialized);
+        expect(warmTiming.durations.price).toBe(0);
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, discoveryEventsRead: 0,
             historyEventsRead: 0, subjectCount: 2,
-            replayedSubjects: 0, replayedEvents: 0 });
+            replayedSubjects: 0, replayedEvents: 0, tariffCalculations: 0, tariffReuses: 0,
+            calendarTargetCalculations: 0, calendarTargetReuses: 0 });
         expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBeGreaterThan(0);
         const privateCache = await db.usageAccountingProjection.findMany({ where: { accountId: account.id },
             orderBy: { recordKey: 'asc' } });
@@ -720,6 +724,98 @@ describe('compact Usage activity summary read cache', () => {
         const result = repriced.delivery.results[0];
         if (!result || !('value' in result)) throw new Error('Expected repriced compact activity result');
         expect(result.value.totals.cost).toMatchObject({ reportedUsd: 9, estimatedUsd: 7 });
+    });
+
+    it('persists repriced checkpoints after mode and same-revision tariff changes, then prices zero on identical reads', async () => {
+        const { account, sessions } = await seed();
+        process.env.HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED = 'true';
+        await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[0]!.id,
+            observedAt: new Date(startMs + 4 * day), agentId: 'codex', modelId: 'summary-reuse-model',
+            source: 'runtime', scope: 'turn_delta', inputTokens: 1_000_000, totalTokens: 1_000_000,
+            reportedCostUsd: 9, estimatedCostUsd: 7, costSource: 'provider_reported' } });
+        const catalog = (inputUsdPerMillion: number) => JSON.stringify({ v: 1,
+            models: { 'summary-reuse-model': { inputUsdPerMillion, outputUsdPerMillion: 4 } },
+            provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1000,
+                revision: 'unchanged-revision', fetchStatus: 'ready' } });
+        await db.simpleCache.create({ data: { key: USAGE_MODEL_PRICE_CACHE_KEY, value: catalog(2) } });
+        const query = compactQuery({ startMs, endMs: startMs + 7 * day + 1000 });
+        await expectControl(account.id, query);
+        // Existing v5 heads predate this optional private pricing checkpoint.
+        const saved = await inReadSnapshot(tx => readUsageActivitySummaryHead(tx, account.id));
+        if (!saved) throw new Error('Expected persisted activity summary');
+        const legacyHead: Record<string, unknown> = JSON.parse(saved);
+        delete legacyHead.pricingReuse;
+        await db.usageAccountingProjection.updateMany({ where: { accountId: account.id, payload: saved },
+            data: { payload: JSON.stringify(legacyHead) } });
+        const upgradedTiming = new UsageQueryTiming();
+        const upgraded = await read(account.id, query, true, upgradedTiming);
+        expectSameWire(upgraded.serialized, (await read(account.id, query, false)).serialized);
+        expect(upgradedTiming.durations.price).toBeGreaterThan(0);
+        expect(upgraded.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0, published: true });
+        const assertWarm = async (selected: UsageAnalyticsQueryRequest) => {
+            const timing = new UsageQueryTiming();
+            const result = await read(account.id, selected, true, timing);
+            expectSameWire(result.serialized, (await read(account.id, selected, false)).serialized);
+            expect(timing.durations.price).toBe(0);
+            expect(result.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
+        };
+        await assertWarm(query);
+        const api = UsageAnalyticsQueryRequestSchema.parse({ ...query, costMode: 'api_equivalent' });
+        const modeTiming = new UsageQueryTiming();
+        const modeChanged = await read(account.id, api, true, modeTiming);
+        expectSameWire(modeChanged.serialized, (await read(account.id, api, false)).serialized);
+        expect(modeTiming.durations.price).toBeGreaterThan(0);
+        await assertWarm(api);
+        await db.simpleCache.update({ where: { key: USAGE_MODEL_PRICE_CACHE_KEY }, data: { value: catalog(3) } });
+        const priceTiming = new UsageQueryTiming();
+        const priceChanged = await read(account.id, api, true, priceTiming);
+        expectSameWire(priceChanged.serialized, (await read(account.id, api, false)).serialized);
+        expect(priceChanged.serialized === modeChanged.serialized).toBe(false);
+        expect(priceTiming.durations.price).toBeGreaterThan(0);
+        await assertWarm(api);
+        const moved = UsageAnalyticsQueryRequestSchema.parse({ ...api,
+            dateRange: { ...api.dateRange, endMs: api.dateRange!.endMs! + 1000 } });
+        await assertWarm(moved);
+    });
+
+    it('calculates tariffs only for changed exact operands and reuses unaffected priced groups', async () => {
+        const { account, sessions } = await seed();
+        process.env.HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED = 'true';
+        await db.simpleCache.create({ data: { key: USAGE_MODEL_PRICE_CACHE_KEY, value: JSON.stringify({ v: 1,
+            models: { 'selective-price-model': { inputUsdPerMillion: 0.123456789, outputUsdPerMillion: 4 } },
+            provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1000,
+                revision: 'selective-prices', fetchStatus: 'ready' } }) } });
+        for (let index = 0; index < 12; index++) {
+            await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[index % 2]!.id,
+                observedAt: new Date(startMs + index * day + 12 * 3_600_000), agentId: 'codex',
+                modelId: 'selective-price-model', source: 'runtime', scope: 'turn_delta',
+                inputTokens: (index + 1) * 1_000_000, totalTokens: (index + 1) * 1_000_000 } });
+        }
+        const query = UsageAnalyticsQueryRequestSchema.parse({ ...compactQuery({ startMs, endMs: startMs + 14 * day }),
+            costMode: 'api_equivalent' });
+        const cold = await expectControl(account.id, query);
+        const coldCalculations = cold.capture.activitySummary!.stats.tariffCalculations;
+        const coldTargetCalculations = cold.capture.activitySummary!.stats.calendarTargetCalculations;
+        expect(coldCalculations).toBeGreaterThan(0);
+        expect(coldTargetCalculations).toBeGreaterThan(0);
+        await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[1]!.id,
+            observedAt: new Date(startMs + 11 * day + 12 * 3_600_000 + 1000), agentId: 'codex',
+            modelId: 'selective-price-model', source: 'runtime', scope: 'turn_delta',
+            inputTokens: 500_000, totalTokens: 500_000 } });
+        const changed = await expectControl(account.id, query);
+        const stats = changed.capture.activitySummary!.stats;
+        expect(stats.tariffCalculations).toBeGreaterThan(0);
+        expect(stats.tariffCalculations).toBeLessThan(coldCalculations);
+        expect(stats.tariffReuses).toBeGreaterThan(0);
+        expect(stats.calendarTargetCalculations).toBeGreaterThan(0);
+        expect(stats.calendarTargetCalculations).toBeLessThan(coldTargetCalculations);
+        expect(stats.calendarTargetReuses).toBeGreaterThan(0);
+        const timing = new UsageQueryTiming();
+        const warm = await read(account.id, query, true, timing);
+        expectSameWire(warm.serialized, changed.serialized);
+        expect(warm.capture.activitySummary?.stats.tariffCalculations).toBe(0);
+        expect(warm.capture.activitySummary?.stats.calendarTargetCalculations).toBe(0);
+        expect(timing.durations.price).toBe(0);
     });
 
     it.each([{ sessionQueries: undefined }, { sessionQueries: [] }])(

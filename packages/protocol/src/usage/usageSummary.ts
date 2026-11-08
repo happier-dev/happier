@@ -12,6 +12,7 @@ import { addUsageMoney, readUsageMoney, usageMoneyFromNumber, usageMoneyToNumber
 import { buildUsageSummaryCalendarPricing, repriceUsageSummaryCalendarPricing } from './usageSummaryCalendarPricing.js';
 import { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './usageAnalyticsDemandProjection.js';
 import { countUsageSummaryUnknownAccounts, groupUsageSummaryAccounts, projectUsageSummaryObservationRange } from './usageActivityProjectionFacts.js';
+import { createUsagePricingReuse, type UsagePricingReuse } from './usagePricingReuse.js';
 export { projectUsageActivitySubjectProjectionFacts, projectUsageActivityProjectionDayFacts, mergeUsageActivityProjectionFacts, readUsageActivityProjectionOperand,
     type UsageActivityProjectionOperand, type UsageActivitySubjectProjectionDay, type UsageActivityProjectionDayFacts } from './usageActivityProjectionFacts.js';
 
@@ -256,7 +257,7 @@ function projectSummaryFacts(value: UsageAnalyticsQueryResponse, summary: UsageA
 
 /** Reprice the producer's tariff-linear sufficient statistics, without event detail. */
 export function repriceUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog,
-    overrides: UsageModelPriceOverridesV1, mode: UsageCostMode): UsageAnalyticsQueryResponse {
+    overrides: UsageModelPriceOverridesV1, mode: UsageCostMode, reuse?: UsagePricingReuse): UsageAnalyticsQueryResponse {
     const summary = value.summary!;
     const originalPrices = Object.keys(overrides).length === 0
         && catalog.provenance.revision === summary.catalogRevision && mode === summary.costMode;
@@ -264,7 +265,8 @@ export function repriceUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse,
         if (!originalPrices) throw new Error('Usage summary is missing grouped pricing operands');
         return value.priceCatalog === catalog ? value : { ...value, priceCatalog: catalog };
     }
-    const price = (population: UsagePricingPopulation) => priceUsagePricingPopulation(population, catalog, overrides, mode);
+    const pricing = reuse ?? createUsagePricingReuse(catalog, overrides, mode);
+    const price = (population: UsagePricingPopulation) => priceUsagePricingPopulation(population, catalog, overrides, mode, pricing);
     const total = price(summary.pricing.totals!);
     const ranked = (key: string, limit: number) => {
         const entries = summary.rankedPricing?.[key]?.map(entry => ({ ...entry.value, cost: price(entry.population).cost,
@@ -292,7 +294,7 @@ export function repriceUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse,
         insights,
         summary: { ...summary, costMode: mode, catalogRevision: catalog.provenance.revision,
             ...(summary.accountingCalendar?.pricing ? { accountingCalendar: { ...summary.accountingCalendar,
-                value: repriceUsageSummaryCalendarPricing(summary.accountingCalendar.value, summary.accountingCalendar.pricing, catalog, overrides, mode) } } : {}),
+                value: repriceUsageSummaryCalendarPricing(summary.accountingCalendar.value, summary.accountingCalendar.pricing, catalog, overrides, mode, pricing) } } : {}),
             accounts: { ...summary.accounts, values: summary.accounts.values.map((account, index) => {
             const priced = price(summary.pricing![`account:${index}`]!);
             return { ...account, pricedContributionCount: priced.pricedContributionCount, apiEquivalentUsd: priced.apiEquivalentUsd, pricingSources: priced.pricingSources };

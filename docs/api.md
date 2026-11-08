@@ -3256,7 +3256,13 @@ Reduced identity/order, coverage and legacy-bridge facts are grouped by source
 day; raw event metadata remains in the event store. Changed-day metadata is admitted
 in the snapshot to identify subjects before primary-key hydration; reconciliation
 and response projection follow commit. Only changed day containers are published. Matching requests and safe end-only movement within the terminal local
-hour reuse compact calendar and membership facts, repriced by the current catalog.
+hour reuse the already-priced compact response when the money owner proves
+identical catalog content, overrides and pricing mode. Its private checkpoint
+retains exact tariff operands and money provenance so changed projections reuse
+unchanged estimates. Calendar targets with identical atomic pricing operands and
+ordered membership reuse selected money before merging and pricing. Changed
+price inputs refresh the priced checkpoint without
+replaying events.
 Public populations and mixed rich/detail demands use the ordinary path.
 Conditional publication follows the read snapshot; startup and event writes
 perform no summary maintenance. Existing migrations are unchanged.

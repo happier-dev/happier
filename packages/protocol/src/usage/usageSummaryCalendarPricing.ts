@@ -4,6 +4,7 @@ import { createUsageFixedBucketResolver, resolveUsageCalendarInstant } from './u
 import type { UsageCostMode } from './usageCostFacts.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { buildUsagePricingPopulation, mergeUsagePricingPopulations, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
+import type { UsagePricingReuse } from './usagePricingReuse.js';
 
 type CalendarFigures = Pick<UsageAgentCalendar['days'][number], 'totals' | 'agents' | 'leaders'>;
 type CalendarFamily = 'period' | 'days' | 'weeks' | 'hours' | 'weekdayHourBuckets' | 'hourOfDayBuckets';
@@ -41,10 +42,10 @@ export function buildUsageSummaryCalendarPricing(value: UsageAgentCalendar, rows
 
 /** Reconstitute rendered cell operands without repeating them in accounting delivery. */
 function calendarPricingTargets(value: UsageAgentCalendar, populations: Readonly<Record<string, UsagePricingPopulation>>) {
-    const groups = new Map<string, UsagePricingPopulation[]>();
-    const append = (key: string, population: UsagePricingPopulation) => {
+    const groups = new Map<string, Array<{ key: string; population: UsagePricingPopulation }>>();
+    const append = (key: string, populationKey: string, population: UsagePricingPopulation) => {
         const group = groups.get(key) ?? [];
-        group.push(population);
+        group.push({ key: populationKey, population });
         groups.set(key, group);
     };
     const families = ([['days', 'day'], ['weeks', 'week'], ['hours', 'hour']] as const).map(([family, granularity]) => ({
@@ -59,22 +60,27 @@ function calendarPricingTargets(value: UsageAgentCalendar, populations: Readonly
             keys.push(target(family, Math.max(value.period.startMs, bounds.bucketStartMs)));
         }
         for (const agent of hour.agents) {
-            const population = populations[agentTarget(target('hours', hour.startMs), agent.agentId)];
+            const populationKey = usageSummaryCalendarHourPricingKey(hour.startMs, agent.agentId);
+            const population = populations[populationKey];
             if (!population) continue;
             for (const key of keys) {
-                append(key, population);
-                append(agentTarget(key, agent.agentId), population);
+                append(key, populationKey, population);
+                append(agentTarget(key, agent.agentId), populationKey, population);
             }
         }
     }
-    return Object.fromEntries([...groups].map(([key, group]) => [key, mergeUsagePricingPopulations(group)]));
+    return groups;
 }
 
 /** Replay typed grouped operands through the same money owner as rich accounting. */
 export function repriceUsageSummaryCalendarPricing(value: UsageAgentCalendar, populations: Readonly<Record<string, UsagePricingPopulation>>,
-    catalog: UsageModelPriceCatalog, overrides: UsageModelPriceOverridesV1, mode: UsageCostMode): UsageAgentCalendar {
-    const costs = new Map(Object.entries(calendarPricingTargets(value, populations)).map(([key, population]) =>
-        [key, priceUsagePricingPopulation(population, catalog, overrides, mode).selected]));
+    catalog: UsageModelPriceCatalog, overrides: UsageModelPriceOverridesV1, mode: UsageCostMode,
+    reuse?: UsagePricingReuse): UsageAgentCalendar {
+    const costs = new Map([...calendarPricingTargets(value, populations)].map(([key, inputs]) => {
+        const calculate = () => priceUsagePricingPopulation(mergeUsagePricingPopulations(inputs.map(input => input.population)),
+            catalog, overrides, mode, reuse).selected;
+        return [key, reuse ? reuse.calendarTarget(key, inputs, calculate) : calculate()] as const;
+    }));
     const figures = (previous: CalendarFigures, key: string): CalendarFigures => {
         const totals = { ...previous.totals, cost: costs.has(key) ? costs.get(key)! : previous.totals.cost };
         const agents = previous.agents.map(agent => {

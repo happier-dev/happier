@@ -1,5 +1,6 @@
 import { getUsageAnalyticsQueryRequestKey, type UsageAccountingCoverageReason, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
+import type { UsagePricingReuseCheckpoint } from '@happier-dev/protocol/usage/usageCost';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { rebaseUsageAnalyticsSummaryEnd } from '@happier-dev/protocol/usage/usageSummary';
 import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts,
@@ -38,6 +39,7 @@ interface SummaryHead extends UsageActivityRoutingHead {
     query: UsageAnalyticsQueryRequest;
     sourceDigest: string;
     response: UsageAnalyticsQueryResponse;
+    pricingReuse?: UsagePricingReuseCheckpoint;
     days: Array<[number, ProjectionDay]>;
 }
 
@@ -50,6 +52,8 @@ export interface CapturedUsageActivitySummary {
     sourceDigest: string;
     snapshot: UsageAnalyticsSnapshot;
     compact?: UsageAnalyticsQueryResponse;
+    pricingReuse?: UsagePricingReuseCheckpoint;
+    updatedPricingReuse?: UsagePricingReuseCheckpoint;
     routing?: UsageActivityRoutingCapture;
     days: Map<number, ProjectionDay>;
     stats: UsageActivitySubjectReplayStats & {
@@ -57,6 +61,10 @@ export interface CapturedUsageActivitySummary {
         discoveryEventsRead: number;
         historyEventsRead: number;
         projectedRows: number;
+        tariffCalculations: number;
+        tariffReuses: number;
+        calendarTargetCalculations: number;
+        calendarTargetReuses: number;
         published?: boolean;
     };
 }
@@ -98,10 +106,10 @@ export async function captureUsageActivitySummaryInTx(tx: Tx, accountId: string,
     ]);
     let head = readHead(expectedHead);
     const stats: CapturedUsageActivitySummary['stats'] = { eventsRead: 0, discoveryEventsRead: 0, historyEventsRead: 0,
-        projectedRows: 0, subjectCount: head?.subjectCount ?? 0, replayedSubjects: 0, replayedEvents: 0 };
+        projectedRows: 0, tariffCalculations: 0, tariffReuses: 0, calendarTargetCalculations: 0, calendarTargetReuses: 0, subjectCount: head?.subjectCount ?? 0, replayedSubjects: 0, replayedEvents: 0 };
     const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [], priceCatalog, messageCountsBySession: undefined };
     const state: CapturedUsageActivitySummary = { accountId, query, expectedHead, changes, snapshot,
-        sourceDigest: head?.sourceDigest ?? '', days: new Map(), stats };
+        sourceDigest: head?.sourceDigest ?? '', pricingReuse: head?.pricingReuse, days: new Map(), stats };
     if (head && changes.length === 0) {
         state.compact = head.queryKey === getUsageAnalyticsQueryRequestKey(query) ? head.response
             : rebaseUsageAnalyticsSummaryEnd(head.response, head.query, query);
@@ -219,17 +227,27 @@ export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySu
 /** Publish only changed routing, subject and local-day operands after canonical delivery succeeds. */
 export async function publishUsageActivitySummary(state: CapturedUsageActivitySummary,
     value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog): Promise<void> {
-    if (state.compact) return;
+    if (state.compact && !state.updatedPricingReuse) return;
     const query = state.query;
     const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1, priceCatalog: catalog,
         results: [{ query, value }] }, { queries: [query], includeContributions: false,
         contributionQueries: [], sessionQueries: [query] }, false));
     const result = delivered.results[0];
     if (!result || 'error' in result) throw new Error('Usage activity summary projection failed');
+    // A catalog/mode refresh updates only the priced head; source witnesses and
+    // retained operands still describe the same admitted read snapshot.
+    const previous = state.compact ? readHead(state.expectedHead) : undefined;
+    if (previous) {
+        const head: SummaryHead = { ...previous, queryKey: getUsageAnalyticsQueryRequestKey(query), query,
+            response: result.value, pricingReuse: state.updatedPricingReuse };
+        state.stats.published = await saveUsageActivitySummary(state.accountId, state.expectedHead,
+            JSON.stringify(head), new Map(), []);
+        return;
+    }
     const routing = state.routing!;
     const head: SummaryHead = { version: USAGE_ACTIVITY_SUMMARY_VERSION, format: 'selective-day-facts',
         queryKey: getUsageAnalyticsQueryRequestKey(query), query, sourceDigest: state.sourceDigest,
-        subjectCount: state.stats.subjectCount, response: result.value,
+        subjectCount: state.stats.subjectCount, response: result.value, pricingReuse: state.updatedPricingReuse,
         sourceDays: [...routing.sourceDays].sort((left, right) => left - right),
         subjectKeys: [...routing.subjectKeys], sessionKeys: [...routing.sessionKeys],
         sourceCoverage: [...routing.sourceCoverage], reportSources: routing.reportSources,
