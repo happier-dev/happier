@@ -37,7 +37,7 @@ import {
  * `useQualifiedConnectedAccountGroups`.
  */
 export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
-    props: Omit<QualifiedPoolDetailViewProps, 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenAccount' | 'now'>,
+    props: Omit<QualifiedPoolDetailViewProps, 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenAccount' | 'now' | 'onCheckStale'>,
 ) {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
@@ -53,10 +53,17 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             byAccountId[profile.ref.accountId] = {
                 snapshot: quotas.snapshotsByKey[profile.key] ?? null,
                 loading: quotas.loadingByKey[profile.key] === true,
+                failed: quotas.errorsByKey[profile.key] != null,
             };
         }
         return byAccountId;
-    }, [quotas.loadingByKey, quotas.profiles, quotas.snapshotsByKey]);
+    }, [quotas.errorsByKey, quotas.loadingByKey, quotas.profiles, quotas.snapshotsByKey]);
+    // The page's one on-demand check for members whose readings are old when it opens.
+    const { profiles: quotaProfiles, refresh: refreshQuotas } = quotas;
+    const checkStale = React.useCallback((accountIds: readonly string[]) => {
+        const keys = quotaProfiles.flatMap((profile) => profile.kind === 'qualified' && accountIds.includes(profile.ref.accountId) ? [profile.key] : []);
+        if (keys.length > 0) fireAndForget(refreshQuotas(keys), { tag: 'QualifiedPoolDetail.checkStale' });
+    }, [quotaProfiles, refreshQuotas]);
 
     const target = React.useMemo<Extract<QualifiedConnectedAccountPurposeBindingTargetV1, { kind: 'group' }>>(() => ({
         kind: 'group',
@@ -112,6 +119,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             presentGatewayTarget={presentGatewayTarget}
             onOpenGateway={openGateway}
             onOpenAccount={openAccount}
+            onCheckStale={checkStale}
             onResetLabel={resetLabel}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
             onConnectAccount={() => {

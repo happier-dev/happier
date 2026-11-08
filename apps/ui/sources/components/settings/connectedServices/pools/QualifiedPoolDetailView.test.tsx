@@ -759,7 +759,7 @@ describe('QualifiedPoolDetailView', () => {
         expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
     });
 
-    it('shows a shared stale check once at pool level on wide and compact pages', async () => {
+    it('reads old readings as their age, not as a failure, on wide and compact pages', async () => {
         const { screen } = await renderPoolDetail({}, {
             memberQuotaByAccountId: quota({
                 work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
@@ -769,10 +769,51 @@ describe('QualifiedPoolDetailView', () => {
         for (const width of [1440, 390]) {
             act(() => screen.findHostByTestId('connected-services-pool-detail')?.props.onLayout?.({ nativeEvent: { layout: { width, height: 800, x: 0, y: 0 } } }));
             expect(memberRows(screen).every((row) => row.note === null)).toBe(true);
-            expect(screen.findByTestId('connected-services-pool-detail:members:stale')).not.toBeNull();
+            expect(screen.findByTestId('connected-services-pool-detail:members:stale')).toBeNull();
+            expect(screen.getTextContent()).not.toContain('connectedServicesPool.usageNotAnswering');
+            expect(screen.findAllByType(SurfaceAsOfLabel).map((label) => label.props.at)).toEqual([NOW - 20 * MIN]);
             expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
             expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
         }
+    });
+
+    it('says the service did not answer only when a member\'s last check failed', async () => {
+        const memberQuotaByAccountId = {
+            ...quota({
+                work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+            }),
+        };
+        memberQuotaByAccountId.work = { ...memberQuotaByAccountId.work!, failed: true };
+        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId });
+        expect(screen.findByTestId('connected-services-pool-detail:members:stale')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('connectedServicesPool.usageNotAnswering');
+        expect(screen.findAllByType(SurfaceAsOfLabel)).toHaveLength(0);
+    });
+
+    it('asks once for a check when it opens with an old reading, and never again while open', async () => {
+        const onCheckStale = vi.fn();
+        const memberQuotaByAccountId = quota({
+            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
+        });
+        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId, onCheckStale });
+        expect(onCheckStale.mock.calls).toEqual([[['work']]]);
+        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 30 * MIN} memberQuotaByAccountId={{ ...memberQuotaByAccountId }} />);
+        expect(onCheckStale).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not ask for a check when it opens with current readings, even as they age while open', async () => {
+        const onCheckStale = vi.fn();
+        const memberQuotaByAccountId = quota({
+            work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }]),
+            backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
+        });
+        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId, onCheckStale });
+        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 30 * MIN} memberQuotaByAccountId={{ ...memberQuotaByAccountId }} />);
+        expect(onCheckStale).not.toHaveBeenCalled();
     });
 
     it('keeps settled capacity as the active reading ages during a refresh, then accepts fresh room', async () => {

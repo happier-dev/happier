@@ -109,6 +109,8 @@ export type QualifiedPoolDetailAccount = QualifiedConnectedAccountPresentationAc
 export type PoolMemberQuota = Readonly<{
     snapshot: QuotaSnapshot | null;
     loading: boolean;
+    /** The owner's last check for this member failed (a producer error or a failed read). */
+    failed?: boolean;
 }>;
 
 /**
@@ -159,6 +161,8 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     shareSource?: TeamCredentialSourceHint;
     /** Clears this pool's personal label (`connectedServices.labels.reset`), shown only while one is set. */
     onResetLabel?: () => void;
+    /** Asked once when the page opens with old readings: the on-demand check for those members. */
+    onCheckStale?: (accountIds: readonly string[]) => void;
     onConnectAccount?: (anchor?: PopoverAnchor) => void;
     settled?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
@@ -574,11 +578,26 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         .map((member) => countedSnapshotByAccountId[member.ref.accountId])
         .filter((snapshot): snapshot is QuotaSnapshot => snapshot != null);
     // Freshness is a pool fact, stated once in the Members header: the pool is as current as the
-    // oldest reading it counts. The section says it is behind only when every reading is old.
+    // oldest reading it counts. Nothing is checked while nothing needs a reading, so old readings
+    // read as their age; "didn't answer" is said only when every reading is old and a check failed.
     const poolAsOf = enabledSnapshots.length > 0 ? Math.min(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
-    const allStale = enabledSnapshots.length > 0 && enabledMembers
-        .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null)
-        .every((member) => usage.memberByAccountId[member.ref.accountId]?.isStale);
+    const staleMemberIds = enabledMembers
+        .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null
+            && usage.memberByAccountId[member.ref.accountId]?.isStale)
+        .map((member) => member.ref.accountId);
+    const notAnswering = enabledSnapshots.length > 0
+        && staleMemberIds.length === enabledMembers.filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null).length
+        && enabledMembers.some((member) => memberQuota[member.ref.accountId]?.failed === true);
+    // One check when the page opens with old readings; nothing polls while it stays open.
+    const checkedOnOpen = React.useRef(false);
+    const hasReading = enabledSnapshots.length > 0;
+    const staleOnOpen = staleMemberIds.join('\n');
+    const onCheckStale = props.onCheckStale;
+    React.useEffect(() => {
+        if (checkedOnOpen.current || !hasReading) return;
+        checkedOnOpen.current = true;
+        if (staleOnOpen) onCheckStale?.(staleOnOpen.split('\n'));
+    }, [hasReading, onCheckStale, staleOnOpen]);
     const roomLine = usage.room.total > 0
         ? [
             t('connectedServicesPool.roomCount', { count: usage.room.withRoom, total: usage.room.total }),
@@ -796,11 +815,11 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 title={memberCount > 0 ? t('connectedServicesPool.membersTitle') : undefined}
                 description={memberCount > 0 ? t(compact ? 'connectedServicesPool.membersCompactDescription' : 'connectedServicesPool.membersDescription') : undefined}
                 action={memberCount > 0 ? <View style={styles.headerActions}>
-                    {poolAsOf !== null && !allStale ? <SurfaceAsOfLabel at={poolAsOf} testID={`${TEST_ID}:members:as-of`} /> : null}
+                    {poolAsOf !== null && !notAnswering ? <SurfaceAsOfLabel at={poolAsOf} testID={`${TEST_ID}:members:as-of`} /> : null}
                     {manageMembers}
                 </View> : undefined}
             >
-                {allStale && poolAsOf !== null ? (
+                {notAnswering && poolAsOf !== null ? (
                     <SectionContentRow>
                         <SurfaceFreshnessLine
                             testID={`${TEST_ID}:members:stale`}
