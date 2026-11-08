@@ -18,7 +18,7 @@ type DocCollaborationActionSpec = {
 
 export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionSpec[] = lazyActionSpecArray(() => [
   { id: 'doc.read', title: 'Read document',
-    description: 'Read an authorized prose Doc through the canonical Artifact reader. A supplied full revision must still be current. An unavailable comment count is explicit. Reading does not mark a Discussion read.',
+    description: 'Read an authorized prose Doc, including its document text, through the canonical Artifact reader. In a Doc passage thread, use the context docRef as ref; a supplied full revision must still be current. An unavailable comment count is explicit. Reading does not mark a Discussion read.',
     safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'account',
     approval: { result: 'none' }, placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
@@ -37,7 +37,7 @@ export const DOC_COLLABORATION_ACTION_SPECS_V1: readonly DocCollaborationActionS
     cli: { acceptsServerId: true, commands: [{ path: ['doc', 'comment', 'reply'], visibility: 'canonical' }] },
   },
   { id: 'doc.edit.propose', title: 'Propose a document edit',
-    description: 'Propose replacement after text in a passage thread by supplying discussionRef and localId, with an optional reason. The stored thread supplies the exact passage, quote and full revision before approval. Explicit target/baseRevision/before inputs also work. A proposal never changes document text.',
+    description: 'Suggest a rewrite of this passage as a Doc suggestion for the person to review. Supply the replacement text as after, discussionRef from the thread context threadRef, and localId, with an optional reason. The stored thread supplies the exact passage, quote and full revision before approval; use doc.read with the context docRef as ref to read document text. Explicit target/baseRevision/before inputs also work. A proposal never changes document text.',
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'account_automation', executionPlacement: 'account',
     approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' },
     placements: [],
