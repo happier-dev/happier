@@ -20,7 +20,10 @@ import { subscribeHomeCredentialMutations } from '@/auth/storage/tokenStorage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { captureServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { getServerProfileById, areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { getStorage } from '@/sync/domains/state/storage';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -1174,6 +1177,15 @@ function createUsageQueryAccountContext(credentials: AuthCredentials, accountLif
 }
 
 /** One Action port batches resolved A requests; B/backfill never delays available A. */
+/**
+ * A selected Project asks for every key its usage may carry (owner 11-08): the census's scope for each Project, read
+ * when the request is built. The request sent and the changed-request key both come from here.
+ */
+function usageProjectScopeKeys(serverId: string): (projectKey: string) => Iterable<string> {
+    const refs = readProjectAccountWorkspaceRefs(getStorage().getState());
+    return projectKey => resolveSessionProjectScopeV1({ serverId, projectKey }, refs, resolveServerProfileScopeIdForIdentifier).projectKeys;
+}
+
 export async function readUiUsageQueryBatch(
     context: UsageQueryAccountContext,
     input: UsageQueryBatchInput,
@@ -1215,7 +1227,8 @@ export async function readUiUsageQueryBatch(
     };
     const accounting = new Map<string, UsageAccountingSourceSnapshot>(requests.map(query => {
         const key = getUsageQueryKey(query);
-        const request = usageQueryToAnalyticsRequest({ ...query, period: periods.get(key)! });
+        const request = usageQueryToAnalyticsRequest({ ...query, period: periods.get(key)! }, undefined,
+            usageProjectScopeKeys(context.accountLifetime.scope.serverId));
         const needsRows = usageQueryNeedsContributionRows(query);
         const needsMembership = !needsRows && (query.includeSessionEvidence || query.includeWorkEvidence);
         const workOnly = needsRows && query.includeWorkEvidence && !query.includeContributions
@@ -2208,7 +2221,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     for (const [key, input] of accountingInputs) {
                         if (!usageAccountingChangeAffectsQueries([input.query], change)) continue;
                         for (const read of resolveUsagePageAccountingReads([input.query], input.nowMs)) {
-                            changedRequests.add(getUsageAnalyticsQueryRequestKey(usageQueryToAnalyticsRequest({ ...read.query, period: read.period })));
+                            changedRequests.add(getUsageAnalyticsQueryRequestKey(usageQueryToAnalyticsRequest({ ...read.query, period: read.period },
+                                undefined, usageProjectScopeKeys(lifetime.scope.serverId))));
                         }
                         // Relative windows advance only for affected queries;
                         // unrelated close/reopen/rebatch keeps its admitted clock.

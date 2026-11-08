@@ -45,6 +45,9 @@ The admitted Session directory travels through the existing requested-directory
 carrier; native Exec passes that directory and the member's home through the
 existing UID delegate. The custodian controller never needs to enter a member's
 0700 home before that switch. Shared-agent placement uses the same handoff.
+Fresh and resumed path Sessions retain `~` home intent until native directory
+preparation resolves it under the selected execution identity. Ordinary daemon
+placement resolves that intent locally through the same canonical path helper.
 A regular start with no PID retains `SPAWN_NO_PID` and its structured spawn cause,
 including the OS code, numeric errno when observed, and final physical spawn cwd.
 These diagnostics do not grant launch or retry authority.
@@ -1417,7 +1420,14 @@ joins an existing Project of the Home, and `projectKey: "self"` separates the
 checkout (`resolveWorkspaceGroupingV1`). Existing duplicates are joined this way,
 never merged automatically. Nothing else is rewritten: Sessions keep the key they
 were stamped with, and a Project's Sessions, memory and usage are selected by
-`projectScopeKeysV1(group)`, the anchor plus each member's own id.
+`projectScopeKeysV1(group)`, the anchor plus each member's own id. The other
+direction has one owner too: `resolveSessionProjectKeyV1` maps a stamped key (or a
+stale `metadata.projectId`) to the Project it belongs to now through
+`createProjectAnchorOfKeyV1`, so context, prompt stacks, reach and saved
+`projects` facets follow the group. Home queries (`projectSessionListFilterHomeQueriesV1`
+with `workspaceRefs`, `usageQueryToAnalyticsRequest` with `projectScopeKeys`) send
+the whole scope, and Usage options and the work ledger roll member keys into the
+Project.
 
 `projects.list` is an Account Action that lists the Projects the person added.
 A Project is listed when its organization row exists and is not hidden, or, with

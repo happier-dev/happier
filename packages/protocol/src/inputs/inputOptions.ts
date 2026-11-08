@@ -20,10 +20,10 @@ import { resolveActionBackendTargetSelection, resolveExecutionBackendTargetSelec
 import { readRecord, readRecordListProperty, readNonEmptyString, isRecord, hasOwn } from './inputRecords.js';
 import { projectInputOptionsDependencies } from './inputOptionsDependencies.js';
 import { inputTypeOptionsSourceId, parseInputTypeOptionsSourceId } from './inputTypes.js';
-import { resolveInputTypeOptions, narrowInputFieldOptions } from './inputTypeRuntime.js';
+import { resolveInputTypeOptions, narrowInputFieldOptions, type InputTypeOptionsQueryV1 } from './inputTypeRuntime.js';
 import type { InputOption, InputFieldHint } from './inputFields.js';
 import type { InputOptionsConsumerV1 } from './inputOptionsConsumer.js';
-import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { parseSessionAwarenessListResultV1 } from '../sessions/awareness/action.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
 import { isSessionAwarenessContentReadableV1 } from '../sessions/awareness/availability.js';
@@ -32,11 +32,13 @@ import { SessionAwarenessProjectionV1Schema, type SessionAwarenessProjectionV1 }
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
+import { createProjectAnchorOfKeyV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { MachineVitalsSnapshotV1Schema } from '../machines/vitals/machineVitalsRpcV1.js';
 import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
-import { executeUsageAction } from '../actions/executor/usageActions.js';
-import { UsageQueryBatchResultSchema } from '../usage/resolveUsagePageAggregation.js';
 import { readUsageScopeOptions } from '../usage/usageFilterOptions.js';
+import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
+import { DesktopDisplaysListResultSchema } from '../actions/specs/desktopShell.js';
+import { BrowserExtensionsListResultV1Schema } from '../actions/browserExtensionActions.js';
 
 export function normalizeResolvedOptions(value: unknown, options: Readonly<{ allowEmptyValue?: boolean }> = {}): readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] {
   const items = readRecordListProperty(value, 'items').length > 0
@@ -54,6 +56,9 @@ export function normalizeResolvedOptions(value: unknown, options: Readonly<{ all
           ? item.value
           : typeof item?.id === 'string'
             ? item.id
+            // Machine inventory rows (the UI machines list) name their Machine by machineId.
+            : typeof item?.machineId === 'string'
+            ? item.machineId
             : typeof item?.modelId === 'string'
               ? item.modelId
               : typeof item?.path === 'string'
@@ -252,12 +257,14 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
   if (!type || type.identity.pluginId !== identity.pluginId || type.identity.localId !== identity.localId)
     return { ok: false, errorCode: 'input_type_unavailable', error: 'input_type_unavailable' };
   let typeOptions: readonly InputOption[] | undefined;
+  let nextCursor: string | undefined;
   if (type.definition.options) {
     const sessionId = params.resolveSessionId(params.input, ctx);
-    const resolved = await resolveInputTypeOptions({ deps, ctx, identity, readFailure: params.readFailure,
+    const resolved = await resolveInputTypeOptions({ deps, ctx, identity, query: params.query, readFailure: params.readFailure,
       ...(sessionId ? { sessionId } : {}) });
     if (!resolved.ok) return resolved;
     typeOptions = resolved.result;
+    nextCursor = resolved.nextCursor;
   }
   let options = field.options ?? typeOptions ?? [];
   if (field.options === undefined && field.optionsSourceId) {
@@ -268,7 +275,7 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
   const current = await deps.resolveInputType?.(identity, ctx);
   if (ctx.signal?.aborted || current?.occurrenceId !== type.occurrenceId)
     return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
-  return { ok: true, result: narrowInputFieldOptions({ field, type, options: typeOptions ?? options, candidates: options }),
+  return { ok: true, ...(nextCursor === undefined ? {} : { nextCursor }), result: narrowInputFieldOptions({ field, type, options: typeOptions ?? options, candidates: options }),
     ...(field.options !== undefined || !field.optionsSourceId && !type.definition.options ? { optionsSourceId: null } : {}) };
 }
 
@@ -280,9 +287,12 @@ export async function resolveInputOptions(params: Readonly<{
   optionsSourceId: string;
   input: Record<string, unknown>;
   consumer?: InputOptionsConsumerV1;
+  query?: InputTypeOptionsQueryV1;
   /** Picked values to check: a source that can answer them directly does not read its whole inventory. */
   values?: readonly JsonValue[];
   includeSpawnModelCatalog?: boolean;
+  /** Sources owned by a client Action use the same admitted transport from headless hosts. */
+  executeOwnerAction?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   readFailure: (result: unknown) => Extract<ActionExecuteResult, { ok: false }> | null;
   resolveSessionId: (input: unknown, ctx: ActionExecutorContext) => string | null;
   reviewScope: (input: unknown) => 'paths' | undefined;
@@ -290,7 +300,9 @@ export async function resolveInputOptions(params: Readonly<{
   ok: true;
   result: readonly InputOption[];
   optionsSourceId?: null;
+  nextCursor?: string;
   modelCatalog?: NonNullable<PublicActionResultById['action.options.resolve']['modelCatalog']>;
+  machineRecipeDetails?: NonNullable<PublicActionResultById['action.options.resolve']['machineRecipeDetails']>;
 }>> {
   const { deps, ctx, actionId, optionsSourceId } = params;
   const sameHome = params.sameHome ?? areServerProfileIdentifiersEquivalent;
@@ -301,6 +313,61 @@ export async function resolveInputOptions(params: Readonly<{
     : readNonEmptyString(ctx.serverId);
   const modelId = readDynamicOptionModelId(input, actionId);
   const directory = readDynamicOptionDirectory(input, actionId);
+
+  if (optionsSourceId === 'browser.profiles.available') {
+    if (!machineId) return { ok: false, errorCode: 'missing_option_dependency', error: 'missing_option_dependency',
+      details: { requiredDraftPath: 'machineId' } };
+    const ownerContext = { ...ctx, externalActionTarget: ctx.externalActionTarget ?? { kind: 'machine' as const, machineId } };
+    let result: unknown;
+    if (params.executeOwnerAction) {
+      const executed = await params.executeOwnerAction('browser.extensions.list', { machineId }, ownerContext);
+      if (!executed.ok) return executed;
+      result = executed.result;
+    } else if (deps.runtimeActionExecute) {
+      result = await deps.runtimeActionExecute({ actionId: 'browser.extensions.list', input: { machineId }, context: ownerContext });
+    } else {
+      return { ok: false, errorCode: 'unavailable', error: 'browser.profiles.available' };
+    }
+    const failure = params.readFailure(result);
+    if (failure) return failure;
+    const parsed = BrowserExtensionsListResultV1Schema.safeParse(result);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    if (parsed.data.status === 'unavailable') return { ok: false, errorCode: parsed.data.code,
+      error: parsed.data.message ?? parsed.data.code };
+    if (parsed.data.profiles === undefined) return { ok: false, errorCode: 'unavailable', error: 'browser.profiles.available' };
+    return { ok: true, result: parsed.data.profiles.map(profile => ({ value: profile.profileId,
+      label: profile.displayName ?? profile.profileId })) };
+  }
+
+  if (optionsSourceId === 'desktop.displays.list') {
+    let result: unknown;
+    if (params.executeOwnerAction) {
+      const executed = await params.executeOwnerAction('desktop.displays.list', {});
+      if (!executed.ok) return executed;
+      result = executed.result;
+    } else if (deps.desktopDisplaysList) {
+      result = await deps.desktopDisplaysList({ context: ctx });
+    } else {
+      return { ok: false, errorCode: 'unavailable', error: 'desktop.displays.list' };
+    }
+    const failure = params.readFailure(result);
+    if (failure) return failure;
+    const parsed = DesktopDisplaysListResultSchema.safeParse(result);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    const { displays, automaticResolvesTo } = parsed.data;
+    const automatic = displays.find(display => display.storageKey === automaticResolvesTo);
+    return { ok: true, result: [
+      { value: 'automatic', label: 'Automatic', ...(automatic ? { description: automatic.name } : {}) },
+      ...(displays.some(display => display.builtIn) ? [{ value: 'built_in', label: 'Built-in display' }] : []),
+      { value: 'main', label: 'Display with the Happier window' },
+      ...displays.map(display => ({ value: `named:${display.storageKey}`, label: display.name,
+        description: display.connected ? 'Connected' : 'Not connected' })),
+    ] };
+  }
+
+  if (optionsSourceId === 'machines.setup.software.available') {
+    return resolveMachineSetupSoftwareOptions({ deps, ctx, actionId, input, values: params.values });
+  }
 
   if (optionsSourceId === 'usage.query.period' || optionsSourceId === inputTypeOptionsSourceId({ hostType: 'usageQuery', field: 'period' })) {
     const draft = isRecord(params.input.query) ? params.input.query : params.input;
@@ -321,12 +388,35 @@ export async function resolveInputOptions(params: Readonly<{
     // target catalog or consumer-owned picker decides what a usage identity means.
     const draft = isRecord(params.input.query) ? params.input.query : params.input;
     const query = normalizeUsageQuery({ period: draft.period, session: draft.session, costBasis: draft.costBasis,
+      includeAccounting: true, includeContributions: false, includeComparison: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+      includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
+      includeModelTimeline: false, includeMessageStats: false,
       breakdown: ['agent', 'machine', 'project', 'source'] });
-    const result = await executeUsageAction('usage.query', { queries: [query] }, deps.usageActions, ctx);
-    if (!result.ok) return result;
-    const batch = UsageQueryBatchResultSchema.parse(result.result);
+    if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    if (!deps.usageActions) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    // The typed port admits its transport once. Only an external Action needs
+    // result re-admission and envelope projection, not an in-process picker.
+    const batch = await deps.usageActions.query({ queries: [query] }, ctx);
+    if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    if ('ok' in batch) return batch;
     const selected = Array.isArray(draft[usageField]) ? draft[usageField].filter((value): value is string => typeof value === 'string') : [];
-    const labels = readUsageScopeOptions(batch.results, usageField, selected);
+    // Usage a checkout was stamped with before it joined a Project is offered under that Project (owner 11-08).
+    let anchorOf: ((key: string) => string) | undefined;
+    const projectHome = readNonEmptyString(ctx.serverId);
+    if (usageField === 'projects' && projectHome && deps.projectWorkspaceRefs) {
+      const census = await deps.projectWorkspaceRefs({ serverId: projectHome }, ctx);
+      ctx.signal?.throwIfAborted();
+      if (!params.readFailure(census)) {
+        const refs = readRecordListProperty(census, 'workspaceRefs').flatMap(row => {
+          const ref = WorkspaceRefV1Schema.safeParse(row);
+          return ref.success ? [ref.data] : [];
+        });
+        const resolve = createProjectAnchorOfKeyV1(refs);
+        anchorOf = key => resolve(projectHome, key);
+      }
+    }
+    const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf);
     if (usageField === 'machines' && deps.machinesList) {
       if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
       const machines = await deps.machinesList({ serverId, purpose: 'input' });
@@ -430,7 +520,7 @@ export async function resolveInputOptions(params: Readonly<{
   const inputTypeIdentity = parseInputTypeOptionsSourceId(optionsSourceId);
   if (inputTypeIdentity) {
     const sessionId = params.resolveSessionId(input, ctx);
-    return resolveInputTypeOptions({ deps, ctx, identity: inputTypeIdentity, readFailure: params.readFailure,
+    return resolveInputTypeOptions({ deps, ctx, identity: inputTypeIdentity, query: params.query, readFailure: params.readFailure,
       ...(sessionId ? { sessionId } : {}) });
   }
 

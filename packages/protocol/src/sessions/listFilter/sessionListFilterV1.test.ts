@@ -121,6 +121,21 @@ describe('SessionListFilterV1', () => {
         expect(projectSessionListFilterHomeQueriesV1(filter, options).every(({ query }) => !('projectKeys' in query))).toBe(true);
     });
 
+    it('asks the Home for every key a saved Project\'s Sessions may carry, and matches them locally (owner 11-08)', () => {
+        // "nldw6" joined "payments" after its Sessions were stamped with its own id.
+        const workspaceRefs = [
+            { id: 'payments', serverId: 'a', machineId: 'm3', rootPath: '/pay', projectKey: 'payments', createdAtMs: 1 },
+            { id: 'nldw6', serverId: 'a', machineId: 'm6', rootPath: '/pay', projectKey: 'payments', createdAtMs: 2 },
+        ];
+        const filter = normalizeSessionListFilterV1({ homeServerIds: ['a'], scope: 'all_accessible', projects: {
+            include: [{ serverId: 'a', projectKey: 'payments' }], exclude: [] } });
+        const [home] = projectSessionListFilterHomeQueriesV1(filter, { storage: 'active', includeInactive: true,
+            mountedHomeServerIds: ['a'], projectFacet: 'query', workspaceRefs });
+        expect([...(home?.query.projectKeys?.include ?? [])].sort()).toEqual(['nldw6', 'payments']);
+        // The saved facet value (the anchor) matches a Session stamped with the joined checkout's own id.
+        expect(matchSessionProjectFilterV1({}, 'a', { serverId: 'a', projectKey: 'payments' }, workspaceRefs, { projectKey: 'nldw6' })).toBe('match');
+    });
+
     it('lets exhaustive previews omit attention promotion while preserving the structural corpus and transport page bound', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible',
             projects: { include: [{ serverId: 'home', projectKey: 'private-project' }], exclude: [] } });

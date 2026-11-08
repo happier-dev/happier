@@ -67,6 +67,7 @@ import {
 } from '@/api/externalActionExecutionAuthorization';
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
 import { getUsageQueryKey, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -551,8 +552,23 @@ export function createAccountServerActionDeps(input: Readonly<{
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
         const accountingNowMs = Date.now();
         const accountingReads = resolveUsagePageAccountingReads(request.queries, accountingNowMs);
+        // A selected Project asks for every key its usage may carry (owner 11-08), from one census read. Without the
+        // census (an external read principal, or the read failing) the Project's anchor alone.
+        let projectScopeKeys: ((projectKey: string) => Iterable<string>) | undefined;
+        if (accountingReads.some(({ query }) => query.projects.length > 0)
+          && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization) {
+          const homeId = serverIdentityId ?? serverId;
+          try {
+            const observation = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRowsObservation({
+              credentials, serverId: homeId, signal: context?.signal, selection: { kinds: ['workspace-ref'] } }));
+            const refs = observation.snapshot.workspaceRefs;
+            projectScopeKeys = projectKey => resolveSessionProjectScopeV1({ serverId: homeId, projectKey }, refs).projectKeys;
+          } catch {
+            context?.signal?.throwIfAborted();
+          }
+        }
         const snapshots = await Promise.all(accountingReads.map(async ({ query, period }): Promise<UsageAccountingSourceSnapshot | ActionExecuteFailure> => {
-          const body = projectNativeJsonValueForTransport(usageQueryToAnalyticsRequest({ ...query, period }, accountingNowMs));
+          const body = projectNativeJsonValueForTransport(usageQueryToAnalyticsRequest({ ...query, period }, accountingNowMs, projectScopeKeys));
           const path = '/v2/usage/query';
           const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'POST', path, body });
           if (!authorization.ok) return externalAuthorizationUnavailable();
@@ -596,7 +612,6 @@ export function createAccountServerActionDeps(input: Readonly<{
           });
           return result.response.data;
         };
-        const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
         type Quota = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']>;
         let quota: Quota = { status: 'unknown' };
         let quotaSources: UsageQuerySourceState[] = [];

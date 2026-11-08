@@ -10,7 +10,7 @@ import { t } from '@/text';
 import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import { toggleUsageScopeSelection } from './usageWidgetPageContext';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
-import { readUsageCoverageGaps, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
+import { readUsageCoverageGaps, useUsageProjectAnchorOf, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
 
 export const USAGE_SCOPE_FILTER_ALL = '\u0000all';
 type ScopeField = 'sources' | 'agents' | 'machines' | 'projects';
@@ -50,7 +50,10 @@ function sourceOptionDetail(slices: readonly UsageQueryResultSlice[], source: st
 }
 
 /** One choice/toggle owner consumed by both the toolbar and mounted current-context commands. */
-export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, slices: readonly UsageQueryResultSlice[], sessionScoped: boolean) {
+export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, slices: readonly UsageQueryResultSlice[], sessionScoped: boolean,
+    serverId: string) {
+    // Usage stamped by a checkout before it joined a Project is offered under that Project (owner 11-08).
+    const projectAnchorOf = useUsageProjectAnchorOf(serverId);
     const { scope, setScope } = page;
     const referencedMachineIds = React.useMemo(() => sessionScoped ? [] : [...readUsageScopeOptions(slices, 'machines', scope.machines).keys()], [sessionScoped, slices, scope.machines]);
     // Filters consume names, not Machine runtime/presence. Select the canonical
@@ -66,7 +69,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
         const filters = sessionScoped ? [] :
         (['sources', 'agents', 'machines', 'projects'] as const).map(field => {
             const selected = scope[field];
-            const labels = readUsageScopeOptions(slices, field, selected);
+            const labels = readUsageScopeOptions(slices, field, selected, field === 'projects' ? projectAnchorOf.resolve : undefined);
             const title = t(FIELD_TITLE[field]);
             const listed = [...labels.keys()];
             const gaps = field === 'sources' ? slices.flatMap(slice => readUsageCoverageGaps(slice, ['accounting'])) : [];
@@ -101,5 +104,5 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
         if (previous && previous.filters.length === shared.length && shared.every((filter, index) => filter === previous.filters[index])) return previous.filters;
         retained.current = { setScope, filters: shared };
         return shared;
-    }, [machineNames, scope, setScope, sessionScoped, slices]);
+    }, [machineNames, projectAnchorOf, scope, setScope, sessionScoped, slices]);
 }

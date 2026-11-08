@@ -9,6 +9,13 @@ import * as usageQuery from './usageQuery.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 describe('shared UsageQuery', () => {
+  it('asks for every key a selected Project\'s usage may carry when given its scope (owner 11-08)', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, projects: ['payments'] });
+    const scope = (projectKey: string) => projectKey === 'payments' ? ['payments', 'nldw6'] : [projectKey];
+    expect(usageQueryToAnalyticsRequest(query, 0, scope).filters?.projectKeys).toEqual(['payments', 'nldw6']);
+    expect(usageQueryToAnalyticsRequest(query, 0).filters?.projectKeys).toEqual(['payments']);
+  });
+
   it('reuses only owner-normalized immutable identities while mutable caller values remain live', () => {
     const raw = { period: { startMs: 100, endMs: 200 }, agents: ['b', 'a'] };
     const query = normalizeUsageQuery(raw);

@@ -12,9 +12,12 @@ export function agentIdFromEngineKey(key: string): string {
   return separator === -1 ? key : key.slice(0, separator);
 }
 
-/** Both ordinary inputs and the Usage toolbar consume the admitted accounting inventory. */
+/**
+ * Both ordinary inputs and the Usage toolbar consume the admitted accounting inventory. `anchorOf`
+ * (`createProjectAnchorOfKeyV1`, owner 11-08) lists usage a checkout was stamped with under the Project it belongs to now.
+ */
 export function readUsageScopeOptions(slices: readonly UsageQueryResultSlice[], field: UsageScopeFilterField,
-  selected: readonly string[] = []): Map<string, string> {
+  selected: readonly string[] = [], anchorOf?: (key: string) => string): Map<string, string> {
   const labels = new Map<string, string>();
   for (const slice of slices) {
     if (field === 'agents') for (const bucket of slice.accounting?.engineTimeline ?? []) for (const entry of bucket.leaders) {
@@ -22,7 +25,9 @@ export function readUsageScopeOptions(slices: readonly UsageQueryResultSlice[], 
       if (!labels.has(agentId)) labels.set(agentId, agentId);
     }
     for (const entry of slice.accounting?.breakdowns?.[dimensionOf[field]] ?? []) {
-      labels.set(entry.key, entry.label ?? labels.get(entry.key) ?? entry.key);
+      const key = field === 'projects' && anchorOf ? anchorOf(entry.key) : entry.key;
+      // A grouped Project keeps the label its anchor's own entry carries.
+      labels.set(key, (key === entry.key ? entry.label : undefined) ?? labels.get(key) ?? entry.label ?? key);
     }
     if (field === 'sources') for (const source of slice.accounting?.coverage?.sources ?? []) {
       if (!labels.has(source.source)) labels.set(source.source, source.source);

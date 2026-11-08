@@ -35,6 +35,8 @@ import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeMo
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
 import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
@@ -114,6 +116,23 @@ function useUsageAnalyticsAccounting(accounting: UsageQueryResultSlice['accounti
     accounting?.coverage?.status, accounting?.coverage?.reasons, accounting?.coverage?.ranked,
     dayStreaks?.activeDays, dayStreaks?.currentStreakDays, dayStreaks?.longestStreakDays,
   ]);
+}
+
+/**
+ * The Project a usage key belongs to now (`createProjectAnchorOfKeyV1`, owner 11-08): usage a checkout was stamped
+ * with before it joined a Project counts under that Project. Only joined checkouts change a key's Project, so
+ * `joinedKey` (a cache key) and `resolve` stay put through an unrelated census refresh.
+ */
+export function useUsageProjectAnchorOf(serverId: string): Readonly<{ joinedKey: string; resolve: (key: string) => string }> {
+  const workspaceRefs = useWorkspaceRefs();
+  const joinedKey = React.useMemo(() => JSON.stringify(workspaceRefs.filter(ref => ref.projectKey !== undefined && ref.projectKey !== ref.id)
+    .map(ref => [ref.serverId, ref.id, ref.projectKey]).sort()), [workspaceRefs]);
+  return React.useMemo(() => {
+    const joined = (JSON.parse(joinedKey) as Array<[string, string, string]>).map(([refServerId, id, projectKey]) => ({
+      id, serverId: refServerId, projectKey, machineId: '', rootPath: '', createdAtMs: 0 }));
+    const anchorOf = createProjectAnchorOfKeyV1(joined, { normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+    return { joinedKey, resolve: (key: string) => anchorOf(serverId, key) };
+  }, [joinedKey, serverId]);
 }
 
 /** Names stay in the opened Account projection; accounting carries only the Project anchor. */

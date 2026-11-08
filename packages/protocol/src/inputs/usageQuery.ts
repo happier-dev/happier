@@ -139,7 +139,12 @@ export function resolveUsageQueryPeriod(query: Pick<UsageQuery, 'period' | 'time
   return { startMs: today - (days - 1) * 86_400_000, endMs: nowMs };
 }
 
-export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now()): UsageAnalyticsQueryRequest {
+/**
+ * `projectScopeKeys` (the Account's `resolveSessionProjectScopeV1`, owner 11-08) asks for every key a selected Project's
+ * usage may carry: a checkout keeps the key it was stamped with when it joins or leaves a Project.
+ */
+export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now(),
+  projectScopeKeys?: (projectKey: string) => Iterable<string>): UsageAnalyticsQueryRequest {
   const query = normalizeUsageQuery(value);
   const { period: _period, agents, machines, projects, sources, execution, session, costBasis, metric: _metric,
     includeAccounting: _accounting, includeContributions: _contributions, includeComparison: _comparison,
@@ -150,7 +155,8 @@ export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now
   return UsageAnalyticsQueryRequestSchema.parse({ ...clauses,
     ...(population === 'public_eligible_personal' ? { population } : {}),
     dateRange: resolveUsageQueryPeriod(query, nowMs), costMode: costBasis, breakdowns: breakdown,
-    filters: { agentIds: selected(agents), machineIds: selected(machines), projectKeys: selected(projects), sources: selected(sources),
+    filters: { agentIds: selected(agents), machineIds: selected(machines),
+      projectKeys: selected(projectScopeKeys ? [...new Set(projects.flatMap(project => [...projectScopeKeys(project)]))] : projects), sources: selected(sources),
       ...(execution === undefined ? {} : { execution }),
       sessionIds: session === null ? undefined : typeof session === 'string' ? [session] : session,
       modelIds: selected(modelIds), workspaceIds: selected(workspaceIds), backendModes: selected(backendModes) },

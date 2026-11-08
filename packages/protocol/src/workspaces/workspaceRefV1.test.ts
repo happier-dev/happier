@@ -99,6 +99,21 @@ describe('workspaceRefV1', () => {
       expect(resolveWorkspaceProjectKeyV1(refs, { serverId: 'home', id: 'local' })).toBe('local');
     });
 
+    it('resolves a Session stamped before its checkout was grouped to the Project it belongs to now', () => {
+      // "second" was its own Project when its Sessions were stamped, then joined "first".
+      const refs = [ref('first', { createdAtMs: 1 }), ref('second', { createdAtMs: 2, projectKey: 'first', rootPath: '/second' })];
+      const stamped = resolveSessionProjectKeyV1({ path: '/second', machineId: 'm' }, 'home', refs, { projectKey: 'second' });
+      expect(stamped).toMatchObject({ kind: 'resolved', projectKey: { serverId: 'home', projectKey: 'first' } });
+      // Metadata stamped with the old Project id still resolves through its checkout, now to the group.
+      expect(resolveSessionProjectKeyV1({ workspaceId: 'second', projectId: 'second' }, 'home', refs))
+        .toMatchObject({ kind: 'resolved', projectKey: { projectKey: 'first' } });
+      // A key no checkout carries, or no census, stays as stamped.
+      expect(resolveSessionProjectKeyV1({}, 'home', refs, { projectKey: 'elsewhere' })).toMatchObject({ projectKey: { projectKey: 'elsewhere' } });
+      expect(resolveSessionProjectKeyV1({}, 'home', undefined, { projectKey: 'second' })).toMatchObject({ projectKey: { projectKey: 'second' } });
+      // A Project id from another Project still refuses.
+      expect(resolveSessionProjectKeyV1({ workspaceId: 'second', projectId: 'unrelated' }, 'home', refs)).toEqual({ kind: 'unavailable' });
+    });
+
     it('groups a checkout with an existing Project, or separates it, as the person asked', () => {
       const refs = [ref('app', { createdAtMs: 1 }), ref('member', { projectKey: 'app' }), ref('other', { createdAtMs: 3 }), ref('foreign', { serverId: 'elsewhere' })];
       expect(resolveWorkspaceGroupingV1(refs, refs[2]!, 'app')).toEqual({ ok: true, projectKey: 'app' });

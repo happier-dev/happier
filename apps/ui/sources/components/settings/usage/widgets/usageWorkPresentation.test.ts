@@ -109,6 +109,15 @@ describe('Work display grouping of the canonical allocation', () => {
     expect(summary.total).toBe(42);
     expect(work.allocations.map(row => row.contribution.projectKey)).toEqual(['known', 'opaque-a', 'opaque-b']);
   });
+  it('counts usage a grouped checkout was stamped with under the Project it belongs to now (owner 11-08)', () => {
+    // "nldw6" joined "payments" after its Sessions were stamped with its own id.
+    const work = allocateUsageOutcomes({ contributions: [contribution('a', 's1', 't1', 'payments'),
+      contribution('b', 's2', 't2', 'nldw6')], evidence: [] });
+    const anchorOf = (key: string) => key === 'nldw6' ? 'payments' : key;
+    const summary = summarizeUsageWork(work, { metric: 'tokens', costBasis: 'auto' }, new Set(['payments']), anchorOf);
+    expect(summary.projects.map(row => [row.projectKey, row.sessionIds])).toEqual([['payments', ['s1', 's2']]]);
+    expect(summary.total).toBe(28);
+  });
   it('selects a whole-call final for the complete Session without assigning it to an earlier PR turn', () => {
     const earlier: UsageWorkContribution = { ...contribution('earlier', 's1', 't1'), observedAtMs: 10,
       cost: { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate', reportedTotalId: 'final' } };

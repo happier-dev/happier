@@ -43,7 +43,7 @@ export { projectProjectListV1, projectScopeKeysV1, compareProjectWorkspaceRefsV1
 } from '../projects/projectListProjectionV1.js';
 
 export { resolveWorkspaceRefV1, normalizeWorkspaceRootPathV1, isWorkspacePathWithinRootV1, projectWorkspaceRefV1,
-  workspaceAddressFromRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
+  workspaceAddressFromRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, resolveWorkspaceGroupingV1, createProjectAnchorOfKeyV1, resolveSessionProjectKeyV1, createSessionProjectKeyResolverV1,
   type WorkspaceRefResolutionV1, type WorkspaceRefResolutionContextV1, type SessionProjectKeyResolutionV1,
 } from './workspaceRefResolutionV1.js';
 

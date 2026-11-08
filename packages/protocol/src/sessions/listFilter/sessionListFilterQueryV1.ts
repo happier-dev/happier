@@ -1,5 +1,6 @@
 import type { SessionAudienceSelectionV1, SessionListQueryV1 } from '../listing/query.js';
-import { normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1, type QualifiedAudienceSelection, type SessionListFilterV1 } from './sessionListFilterV1.js';
+import { normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1, resolveSessionProjectScopeV1, type QualifiedAudienceSelection, type SessionListFilterV1 } from './sessionListFilterV1.js';
+import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../../workspaces/workspaceRefV1.js';
 
 function toHomeAudience(audience: QualifiedAudienceSelection): SessionAudienceSelectionV1 {
   if (audience.kind === 'outside_teams') return { kind: 'outside_teams' };
@@ -23,7 +24,14 @@ export function projectSessionListFilterAfterHomeQueryV1(filter: SessionListFilt
 export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilterV1, options: Readonly<{
   storage: SessionListQueryV1['storage']; includeInactive: boolean; mountedHomeServerIds: readonly string[];
   limit?: number; tagFacet?: 'query' | 'local'; sectionFacet?: 'query' | 'local'; projectFacet?: 'query' | 'local'; includeAttention?: boolean;
+  /**
+   * The Account's accepted checkouts: a selected Project asks the Home for every key its Sessions may carry
+   * (`resolveSessionProjectScopeV1`, owner 11-08). Without them, the Project's anchor alone.
+   */
+  workspaceRefs?: readonly WorkspaceRefV1[];
 }>): ReadonlyArray<Readonly<{ serverId: string; query: SessionListQueryV1 }>> {
+  const scopeKeys = (project: QualifiedProjectKeyV1) => options.workspaceRefs
+    ? [...resolveSessionProjectScopeV1(project, options.workspaceRefs).projectKeys] : [project.projectKey];
   const normalized = normalizeSessionListFilterV1(filters);
   const mountedHomeServerIds = new Set(normalizeSessionListFilterHomeIds(options.mountedHomeServerIds));
   const tagFacetLocal = options.tagFacet === 'local';
@@ -50,8 +58,8 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
       tagIds: tagFacetLocal ? [] : normalized.tagIds.filter(tag => tag.serverId === serverId).map(tag => tag.tagId),
       ...(sectionFacetActive ? { folderIds: [...new Set(normalized.sections!.include.filter(section => section.serverId === serverId).map(section => section.sectionId))] } : {}),
       ...(projectFacetActive ? { projectKeys: {
-        include: normalized.projects!.include.filter(project => project.serverId === serverId).map(project => project.projectKey),
-        exclude: normalized.projects!.exclude.filter(project => project.serverId === serverId).map(project => project.projectKey),
+        include: [...new Set(normalized.projects!.include.filter(project => project.serverId === serverId).flatMap(scopeKeys))],
+        exclude: [...new Set(normalized.projects!.exclude.filter(project => project.serverId === serverId).flatMap(scopeKeys))],
       } } : {}),
       // Visible lists promote attention before ordinary paging completes. Exhaustive
       // readers already visit that same structural corpus and can omit the supplement.

@@ -352,7 +352,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const selectAreaLayout = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) =>
     (await bindingSelectLayout(layoutId, callerContext)).ok, [bindingSelectLayout]);
   const publishedLayouts = React.useMemo(() => tabs.map((tab) => ({ id: tab.id, name: tab.name })), [tabs]);
-  const scopeFilters = useUsageWidgetPageFilters(page, filterSlices, props.sessionId !== undefined);
+  const scopeFilters = useUsageWidgetPageFilters(page, filterSlices, props.sessionId !== undefined, props.authority?.scope.serverId ?? '');
   const filterCommands = React.useMemo(() => scopeFilters.flatMap(filter => filter.options.map(option => ({
     field: filter.field,
     id: option.id,

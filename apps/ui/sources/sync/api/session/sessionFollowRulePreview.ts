@@ -4,7 +4,8 @@ import { FollowReceiverRefV1Schema } from '@happier-dev/protocol/sessions/follow
 import type { FollowPreviewActionInputV1 } from '@happier-dev/protocol/sessions/follow/actions';
 import { projectSessionListFilterAfterHomeQueryV1, projectSessionListFilterHomeQueriesV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1';
 import { canSessionListFilterIncludeRunsV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
+import { SESSION_LIST_PAGE_MAX_LIMIT, supportsSessionListProjectSelectionV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -14,6 +15,8 @@ import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacing
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { listAllWorkflowRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import type { SessionFollowRulesSnapshot } from './sessionFollowRulesApi';
@@ -43,8 +46,14 @@ export async function previewSessionFollowRule(input: Readonly<{
     if (readable) {
         const admitted = new Map<string, () => boolean>();
         if (filter.show !== 'runs' && !input.sourceSession) {
+            const features = filter.projects && (filter.projects.include.length || filter.projects.exclude.length)
+                ? await getServerFeaturesSnapshot({ serverId: input.serverId, signal: input.signal }) : null;
+            input.assertCurrent();
             for (const home of projectSessionListFilterHomeQueriesV1(filter, { storage: 'active', includeInactive: true,
-                mountedHomeServerIds: [input.serverId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false })) {
+                mountedHomeServerIds: [input.serverId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false,
+                // A selected Project asks for every key its Sessions may carry (owner 11-08).
+                workspaceRefs: readProjectAccountWorkspaceRefs(getStorage().getState()),
+                projectFacet: features?.status === 'ready' && supportsSessionListProjectSelectionV1(features.features) ? 'query' : 'local' })) {
                 let cursor: string | undefined;
                 let attentionCursor: string | undefined;
                 let previousPage: Awaited<ReturnType<typeof fetchSessionListQueryPageForHome>> | undefined;
@@ -82,6 +91,7 @@ export async function previewSessionFollowRule(input: Readonly<{
             || !areServerProfileIdentifiersEquivalent(state.profileScope.serverId, input.serverId)) throw new Error('scope-retired');
         const nowMs = Date.now();
         const workspaceRefs = readProjectAccountWorkspaceRefs(state);
+        const sessionProjectKeyResolver = createSessionProjectKeyResolverV1(workspaceRefs, workspaceRefResolutionContextV1());
         const seen = new Set<string>();
         const add = (row: Parameters<typeof buildSessionListRowFilterFacts>[0]) => {
             if (!row || row.archivedAt != null || !isUserFacingSession(row) || seen.has(row.id)) return;
@@ -89,7 +99,8 @@ export async function previewSessionFollowRule(input: Readonly<{
             const readableRow = isSessionContentReadable(readSessionContentAvailability(row))
                 ? row : { ...row, metadata: null, ownerMetadataView: null, metadataUnavailable: true };
             candidates.push({ source: { kind: 'session', sessionId: row.id }, facts: buildSessionListRowFilterFacts(
-                readableRow, input.serverId, { nowMs, viewerAccountId: input.accountId, workspaceRefs,
+                readableRow, input.serverId, { nowMs, viewerAccountId: input.accountId, workspaceRefs, sessionProjectKeyResolver,
+                    workspaceRefsServerId: state.profileScope?.serverId,
                     includeStatus: Boolean(input.request.filter.statuses?.length), includeSource: input.request.filter.source !== 'all',
                     tagIds: state.sessionOrganizationTagAssignmentsBySessionKey[buildSessionOrganizationSessionKey(input.serverId, row.id)]?.tagIds,
                 }),

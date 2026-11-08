@@ -17,7 +17,7 @@ import {
   type UsageWorkSummary,
   type UsageWorkMoneyBasis,
 } from './usageWorkPresentation';
-import { useUsageAnalyticsView, useUsageProjectLabels } from './usageBodyKit';
+import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectLabels } from './usageBodyKit';
 import { readUsageWidgetPageScope, readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import { buildUsageRouteParams } from '../usageRouteParams';
 import { usageCostKindPhrase } from '../usageCostPresentation';
@@ -51,10 +51,12 @@ export function useUsageWork(
     return display && display !== key && !/^[a-f\d]{32,}$/i.test(display) ? [[key, display] as const] : [];
   })), [view?.breakdowns.projects, protectedProjectLabels]);
   const namedProjectKeys = React.useMemo(() => new Set(projectLabels.keys()), [projectLabels]);
+  // Usage stamped by a checkout before it joined a Project counts under that Project (owner 11-08).
+  const anchorOf = useUsageProjectAnchorOf(serverId);
   const namesKey = JSON.stringify([...namedProjectKeys].sort());
   const summary = React.useMemo(() => {
     if (!work) return null;
-    const key = `${query.metric}\u0000${query.costBasis}\u0000${namesKey}`;
+    const key = `${query.metric}\u0000${query.costBasis}\u0000${namesKey}\u0000${anchorOf.joinedKey}`;
     let byKey = summaries.get(work);
     if (!byKey) {
       byKey = new Map();
@@ -65,10 +67,10 @@ export function useUsageWork(
     const built = summarizeUsageWork(work, {
       metric: query.metric,
       costBasis: query.costBasis,
-    }, namedProjectKeys);
+    }, namedProjectKeys, anchorOf.resolve);
     byKey.set(key, built);
     return built;
-  }, [work, query.metric, query.costBasis, namesKey, namedProjectKeys]);
+  }, [work, query.metric, query.costBasis, namesKey, namedProjectKeys, anchorOf]);
   const format = React.useCallback(
     (value: number | null, moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null) =>
       value === null ? t('usage.board.recap.money_unpriced') : query.metric === 'cost'

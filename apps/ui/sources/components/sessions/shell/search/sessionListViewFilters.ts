@@ -21,6 +21,8 @@ import type { SessionListSpaceMembership } from '@/sync/domains/session/listing/
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import { projectSessionListFilterHomeQueriesV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 import {
     canSessionListOrdinaryPageAnswerQuery,
     type SessionListOrdinaryPageAdapter,
@@ -111,6 +113,8 @@ export function resolveSessionListViewContextDefaults(
         defaults: createSessionListViewFilterDefaults({
             scope: 'my_work',
             homeServerIds: mountedHomeServerIds,
+            // The seeded world has Sessions, without a credentialed Workflow Run collection.
+            ...(getDemoModeServerId() ? { show: 'sessions' as const } : {}),
             source,
         }),
     };
@@ -293,6 +297,8 @@ export function buildSessionListFilterQueryHomes(
         sectionFacet?: 'query' | 'local';
         spaceMembership?: SessionListSpaceMembership;
         viewerAccountIdByServerId?: ReadonlyMap<string, string>;
+        /** The Account's checkouts, so a selected Project asks for every key its Sessions may carry (owner 11-08). */
+        workspaceRefs?: readonly WorkspaceRefV1[];
     }>,
 ): SessionListFilterQueryHome[] {
     const space = options.spaceMembership;

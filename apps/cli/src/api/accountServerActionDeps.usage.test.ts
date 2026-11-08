@@ -5,7 +5,10 @@ import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1, createActionExecutor, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol';
-import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { enforceExternalActionResponseEnvelopeLimitV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
@@ -13,7 +16,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import { ScmPullRequestWorkEvidenceSchema } from '@happier-dev/protocol/scm';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -27,7 +30,8 @@ import { createCliSettingsDeclarationAction } from '@/session/actions/settingsDe
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { McpServerCatalogRowMutationV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
-import { UsageCoachApplyResultSchema } from '@happier-dev/protocol/usage/coach/coachActions';
+import { UsageCoachApplyResultSchema, UsageCoachSuppressionStateV1Schema, USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { UsageMcpBindingUsageSchema } from '@happier-dev/protocol/usage/coach/usageMcpBindingUsage';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -84,6 +88,152 @@ describe('CLI and MCP personal usage Account transport', () => {
       }
     } finally { await app.close(); }
   });
+  it('settles the QA-ACCT exact empty model/Machine filter shape as zero through the canonical query Action', async () => {
+    // Exact clauses from qa-usage-acct-1030/fixture-query-input.json; the
+    // authenticated HTTP owner returns its valid empty accounting projection.
+    const machine = 'ae694c29-6fe7-4324-b7d3-0bff5a8961e0';
+    const common = { machines: [machine], breakdown: ['model'], includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, timeZoneOffsetMinutes: 0 };
+    const counters = ['qa-usage-acct-1030-counter-a', 'qa-usage-acct-1030-counter-b'];
+    const input = { queries: [{ ...common, period: { relative: 'today' }, modelIds: counters },
+      { ...common, period: {}, modelIds: counters },
+      { ...common, period: { relative: 'today' }, modelIds: ['qa-usage-acct-1030-model-a', 'qa-usage-acct-1030-model-b'] }] };
+    const app = fastify();
+    const paths: string[] = [];
+    app.addHook('onRequest', async request => { paths.push(request.url.split('?')[0]!); });
+    app.post('/v2/usage/query', async request => {
+      const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+      expect(query.filters?.machineIds).toEqual([machine]);
+      expect(query.filters?.modelIds).toHaveLength(2);
+      return UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, series: [], breakdowns: { model: [] },
+        contributions: [], priceCatalog: bundledUsageModelPriceCatalog });
+    });
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-empty-filter.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: 'owner-token', serverId: 'home', serverHttpBaseUrl: 'http://usage-empty-filter.test' }) });
+    try {
+      const result = await executor.execute('usage.query', input, { surface: 'cli', serverId: 'home' });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const batch = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined);
+      expect(batch.results).toHaveLength(3);
+      for (const slice of batch.results) {
+        expect(slice.accounting?.totals).toMatchObject({ eventCount: 0, tokens: { total: 0 } });
+        expect(slice.sources.find(source => source.source === 'accounting')).toMatchObject({ status: 'available' });
+      }
+      expect(paths.some(path => path.includes('/sessions'))).toBe(false);
+    } finally { await app.close(); }
+  });
+
+  it('delivers only grouped accounting for evidence-free Usage slices without copying raw populations or the tariff inventory', async () => {
+    // EXPORT-C observed 20 accounting contributions and a complete tariff
+    // inventory even on empty comparison reads. Keep that boundary shape.
+    const count = 20;
+    const now = Date.UTC(2026, 9, 30, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const contributions = Array.from({ length: count }, (_, index) => ({ id: `cost-${index}`, observedAtMs: now - 1000,
+      sessionId: `session-${index}`, turnId: `turn-${index}`, agentId: 'codex', modelId: 'model', machineId: null,
+      projectKey: null, workspaceId: null, source: 'runtime', tokens: response.totals.tokens, cost: response.totals.cost }));
+    const catalog = { ...bundledUsageModelPriceCatalog, models: { ...bundledUsageModelPriceCatalog.models,
+      model: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } } };
+    const app = fastify();
+    const paths: string[] = [];
+    app.addHook('onRequest', async request => { paths.push(request.url.split('?')[0]!); });
+    app.post('/v2/usage/query', async request => {
+      const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+      const rows = contributions.filter(row => row.observedAtMs >= (query.dateRange?.startMs ?? 0)
+        && row.observedAtMs <= (query.dateRange?.endMs ?? now));
+      const totals = { eventCount: rows.length, tokens: { input: rows.length * 10, output: rows.length * 2,
+        reasoning: 0, cacheRead: 0, cacheWrite: 0, total: rows.length * 12 },
+        cost: { reportedUsd: rows.length, estimatedUsd: 0, currency: 'USD' } };
+      return UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals, contributions: rows, priceCatalog: catalog,
+        breakdowns: Object.fromEntries((query.breakdowns ?? []).map(dimension => [dimension,
+          rows.length ? [{ key: dimension === 'agent' ? 'codex' : 'model', ...totals }] : []])) });
+    });
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-grouped.test' });
+    const credentials = { token: 'owner-token', encryption: null };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage-grouped.test' }) });
+    const noEvidence = { includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false };
+    const today = { period: { relative: 'today' }, costBasis: 'auto', metric: 'tokens', breakdown: ['agent'], ...noEvidence };
+    try {
+      const result = await executor.execute('usage.query', { queries: [today,
+        { period: { relative: '7days' }, costBasis: 'api_equivalent', metric: 'cost', breakdown: ['model'], ...noEvidence }, today,
+      ] }, { surface: 'cli', serverId: 'home' });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const batch = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined);
+      const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value ?? null), 'utf8');
+      console.info('USAGE-A03 delivery composition', JSON.stringify({ bytes: bytes(batch), slices: batch.results.map(slice => ({
+        metric: slice.requestedQuery.metric, accountingBytes: bytes(slice.accounting),
+        rows: slice.accounting?.contributions?.length ?? 0, rowBytes: bytes(slice.accounting?.contributions),
+        catalogBytes: bytes(slice.accounting?.priceCatalog), factsBytes: bytes(slice.accounting?.costFacts),
+        comparisonBytes: bytes(slice.comparison?.accounting), comparisonCatalogBytes: bytes(slice.comparison?.accounting?.priceCatalog),
+      })) }));
+      expect(batch.results).toHaveLength(2);
+      expect(enforceExternalActionResponseEnvelopeLimitV1({ v: 1, actionId: 'usage.query', requestId: 'grouped-read', execution: result }))
+        .toMatchObject({ execution: { ok: true } });
+      for (const slice of batch.results) {
+        expect(slice.accounting?.totals.tokens.total).toBe(count * 12);
+        expect(slice.accounting?.breakdowns?.[slice.requestedQuery.breakdown[0]!]).toHaveLength(1);
+        expect(slice.costFactTotals?.length).toBeGreaterThan(0);
+        for (const accounting of [slice.accounting, slice.comparison?.accounting]) {
+          expect(accounting).toBeDefined();
+          expect(accounting).not.toHaveProperty('contributions');
+          expect(accounting).not.toHaveProperty('priceCatalog');
+        }
+      }
+      expect(bytes(batch)).toBeLessThan(bytes(catalog));
+      expect(paths.some(path => path === '/v2/sessions/read-batch' || path.endsWith('/messages'))).toBe(false);
+    } finally { cleanup?.(); cleanup = undefined; await app.close(); }
+  });
+
+  it.each([true, false])('keeps a missing Session batch update requirement on public Usage detail (Session evidence=%s)', async includeSessionEvidence => {
+    const app = fastify();
+    const paths: string[] = [];
+    app.addHook('onRequest', async request => { paths.push(request.url.split('?')[0]!); });
+    const sessionId = 'old-server-session';
+    const accounting = { ...response, contributions: [{ id: 'turn-cost', observedAtMs: 150, sessionId,
+      turnId: 'turn', agentId: 'claude', modelId: null, machineId: 'machine', projectKey: null, workspaceId: null,
+      source: 'session', tokens: response.totals.tokens, cost: response.totals.cost }] };
+    app.post('/v2/usage/query', async () => accounting);
+    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [], connectedAccountGroupsV4: [] }));
+    // No batch route: exercise Fastify's real missing-route response, not a domain stub.
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-old-server.test' });
+    const credentials = { token: 'owner-token', encryption: null };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://usage-old-server.test' }) });
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: sessionId,
+      includeQuotaHistory: false, includeSessionEvidence, includeWorkEvidence: true });
+    try {
+      const result = await executor.execute('usage.query', { queries: [query] }, { surface: 'cli', serverId: 'home' });
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect(slice.accounting?.totals).toMatchObject(accounting.totals);
+      expect(paths.filter(path => path === '/v2/sessions/read-batch')).toHaveLength(1);
+      expect(paths.some(path => /^\/v[12]\/sessions\/[^/]+(?:\/(?:turns|messages))?$/.test(path)
+        && path !== '/v2/sessions/read-batch')).toBe(false);
+      const requirement = { kind: 'update_required', operation: 'session.detail', component: 'server', reason: 'session_read_batch_unsupported' };
+      expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'work', errorCode: 'update_required', updateRequired: requirement }));
+      if (includeSessionEvidence) expect(slice.sources).toContainEqual(expect.objectContaining({
+        source: 'how_you_work', errorCode: 'update_required', updateRequired: requirement }));
+      const before = paths.length;
+      const unaffected = await executor.execute('usage.query', { queries: [{ ...query,
+        includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }] }, { surface: 'cli', serverId: 'home' });
+      expect(unaffected.ok, JSON.stringify(unaffected)).toBe(true);
+      expect(UsageQueryBatchResultSchema.parse(unaffected.ok ? unaffected.result : undefined).results[0]?.accounting?.totals)
+        .toMatchObject(accounting.totals);
+      expect(paths.slice(before)).not.toContain('/v2/sessions/read-batch');
+    } finally { cleanup?.(); cleanup = undefined; await app.close(); }
+  });
+
   it('reads the captured Account public view without private Usage and refuses a retired result', async () => {
     const app = fastify();
     let current = true;
@@ -166,20 +316,22 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.get('/v1/account/entity-rows/profiles/transfer', async () => ({ status: 'absent' }));
     app.get('/v2/account/settings/history', async () => ({ snapshots: [] }));
     app.get('/v1/machines/machine', async () => ({ machine: { ...createAvailableSessionSpawnMachineSnapshot('machine'), storageMode: 'plain' } }));
-    app.get('/v2/sessions', async () => ({ sessions: [createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null })], hasNext: false }));
+    app.get('/v2/sessions', async () => ({ sessions: [createCompactSessionListRowFixture(
+      createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null }))], hasNext: false }));
     app.get('/v2/sessions/archived', async () => ({ sessions: [], hasNext: false }));
-    app.get(`/v2/sessions/${sessionId}`, async () => {
+    const readSession = () => {
       sessionReads += 1;
       return { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
         ...(detail === 'summary' ? { agentState: JSON.stringify({ completedRequests: { permission: { tool: 'Read', arguments: {},
           turnId: 'turn', createdAt: 100, completedAt: 110, status: 'approved', answeringClientCategory: 'web' } } }) } : {}),
         metadata: JSON.stringify({ path: '/repo', machineId: 'machine', agent: 'claude' }), share: null }) };
-    });
-    app.get(`/v1/sessions/${sessionId}/turns`, async () => ({ v: 1, sessionId, updatedAt: 180,
-      turns: [{ turnId: 'turn', agentId: 'claude', status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] }));
-    app.get(`/v1/sessions/${sessionId}/messages`, async request => {
+    };
+    app.get(`/v2/sessions/${sessionId}`, async () => readSession());
+    const readTurns = () => ({ v: 1, sessionId, updatedAt: 180,
+      turns: [{ turnId: 'turn', agentId: 'claude', status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] });
+    app.get(`/v1/sessions/${sessionId}/turns`, async () => readTurns());
+    const readMessages = (roles: readonly string[]) => {
       if (malformed) return { messages: [{ content: 'invalid' }], hasMore: false };
-      const roles = String((request.query as { roles?: string }).roles).split(',');
       return { hasMore: false, messages: roles.includes('agent') ? [{ id: 'mixed', seq: 1, createdAt: 140,
         messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: { type: 'output',
           data: { type: 'assistant', message: { role: 'assistant', content: [
@@ -191,6 +343,15 @@ describe('CLI and MCP personal usage Account transport', () => {
           } } }, { id: 'composition', seq: 3, createdAt: 150, messageRole: 'event', content: { t: 'plain', v: {
             role: 'agent', content: { type: 'event', id: 'composition-event', data: { type: 'prompt-composition', composition } },
           } } }] : [] };
+    };
+    app.get(`/v1/sessions/${sessionId}/messages`, async request => readMessages(String((request.query as { roles?: string }).roles).split(',')));
+    app.post('/v2/sessions/read-batch', async request => {
+      const body = SessionReadBatchRequestV1Schema.parse(request.body);
+      return { results: body.sessionIds.map(id => ({ sessionId: id,
+        detail: { status: 200, body: readSession() },
+        ...(body.includeTurns ? { turns: { status: 200, body: readTurns() } } : {}),
+        ...(body.includeMessages ? { messages: { status: 200, body: readMessages(['user', 'agent', 'event']) } } : {}),
+      })) };
     });
     cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`, encryption: null };
@@ -215,7 +376,7 @@ describe('CLI and MCP personal usage Account transport', () => {
       expect(opened.howYouWork?.autopsy).toBeUndefined();
       expect(opened.howYouWork?.inputs).toBeNull();
       expect(opened.work?.allocations[0]?.reason).toBe('allocated');
-      expect(reads).toContain(`/v1/sessions/${sessionId}/turns`);
+      expect(reads).toContain('/v2/sessions/read-batch');
       expect(reads).not.toContain(`/v1/sessions/${sessionId}/messages`);
       const fullQuery = { ...query, includeTranscriptEvidence: true };
       const mixed = await executor.execute('usage.query', { queries: [query, fullQuery] }, { surface: 'cli', serverId: 'home' });
@@ -285,7 +446,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(denied.howYouWork?.autopsy).toBeUndefined();
     await app.close();
   });
-  it('composes retained quota/history/targets and dismisses witnessed native findings through the real settings CAS owner', async () => {
+  it('composes retained quota/history/targets and persists Coach suppressions through Account KV without changing preferences', async () => {
     const app = fastify();
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
@@ -305,8 +466,40 @@ describe('CLI and MCP personal usage Account transport', () => {
       incarnation: 'pool-lifetime', displayName: null, policy: {}, activeConnectedAccountId: 'work', generation: 1,
       runtimeStateRevision: 1, state: {}, createdAt: 100, updatedAt: 150,
       members: [{ v: 1, connectedAccountId: 'work', state: {}, createdAt: 100, updatedAt: 150 }] });
-    let raw: Record<string, unknown> = { usageCoachPreferencesV1: { v: 1, digestCadence: 'off', suppressions: [] }, usagePacingTargetsV1: targets };
+    const legacySuppression = { kind: 'dismissed', evidenceKey: 'previous-native-finding' };
+    let raw: Record<string, unknown> = { usageCoachPreferencesV1: { v: 1, suppressions: [legacySuppression] }, usagePacingTargetsV1: targets };
     let version = 1;
+    let settingsWrites = 0;
+    const kvRows = new Map<string, { key: string; value: string; version: number }>();
+    // Opaque HTTP persistence is the boundary; encryption, CAS client and Coach owner stay real.
+    app.get('/v1/kv/:key', async (request, reply) => {
+      const { key } = z.object({ key: z.string() }).parse(request.params);
+      return kvRows.get(key) ?? reply.code(404).send({ error: 'not_found' });
+    });
+    app.post('/v1/kv', async (request, reply) => {
+      const { mutations } = z.strictObject({ mutations: z.array(z.strictObject({
+        key: z.string(), value: z.nullable(z.string()), version: z.number().check(z.int()),
+      })) }).parse(request.body);
+      const errors = mutations.flatMap(mutation => {
+        const row = kvRows.get(mutation.key);
+        return mutation.version === (row?.version ?? -1) ? [] : [{ key: mutation.key, error: 'version-mismatch',
+          version: row?.version ?? -1, value: row?.value ?? null }];
+      });
+      if (errors.length) return reply.code(409).send({ success: false, errors });
+      return { success: true, results: mutations.map(mutation => {
+        const version = (kvRows.get(mutation.key)?.version ?? -1) + 1;
+        if (mutation.value === null) kvRows.delete(mutation.key);
+        else kvRows.set(mutation.key, { key: mutation.key, value: mutation.value, version });
+        return { key: mutation.key, version };
+      }) };
+    });
+    const suppressions = () => {
+      const row = kvRows.get(USAGE_COACH_SUPPRESSIONS_KV_KEY);
+      expect(row).toBeDefined();
+      const envelope = StoredJsonContentEnvelopeSchema.parse(JSON.parse(new TextDecoder().decode(decodeBase64(row!.value))));
+      if (envelope.t !== 'plain') throw new Error('Expected plain Account KV envelope');
+      return UsageCoachSuppressionStateV1Schema.parse(envelope.v).suppressions;
+    };
     let mode: 'plain' | 'e2ee' = 'plain';
     let denied = false;
     let includeUnavailableAccount = false;
@@ -315,13 +508,18 @@ describe('CLI and MCP personal usage Account transport', () => {
     let rangeHistoryReads = 0;
     const cursor = { id: 'history', observedAtMs: 150 };
     const historyRequest = { range: { startAtMs: 100, endAtMs: 200 }, pageSize: 100 };
+    let expectedHistoryRequest = historyRequest;
+    const accountingRequests: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
     let releaseContinuation!: () => void;
     const heldContinuation = new Promise<void>(resolve => { releaseContinuation = resolve; });
     let enteredContinuation!: () => void;
     const continuationEntered = new Promise<void>(resolve => { enteredContinuation = resolve; });
     const unavailableSource = { ...source, ref: { ...source.ref, accountId: 'unavailable' } };
     app.addHook('preHandler', async request => { expect(request.headers.authorization).toBe('Bearer owner-token'); });
-    app.post('/v2/usage/query', async () => native);
+    app.post('/v2/usage/query', async request => {
+      accountingRequests.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
+      return native;
+    });
     app.get('/v1/account/profile', async (_request, reply) => denied ? reply.code(403).send({ error: 'denied' }) : ({ id: 'account', connectedAccountsV4: [{
       ref: source.ref, status: 'connected', authenticationModeId: null, revisionSemantics: 'revisioned',
       credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true, configurationRevision: '1', scopes: [],
@@ -333,6 +531,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
     app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: raw }, version }));
     app.post('/v2/account/settings', async (request, reply) => {
+      settingsWrites += 1;
       const mutation = AccountSettingsV2UpdateRequestSchema.parse(request.body);
       if (mutation.expectedVersion !== version) return reply.code(409).send({ success: false, error: 'version-mismatch', currentVersion: version,
         currentContent: { t: 'plain', v: raw } });
@@ -360,7 +559,7 @@ describe('CLI and MCP personal usage Account transport', () => {
           metadata: { ...record.metadata, fetchedAt: 175 },
           content: { t: 'plain', v: { ...snapshot, observedAtMs: 175, fetchedAtMs: 175 } } } }], nextCursor: null };
       }
-      expect(requested).toEqual({ recordId: snapshot.recordId, history: historyRequest });
+      expect(requested).toEqual({ recordId: snapshot.recordId, history: expectedHistoryRequest });
       return { entries: [{ id: 'history', observedAtMs: 150, record }], nextCursor: pagedHistory ? cursor : null };
     });
     app.post('/v2/pending/reset-starts/read', async () => ({ entries: [] }));
@@ -427,23 +626,46 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(UsageQueryBatchResultSchema.parse(mixed.ok ? mixed.result : undefined).results
       .find(result => result.key === slice.key)?.quota).toMatchObject([{ history: { entries: [{ id: 'history' }], nextCursor: null } }]);
     expect(rangeHistoryReads).toBe(beforeHead + 2);
+    // Named All has an open accounting start; quota history still spans all
+    // retained observations through its existing numeric range contract.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      expectedHistoryRequest = { range: { startAtMs: 0, endAtMs: 1_000 }, pageSize: 100 };
+      const beforeAll = rangeHistoryReads;
+      const all = await read(normalizeUsageQuery({ ...query, period: { relative: 'all' } }));
+      expect(accountingRequests.at(-1)?.dateRange).toEqual({ endMs: 1_000 });
+      expect(all.quota).toMatchObject([{ history: { entries: [{ id: 'history' }], nextCursor: null } }]);
+      expect(rangeHistoryReads).toBe(beforeAll + 1);
+    } finally { clock.mockRestore(); expectedHistoryRequest = historyRequest; }
     expect(slice.pools).toMatchObject([{ group: group.ref, memberAccountIds: ['work'], activeAccountId: 'work',
       selection: { status: 'unsupported', errorCode: 'machine_context_unavailable' } }]);
     expect(slice.sources).toEqual(expect.arrayContaining([{ source: 'accounting', status: 'available', asOfMs: 180 },
       expect.objectContaining({ source: 'work', status: 'unknown' })]));
     const finding = slice.coach!.findings.find(row => row.detectorId === 'outside_usage')!;
     expect(finding.currentness).toBe('current');
+    const preferencesBefore = structuredClone(raw.usageCoachPreferencesV1);
     const dismissed = await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: true },
       { surface: 'cli', serverId: 'home', authority: 'present_user' });
     expect(dismissed, JSON.stringify(dismissed)).toMatchObject({ ok: true, result: { kind: 'preference_updated' } });
     expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
+    expect(suppressions()).toEqual([legacySuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
+    expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: false },
+      { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
+    expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
+    expect(suppressions()).toEqual([legacySuppression]);
+    expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: true },
+      { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
+    expect(settingsWrites).toBe(0);
+    expect(raw.usageCoachPreferencesV1).toEqual(preferencesBefore);
     const preferenceRead = await executor.execute('settings.get', { anchor: 'usage.coachPreferences', includeVersion: true },
       { surface: 'cli', serverId: 'home' });
     expect(preferenceRead).toMatchObject({ ok: true, result: { value: { disabledChecks: [], modelSuggestion: 'suggest_with_estimates' } } });
     const configured = await executor.execute('settings.set', { anchor: 'usage.coachPreferences',
-      value: { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: finding.evidenceKey }], disabledChecks: ['outside_usage'], modelSuggestion: 'off' },
+      value: { v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' },
       expectedSettingsVersion: version }, { surface: 'cli', serverId: 'home', authority: 'present_user' });
     expect(configured).toMatchObject({ ok: true });
+    expect(suppressions()).toEqual([legacySuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
+    expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' });
     expect((await read()).coach!.evaluations.find(row => row.detectorId === 'outside_usage')?.status).toBe('disabled');
     expect((await read()).coach!.findings).toEqual([]);
     expect(await executor.execute('settings.set', { anchor: 'usage.coachPreferences', value: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'off' },
@@ -516,7 +738,7 @@ describe('CLI and MCP personal usage Account transport', () => {
         changeTitle: async () => { throw new Error('Calendar cannot change a Session'); } },
     });
     const output = z.object({ isError: z.boolean(), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) })
-      .parse(await handlers.get('usage_calendar_export')?.(input));
+      .parse(await handlers.get('action_execute')?.({ actionId: 'usage.calendar.export', input }));
     expect(output.isError, output.content.map(part => part.text).join('\n')).toBe(false);
     const file = UsageFileResultSchema.parse(JSON.parse(output.content[0]!.text));
     const text = new TextDecoder().decode(decodeBase64(file.base64));
@@ -542,6 +764,31 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(paths.every(path => !path.includes('refresh'))).toBe(true);
     await app.close();
   });
+  it('asks for every key a grouped Project\'s usage may carry, from one census read (owner 11-08)', async () => {
+    const app = fastify();
+    const admitted: unknown[] = [];
+    // "member" joined "project" after its usage was stamped with its own id.
+    const ref = (id: string) => ({ id, serverId: 'home', machineId: `machine-${id}`, rootPath: '/repo', projectKey: 'project', createdAtMs: 1 });
+    const row = (value: ReturnType<typeof ref>) => {
+      const key = { kind: 'workspace-ref', serverId: 'home', id: value.id };
+      return { key, revision: 1, content: { t: 'plain', v: { key, value } } };
+    };
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    app.post('/v1/account/project-rows/list', async () => ({ status: 'listed', coverage: 'complete', rows: [row(ref('project')), row(ref('member'))] }));
+    app.post('/v2/usage/query', async request => {
+      admitted.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
+      return response;
+    });
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-project-scope.test' });
+    const deps = createAccountServerActionDeps({ token: 'owner-token', serverId: 'home', serverHttpBaseUrl: 'http://usage-project-scope.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+    const query = normalizeUsageQuery({ projects: ['project'] });
+    expect((await executor.execute('usage.query', { queries: [query] }, { surface: 'mcp', serverId: 'home' })).ok).toBe(true);
+    expect(admitted.map(request => [...((request as { filters?: { projectKeys?: string[] } }).filters?.projectKeys ?? [])].sort()))
+      .toEqual([['member', 'project']]);
+    await app.close();
+  });
+
   it('queries independent slices through the canonical batch Action without dropping filters', async () => {
     const app = fastify();
     const admitted: unknown[] = [];
@@ -580,10 +827,10 @@ describe('CLI and MCP personal usage Account transport', () => {
       sessionId: '', surface: 'mcp', deps: { executeActionByToolName: bridge.executeActionByToolName,
         changeTitle: async () => { throw new Error('Usage read must not change a Session'); } },
     });
-    const invokeQuery = handlers.get('usage_query');
+    const invokeQuery = handlers.get('action_execute');
     expect(invokeQuery).toBeDefined();
     const mcpOutput = z.object({ isError: z.literal(false), content: z.array(z.object({ type: z.literal('text'), text: z.string() })) })
-      .parse(await invokeQuery?.({ queries }));
+      .parse(await invokeQuery?.({ actionId: 'usage.query', input: { queries } }));
     const mcpResult = UsageQueryBatchResultSchema.parse(JSON.parse(mcpOutput.content[0]!.text));
     for (const result of [cliResult, mcpResult]) {
       expect(result).toMatchObject({ results: expect.arrayContaining([

@@ -1,12 +1,11 @@
 import * as React from 'react';
 
-import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { listServerProfileScopeIds } from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSetting, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
@@ -129,12 +128,6 @@ export function useSessionListViewFilterController(
 ): SessionListViewFilterController {
     const selection = useSessionListSelectionState();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
-    const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
-    // Source has one device-local owner, so this controller seeds it rather than
-    // taking a per-surface default: mount order can no longer decide which default
-    // the shared global context gets. With no Home exposing external Sessions the
-    // facet cannot mean anything, so the corpus stays unnarrowed.
-    const defaultSource: SessionListViewFilters['source'] = externalSessionsEnabled ? storageKind : 'all';
     const serverProfilesGeneration = useServerProfilesGeneration();
     const mountedHomeServerIds = React.useMemo(() => {
         const values = selection.allowedServerIds?.length
@@ -155,9 +148,9 @@ export function useSessionListViewFilterController(
     const teamServerId = viewContext.kind === 'team' ? viewContext.team.serverId : undefined;
     const teamId = viewContext.kind === 'team' ? viewContext.team.teamId : undefined;
     const context = React.useMemo(() => {
-        const base = resolveSessionListViewContextDefaults(viewContext, mountedHomeServerIds, defaultSource);
+        const base = resolveSessionListViewContextDefaults(viewContext, mountedHomeServerIds, 'all');
         return fixedShow ? { contextKey: `${base.contextKey}:show:${fixedShow}`, defaults: { ...base.defaults, show: fixedShow } } : base;
-    }, [defaultSource, fixedShow, mountedHomeServerIds, teamId, teamServerId, viewContext.kind]);
+    }, [fixedShow, mountedHomeServerIds, teamId, teamServerId, viewContext.kind]);
     const defaultSpaceName = t('sessionsList.filtersMyWork');
     const defaultSpaceFilter = React.useMemo(() => toStoredSessionListFilter(context.defaults), [context.defaults]);
     const { spaces, selectedSpaceId, selectedSpace, activeSpace, spacesEnabled, spacesReady, spaceSettingsScope, spaceAccountScopeKey, admittedSpaces, savedSpace }
@@ -234,8 +227,12 @@ export function useSessionListViewFilterController(
     const queryEnabled = resolveSelectedHomeFeatureAvailability(selectedHomeServerIds, homeSupportByServerId);
     const followingAvailable = resolveSelectedHomeFeatureAvailability(selectedHomeServerIds, followingSupportByServerId);
     const sourceAvailable = resolveSelectedHomeFeatureAvailability(selectedHomeServerIds, sourceSupportByServerId);
+    // A selected Project asks its Home for every key its Sessions may carry (owner 11-08); no census read otherwise.
+    const workspaceRefs = useWorkspaceRefs();
+    const projectRefs = displayFilters.projects?.include.length || displayFilters.projects?.exclude.length ? workspaceRefs : undefined;
     const queryHomes = React.useMemo(
         () => buildSessionListFilterQueryHomes(displayFilters, {
+            workspaceRefs: projectRefs,
             storage: corpusStorage,
             // Completed step Sessions still belong beneath their Run. The query
             // keeps them available; the list's canonical activity projection
@@ -253,7 +250,7 @@ export function useSessionListViewFilterController(
             ...home,
             ordinaryAdapter: resolveSessionListFilterOrdinaryPageAdapter(displayFilters, home.query),
         })),
-        [corpusStorage, includeInactive, mountedHomeServerIds, queryEnabled, retained.filters.show, displayFilters, spaceMembership, viewerAccountIdByServerId],
+        [corpusStorage, includeInactive, mountedHomeServerIds, queryEnabled, retained.filters.show, displayFilters, spaceMembership, viewerAccountIdByServerId, projectRefs],
     );
     const useQuerySource = Boolean(spaceMembership) || shouldUseSessionListFilterQuerySource(displayFilters, {
         mountedHomeServerIds,

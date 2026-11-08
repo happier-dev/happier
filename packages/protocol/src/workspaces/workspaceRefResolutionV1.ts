@@ -98,7 +98,33 @@ export type SessionProjectKeyResolutionV1<T extends WorkspaceRefV1 = WorkspaceRe
   | Readonly<{ kind: 'none' }>
   | Readonly<{ kind: 'unavailable' }>;
 
-/** One accepted Project association for row grouping, filtering and private Project consumers. */
+/**
+ * Which Project a stamped key belongs to now (owner 11-08): a key that is a Project's anchor is that Project; otherwise
+ * the Project of the checkout whose own id it is. This is the membership `projectScopeKeysV1` gives a Project (its
+ * anchor plus each member's own id), read in the other direction. A key no checkout carries stays as it is.
+ */
+export function createProjectAnchorOfKeyV1(
+  refs: readonly WorkspaceRefV1[] | undefined,
+  context: Pick<WorkspaceRefResolutionContextV1, 'normalizeServerId'> = {},
+): (serverId: string, key: string) => string {
+  const home = context.normalizeServerId ?? ((value: string) => value.trim());
+  const anchors = new Set<string>();
+  const anchorById = new Map<string, string>();
+  for (const ref of refs ?? []) {
+    const anchor = ref.projectKey ?? ref.id;
+    anchors.add(JSON.stringify([home(ref.serverId), anchor]));
+    anchorById.set(JSON.stringify([home(ref.serverId), ref.id]), anchor);
+  }
+  return (serverId, key) => {
+    const qualified = JSON.stringify([home(serverId), key]);
+    return anchors.has(qualified) ? key : anchorById.get(qualified) ?? key;
+  };
+}
+
+/**
+ * One accepted Project association for row grouping, filtering and private Project consumers. With the census, a
+ * Session stamped before its checkout joined or left a Project resolves to the Project it belongs to now.
+ */
 export function resolveSessionProjectKeyV1<T extends WorkspaceRefV1>(
   metadata: unknown,
   serverId: string,
@@ -106,7 +132,7 @@ export function resolveSessionProjectKeyV1<T extends WorkspaceRefV1>(
   context: WorkspaceRefResolutionContextV1 = {},
 ): SessionProjectKeyResolutionV1<T> {
   return resolveSessionProjectKeyUsingV1(metadata, serverId, refs, context,
-    target => resolveWorkspaceRefV1(refs ?? [], target, context));
+    target => resolveWorkspaceRefV1(refs ?? [], target, context), refs ? createProjectAnchorOfKeyV1(refs, context) : null);
 }
 
 export type SessionProjectCheckoutTargetV1 =
@@ -148,8 +174,9 @@ export function createSessionProjectKeyResolverV1<T extends WorkspaceRefV1>(
   context: WorkspaceRefResolutionContextV1 = {},
 ): (metadata: unknown, serverId: string, projectKey?: string | null) => SessionProjectKeyResolutionV1<T> {
   const resolve = createWorkspaceRefResolverV1(refs, context);
+  const anchorOf = refs ? createProjectAnchorOfKeyV1(refs, context) : null;
   return (metadata, serverId, projectKey = context.projectKey) => resolveSessionProjectKeyUsingV1(
-    metadata, serverId, refs, { ...context, projectKey }, resolve);
+    metadata, serverId, refs, { ...context, projectKey }, resolve, anchorOf);
 }
 
 function resolveSessionProjectKeyUsingV1<T extends WorkspaceRefV1>(
@@ -158,13 +185,14 @@ function resolveSessionProjectKeyUsingV1<T extends WorkspaceRefV1>(
   refs: readonly T[] | undefined,
   context: WorkspaceRefResolutionContextV1,
   resolveRef: (target: SessionProjectCheckoutTargetV1) => WorkspaceRefResolutionV1<T>,
+  anchorOf: ((serverId: string, key: string) => string) | null = null,
 ): SessionProjectKeyResolutionV1<T> {
   const home = context.normalizeServerId ?? ((value: string) => value.trim());
   const qualifiedHome = home(serverId);
   if (!qualifiedHome) return { kind: 'unavailable' };
   if (context.projectKey != null) {
     return context.projectKey.trim()
-      ? { kind: 'resolved', projectKey: { serverId: qualifiedHome, projectKey: context.projectKey } }
+      ? { kind: 'resolved', projectKey: { serverId: qualifiedHome, projectKey: anchorOf ? anchorOf(qualifiedHome, context.projectKey) : context.projectKey } }
       : { kind: 'unavailable' };
   }
   if (readSessionDirectoryKind(metadata) === 'managed') return { kind: 'none' };
@@ -187,7 +215,9 @@ function resolveSessionProjectKeyUsingV1<T extends WorkspaceRefV1>(
   if (resolved.kind === 'missing' && !explicit && projectId == null) return { kind: 'none' };
   if (resolved.kind !== 'resolved') return { kind: 'unavailable' };
   const projectKey = projectWorkspaceRefV1(resolved.ref);
-  if (projectId != null && projectId !== projectKey.projectKey) return { kind: 'unavailable' };
+  // A Project id stamped before the checkout joined or left a Project still names it through its current Project.
+  const stampedProject = typeof projectId === 'string' && anchorOf ? anchorOf(qualifiedHome, projectId) : projectId;
+  if (projectId != null && stampedProject !== projectKey.projectKey) return { kind: 'unavailable' };
   return { kind: 'resolved', projectKey: { ...projectKey, serverId: home(projectKey.serverId) }, ref: resolved.ref };
 }
 

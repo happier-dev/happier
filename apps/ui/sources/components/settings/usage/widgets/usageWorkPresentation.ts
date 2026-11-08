@@ -199,7 +199,7 @@ type BranchGroup = Marks & { branch: UsageWorkBranch; amount: AmountAccumulator;
   projects: Set<string | null>; commits: Set<string>; evidence: RepositoryCheckpointCommitEvidence[];
   linkedPullRequests: Map<string, ScmPullRequestSummary> };
 function groupBranches(allocations: UsageWorkProjection['branchAllocations'], basis: UsageWorkAmount,
-  outcomeAllocations: UsageWorkProjection['allocations']): UsageWorkBranchRow[] {
+  outcomeAllocations: UsageWorkProjection['allocations'], anchor: (key: string | null) => string | null = key => key): UsageWorkBranchRow[] {
   const rows = new Map<string, BranchGroup>();
   const outcomeByContribution = new Map(outcomeAllocations.map(row => [row.contribution.id, row]));
   for (const allocation of allocations) {
@@ -209,7 +209,7 @@ function groupBranches(allocations: UsageWorkProjection['branchAllocations'], ba
     accumulate(row.amount, allocation, basis);
     addPart(row.parts, allocation.contribution.sessionId, allocation, basis);
     witness(row, allocation.contribution);
-    row.projects.add(allocation.contribution.projectKey);
+    row.projects.add(anchor(allocation.contribution.projectKey));
     for (const evidence of allocation.evidence) row.commits.add(evidence.commitSha);
     row.evidence.push(...allocation.evidence);
     for (const witness of outcomeByContribution.get(allocation.contribution.id)?.evidence ?? []) {
@@ -235,8 +235,17 @@ export function summarizeUsageWork(
   work: UsageWorkProjection,
   basis: UsageWorkAmount,
   namedProjectKeys?: ReadonlySet<string>,
+  /**
+   * The Project a stamped key belongs to now (`createProjectAnchorOfKeyV1`, owner 11-08): usage a checkout was stamped
+   * with before it joined a Project counts under that Project.
+   */
+  anchorOf?: (key: string) => string,
 ): UsageWorkSummary {
-  const displayProjectKey = (key: string | null) => key === null || namedProjectKeys && !namedProjectKeys.has(key) ? null : key;
+  const anchor = (key: string | null) => key === null || !anchorOf ? key : anchorOf(key);
+  const displayProjectKey = (key: string | null) => {
+    const project = anchor(key);
+    return project === null || namedProjectKeys && !namedProjectKeys.has(project) ? null : project;
+  };
   const unallocatedAmounts: Record<UsageWorkUnallocatedReason, AmountAccumulator> = {
     missing_turn: newAmount(),
     missing_evidence: newAmount(),
@@ -354,7 +363,7 @@ export function summarizeUsageWork(
     accumulate(outcome.amount, row, basis);
     addPart(outcome.parts, contribution.sessionId, row, basis);
     witness(outcome.marks, contribution);
-    outcome.projects.add(contribution.projectKey);
+    outcome.projects.add(anchor(contribution.projectKey));
     outcomeRows.set(row.outcome.key, outcome);
   }
   finishAmounts([total, allocated, unallocated, ...Object.values(unallocatedAmounts), ...agentAmounts.values()], basis);
@@ -392,7 +401,7 @@ export function summarizeUsageWork(
         .flatMap((key) => outcomeByKey.get(key) ?? [])
         .sort(byAmount),
       sessions: sessionParts(row.parts),
-      branches: groupBranches(work.branchAllocations.filter((allocation) => displayProjectKey(allocation.contribution.projectKey) === projectKey), basis, work.allocations),
+      branches: groupBranches(work.branchAllocations.filter((allocation) => displayProjectKey(allocation.contribution.projectKey) === projectKey), basis, work.allocations, anchor),
     }))
     .sort(byAmount);
   const sessions = [...sessionRows.entries()]
@@ -422,7 +431,7 @@ export function summarizeUsageWork(
     unallocatedByReason: { missing_turn: unallocatedAmounts.missing_turn.amount, missing_evidence: unallocatedAmounts.missing_evidence.amount,
       ambiguous_outcome: unallocatedAmounts.ambiguous_outcome.amount, uncertain_writers: unallocatedAmounts.uncertain_writers.amount },
     outcomes,
-    branches: groupBranches(work.branchAllocations, basis, work.allocations),
+    branches: groupBranches(work.branchAllocations, basis, work.allocations, anchor),
     projects,
     sessions,
     agents: sessionParts(agentAmounts).map((row) => ({ agentId: row.sessionId, amount: row.amount, moneyBasis: row.moneyBasis })),

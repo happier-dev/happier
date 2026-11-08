@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getUsageQueryKey, normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '../usage/resolveUsagePageAggregation.js';
@@ -10,6 +10,7 @@ import type { UsageWorkEvidence } from '../usage/usageOutcomeAllocation.js';
 import { resolveInputOptions } from '../inputs/inputOptions.js';
 import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import * as usageDelivery from '../usage/projectUsageQueryDelivery.js';
+import * as strictJson from '../plugins/contributions/strictJsonValue.js';
 
 const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
@@ -171,6 +172,19 @@ describe('personal usage Action execution', () => {
     expect(document.accounting.priceCatalog.provenance).toEqual(bundledUsageModelPriceCatalog.provenance);
   });
 
+  it('offers a grouped Project once in agent Usage choices, for usage stamped by any of its checkouts (owner 11-08)', async () => {
+    const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, breakdowns: {
+      project: [{ key: 'project-1', label: 'App', ...accounting.totals }, { key: 'member', ...accounting.totals }] } });
+    const refs = ['project-1', 'member'].map(id => ({ id, serverId: 'home-1', machineId: `m-${id}`, rootPath: '/app', projectKey: 'project-1', createdAtMs: 1 }));
+    const deps: Partial<ActionExecutorDeps> = {
+      projectWorkspaceRefs: async () => ({ workspaceRefs: refs }),
+      usageActions: { query: async request => resolveUsagePageAggregation({ queries: request.queries,
+        accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) }) } };
+    expect(await resolveInputOptions({ deps: deps as ActionExecutorDeps, ctx: { surface: 'agent', serverId: 'home-1' }, actionId: null,
+      optionsSourceId: 'usage.filters.projects', input: {}, readFailure: () => null,
+      resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [{ value: 'project-1', label: 'App' }] });
+  });
+
   it('resolves Usage filter choices from admitted accounting instead of execution target identities', async () => {
     const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, breakdowns: {
       agent: [{ key: 'claude', label: 'Claude', ...accounting.totals }],
@@ -179,16 +193,39 @@ describe('personal usage Action execution', () => {
       source: [{ key: 'native', label: 'Native', ...accounting.totals }],
     } });
     // The authenticated accounting transport is the boundary; option/key/admission logic is real.
+    const requested: ReturnType<typeof normalizeUsageQuery>[] = [];
     const deps: Partial<ActionExecutorDeps> = { machinesList: async () => ({ items: [{ id: 'machine-1', label: 'Laptop' }, { id: 'unaccounted', label: 'Another machine' }] }),
-      usageActions: { query: async (request: { queries: ReturnType<typeof normalizeUsageQuery>[] }) =>
-      resolveUsagePageAggregation({ queries: request.queries, accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) }) } };
-    for (const [field, expected] of [['agents', { value: 'claude', label: 'Claude' }],
-      ['machines', { value: 'machine-1', label: 'Laptop' }], ['projects', { value: 'project-1', label: 'App' }],
-      ['sources', { value: 'native', label: 'Native' }]] as const) {
-      expect(await resolveInputOptions({ deps: deps as ActionExecutorDeps, ctx: { surface: 'ui', serverId: 'home-1' }, actionId: null,
-        optionsSourceId: `usage.filters.${field}`, input: {}, readFailure: () => null,
-        resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [expected] });
-    }
+      usageActions: { query: async request => {
+        requested.push(...request.queries);
+        return resolveUsagePageAggregation({ queries: request.queries,
+          accounting: request.queries.map(query => ({ query, value, status: 'available' as const })) });
+      } } };
+    // Call-through instrumentation only: production parsing and envelope logic remain real.
+    const delivery = vi.spyOn(usageDelivery, 'projectUsageQueryDelivery');
+    const measurement = vi.spyOn(strictJson, 'measureSerializedValidatedStrictPluginJsonUtf8Bytes');
+    const parse = vi.spyOn(UsageQueryBatchResultSchema, 'parse');
+    const safeParse = vi.spyOn(UsageQueryBatchResultSchema, 'safeParse');
+    try {
+      for (const [field, expected] of [['agents', { value: 'claude', label: 'Claude' }],
+        ['machines', { value: 'machine-1', label: 'Laptop' }], ['projects', { value: 'project-1', label: 'App' }],
+        ['sources', { value: 'native', label: 'Native' }]] as const) {
+        expect(await resolveInputOptions({ deps: deps as ActionExecutorDeps, ctx: { surface: 'ui', serverId: 'home-1' }, actionId: null,
+          optionsSourceId: `usage.filters.${field}`, input: {}, readFailure: () => null,
+          resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [expected] });
+      }
+      expect(requested).toHaveLength(4);
+      expect(new Set(requested.map(getUsageQueryKey)).size).toBe(1);
+      expect(requested[0]).toMatchObject({ includeAccounting: true,
+        includeContributions: false, includeComparison: false, includeQuotaHistory: false,
+        includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+        includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
+        includeModelTimeline: false, includeMessageStats: false,
+        breakdown: ['agent', 'machine', 'project', 'source'], topLimit: 20 });
+      expect(delivery).not.toHaveBeenCalled();
+      expect(measurement).not.toHaveBeenCalled();
+      expect(parse).not.toHaveBeenCalled();
+      expect(safeParse).not.toHaveBeenCalled();
+    } finally { delivery.mockRestore(); measurement.mockRestore(); parse.mockRestore(); safeParse.mockRestore(); }
   });
   it('publishes Coach evidence states through the same admitted query Action', async () => {
     const coachQuery = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
