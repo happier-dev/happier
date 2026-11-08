@@ -15,6 +15,7 @@ import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary as 
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { readWorkspaceSyncWorkerTargetSnapshot } from './sync/workspaceSyncPreparation';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { configuration } from '@/configuration';
 
 // Prepare the real lazy Machine transport during collection; this fixture measures HTTP row work, not source transformation.
 await import('@/api/api');
@@ -31,6 +32,246 @@ function deferred() {
 }
 
 describe('Project snapshot refresh availability', () => {
+  it('publishes requester mutation acknowledgements to the installed Account without a readback or foreign Account publication', async () => {
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref)];
+    const post = boundary(rows);
+    const serverId = configuration.activeServerId;
+    const installed = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'installed-account' })).toString('base64url')}.signature`, encryption: null };
+    const foreign = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'foreign-account' })).toString('base64url')}.signature`, encryption: null };
+    await readProjectAccountRows({ credentials: installed, serverId, publication: 'installed' });
+    const changes: unknown[] = [];
+    const release = subscribeActiveProjectAccountRowsSnapshot((_previous, next) => changes.push(next));
+    try {
+      const mutate = (credentials: typeof installed, accountId: string, home = serverId) => createProjectAccountSnapshotMutation({ credentials,
+        serverId: home, sessionCustody: { serverId: home, accountId, serverHttpBaseUrl: 'http://localhost:3005', isCurrent: async () => true } });
+      post.mockClear();
+      await mutate(installed, 'installed-account')(snapshot => ({ ...snapshot,
+        workspaceRefs: snapshot.workspaceRefs.map(value => ({ ...value, label: 'acknowledged' })) }));
+      expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([{ ...ref, label: 'acknowledged' }]);
+      expect(changes).toHaveLength(1);
+      expect(post.mock.calls.map(([url]) => url.split('/').at(-1))).toEqual(['list', 'mutate']);
+      post.mockClear();
+      await mutate(installed, 'installed-account')(snapshot => snapshot);
+      expect(changes).toHaveLength(1);
+      expect(post.mock.calls.map(([url]) => url.split('/').at(-1))).toEqual(['list']);
+      await mutate(foreign, 'foreign-account')(snapshot => ({ ...snapshot,
+        workspaceRefs: snapshot.workspaceRefs.map(value => ({ ...value, label: 'foreign' })) }));
+      expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([{ ...ref, label: 'acknowledged' }]);
+      expect(changes).toHaveLength(1);
+      await mutate(installed, 'installed-account', 'another-home')(snapshot => ({ ...snapshot,
+        workspaceRefs: snapshot.workspaceRefs.map(value => ({ ...value, label: 'another-home' })) }));
+      expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([{ ...ref, label: 'acknowledged' }]);
+      expect(changes).toHaveLength(1);
+      withdrawActiveProjectAccountRowsSnapshot();
+      await mutate(installed, 'installed-account')(snapshot => ({ ...snapshot,
+        workspaceRefs: snapshot.workspaceRefs.map(value => ({ ...value, label: 'private' })) }));
+      expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
+    } finally { release(); }
+  });
+  it('requires a finite reader to name its projection instead of silently opening the whole Account', async () => {
+    const post = boundary([createPlainProjectAccountRefRow(ref)]);
+    // Exercise an untyped/injected caller at the public owner, not a TypeScript-only contract.
+    // @ts-expect-error Untyped callers must not silently request the full census.
+    await expect(readProjectAccountRows({ credentials, serverId: ref.serverId }))
+      .rejects.toMatchObject({ code: 'project_account_rows_selection_required' });
+    expect(post).not.toHaveBeenCalled();
+    // @ts-expect-error An empty selector is a census, not a finite projection.
+    await expect(readProjectAccountRows({ credentials, serverId: ref.serverId, selection: {} }))
+      .rejects.toMatchObject({ code: 'project_account_rows_selection_required' });
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('requires a finite reader to retain its selected observation currentness across installed changes', async () => {
+    const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: 'unrelated' };
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref), { key: organizationKey, revision: 0,
+      content: { t: 'plain', v: { key: organizationKey, value: {} } } }];
+    boundary(rows);
+    const installed = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    await readProjectAccountRows(installed);
+    const observation = await readProjectAccountRowsObservation({ credentials, serverId: ref.serverId,
+      selection: { kinds: ['workspace-ref'], serverId: ref.serverId } });
+    expect(await observation.isCurrent()).toBe(true);
+    rows[1] = { key: organizationKey, revision: 1,
+      content: { t: 'plain', v: { key: organizationKey, value: { pinned: true } } } };
+    await readProjectAccountRows({ ...installed, changedKeys: [organizationKey] });
+    expect(await observation.isCurrent()).toBe(true);
+    rows[0] = createPlainProjectAccountRefRow({ ...ref, rootPath: '/fresh-change' }, 1);
+    await readProjectAccountRows({ ...installed, changedKeys: [key] });
+    expect(await observation.isCurrent()).toBe(false);
+  });
+  it.each([
+    { event: 'changed', read: readProjectAccountRowsObservation, reader: 'observation' },
+    { event: 'withdrawn', read: readProjectAccountRowsObservation, reader: 'observation' },
+    { event: 'changed', read: readProjectAccountRows, reader: 'raw' },
+    { event: 'withdrawn', read: readProjectAccountRows, reader: 'raw' },
+  ] as const)('refuses a selected $reader when installed facts are $event during HTTP', async ({ event, read }) => {
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref)];
+    const post = boundary(rows);
+    const installed = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    await readProjectAccountRows(installed);
+    const readStarted = deferred();
+    const releaseRead = deferred();
+    const serve = post.getMockImplementation()!;
+    let hold = true;
+    post.mockImplementation(async (...args) => {
+      const response = await serve(...args);
+      if (hold) { hold = false; readStarted.resolve(); await releaseRead.promise; }
+      return response;
+    });
+    const pending = read({ credentials, serverId: ref.serverId,
+      selection: { kinds: ['workspace-ref'], serverId: ref.serverId } });
+    await readStarted.promise;
+    if (event === 'changed') {
+      rows[0] = createPlainProjectAccountRefRow({ ...ref, rootPath: '/changed-during-read' }, 1);
+      await readProjectAccountRows({ ...installed, changedKeys: [key] });
+    } else withdrawActiveProjectAccountRowsSnapshot();
+    releaseRead.resolve();
+    await expect(pending).rejects.toMatchObject({ code: 'project_account_rows_changed' });
+    if (event === 'changed') expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs)
+      .toEqual([{ ...ref, rootPath: '/changed-during-read' }]);
+    else expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
+  });
+  it('keeps its own complete selected topology publication current without reopening organizations', async () => {
+    const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: 'unrelated' };
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref), { key: organizationKey, revision: 0,
+      content: { t: 'plain', v: { key: organizationKey, value: { pinned: true } } } }];
+    const post = boundary(rows);
+    const installed = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    const baseline = await readProjectAccountRows(installed);
+    rows[0] = createPlainProjectAccountRefRow({ ...ref, rootPath: '/fresh-own-publication' }, 1);
+    post.mockClear();
+    const observation = await readProjectAccountRowsObservation({ ...installed,
+      selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+    expect(observation.snapshot.workspaceRefs).toEqual([{ ...ref, rootPath: '/fresh-own-publication' }]);
+    expect(await observation.isCurrent()).toBe(true);
+    expect(getActiveProjectAccountRowsSnapshot()?.organizations).toEqual(baseline.organizations);
+    expect(post.mock.calls.map(([, body]) => body)).toEqual([{ kinds: ['workspace-ref', 'relationship-graph'] }]);
+  });
+  it('requires a finite reader to leave installed graph publication to the complete topology owner', async () => {
+    const other = { ...ref, id: 'ref-b', rootPath: '/work/b' };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const relationship = { v: 1 as const, relationshipId: 'sync', controllerMachineId: ref.machineId,
+      alphaWorkspaceRefId: ref.id, betaWorkspaceRefId: other.id, mode: 'keep_both_in_sync' as const, enabled: false,
+      createdAtMs: 1, updatedAtMs: 1, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } };
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref), createPlainProjectAccountRefRow(other),
+      { key: graphKey, revision: 0, content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } }];
+    const post = boundary(rows);
+    const installed = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    const before = await readProjectAccountRows(installed);
+    rows[0] = { key, revision: 1, content: null };
+    rows[2] = { key: graphKey, revision: 1, content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } };
+    post.mockClear();
+    const selected = await readProjectAccountRows({ credentials, serverId: ref.serverId,
+      selection: { kinds: ['workspace-ref'] } });
+    expect(selected.workspaceRefs).toEqual([other]);
+    expect(getActiveProjectAccountRowsSnapshot()).toBe(before);
+    expect(post.mock.calls.map(([, body]) => body)).toEqual([{ kinds: ['workspace-ref'] }]);
+    const updates: unknown[] = [];
+    const stop = subscribeActiveProjectAccountRowsSnapshot((_previous, next) => updates.push(next));
+    try {
+      const next = await readProjectAccountRows({ ...installed, changedKeys: [key, graphKey] });
+      expect(next.workspaceRefs).toEqual([other]);
+      expect(next.relationships).toEqual([]);
+      expect(updates).toEqual([next]);
+    } finally { stop(); }
+  });
+  it('mutates complete topology without opening 1,024 unrelated organizations', async () => {
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref), ...Array.from({ length: 1024 }, (_, index) => {
+      const key = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: `unrelated-${index}` };
+      return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+    })];
+    const post = boundary(rows);
+    const mutate = createProjectAccountSnapshotMutation({ credentials, serverId: ref.serverId });
+    const result = await mutate(snapshot => ({ ...snapshot,
+      workspaceRefs: snapshot.workspaceRefs.map(value => ({ ...value, label: 'fresh label' })) }));
+    expect(result).toMatchObject({ status: 'applied', snapshot: { workspaceRefs: [{ ...ref, label: 'fresh label' }] } });
+    expect(post.mock.calls.filter(([url]) => url.endsWith('/list')).map(([, body]) => body))
+      .toEqual([{ kinds: ['workspace-ref', 'relationship-graph'] }]);
+  });
+  it('opens only the demanded topology domain and accepts a ref/graph removal atomically against admitted rows', async () => {
+    const other = { ...ref, id: 'ref-b', rootPath: '/work/b' };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const relationship = { v: 1 as const, relationshipId: 'sync', controllerMachineId: ref.machineId,
+      alphaWorkspaceRefId: ref.id, betaWorkspaceRefId: other.id, mode: 'keep_both_in_sync' as const, enabled: false,
+      createdAtMs: 1, updatedAtMs: 1, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } };
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref), createPlainProjectAccountRefRow(other),
+      { key: graphKey, revision: 0, content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } },
+      ...Array.from({ length: 1024 }, (_, index) => {
+        const key = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+      })];
+    const post = boundary(rows);
+    const input = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    const initial = await readProjectAccountRows(input);
+    rows[0] = { key, revision: 1, content: null };
+    rows[2] = { key: graphKey, revision: 1, content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } };
+    post.mockClear();
+    const published: unknown[] = [];
+    const stop = subscribeActiveProjectAccountRowsSnapshot((_previous, next) => published.push(next));
+    try {
+      // The endpoint hint can be on the following durable feed page.
+      const changed = { ...input, changedKeys: [graphKey, graphKey] };
+      const next = await readProjectAccountRows(changed);
+      expect(next.workspaceRefs).toEqual([other]);
+      expect(next.relationships).toEqual([]);
+      expect(next.organizations).toEqual(initial.organizations);
+      expect(published).toEqual([next]);
+      expect(post.mock.calls.map(([url, body]) => [new URL(url).pathname, body])).toEqual([
+        ['/v1/account/project-rows/list', { kinds: ['workspace-ref', 'relationship-graph'] }],
+      ]);
+    } finally { stop(); }
+  });
+  it('opens one changed organization without rereading topology or 1,024 unrelated organizations', async () => {
+    const organizationKey = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: 'changed' };
+    const organization = (revision: number, pinned: boolean) => ({ key: organizationKey, revision,
+      content: { t: 'plain' as const, v: { key: organizationKey, value: { pinned } } } });
+    const rows: unknown[] = [organization(0, false), createPlainProjectAccountRefRow(ref),
+      ...Array.from({ length: 1024 }, (_, index) => {
+        const key = { ...organizationKey, projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+      })];
+    const post = boundary(rows);
+    const input = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    const initial = await readProjectAccountRows(input);
+    let unrelatedPayloadReads = 0;
+    for (const row of initial.rows) {
+      if (row.key.kind !== 'project-organization' || row.key.projectKey === organizationKey.projectKey) continue;
+      const payload = row.payload;
+      // Observe already-admitted bodies without replacing any projection logic.
+      Object.defineProperty(row, 'payload', { configurable: true, enumerable: true,
+        get: () => { unrelatedPayloadReads++; return payload; } });
+    }
+    rows[0] = organization(1, true);
+    post.mockClear();
+    const next = await readProjectAccountRows({ ...input, changedKeys: [organizationKey, organizationKey] });
+    expect(unrelatedPayloadReads).toBe(0);
+    expect(next.organizations.filter((row, index) => row !== initial.organizations[index])).toHaveLength(1);
+    expect(next.workspaceRefs).toBe(initial.workspaceRefs);
+    expect(next.relationships).toBe(initial.relationships);
+    expect(next.workspaceRefs).toEqual([ref]);
+    expect(next.organizations.find(row => row.key.projectKey === organizationKey.projectKey)).toMatchObject({ revision: 1, value: { pinned: true } });
+    expect(post.mock.calls.map(([url, body]) => [new URL(url).pathname, body])).toEqual([
+      ['/v1/account/project-rows/read', { key: organizationKey }],
+    ]);
+  });
+  it.each(['cancelled', 'retired'] as const)('accepts no incremental reply after its authority is %s', async reason => {
+    const rows: unknown[] = [createPlainProjectAccountRefRow(ref)];
+    const post = boundary(rows);
+    const input = { credentials, serverId: ref.serverId, publication: 'installed' as const };
+    await readProjectAccountRows(input);
+    rows[0] = createPlainProjectAccountRefRow({ ...ref, rootPath: '/late' }, 1);
+    const controller = new AbortController();
+    let current = true;
+    const serve = post.getMockImplementation()!;
+    post.mockImplementation(async (...args) => {
+      expect(args[2]?.signal).toBe(controller.signal);
+      const response = await serve(...args);
+      if (reason === 'cancelled') controller.abort(); else current = false;
+      return response;
+    });
+    await expect(readProjectAccountRows({ ...input, changedKeys: [key], signal: controller.signal,
+      assertCurrentAuthority: async () => { if (!current) throw new Error('retired'); } })).rejects.toBeDefined();
+    expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs.some(value => value.rootPath === '/late') ?? false).toBe(false);
+  });
   it('publishes no unchanged row census to its consumers and retains immutable rows across a real change', async () => {
     const rows = Array.from({ length: 1001 }, (_, index) => createPlainProjectAccountRefRow({ ...ref,
       id: `ref-${index}`, rootPath: `/work/${index}` }));
@@ -228,6 +469,18 @@ describe('Project checkout retirement', () => {
     const rowKey = { ...key, serverId: value.serverId, id: value.id };
     return { key: rowKey, revision, content: { t: 'plain', v: { key: rowKey, value } } };
   };
+  it('prepares a fresh retirement from topology only, without opening unrelated organization bodies', async () => {
+    const post = boundary([row(), ...Array.from({ length: 1024 }, (_, index) => {
+      const key = { kind: 'project-organization' as const, serverId: ref.serverId, projectKey: `unrelated-${index}` };
+      return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+    })]);
+    const prepared = await createOwner().prepare({ rootPath: ref.rootPath });
+    await createOwner().assertCurrent(prepared.ownerData);
+    expect(post.mock.calls.map(([url, body]) => [new URL(url).pathname, body])).toEqual([
+      ['/v1/account/project-rows/list', { kinds: ['workspace-ref', 'relationship-graph'] }],
+      ['/v1/account/project-rows/list', { kinds: ['workspace-ref', 'relationship-graph'] }],
+    ]);
+  });
   it('retires the reviewed main and dependent refs together and exactly restores their identities through Undo', async () => {
     const dependent = { ...ref, id: 'external-worktree', rootPath: '/other/branch', projectKey: 'retained-project' };
     const nested = { ...ref, id: 'nested-project', rootPath: '/work/a/nested' };
@@ -246,11 +499,11 @@ describe('Project checkout retirement', () => {
     await owner.assertCurrent(retained);
     await owner.retire(retained);
     expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([unrelated, ancestor, foreignMachine, independent]);
-    expect((await readProjectAccountRows({ credentials, serverId: ref.serverId })).workspaceRefs).toEqual([unrelated, ancestor, foreignMachine, independent]);
+    expect((await readProjectAccountRows({ credentials, serverId: ref.serverId, selection: { kinds: ['workspace-ref'] } })).workspaceRefs).toEqual([unrelated, ancestor, foreignMachine, independent]);
     await owner.retire(retained);
     await owner.reinstate(retained, ref.rootPath);
     await owner.reinstate(retained, ref.rootPath);
-    const restored = await readProjectAccountRows({ credentials, serverId: ref.serverId });
+    const restored = await readProjectAccountRows({ credentials, serverId: ref.serverId, selection: { kinds: ['workspace-ref', 'project-organization'] } });
     expect(restored.workspaceRefs).toEqual([ref, dependent, nested, unrelated, ancestor, foreignMachine, independent]);
     expect(restored.organizations).toMatchObject([{ key: organizationKey, revision: 3, value: { pinned: true } }]);
   });
@@ -267,7 +520,7 @@ describe('Project checkout retirement', () => {
     await owner.retire(latest.ownerData);
     rows[0] = row({ ...ref, label: 'Recreated' }, 5);
     await expect(owner.reinstate(latest.ownerData, ref.rootPath)).rejects.toMatchObject({ code: 'changed_since_review' });
-    expect((await readProjectAccountRows({ credentials, serverId: ref.serverId })).workspaceRefs).toEqual([{ ...ref, label: 'Recreated' }]);
+    expect((await readProjectAccountRows({ credentials, serverId: ref.serverId, selection: { kinds: ['workspace-ref'] } })).workspaceRefs).toEqual([{ ...ref, label: 'Recreated' }]);
   });
   it('blocks even a paused Sync endpoint before checkout retirement is prepared', async () => {
     const other = { ...ref, id: 'ref-b', rootPath: '/work/b' };
@@ -295,6 +548,9 @@ describe('Project checkout retirement', () => {
       }
       return result;
     });
+    // The installed startup owner, not finite retirement preparation, establishes
+    // the projection whose acknowledged/recovered changes this test observes.
+    await readProjectAccountRows({ credentials, serverId: ref.serverId, publication: 'installed' });
     const owner = createOwner();
     const prepared = await owner.prepare({ rootPath: ref.rootPath });
     await expect(owner.retire(prepared.ownerData)).rejects.toMatchObject({ code: 'project_account_row_outcome_unknown' });
@@ -366,6 +622,7 @@ describe('Project Account row transport', () => {
     let current = true;
     const observation = await readProjectAccountRowsObservation({
       credentials: { token: 'private-requester', encryption: null }, serverId: 'home-a',
+      selection: { kinds: ['workspace-ref', 'relationship-graph'] },
       assertCurrentAuthority: async () => { if (!current) throw new Error('Requester retired'); },
     });
     expect(await observation.isCurrent()).toBe(true);
@@ -398,28 +655,28 @@ describe('Project Account row transport', () => {
     let publications = 0;
     const release = subscribeActiveProjectAccountRowsSnapshot(() => publications++);
     try {
-      const privateSnapshot = await readProjectAccountRows(requester);
+      const privateSnapshot = await readProjectAccountRows({ ...requester, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
       expect(privateSnapshot.scopeKey).not.toBe(installed.scopeKey);
       expect(await createProjectAccountSnapshotMutation(requester)(snapshot => ({ ...snapshot, workspaceRefs: [ref] })))
         .toMatchObject({ status: 'applied', snapshot: { workspaceRefs: [ref] } });
       expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
       post.mockRejectedValueOnce(new Error('Requester Home unavailable'));
-      await expect(readProjectAccountRows(requester)).rejects.toThrow('Requester Home unavailable');
+      await expect(readProjectAccountRows({ ...requester, selection: { kinds: ['workspace-ref', 'relationship-graph'] } })).rejects.toThrow('Requester Home unavailable');
       expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
-      await readProjectAccountRows({ credentials, serverId: 'home-a', publication: 'installed',
+      await readProjectAccountRows({ credentials, serverId: 'home-a', selection: { kinds: ['workspace-ref', 'relationship-graph'] },
         sessionCustody: { serverId: 'home-a', accountId: 'installed-account', serverHttpBaseUrl: 'https://installed-home.invalid',
           isCurrent: async () => true } });
       expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
       expect(publications).toBe(0);
       // An ordinary installed refresh still publishes and can recover after withdrawal.
-      await readProjectAccountRows({ credentials, serverId: 'home-a' });
+      await readProjectAccountRows({ credentials, serverId: 'home-a', publication: 'installed' });
       expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([ref]);
       expect(publications).toBe(1);
       withdrawActiveProjectAccountRowsSnapshot();
       await readProjectAccountRows({ credentials, serverId: 'home-a', publication: 'installed' });
       expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs).toEqual([ref]);
       withdrawActiveProjectAccountRowsSnapshot();
-      await readProjectAccountRows(requester);
+      await readProjectAccountRows({ ...requester, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
       expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
     } finally { release(); }
   });
@@ -458,7 +715,7 @@ describe('Project Account row transport', () => {
     expect(getActiveProjectAccountRowsSnapshot()).toBe(daemonSnapshot);
     current = false;
     transport.mockClear();
-    await expect(readProjectAccountRows(input)).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+    await expect(readProjectAccountRows({ ...input, selection: { kinds: ['workspace-ref', 'relationship-graph'] } })).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
     expect(transport).not.toHaveBeenCalled();
   });
   it('does not resurrect a deleted ref or older graph when an earlier complete read arrives last', async () => {
@@ -538,8 +795,8 @@ describe('Project Account row transport', () => {
   it('refuses missing or unusable E2EE material even when the Account currently has no Project rows', async () => {
     const transport = boundary([]);
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { mode: 'e2ee', updatedAt: 0 } });
-    await expect(readProjectAccountRows({ credentials })).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
-    await expect(readProjectAccountRows({ credentials: { token: 'bad-key', encryption: { type: 'legacy', secret: new Uint8Array(31) } } }))
+    await expect(readProjectAccountRows({ credentials, selection: { kinds: ['workspace-ref'] } })).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
+    await expect(readProjectAccountRows({ credentials: { token: 'bad-key', encryption: { type: 'legacy', secret: new Uint8Array(31) } }, selection: { kinds: ['workspace-ref'] } }))
       .rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
     expect(transport).not.toHaveBeenCalled();
   });
@@ -600,9 +857,9 @@ describe('Project Account row transport', () => {
     const c = sealAccountScopedBlobCiphertext({ kind: 'project_account_row', material: { type: 'legacy', secret },
       payload: { key: { ...key, id: 'ref-b' }, value: { ...ref, id: 'ref-b' } }, randomBytes: n => new Uint8Array(n).fill(3) });
     const post = boundary([{ key, revision: 0, content: { t: 'encrypted', c } }]);
-    await expect(readProjectAccountRows({ credentials })).rejects.toMatchObject({ code: 'project_account_mode_mismatch' });
+    await expect(readProjectAccountRows({ credentials, selection: { kinds: ['workspace-ref'] } })).rejects.toMatchObject({ code: 'project_account_mode_mismatch' });
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { mode: 'e2ee', updatedAt: 0 } });
-    await expect(readProjectAccountRows({ credentials: { token: 't', encryption: { type: 'legacy', secret } } })).rejects.toMatchObject({ code: 'project_account_row_invalid' });
+    await expect(readProjectAccountRows({ credentials: { token: 't', encryption: { type: 'legacy', secret } }, selection: { kinds: ['workspace-ref'] } })).rejects.toMatchObject({ code: 'project_account_row_invalid' });
     expect(post.mock.calls.every(([url]) => url.endsWith('/list'))).toBe(true);
   });
 

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import {
   PROJECT_ACCOUNT_ROWS_ROUTE_V1,
@@ -64,26 +64,59 @@ export function subscribeActiveProjectAccountRowsSnapshot(listener: ProjectAccou
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 }
+function replaceProjectFacts<T>(previous: readonly T[], incoming: readonly T[], changed: ReadonlySet<string>, order: Iterable<string>, identity: (value: T) => string): readonly T[] {
+  if (changed.size === 0) return previous;
+  const facts = new Map(previous.map(value => [identity(value), value]));
+  const replacements = new Map(incoming.filter(value => changed.has(identity(value))).map(value => [identity(value), value]));
+  for (const key of changed) {
+    const replacement = replacements.get(key);
+    if (replacement === undefined) facts.delete(key); else facts.set(key, replacement);
+  }
+  // Tombstones retain their physical slot; restoring one also restores its
+  // projection position rather than appending after unaffected facts.
+  const result: T[] = [];
+  for (const key of order) {
+    const fact = facts.get(key);
+    if (fact !== undefined) result.push(fact);
+  }
+  return result;
+}
+function mergeProjectSnapshots(previous: ActiveProjectAccountRowsSnapshot, incoming: ActiveProjectAccountRowsSnapshot): ActiveProjectAccountRowsSnapshot {
+  const rows = new Map(previous.rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row]));
+  const refs = new Set<string>();
+  const organizations = new Set<string>();
+  let graphChanged = false;
+  for (const row of incoming.rows) {
+    const identity = buildProjectAccountRowPhysicalKeyV1(row.key);
+    const known = rows.get(identity);
+    if (!known || row.revision > known.revision) {
+      rows.set(identity, row);
+      if (row.key.kind === 'workspace-ref') refs.add(identity);
+      else if (row.key.kind === 'project-organization') organizations.add(identity);
+      else graphChanged = true;
+    }
+  }
+  // Admitted rows and their projected facts are immutable within a revision.
+  if (refs.size === 0 && organizations.size === 0 && !graphChanged) return previous;
+  const workspaceRefs = replaceProjectFacts(previous.workspaceRefs, incoming.workspaceRefs, refs, rows.keys(),
+    ref => buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: ref.serverId, id: ref.id }));
+  const relationships = graphChanged ? incoming.relationships : previous.relationships;
+  // Organization updates cannot change topology. Validate the winning graph
+  // and endpoints together only when one of those domains actually changed.
+  const topology = refs.size > 0 || graphChanged ? parseProjectAccountSnapshotV1({ workspaceRefs, relationships }) : previous;
+  return { ...incoming, workspaceRefs: topology.workspaceRefs, relationships: topology.relationships,
+    rows: [...rows.values()], graphRevision: graphChanged ? incoming.graphRevision : previous.graphRevision,
+    organizations: replaceProjectFacts(previous.organizations, incoming.organizations, organizations, rows.keys(),
+      organization => buildProjectAccountRowPhysicalKeyV1(organization.key)) };
+}
 function publish(snapshot: ActiveProjectAccountRowsSnapshot): ActiveProjectAccountRowsSnapshot;
 function publish(snapshot: null): null;
 function publish(snapshot: ActiveProjectAccountRowsSnapshot | null): ActiveProjectAccountRowsSnapshot | null {
   const previous = active;
   if (snapshot === previous) return previous;
   if (snapshot && previous?.scopeKey === snapshot.scopeKey) {
-    const rows = new Map(previous.rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row]));
-    let changed = false;
-    for (const row of snapshot.rows) {
-      const identity = buildProjectAccountRowPhysicalKeyV1(row.key);
-      const known = rows.get(identity);
-      if (!known || row.revision > known.revision) {
-        rows.set(identity, row);
-        changed = true;
-      }
-    }
-    // Rows, including reserved tombstones, are immutable within a revision.
-    if (!changed) return previous;
-    // Reproject the winning graph and refs together before notifying consumers.
-    snapshot = projectSnapshotFromRows([...rows.values()], snapshot.scopeKey);
+    snapshot = mergeProjectSnapshots(previous, snapshot);
+    if (snapshot === previous) return previous;
   }
   active = snapshot;
   for (const listener of listeners) {
@@ -103,10 +136,15 @@ export type ProjectAccountRowsInput = Readonly<({ credentials: StoredCredentials
     publication?: 'installed';
     /** A host-owned effect also retains its captured Machine/lifecycle authority at each HTTP admission. */
     assertCurrentAuthority?: () => Promise<void> }>;
-export type ProjectAccountRowsReadInput = ProjectAccountRowsInput & Readonly<{
-  /** Exact/domain reads may refresh an existing same-scope census, never establish one. */
-  selection?: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>;
-}>;
+export type ProjectAccountRowsSelection = Readonly<{ key: ProjectAccountRowKeyV1 }>
+  | Readonly<{ kinds: NonNullable<ProjectAccountRowListRequestV1['kinds']>; serverId?: string }>;
+export type ProjectAccountRowsReadInput = ProjectAccountRowsInput & (
+  Readonly<{ selection: ProjectAccountRowsSelection; changedKeys?: never }>
+  // Only the installed owner establishes or recovers completeness. A finite
+  // requester must name its projection, even when its Account is installed.
+  | Readonly<{ publication: 'installed'; sessionCustody?: never; authorization?: never; selection?: never;
+    changedKeys?: readonly ProjectAccountRowKeyV1[] }>
+);
 export type ProjectRuntimeAccountAccess = Readonly<{ credentials: StoredCredentials; sessionCustody?: ProjectAccountSessionCustody; accountAuthorization?: never }>
   | Readonly<{ credentials?: never; accountAuthorization: ExternalActionExecutionAuthorizationV1 }>;
 
@@ -163,12 +201,49 @@ async function withSnapshotReadFailurePolicy<T>(input: ReadInput, read: () => Pr
     throw error;
   }
 }
-function acceptSnapshot(input: ProjectAccountRowsReadInput, snapshot: ActiveProjectAccountRowsSnapshot) {
+function acceptSnapshot(input: ReadInput & Readonly<{ selection?: ProjectAccountRowsSelection }>, snapshot: ActiveProjectAccountRowsSnapshot) {
   if (input.selection) {
-    if (canPublish(input) && active?.scopeKey === snapshot.scopeKey) publish(snapshot);
+    // An isolated ref deletion cannot be merged against an older graph. Only
+    // complete topology reads may refresh its installed projection; finite
+    // refs/organization consumers still receive their freshly admitted rows.
+    const selection = input.selection;
+    const completeTopology = !('key' in selection) && !selection.serverId
+      && selection.kinds.includes('workspace-ref') && selection.kinds.includes('relationship-graph');
+    if (completeTopology && canPublish(input) && active?.scopeKey === snapshot.scopeKey) publish(snapshot);
     return snapshot;
   }
   return canPublish(input) ? publish(snapshot) : snapshot;
+}
+async function acceptMutationSnapshot(input: ReadInput, snapshot: ActiveProjectAccountRowsSnapshot) {
+  // A retained requester Session writes with its own Account custody. Its
+  // acknowledged rows also settle an already installed projection of that
+  // same Account/Home; private reads still cannot establish that projection.
+  const installed = active;
+  if (input.sessionCustody && installed
+    && installed.scopeKey === `${configuration.activeServerId}:${resolveAccountSettingsScopeKey(input.credentials)}`
+    && await isServerProfileHomeIdentity(configuration.activeServerId, input.serverId ?? input.sessionCustody.serverId)
+    && active?.scopeKey === installed.scopeKey) {
+    publish({ ...snapshot, scopeKey: installed.scopeKey });
+    return snapshot;
+  }
+  return acceptSnapshot(input, snapshot);
+}
+function selectedProjection(snapshot: ActiveProjectAccountRowsSnapshot, selection: ProjectAccountRowsSelection) {
+  if ('key' in selection) {
+    const key = selection.key;
+    if (key.kind === 'workspace-ref') return resolveWorkspaceRefById(snapshot.workspaceRefs, key.id, key.serverId);
+    if (key.kind === 'relationship-graph') return snapshot.relationships;
+    return snapshot.organizations.find(row => row.key.serverId === key.serverId && row.key.projectKey === key.projectKey);
+  }
+  // The installed owner already projects these domains. A refs-only fence must
+  // not scan unrelated organization rows merely to observe its selected refs.
+  return {
+    workspaceRefs: selection.kinds.includes('workspace-ref')
+      ? selection.serverId ? snapshot.workspaceRefs.filter(ref => ref.serverId === selection.serverId) : snapshot.workspaceRefs : undefined,
+    relationships: selection.kinds.includes('relationship-graph') ? snapshot.relationships : undefined,
+    organizations: selection.kinds.includes('project-organization')
+      ? selection.serverId ? snapshot.organizations.filter(row => row.key.serverId === selection.serverId) : snapshot.organizations : undefined,
+  };
 }
 function headers(credentials: StoredCredentials) {
   return { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' };
@@ -264,11 +339,11 @@ export async function mutateProjectAccountRows(input: ReadInput & Readonly<{
   if (input.snapshot && input.snapshot.scopeKey !== scopeKey(input)) throw rowError('project_requester_authority_unavailable');
   return await runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
     const result = await submitOpenedRows(input, await readMode(input));
-    if (result.status === 'updated' && input.snapshot) acceptSnapshot(input, applyAcknowledgedRows(input.snapshot, result.openedRows));
+    if (result.status === 'updated' && input.snapshot) await acceptMutationSnapshot(input, applyAcknowledgedRows(input.snapshot, result.openedRows));
     return result;
   });
 }
-async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection: NonNullable<ProjectAccountRowsReadInput['selection']> = {}): Promise<ActiveProjectAccountRowsSnapshot> {
+async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>): Promise<readonly OpenedProjectAccountRow[]> {
   const path = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/${'key' in selection ? 'read' : 'list'}`;
   const admittedHeaders = await timeWebLatencyPhase('projectRows.requestAdmission', () => requestHeaders(input, path, selection));
   const response = await timeWebLatencyPhase('projectRows.http', () => axios.post(`${baseUrl(input)}${path}`, selection, {
@@ -295,10 +370,28 @@ async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection
     selectedRows = result.rows;
   }
   await timeWebLatencyPhase('projectRows.responseAdmission', () => assertRequesterCurrent(input));
-  const rows = selectedRows.map(row => ({ key: row.key, revision: row.revision, payload: row.content === null ? null : openRow(row.key, row.content, mode, input) }));
-  return projectSnapshotFromRows(rows, scopeKey(input));
+  return selectedRows.map(row => ({ key: row.key, revision: row.revision, payload: row.content === null ? null : openRow(row.key, row.content, mode, input) }));
 }
-function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scopeKey: string): ActiveProjectAccountRowsSnapshot {
+async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>): Promise<ActiveProjectAccountRowsSnapshot> {
+  return projectSnapshotFromRows(await fetchRows(input, mode, selection), scopeKey(input));
+}
+async function fetchChangedSnapshot(input: ProjectAccountRowsReadInput, mode: 'plain' | 'e2ee', keys: readonly ProjectAccountRowKeyV1[]): Promise<ActiveProjectAccountRowsSnapshot> {
+  if (input.publication !== 'installed' || !canPublish(input) || input.selection) throw rowError('project_requester_authority_unavailable');
+  const uniqueKeys = [...new Map(keys.map(key => [buildProjectAccountRowPhysicalKeyV1(key), key])).values()];
+  // Graph endpoints and their hints may straddle feed pages. Read their complete
+  // domain together, never an isolated graph against potentially missing refs.
+  const topologyRequired = uniqueKeys.some(key => key.kind !== 'project-organization');
+  const selections: NonNullable<ProjectAccountRowsReadInput['selection']>[] = uniqueKeys
+    .filter(key => key.kind === 'project-organization').map(key => ({ key }));
+  if (topologyRequired) selections.unshift({ kinds: ['workspace-ref', 'relationship-graph'] });
+  const batches = await Promise.all(selections.map(selection => fetchRows(input, mode, selection)));
+  await assertRequesterCurrent(input);
+  // Keep the fetched delta separate until publication merges it into the
+  // then-current admitted projection, preserving concurrent winning revisions.
+  if (active?.scopeKey !== scopeKey(input)) throw rowError('project_requester_authority_unavailable');
+  return projectSnapshotFromRows(batches.flat(), scopeKey(input));
+}
+function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scopeKey: string, previous?: ActiveProjectAccountRowsSnapshot): ActiveProjectAccountRowsSnapshot {
   const workspaceRefs: ProjectAccountSnapshotV1['workspaceRefs'][number][] = [];
   const relationships: ProjectAccountSnapshotV1['relationships'][number][] = [];
   const organizations: ActiveProjectAccountRowsSnapshot['organizations'][number][] = [];
@@ -308,28 +401,29 @@ function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scope
     const identity = buildProjectAccountRowPhysicalKeyV1(row.key);
     if (keys.has(identity)) throw rowError('project_account_row_duplicate');
     keys.add(identity);
-    if (!row.payload) {
+    const payload = row.payload;
+    if (!payload) {
       if (row.key.kind === 'relationship-graph') throw rowError('project_account_graph_deleted');
       continue;
     }
     if (row.key.kind === 'workspace-ref') {
-      const payload = assertProjectAccountRowPayloadBindingV1(row.key, row.payload);
-      if ('id' in payload.value) workspaceRefs.push(payload.value);
+      const bound = assertProjectAccountRowPayloadBindingV1(row.key, payload);
+      if ('id' in bound.value) workspaceRefs.push(bound.value);
     } else if (row.key.kind === 'relationship-graph') {
       graphRevision = row.revision;
-      if ('relationships' in row.payload.value) relationships.push(...row.payload.value.relationships);
+      if ('relationships' in payload.value) relationships.push(...payload.value.relationships);
     } else {
-      const value = row.payload.value;
+      const value = payload.value;
       if (!('id' in value) && !('relationships' in value)) organizations.push({ key: row.key, revision: row.revision, value });
     }
   }
-  return { ...parseProjectAccountSnapshotV1({ workspaceRefs, relationships }), source: 'network', organizations, rows, graphRevision,
+  const snapshot: ActiveProjectAccountRowsSnapshot = { workspaceRefs, relationships, source: 'network', organizations, rows, graphRevision,
     loadedAtMs: Date.now(), scopeKey };
+  return previous ? mergeProjectSnapshots(previous, snapshot)
+    : { ...snapshot, ...parseProjectAccountSnapshotV1({ workspaceRefs, relationships }) };
 }
 function applyAcknowledgedRows(snapshot: ActiveProjectAccountRowsSnapshot, rows: readonly OpenedProjectAccountRow[]): ActiveProjectAccountRowsSnapshot {
-  const accepted = new Map(snapshot.rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row]));
-  for (const row of rows) accepted.set(buildProjectAccountRowPhysicalKeyV1(row.key), row);
-  return projectSnapshotFromRows([...accepted.values()], snapshot.scopeKey);
+  return projectSnapshotFromRows(rows, snapshot.scopeKey, snapshot);
 }
 export type ProjectAccountRowsObservation = Readonly<{
   snapshot: ActiveProjectAccountRowsSnapshot;
@@ -338,17 +432,32 @@ export type ProjectAccountRowsObservation = Readonly<{
 
 export async function readProjectAccountRowsObservation(input: ProjectAccountRowsReadInput): Promise<ProjectAccountRowsObservation> {
   const bound = { ...input, serverId: input.serverId ?? input.authorization?.requesterAccountProjection?.serverId ?? configuration.activeServerId };
+  if (bound.selection ? !('key' in bound.selection) && !bound.selection.kinds
+    : bound.publication !== 'installed' || !canPublish(bound)) throw rowError('project_account_rows_selection_required');
   const trace = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
     bound.authorization?.binding.actionId ?? '', bound.authorization?.binding.requestId, stage, operation);
-  return await runWithServerHttpBaseUrl(baseUrl(bound), () => withSnapshotReadFailurePolicy(bound, async () => {
+  const installedBeforeRead = bound.selection && canPublish(bound) && active?.scopeKey === scopeKey(bound)
+    ? { value: selectedProjection(active, bound.selection) } : null;
+  const observation = await runWithServerHttpBaseUrl(baseUrl(bound), () => withSnapshotReadFailurePolicy(bound, async () => {
       input.signal?.throwIfAborted();
       const mode = await timeWebLatencyPhase('projectRows.mode', () => trace('project_rows.mode', () => readMode(bound)));
-      const snapshot = await trace('project_rows.fetch', () => fetchSnapshot(bound, mode, bound.selection));
+      // Only a complete installed baseline can consume incremental hints.
+      // Connect/reconnect, withdrawn state and a changed Account still recover.
+      if (bound.changedKeys && (bound.publication !== 'installed' || !canPublish(bound) || bound.selection)) {
+        throw rowError('project_requester_authority_unavailable');
+      }
+      const changedKeys = active?.scopeKey === scopeKey(bound) ? bound.changedKeys : undefined;
+      const snapshot = await trace('project_rows.fetch', () => changedKeys === undefined
+        ? fetchSnapshot(bound, mode, bound.selection ?? {}) : fetchChangedSnapshot(bound, mode, changedKeys));
       // Source-backed Projects take their current context from shared attachments;
       // the personal organization remains stored but is not their context layer.
       if (bound.credentials && !bound.selection && canPublish(bound)) {
+        const workspaceRefs = changedKeys?.every(key => key.kind === 'project-organization')
+          ? active?.workspaceRefs ?? snapshot.workspaceRefs : snapshot.workspaceRefs;
+        // Incremental snapshots contain only fetched organizations; recovery
+        // snapshots contain the complete organization domain.
         for (const organization of snapshot.organizations) {
-          if (snapshot.workspaceRefs.some(ref => ref.serverId === organization.key.serverId
+          if (workspaceRefs.some(ref => ref.serverId === organization.key.serverId
             && ref.projectKey === organization.key.projectKey && ref.source)) continue;
           await migrateProjectPromptStackSkillRules({ credentials: bound.credentials, serverId: organization.key.serverId,
             projectKey: organization.key.projectKey, entries: organization.value.promptStack ?? [],
@@ -356,18 +465,38 @@ export async function readProjectAccountRowsObservation(input: ProjectAccountRow
         }
       }
       input.signal?.throwIfAborted();
+      if (changedKeys !== undefined) {
+        await assertRequesterCurrent(bound);
+        if (active?.scopeKey !== scopeKey(bound)) throw rowError('project_requester_authority_unavailable');
+      }
+      // Never hand a raw consumer an older response after its admitted facts
+      // changed in flight. Check before our own complete-topology publication;
+      // an unrelated organization update does not retire a refs observation.
+      if (installedBeforeRead && bound.selection && (!active || active.scopeKey !== snapshot.scopeKey
+        || !isDeepStrictEqual(selectedProjection(active, bound.selection), installedBeforeRead.value))) return null;
       const published = !bound.selection && canPublish(bound);
       const accepted = acceptSnapshot(bound, snapshot);
+      // Follow the consumed rows, not unrelated organization changes. A finite
+      // read never establishes a scope, but keeps its installed-currentness
+      // fence when the same Account already has an admitted projection.
+      const installedSelection = bound.selection && canPublish(bound) && active?.scopeKey === accepted.scopeKey
+        ? { value: selectedProjection(active, bound.selection) } : null;
       return { snapshot: accepted, isCurrent: async () => {
         try { await assertRequesterCurrent(bound); }
         catch { return false; }
-        // Private reads belong to the captured invocation, not the installed
-        // Account projection. Only published reads follow its topology changes.
+        if (installedSelection && bound.selection) return active !== null && active.scopeKey === accepted.scopeKey
+          && isDeepStrictEqual(selectedProjection(active, bound.selection), installedSelection.value);
+        // A private read without an installed baseline belongs only to its
+        // captured invocation. Complete published reads follow topology changes.
         return !published || active !== null && active.scopeKey === accepted.scopeKey
           && isDeepStrictEqual(active.workspaceRefs, accepted.workspaceRefs)
           && isDeepStrictEqual(active.relationships, accepted.relationships);
       } };
   }));
+  // Retirement is not an authentication/content failure: preserve any newer
+  // admitted projection instead of withdrawing it through the failure policy.
+  if (!observation) throw rowError('project_account_rows_changed');
+  return observation;
 }
 
 export async function readProjectAccountRows(input: ProjectAccountRowsReadInput): Promise<ActiveProjectAccountRowsSnapshot> {
@@ -448,7 +577,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
     if (!acknowledged?.payload) throw rowError('project_account_row_acknowledgement_invalid');
     const payload = acknowledged.payload;
     if ('id' in payload.value || 'relationships' in payload.value) throw rowError('project_account_row_invalid');
-    if (active?.scopeKey === snapshot.scopeKey) acceptSnapshot(input, applyAcknowledgedRows(snapshot, result.openedRows));
+    await acceptMutationSnapshot(input, applyAcknowledgedRows(snapshot, result.openedRows));
     return { status: 'updated', key, revision: acknowledged.revision, value: payload.value };
   });
 }
@@ -468,7 +597,7 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
       ...(signal ? { signal } : {}) };
     signal?.throwIfAborted();
     const mode = await readMode(input);
-    const before = await fetchSnapshot(input, mode);
+    const before = await fetchSnapshot(input, mode, { kinds: ['workspace-ref', 'relationship-graph'] });
     const base = parseProjectAccountSnapshotV1(before);
     const next = parseProjectAccountSnapshotV1(await mutate(base));
     assertProjectAccountSnapshotTransition(base, next);
@@ -536,7 +665,7 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
     }
     if (result.status === 'conflict') return { status: 'conflict' };
     if (result.status !== 'updated') throw rowError(`project_account_rows_${result.status}`);
-    const accepted = acceptSnapshot(input, applyAcknowledgedRows(before, result.openedRows));
+    const accepted = await acceptMutationSnapshot(input, applyAcknowledgedRows(before, result.openedRows));
     return { status: 'applied', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted };
   });
 }
