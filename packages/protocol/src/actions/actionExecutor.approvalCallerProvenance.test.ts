@@ -412,8 +412,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         sourceCustody: { kind: 'development', registeredRootId: 'background-root' } } } } });
   });
 
-  it('defers teams.update and replays its exact mutation once after approval', async () => {
-    let storedRequest: ApprovalRequest | null = null;
+  it('executes the person’s own UI teams.update without a self-approval', async () => {
+    let approvalCount = 0;
     const updatedTeam = {
       id: 'team-1',
       name: 'Approval rename',
@@ -450,48 +450,24 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     } as const;
     const homeDomainAction = vi.fn(async () => updatedTeam);
     const executor = createActionExecutor({
-      approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
-        storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
+      approvalsCreate: async () => {
+        approvalCount += 1;
         return { artifactId: 'team-update-approval' };
       },
-      approvalsGet: async () => storedRequest,
-      approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => {
-        storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
-        return { ok: true as const };
-      },
-      isApprovalExecutionOriginCurrent: async () => true,
       isActionApprovalRequired: (actionId: string) => actionId === 'teams.update',
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
     const input = { v: 1 as const, teamId: 'team-1', name: 'Approval rename' };
 
-    const created = await executor.execute('teams.update', input, {
+    const executed = await executor.execute('teams.update', input, {
       surface: 'ui',
       authority: 'present_user',
       serverId: 'home-1',
       runtimeAccountId: 'account-1',
       actionRequestId: 'team-update-request-1',
     });
-    expect(created).toMatchObject({
-      ok: true,
-      result: {
-        kind: 'approval_request_created',
-        artifactId: 'team-update-approval',
-        actionId: 'teams.update',
-      },
-    });
-    expect(homeDomainAction).not.toHaveBeenCalled();
-
-    const approved = await executor.execute('approval.request.decide', {
-      artifactId: 'team-update-approval',
-      decision: 'approve',
-    }, {
-      surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
-    });
-    expect(approved).toMatchObject({
-      ok: true,
-      result: { status: 'executed', execution: { ok: true, result: updatedTeam } },
-    });
+    expect(executed).toMatchObject({ ok: true, result: updatedTeam });
+    expect(approvalCount).toBe(0);
     expect(homeDomainAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       actionId: 'teams.update',
       input,

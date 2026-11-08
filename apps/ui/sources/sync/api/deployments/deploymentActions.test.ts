@@ -1066,6 +1066,164 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
 });
 
 
+it('applies an approved signed agent binding proposal once at its receiving controller', async () => {
+    const actionId = 'deployments.bindings.set';
+    const writer = requireAccount();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
+    const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+    const detail = createDeploymentEnvironmentDetailV1();
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+    } });
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        set: [{ purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }], remove: [] });
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
+    const effects: unknown[] = [];
+    const receiverResults: { ok: boolean; errorCode?: string }[] = [];
+    const { resolveApprovalExecutor } = await import('@happier-dev/protocol/approvals/resolveApprovalExecutor');
+    let approvalPlacement: ReturnType<typeof resolveApprovalExecutor> | undefined;
+    const result = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const approvalsCreate: NonNullable<ActionExecutorDeps['approvalsCreate']> = ({ request }) => {
+        approvalPlacement = resolveApprovalExecutor(request);
+        return createApprovalArtifact({ request, accountId: writer.accountId,
+            read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
+            create: async (artifactId, header, body, idScope) =>
+                (await writer.createArtifactDocument({ artifactId, header, body, idScope })).artifact });
+    };
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
+    const receiver = createActionExecutor(createActionExecutorBoundaryFixture({ approvalsCreate,
+        resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(writer).resolveEnvironmentApprovalScope,
+        deploymentAction: async (_actionId, admitted) => { effects.push(admitted); return result; },
+    }));
+    const { encryption } = await writer.resolveAccountEncryption();
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+        serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+        machineId: detail.environment.controllerMachineId, installationId: 'binding-source-installation',
+        actionId, tokenEpoch: 0, requesterInvocation: 'required', ...(encryption ? { encryption } : {}),
+        execute: async (admitted, transport) => {
+            const executed = await receiver.execute(actionId, admitted, {
+                surface: transport.invocation.surface, authority: transport.invocation.authority,
+                actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
+                serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+                externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                originalActionEnvelope: transport.envelope, actionRequestId: transport.requestId, actionsSettings: settings,
+            });
+            receiverResults.push({ ok: executed.ok, ...(!executed.ok ? { errorCode: executed.errorCode } : {}) });
+            return executed.ok ? executed.result : executed;
+        },
+        failure: execution => execution && typeof execution === 'object' && 'ok' in execution && execution.ok === false
+            && 'errorCode' in execution && typeof execution.errorCode === 'string'
+            ? { errorCode: execution.errorCode, error: execution.errorCode } : null,
+    });
+    for (const path of [`/v1/machines/${detail.environment.controllerMachineId}`, '/v1/machines/read-batch',
+        bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
+        homes.answer(serverId, path, { select: async (_body, request) => {
+            const response = await boundary.handle(new URL(request.url), request.init);
+            if (!response) throw new Error('Expected binding controller HTTP boundary');
+            return { status: response.status, body: await response.json() };
+        } });
+    }
+    const caller = { kind: 'session' as const, sessionId: 'binding-agent-session', starterDepth: 0, turnDepth: 0 };
+    const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const sessionBoundary = createSessionMetadataHttpBoundary(() => ({}));
+    const sessionReads = createSessionReadBatchFetchBoundary(async (url, init) => sessionBoundary.handle(url, init));
+    sessionBoundary.replaceSession(caller.sessionId, createPlainSessionCurrentProjectionRecordFixture({ id: caller.sessionId,
+        metadata: { path: '/workspace', host: 'controller', machineId: detail.environment.controllerMachineId } }));
+    homes.answer(serverId, `/v2/sessions/${caller.sessionId}`, { select: async (_body, request) => {
+        const response = sessionBoundary.handle(request.url, request.init);
+        if (!response) throw new Error('Expected Session metadata HTTP boundary');
+        return { status: response.status, body: await response.json() };
+    } });
+    homes.answer(serverId, 'POST /v2/sessions/read-batch', { select: async (_body, request) => {
+        const response = await sessionReads(request.url, request.init);
+        if (!response) throw new Error('Expected originating Session row');
+        return { status: response.status, body: await response.json() };
+    } });
+    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { SessionInputAdmissionResultV1Schema } =
+        await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+    // Terminal publication is external Session IO too; keep its real requester
+    // crypto and advertised input contract instead of replacing sessionSendMessage.
+    const published = new Set<string>();
+    for (const notificationActionId of ['action.spec.get', 'session.message.send'] as const) {
+        const notificationBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+            serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+            machineId: boundary.machine.id, installationId: boundary.machine.installationId,
+            actionId: notificationActionId, tokenEpoch: 0, requesterInvocation: 'required',
+            ...(encryption ? { encryption } : {}), execute: (notificationInput, transport) => {
+                expect(transport.invocation).toMatchObject({ surface: 'mcp', authority: 'account_automation', caller: { kind: 'host' } });
+                if (notificationActionId === 'action.spec.get') return { actionSpec:
+                    actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: false }) };
+                const message = getActionSpec('session.message.send').inputSchema.parse(notificationInput);
+                expect(message).toMatchObject({ sessionId: caller.sessionId, requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none' });
+                if (!message || typeof message !== 'object' || !('localId' in message)
+                    || typeof message.localId !== 'string') throw new Error('Expected result publication identity');
+                const status = published.has(message.localId) ? 'alreadyAccepted' : 'accepted';
+                published.add(message.localId);
+                return SessionInputAdmissionResultV1Schema.parse({ status, localId: message.localId });
+            } });
+        for (const path of [bindExternalActionExecutionAuthorizationHttpPathV1(notificationActionId), `/v1/actions/${notificationActionId}`]) {
+            homes.answer(serverId, path, { select: async (_body, request) => {
+                const response = await notificationBoundary.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Expected result publication HTTP boundary');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+    }
+    const target = { kind: 'machine' as const, machineId: detail.environment.controllerMachineId };
+    const requestId = 'agent-binding-proposal';
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input });
+    // Home admission and the installed source signer are the external boundaries;
+    // proposal policy, origin creation, Artifact persistence/CAS and replay stay real.
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'binding-agent-source', binding: {
+        accountId: writer.accountId, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
+        serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
+        installationId: boundary.machine.installationId, actionId, requestId, target, environmentId: detail.environment.id,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'binding-agent-turn', callerPermissionMode: null, requestId },
+        sessionActionSource: { machineId: target.machineId, installationId: boundary.machine.installationId },
+    } });
+    const proposal = await receiver.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
+        actionCaller: caller, serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+        defaultSessionId: caller.sessionId, callerPermissionMode: null, actionRequestId: requestId, externalActionTarget: target,
+        externalActionExecutionAuthorization: authorization, originalActionEnvelope: envelope, actionsSettings: settings,
+        sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'binding-agent-turn', via: 'action' },
+        signExternalActionApprovalInput: args => boundary.signApprovalInput({ authorizationToken: args.authorization.token,
+            actionId: args.actionId, input: args.input, target: args.target,
+            ...(args.requesterConfirmation ? { requesterConfirmation: args.requesterConfirmation } : {}),
+            ...(args.sessionTargetsV1 ? { sessionTargetsV1: args.sessionTargetsV1 } : {}) }),
+    });
+    expect(proposal.ok, JSON.stringify({ ok: proposal.ok, ...(!proposal.ok ? { errorCode: proposal.errorCode } : {}) })).toBe(true);
+    if (!proposal.ok) throw new Error('Expected signed agent proposal');
+    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(proposal.result);
+    expect(effects).toEqual([]);
+    const executor = createDefaultActionExecutor();
+    const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+        { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-approves-agent-bindings' });
+    const decided = await decide();
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const persisted = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
+    expect(persisted).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(decided, JSON.stringify({ ok: decided.ok, receiverResults, approvalPlacement,
+        persisted: { status: persisted.status, execution: persisted.execution && { ok: persisted.execution.ok,
+            errorCode: persisted.execution.errorCode, error: persisted.execution.error } },
+        requests: homes.requests.map(({ method, path }) => ({ method, path })),
+        ...(!decided.ok ? { errorCode: decided.errorCode, error: decided.error } : {}) })).toMatchObject({ ok: true,
+        result: { status: 'executed', execution: { ok: true } } });
+    expect(effects).toEqual([input]);
+    expect(await decide()).toEqual(decided);
+    expect(effects).toEqual([input]);
+    expect(homes.artifacts(serverId).list().length).toBe(1);
+    expect(published.size).toBe(1);
+});
+
 it('tears down a person’s own UI Environment under Account Ask after confirmation without a self-approval', async () => {
     const actionId = 'deployments.teardown';
     await homes.requireUiApproval(serverId, actionId);

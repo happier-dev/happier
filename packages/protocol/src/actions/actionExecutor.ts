@@ -1736,10 +1736,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // itself. In that case retain the validated originating context.
       && isActionSpecSurfacedOn(getActionSpec(actionId), args.ctx.surface === 'cli' ? 'cli' : 'ui')
       && isPresentUserHostInvocation(args.ctx);
-    // App placement supplies transport, not replacement authority for an
-    // external admission or a list's admitted ambient corpus.
+    // A signed Account carrier authenticates proposal authoring. The verified
+    // deciding person supplies a fresh invocation; grants and admitted list
+    // corpora retain their original execution authority.
     const appOwnedContextReplay = appOwnedReplay && origin?.success
-      && !origin.data.externalActionExecutionAuthorization && (!isSessionListActionId(actionId)
+      && (!origin.data.externalActionExecutionAuthorization
+        || 'authentication' in origin.data.externalActionExecutionAuthorization.binding
+          && origin.data.externalActionExecutionAuthorization.binding.authentication.kind === 'account')
+      && (!isSessionListActionId(actionId)
       || origin.data.sessionListAccess === undefined || origin.data.sessionListAccess === 'mounted_ui');
     // Machine and Environment binding targets authored with the creator's local
     // profile follow this already-verified Account replay Home. Never rewrite the
