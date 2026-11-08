@@ -255,6 +255,8 @@ it('keeps the pool summary on a phone and offers its operations as one menu: Sha
     const header = screen.findAllByType(SettingsPageHeader)[0]!.props;
     // No filled Rename primary: renaming is a rare operation in the menu.
     expect(header.primaryAction).toBeUndefined();
+    // One alignment: the title block keeps the page's leading edge, like the sections under it.
+    expect(header.compactPresentation).toBeUndefined();
     // One real menu that the navigation fold lifts into rows: no Share button or second ⋯ beside it.
     const elements = (node: React.ReactNode): React.ReactElement[] => React.Children.toArray(node).flatMap((child) => {
         if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return [];

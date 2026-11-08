@@ -78,13 +78,12 @@ it('fits both System Status actions and entity operations in the folded phone po
             expect(box.clipped, id).toBe(false);
         }
         expect(layout.rect('status-copy').width).toBeGreaterThan(0);
+        // The page's labelled buttons are rows of the one menu (DESIGN-15 R4), not a strip above it:
+        // choosing one runs it after dismissal, on the owning menu's next frame.
         await act(async () => (document.querySelector('[data-testid="status-copy"]') as HTMLElement).click());
-        await act(async () => (document.querySelector('[data-testid="status-diagnose"]') as HTMLElement).click());
-        expect(copy).toHaveBeenCalledOnce();
-        expect(diagnose).toHaveBeenCalledOnce();
-        await act(async () => (document.querySelector('[data-testid="entity-remove"]') as HTMLElement).click());
-        // Dropdown operations run after dismissal, on the owning menu's next frame.
-        await act(async () => vi.waitFor(() => expect(remove).toHaveBeenCalledOnce()));
+        await act(async () => vi.waitFor(() => expect(copy).toHaveBeenCalledOnce()));
+        expect(diagnose).not.toHaveBeenCalled();
+        expect(remove).not.toHaveBeenCalled();
     } finally {
         await act(async () => root.unmount());
         host.remove();

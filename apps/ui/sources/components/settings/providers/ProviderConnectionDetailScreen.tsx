@@ -82,7 +82,8 @@ import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/ho
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { CredentialShareButton } from '@/components/sharing/credentials/CredentialShareSheet';
+import { CredentialShareButton, useCredentialShareAction } from '@/components/sharing/credentials/CredentialShareSheet';
+import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { SharedWithTeamsForSource } from '@/components/settings/teams/credentials/SharedWithTeamsSourceAdministration';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -107,6 +108,7 @@ import { ConnectedServiceGatewayUsedBy } from '@/components/settings/connectedSe
 import { ProviderGatewaySections, resolveProviderGatewayChosenMachine, type ProviderGatewayHubReachability,
     type ProviderGatewayMachine } from './gateway/ProviderGatewaySections';
 import { buildProviderGatewaySlotMutation, type ProviderGatewayConfigurationPatch } from '@/providers/connection/gatewayConfiguration';
+import { presentProviderGatewayServiceSummary } from '@/providers/connection/gatewayPresentation';
 import { useProviderGatewayConfiguration } from '@/providers/hooks/useProviderGatewayConfiguration';
 import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -264,7 +266,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     } : null, [mutationApprovalHref, router]);
     const deleteInFlightRef = React.useRef(false);
     const [deletePending, setDeletePending] = React.useState(false);
-    const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'notSupported'>('idle');
+    const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
     const [probeError, setProbeError] = React.useState<ProviderErrorV1 | null>(null);
     const [managedPurposeDraft, setManagedPurposeDraft] = React.useState<ManagedPurposeDraft | null>(null);
     const [duplicateMode, setDuplicateMode] = React.useState<'sameSource' | 'asCustom' | null>(null);
@@ -435,10 +437,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             if (result.status === 'error') {
                 setProbeState('idle');
                 setProbeError(result.error);
-                await query.refresh();
-                return;
+            } else {
+                setProbeState(result.status === 'success' ? 'success' : 'notSupported');
             }
-            setProbeState(result.status === 'success' ? 'idle' : 'notSupported');
             await Promise.all([query.refresh(), refreshPlacement?.()]);
         } catch (caught) {
             if (probeGenerationRef.current !== generation || activeProbeScopeRef.current !== requestScope) return;
@@ -859,9 +860,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         connectionId: props.connectionId,
     });
     const gatewayRuntimeQuery = gatewayHubMachineId === machineId ? query : gatewayHubQuery;
-    const gatewayRuntime = gatewayHubOnline && selectedTargetServerMatchesActiveAccount && !gatewayRuntimeQuery.error
-        ? gatewayRuntimeQuery.data?.connections.find(row => row.connectionId === props.connectionId)?.runtime.gateway
-        : undefined;
+    const gatewayRuntimeConnection = gatewayHubOnline && selectedTargetServerMatchesActiveAccount && !gatewayRuntimeQuery.error
+        ? gatewayRuntimeQuery.data?.connections.find(row => row.connectionId === props.connectionId) ?? null
+        : null;
+    const gatewayRuntime = gatewayRuntimeConnection?.runtime.gateway;
     const gatewayModels = React.useMemo(() => (models.groups[0]?.rows ?? []).map((row) => ({
         id: row.descriptor.id, name: row.descriptor.name,
     })), [models.groups]);
@@ -902,6 +904,21 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }
         if (!opened) await Modal.alert(t('common.error'), t('settingsProviders.links.failedToOpen'));
     }, []);
+
+    // Share is a header button where the page draws its own actions, and a row of the one menu where the
+    // phone's navigation bar holds them (the fold cannot run a button that needs its own hook).
+    const shareOffer = connection?.teamCredentialSourceOffer;
+    const credentialShareSource = teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId && machineId && shareOffer ? {
+        kind: 'provider_connection' as const,
+        serverId,
+        machineId,
+        connectionId: shareOffer.connectionId,
+        credentialSlotId: shareOffer.credentialSlotId,
+        connectionSecurityFingerprint: shareOffer.connectionSecurityFingerprint,
+    } : null;
+    const shareTitle = connection ? presentProviderConnectionDetail(connection, null).title : '';
+    const shareCredential = useCredentialShareAction({ name: shareTitle, ...(credentialShareSource ? { source: credentialShareSource } : {}) });
+    const headerActionsFold = useNavigationTitleChromeShowsTitle();
 
     // What runs on one computer (test, endpoint access, a local runtime) sits in its own section
     // with the machine chip; the connection itself is Account data and never waits for a machine.
@@ -999,8 +1016,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }
 
     const presentation = presentProviderConnectionDetail(connection, probeError);
+    const probePresentation = gateway
+        ? gatewayRuntimeConnection ? presentProviderConnectionDetail(gatewayRuntimeConnection, probeError) : null
+        : presentation;
+    const visibleProbeError = probePresentation ? probePresentation.probeError : probeError;
     const teamCredentialSourceOffer = connection.teamCredentialSourceOffer;
-    const probeErrorPresentation = presentProviderError(presentation.probeError);
+    const probeErrorPresentation = presentProviderError(visibleProbeError);
     const accountGrantValid = connection.grants.accountState === 'valid';
     const managedTargetMachineName = managedDeployment
         ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
@@ -1016,6 +1037,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // A gateway's menu holds gateway operations only: no Provider links, copies or custom edit.
     const providerMenu = gateway === null;
     const menuActions: PageHeaderMenuAction[] = [
+        ...(headerActionsFold && shareCredential ? [{ id: 'share', testID: 'provider-connection-menu-share', title: t('secretsSettings.share'),
+            onSelect: (intent?: { anchor?: PopoverAnchor }) => shareCredential(intent?.anchor) }] : []),
         ...(providerMenu && websiteUrl ? [{
             id: 'website',
             testID: 'provider-connection-menu-website',
@@ -1062,7 +1085,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     ];
     // Header and Test row consume the same daemon-owned observation. The local
     // Action state owns progress/refusals, never a second endpoint-health verdict.
-    const check = presentation.lastCheck;
+    const check = probePresentation?.lastCheck;
     const lastCheck = check
         ? {
             text: [check.errorCode
@@ -1074,23 +1097,15 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         : null;
     const probeDetail = connection.probeCapability === 'none'
         ? t('settingsProviders.detail.testOnFirstSession')
-        : presentation.probeError
+        : visibleProbeError
             ? t(probeErrorPresentation.descriptionKey)
             : probeState === 'notSupported'
                 ? t('settingsProviders.detail.testNotSupported')
-                : lastCheck?.text ?? null;
-    const probeFailed = Boolean(presentation.probeError) || (probeState === 'idle' && lastCheck?.failed === true);
+                : lastCheck?.text ?? (probeState === 'success' ? t('settingsProviders.detail.testSucceeded') : null);
+    const probeFailed = Boolean(visibleProbeError)
+        || ((probeState === 'idle' || probeState === 'success') && lastCheck?.failed === true);
     // A gateway's last check is read on its hub machine; another machine's observation is not its result.
-    const credentialShareSource = teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId && machineId && teamCredentialSourceOffer ? {
-        kind: 'provider_connection' as const,
-        serverId,
-        machineId,
-        connectionId: teamCredentialSourceOffer.connectionId,
-        credentialSlotId: teamCredentialSourceOffer.credentialSlotId,
-        connectionSecurityFingerprint: teamCredentialSourceOffer.connectionSecurityFingerprint,
-    } : null;
     const gatewayProbeDetail = gateway && connectionEnabled && connection.probeCapability !== 'none' && probeState !== 'probing'
-        && (presentation.probeError || probeState === 'notSupported' || gatewayHubMachineId === machineId)
         ? probeDetail : null;
     const apiKeyActionsDisabled = !selectedTargetServerMatchesActiveAccount;
     const selectedMachineName = machineId
@@ -1280,8 +1295,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     </PageHeaderMarkSlot>
                 )}
                 meta={[
-                    // A gateway's line is its live state alone (lab GW1): the engine behind it is not its
-                    // identity, and its model count is the Models row's.
+                    // A gateway leads with its known live state, or its saved service intent until checked.
+                    // Its model count belongs to the Models row.
                     // A named connection says which provider it is; otherwise the line leads with what kind of
                     // provider this is (lab PD1 "Model provider · 2 models").
                     ...(!gateway && (presentation.subtitle || pickerSourceKind && pickerSourceKind !== 'custom') ? [{
@@ -1300,7 +1315,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         text: t('settingsProvidersCollection.gateway.statusUnavailable', { machine: gatewayUnavailableMachineName }),
                     }] : gateway ? [
                         // Its live custody as its machine reports it: running there, or idle until a session
-                        // needs it. Unchecked or off (the switch says it) says nothing; unknown never reads as idle.
+                        // needs it. Until custody is reported, describe the saved service intent, never infer idle.
                         ...(connectionEnabled && gatewayRunningMachineName ? [{
                             key: 'gateway-status',
                             testID: 'provider-gateway-status',
@@ -1313,7 +1328,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             key: 'gateway-status',
                             testID: 'provider-gateway-status',
                             text: t('settingsProvidersCollection.gateway.statusOff'),
-                        }] : []),
+                        }] : [{
+                            key: 'gateway-status',
+                            testID: 'provider-gateway-status',
+                            text: presentProviderGatewayServiceSummary({ enabled: connectionEnabled, services: joinList(gatewayServices) }),
+                        }]),
                         // The header Test's outcome, as one fact beside the status.
                         ...(gatewayProbeDetail ? [{
                             key: 'gateway-probe',
@@ -1344,7 +1363,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             />
                         ) : null}
                         {/* Share is a header action, as on an account or a pool (lab crDetail). */}
-                        {credentialShareSource ? <CredentialShareButton testID="provider-connection-share" name={presentation.title}
+                        {credentialShareSource && !headerActionsFold ? <CredentialShareButton testID="provider-connection-share" name={presentation.title}
                             source={credentialShareSource} /> : null}
                         {/* On/off is the header switch on every connection, a gateway included (lab s2svc:gateway). */}
                         <PageHeaderStateSwitch

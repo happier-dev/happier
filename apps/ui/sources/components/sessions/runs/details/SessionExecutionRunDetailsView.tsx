@@ -865,7 +865,8 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             action={props.onRequestClose
                 ? { label: props.presentation === 'panel' ? t('common.close') : t('runPage.gone.closeTab'), onPress: props.onRequestClose }
                 : { label: t('surfaceState.checkAgain'), onPress: () => load() }}
-            secondaryAction={props.onRequestClose ? { label: t('surfaceState.checkAgain'), onPress: () => load() } : undefined}
+            // A removed Session took the details with it for good: nothing to check again.
+            secondaryAction={props.onRequestClose && !props.sessionRemoved ? { label: t('surfaceState.checkAgain'), onPress: () => load() } : undefined}
             diagnosticCode="execution_run_not_found"
         />
     ) : state.status === 'error' ? (
@@ -1177,7 +1178,8 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             ].join('\n')} />
     ) : null;
     if (props.presentation === 'panel') {
-        return <View style={{ flex: 1 }}>{reviewNotice}{content}</View>;
+        // A settled gone state is a short message: the panel (a dialog) takes its height, not the full card.
+        return <View style={state.status === 'gone' ? undefined : { flex: 1 }}>{reviewNotice}{content}</View>;
     }
 
     return (

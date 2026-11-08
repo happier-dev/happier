@@ -525,7 +525,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         : null;
     let nowTitle: string;
     let nowDetail: string;
-    let nowAction: Readonly<{ label: string; onPress: () => void; testID: string }> | null = null;
+    let nowAction: Readonly<{ label: string; onPress: () => void; testID: string; email?: string }> | null = null;
     if (waiting && usage.firstBack) {
         nowTitle = t('connectedServicesPool.allWaitingTitle');
         const first = usage.firstBack;
@@ -563,7 +563,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         if (!nowAction && nextMember && nextName && fallbackControlsEnabled) {
             // Switch now = the pool's one active-member writer; it moves new turns, it does not claim
             // anything about sessions already running.
+            const nextEmail = identityOf(nextMember.ref.accountId).email;
             nowAction = {
+                ...(nextEmail ? { email: nextEmail } : {}),
                 label: t('connectedServicesPool.switchTo', { name: nextName }),
                 onPress: () => setActiveMember(nextMember.ref),
                 testID: `${TEST_ID}:now:switch`,
@@ -625,7 +627,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     const moreActions: PageHeaderMenuAction[] = [
         ...(compact && share ? [{ id: 'share', title: t('secretsSettings.share'), testID: `${TEST_ID}:share`, onSelect: (intent?: { anchor?: PopoverAnchor }) => share(intent?.anchor) }] : []),
         { id: 'rename', title: t('connectedServicesPool.rename'), testID: `${TEST_ID}:menu:rename`, onSelect: () => { void rename(); } },
-        ...(compact && nowAction ? [{ id: 'switch', title: nowAction.label, testID: nowAction.testID, onSelect: nowAction.onPress }] : []),
+        ...(compact && nowAction ? [{ id: 'switch', title: nowAction.label, testID: nowAction.testID, onSelect: nowAction.onPress,
+            // A menu row is narrow: the email that tells two same-named members apart reads under the verb.
+            ...(nowAction.email ? { subtitle: nowAction.email } : {}) }] : []),
         // A personal label wins over the pool's own name, so renaming alone would change nothing visible.
         ...(props.onResetLabel && labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', service: group.ref.service, groupId: group.ref.groupId })]
             ? [{ id: 'resetLabel', title: t('connectedServicesCollection.resetPoolLabel'), onSelect: () => props.onResetLabel?.() }] : []),
@@ -669,7 +673,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 testID={`${TEST_ID}:summary`}
                 title={label}
                 alwaysShowTitle
-                compactPresentation="centered"
                 leading={(
                     <PageHeaderMarkIcon name="stack" />
                 )}
@@ -687,7 +690,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 // the page's purpose line, who is in use is its identity line, and the one hand switch is
                 // the header's action. Only a pool that needs you speaks with its own card below.
                 description={memberCount > 0 && !waiting ? nowDetail : t('connectedServicesPool.fallbackDescription')}
-                details={<View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: compact ? 'center' : 'flex-start', gap: theme.space.s6 }}>
+                details={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 }}>
                     <ConnectedServiceMark legacyServiceId={props.legacyServiceId} size="inline" />
                     <Text style={styles.headerMeta}>{[
                         compact || memberCount === 0

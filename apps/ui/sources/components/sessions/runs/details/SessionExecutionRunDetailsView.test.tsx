@@ -506,6 +506,8 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(text).not.toContain('runPage.gone.title');
         expect(text).toContain('common.close');
         expect(text).not.toContain('runPage.gone.closeTab');
+        // A removed Session is permanent: nothing to check again.
+        expect(text).not.toContain('surfaceState.checkAgain');
         await screen.pressByTestIdAsync('session-run-details-gone-action');
         expect(close).toHaveBeenCalledOnce();
     });

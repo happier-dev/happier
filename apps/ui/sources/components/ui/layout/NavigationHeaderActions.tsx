@@ -1,6 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useDestinationRouteNavigation as useNavigation } from '@/components/appShell/workspace/destinationInstanceContext';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -11,14 +11,18 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { HEADER_ACTIONS_GAP_PX, PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { readHappierPageOperation } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 // Context controls can contain an entity's existing overflow (directly, in a View, or
 // in a setting anchor). Lift its operations into the navigation overflow instead of
 // nesting a second popover whose selection is lost when the outer one dismisses.
 function foldContextActions(actions: React.ReactNode) {
     const operations: PageHeaderMenuAction[] = [];
+    // An entity's one state switch ("Enabled") is its state, not an operation: it stays visible on the
+    // bar beside the menu instead of hiding in a strip above the menu's rows.
+    const barControls: React.ReactElement[] = [];
     let openRequested = false;
     let hasContent = false;
     function retainControls(nodes: React.ReactNode): React.ReactNode {
@@ -32,6 +36,26 @@ function foldContextActions(actions: React.ReactNode) {
                 operations.push(...menu.props.actions);
                 openRequested ||= menu.props.openRequested === true;
                 return retainControls(menu.props.content);
+            }
+            if (node.type === PageHeaderStateSwitch) {
+                barControls.push(node);
+                return null;
+            }
+            if (node.type === RoundButton) {
+                const button = node as React.ReactElement<React.ComponentProps<typeof RoundButton>>;
+                const run = button.props.onPress ?? button.props.action;
+                if (typeof button.props.title === 'string' && button.props.title.trim() && run) {
+                    operations.push({
+                        id: button.props.testID ?? button.props.title,
+                        title: button.props.title,
+                        ...(button.props.testID ? { testID: button.props.testID } : {}),
+                        ...(button.props.disabled ? { disabled: true } : {}),
+                        ...(button.props.loading ? { loading: true } : {}),
+                        ...(button.props.display === 'destructive' ? { destructive: true } : {}),
+                        onSelect: async () => { await run(); },
+                    });
+                    return null;
+                }
             }
             const operation = readHappierPageOperation(node);
             if (operation) {
@@ -114,7 +138,7 @@ function foldContextActions(actions: React.ReactNode) {
     const content = retainControls(actions);
     // Destructive operations close the menu, whatever order the page drew them in.
     const ordered = [...operations.filter(operation => !operation.destructive), ...operations.filter(operation => operation.destructive)];
-    return { operations: ordered, content: hasContent ? content : undefined, openRequested };
+    return { operations: ordered, content: hasContent ? content : undefined, openRequested, barControls };
 }
 
 export type NavigationHeaderAction = Readonly<{
@@ -193,8 +217,10 @@ export function useNavigationHeaderActions(input: Readonly<{
             options.headerRight = () => (
                 <RoundButtonSizeScope size="normal"><View style={stylesheet.actions}>
                     {routeContextActions?.actions}
-                    {actions ? <PageHeaderMenu actions={foldedActions.operations} content={foldedActions.content}
-                        openRequested={foldedActions.openRequested} testID="page-header-actions" /> : null}
+                    {foldedActions.barControls}
+                    {actions && (foldedActions.operations.length > 0 || foldedActions.content) ? <PageHeaderMenu actions={foldedActions.operations} content={foldedActions.content}
+                        openRequested={foldedActions.openRequested} testID="page-header-actions"
+                        interactiveTargetGapPx={HEADER_ACTIONS_GAP_PX} /> : null}
                     {primary ? (
                         <RoundButton
                             testID={primary.testID}
@@ -211,17 +237,16 @@ export function useNavigationHeaderActions(input: Readonly<{
         }
         if (cancel) {
             options.headerLeft = () => (
-                <Pressable
+                <HappierPressable
                     testID={cancel.testID}
                     accessibilityRole="button"
                     accessibilityLabel={cancel.title}
                     disabled={cancel.disabled}
-                    hitSlop={8}
                     onPress={() => { void cancelRef.current?.onPress(); }}
                     style={stylesheet.cancel}
                 >
                     <Text style={stylesheet.cancelText}>{cancel.title}</Text>
-                </Pressable>
+                </HappierPressable>
             );
         }
         const parent = screen.getParent?.();
@@ -275,7 +300,7 @@ const NavigationHeaderActionsPublisher = React.memo(function NavigationHeaderAct
 
 const stylesheet = StyleSheet.create((theme) => ({
     foldedControls: { flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minWidth: 0, maxWidth: '100%' },
+    actions: { flexDirection: 'row', alignItems: 'center', gap: HEADER_ACTIONS_GAP_PX, minWidth: 0, maxWidth: '100%' },
     cancel: {
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s6,
