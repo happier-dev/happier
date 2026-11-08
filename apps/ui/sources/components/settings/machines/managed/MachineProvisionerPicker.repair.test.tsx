@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerContributionV1Schema, type MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -19,6 +19,10 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { View } from 'react-native';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
+import { activate as activateCrabbox } from '../../../../../../../packages/plugins/machine-crabbox/src/activate';
+import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -53,7 +57,7 @@ function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
 }
 
 describe('mounted provisioner repair', () => {
-    it.each(['picker', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
+    it.each(['picker', 'crabbox', 'configuration', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
         const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
         const repairUnavailable = scenario.endsWith('repairUnavailable');
         const projectionFailure = scenario === 'projectionOffline' ? 'machine-unavailable'
@@ -68,19 +72,42 @@ describe('mounted provisioner repair', () => {
         const machine = createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() });
         storage.setState({ machineListByServerId: { [serverId]: [machine] },
             machineListStatusByServerId: { [serverId]: 'idle' } });
-        const contribution = { pluginId: 'custom.compute', localId: 'native' };
-        const action = { pluginId: 'custom.compute', localId: 'repair' };
+        const isCrabbox = scenario === 'crabbox';
+        const contribution = isCrabbox ? { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox' } : { pluginId: 'custom.compute', localId: 'native' };
+        const action = { pluginId: contribution.pluginId, localId: isCrabbox ? 'install' : 'repair' };
+        const repairInput = isCrabbox ? {} : { tool: 'native-vm' };
+        let crabboxCheck: unknown;
+        if (isCrabbox) {
+            const handlers = new Map<string, ActionHandler>();
+            // Registration and host dependency/Account services are the ABI boundaries;
+            // the authored plugin check produces the prerequisite shown by the real UI.
+            await activateCrabbox({ actions: { register(id: string, handler: ActionHandler) { handlers.set(id, handler); return { dispose() {} }; } },
+                connectedAccounts: { register() {} } } as unknown as PluginApi);
+            crabboxCheck = await handlers.get('check')!({}, { services: {
+                connectedAccounts: { getBinding: async () => null },
+                managedServices: { dependencies: { status: async () => ({ state: 'missing', id: 'crabbox-cli', supported: true }) } },
+            } } as unknown as PluginInvocationContext);
+        }
         const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', credentialPurposes: [], acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: contribution.localId, title: 'Native compute', icon: 'magic-wand', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['darwin'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
             actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
         } };
+        if (isCrabbox) {
+            const descriptor = CRABBOX_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === contribution.localId);
+            if (!descriptor) throw new Error('Crabbox provisioner declaration missing');
+            provisioner.descriptor = MachineProvisionerContributionV1Schema.parse(descriptor);
+        }
+        const declaredRepair = isCrabbox ? CRABBOX_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === action.localId) : undefined;
         const projectedAction = PluginProjectedActionV2Schema.parse({ id: action.localId, pluginId: action.pluginId, occurrenceId: 'repair-occurrence',
             title: 'Repair native compute', scopes: ['global'], surfaces: ['ui'], execution: repairUnavailable
                 ? { target: 'client', client: { artifactId: 'repair-client', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] }
                 : { target: 'daemon' }, available: true,
-            dangerLevel: 'writesLocal', confirmation: { title: 'Repair native compute?', body: 'This changes the selected computer.' } });
+            dangerLevel: 'writesLocal', confirmation: { title: 'Repair native compute?', body: 'This changes the selected computer.' },
+            ...(declaredRepair ? { id: declaredRepair.id, title: declaredRepair.title, scopes: declaredRepair.scopes,
+                surfaces: declaredRepair.surfaces, execution: declaredRepair.execution,
+                dangerLevel: declaredRepair.dangerLevel, confirmation: declaredRepair.confirmation } : {}) });
         const optionsId = provisioner.descriptor.actions.options;
         if (!optionsId) throw new Error('The repair fixture declares a native options role');
         const optionsIdentity = { pluginId: contribution.pluginId, localId: optionsId };
@@ -114,7 +141,7 @@ describe('mounted provisioner repair', () => {
         } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired ? { available: true } : {
+            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired ? { available: true } : isCrabbox ? crabboxCheck : {
                 available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
                   ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
             } } } };
@@ -131,7 +158,7 @@ describe('mounted provisioner repair', () => {
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
         // Both public entry points receive the page's selected controller; automatic selection is a separate contract.
-        const card = surface === 'picker' ? `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.action`
+        const card = surface === 'picker' ? `managed-picker.provisioners.${provisioner.descriptor.billing.location}.${buildQualifiedPluginContributionKey(contribution)}.action`
             : 'managed-config.repair:systemTool:native-vm';
         if (scenario === 'missingWithoutRepair') {
             await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)
@@ -207,7 +234,7 @@ describe('mounted provisioner repair', () => {
         expect(repaired).toBe(true);
         const invocation = boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)?.[0];
         expect(invocation).toMatchObject({ machineId: 'controller', serverId: resolveServerProfileScopeIdForIdentifier(serverId), payload: { qualifiedActionId: buildQualifiedPluginContributionKey(action),
-            expectedContributorOccurrenceId: 'repair-occurrence', executionSurface: 'ui', input: { tool: 'native-vm' }, presentUserIntent: 'confirmed' } });
+            expectedContributorOccurrenceId: 'repair-occurrence', executionSurface: 'ui', input: repairInput, presentUserIntent: 'confirmed' } });
         await waitForHomeGovernance(() => {
             expect(harness.requestsFor('/v1/actions/machines.provisioners.check').length).toBeGreaterThan(checksBeforeRepair);
             if (surface === 'picker') expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)

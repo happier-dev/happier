@@ -1,4 +1,5 @@
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
+import type { ManagedDependencyStatus } from '@happier-dev/plugin-sdk/managed-services';
 
 import { CapabilityError } from '../errors';
 import type { Capability } from '../service';
@@ -36,6 +37,7 @@ function mapInstallResult(result: RuntimeInstallableInstallResult): Capabilities
 export function createInstallableCapability(
   descriptor: InstallableDependencyDescriptor,
   adapter: RuntimeInstallableAdapter,
+  readManagedDependencyStatus?: () => Promise<ManagedDependencyStatus>,
 ): Capability {
   return {
     effects: { detect: ['private_read', 'process'], invoke: {
@@ -49,6 +51,18 @@ export function createInstallableCapability(
       methods: INSTALLABLE_CAPABILITY_METHODS,
     },
     detect: async ({ request }) => {
+      if (readManagedDependencyStatus) {
+        const status = await readManagedDependencyStatus();
+        const ready = status.state === 'ready' || status.state === 'updateAvailable';
+        const executablePresent = ready ? status.executable !== undefined : status.state === 'missing' ? false : null;
+        return {
+          state: status.state, executablePresent, installed: executablePresent,
+          sourceKind: descriptor.source.kind,
+          ...(ready ? { version: status.version, installedVersion: status.version, sourceId: status.sourceId } : {}),
+          ...(status.state === 'updateAvailable' ? { availableVersion: status.availableVersion } : {}),
+          ...('code' in status ? { code: status.code } : {}),
+        };
+      }
       const statusParams = readStatusParams(request.params);
       if (adapter.detectCapabilityStatus) {
         return adapter.detectCapabilityStatus(statusParams);

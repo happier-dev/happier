@@ -22,7 +22,7 @@ import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginA
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionOutputV1Schema,
-    PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -51,7 +51,7 @@ import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } fro
 
 const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null,
     mountedProjection: null as PluginProjectionV2 | null, peerMountedProjection: null as PluginProjectionV2 | null,
-    peerMountedReads: 0, bytes: new Uint8Array(), artifactDigest: '',
+    peerMountedReads: 0, bytes: new Uint8Array(), entryPath: '', artifactDigest: '',
     successorBytes: new Uint8Array(), successorDigest: '' }));
 // Only the real network transport is replaced. Account, storage, projection,
 // Artifact leases, CommonJS evaluation, registration and reconciliation stay real.
@@ -65,7 +65,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
         const { computePluginUiArtifactSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
         return DaemonPluginUiArtifactBytesReadResponseSchema.parse({ ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: digest },
             artifact: { artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: bytes.byteLength },
-            files: [{ relativePath: successor ? 'react-native/next/entry.cjs.bundle' : 'react-native/continuity/entry.cjs.bundle', digest: computePluginUiArtifactSha256DigestV1(bytes),
+            files: [{ relativePath: successor ? 'react-native/next/entry.cjs.bundle' : daemon.entryPath, digest: computePluginUiArtifactSha256DigestV1(bytes),
                 byteSize: bytes.byteLength, bytesBase64: Buffer.from(bytes).toString('base64') }] });
     });
     return createServerScopedMachineRpcBoundaryMock(async ({ method, payload, machineId }) => {
@@ -95,7 +95,9 @@ const actionId = 'hold';
 const artifactId = 'continuity';
 const serverIdentityId = 'srv_executable_continuity';
 const platform = resolvePluginUiClientExecutablePlatform();
-const origin = { serverIdentityId, materializationRef: { machineId: 'machine-live', materializationId: 'continuity-install', pluginId } } as const;
+const defaultOccurrenceId = 'continuity-install';
+const origin = { serverIdentityId, sourceRef: { machineId: 'machine-live', pluginId,
+    sourceCustody: { kind: 'development', registeredRootId: '/fixture/plugins/executable-continuity' } } } as const;
 
 // This is a foreign plugin executable fixture, loaded and evaluated by the
 // production CommonJS owner. Its pending work crosses no mocked internal owner.
@@ -133,6 +135,14 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     managedRepair?: boolean;
     artifactLabel?: string;
     scopedGrants?: PluginActionPresentUserAuthorizationFacts['scopedGrants'] } = {}) {
+    const pluginId = options.managedRepair ? 'happier.machine.docker-sandboxes' : 'acme.executable-continuity';
+    const actionId = options.managedRepair ? 'install-docs' : 'hold';
+    const artifactId = options.managedRepair ? 'docker-sandboxes-machine-native' : 'continuity';
+    const occurrenceId = options.managedRepair ? `${pluginId}:42` : defaultOccurrenceId;
+    const executionOrigin = options.managedRepair
+        ? { serverIdentityId, sourceRef: { machineId: 'machine-live', pluginId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/machine-docker-sandboxes' } } }
+        : origin;
     pluginBoundary.pending = createDeferred<string>();
     pluginBoundary.cleanups = 0;
     pluginBoundary.signal = null;
@@ -179,6 +189,8 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const serverId = lifetime.scope.serverId;
     const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(), daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
     const peerMachine = createMachineFixture({ id: 'machine-peer', active: true, activeAt: Date.now(), daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
+    const peerExecutionOrigin = { serverIdentityId, sourceRef: { machineId: peerMachine.id, pluginId: peerPluginId,
+        sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/cleanup-peer' } } };
     storage.setState({ profileScope: lifetime.scope, settingsScope: lifetime.scope, endpointStatus: 'online', isDataReady: true,
         machines: { [machine.id]: machine, [peerMachine.id]: peerMachine }, machineListByServerId: { [serverId]: [machine, peerMachine] },
         machineListStatusByServerId: { [serverId]: 'idle' }, settings: { ...storage.getState().settings,
@@ -192,7 +204,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     globalThis.executableContinuityFixture.evaluations += 1;
     exports.activate = async function(api) {
         globalThis.executableContinuityFixture.enteredActivation = true;
-        api.actions.register('hold', async function(input, context) {
+        api.actions.register('${actionId}', async function(input, context) {
             globalThis.executableContinuityFixture.signal = context.signal;
             if (${options.managedRepair === true}) {
                 await context.ui.executeAction('links.openExternal', { url: 'https://docs.docker.com/ai/sandboxes/install/' }, { signal: context.signal });
@@ -204,11 +216,12 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         if (globalThis.executableContinuityFixture.activationGate) await globalThis.executableContinuityFixture.activationGate.promise;
         return function() { globalThis.executableContinuityFixture.cleanups += 1; };
     };`);
-    const entryPath = 'react-native/continuity/entry.cjs.bundle';
+    const entryPath = `react-native/${artifactId}/entry.cjs.bundle`;
+    daemon.entryPath = entryPath;
     const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entryPath, bytes: daemon.bytes }]);
     const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId, tier: 'reactNative', entry: entryPath,
         files: [{ relativePath: entryPath, digest: computePluginUiArtifactSha256DigestV1(daemon.bytes), byteSize: daemon.bytes.byteLength }],
-        digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
+        digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: options.managedRepair ? ['activate', 'renderSurface'] : ['activate'] }, hostUiApiRange: '^1.0.0' });
     daemon.artifactDigest = artifactDigest;
     daemon.successorBytes = new TextEncoder().encode(`exports.activate = function(api) {
         globalThis.executableContinuityFixture.peerActivations += 1;
@@ -240,20 +253,28 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     // Closed search-provider descriptors resolve authority through that package row.
     daemon.projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
-            occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
-            source: { kind: options.managedRepair ? 'bundled' : 'registryPackage', locator: pluginId } } },
+            occurrenceId: occurrenceId, executionOrigin, sourceCustody: executionOrigin.sourceRef.sourceCustody,
+            source: { kind: options.managedRepair ? 'bundled' : 'localPath', locator: options.managedRepair ? '@happier-dev/plugins-machine-docker-sandboxes' : `/fixture/plugins/${pluginId}` } } },
         agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         actionsById: { [`${pluginId}/${actionId}`]: { ...projectedAction, pluginId, available: true,
-            occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
-            authorization: { generation: { targetGeneration: origin.materializationRef.materializationId,
-                desiredGeneration: origin.materializationRef.materializationId,
-                appliedGeneration: options.coldDaemon ? null : origin.materializationRef.materializationId },
+            occurrenceId: occurrenceId, executionOrigin,
+            authorization: { generation: { targetGeneration: occurrenceId,
+                desiredGeneration: occurrenceId,
+                appliedGeneration: options.coldDaemon || options.managedRepair ? null : occurrenceId, targetGenerationMode: 'current' },
                 resourceSelections: [], scopedGrants: options.scopedGrants ?? [], serviceAvailability: [], operatingSystemAuthorization: [] } } },
-        familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [`reactNativeBundle:${pluginId}:${actionId}`]: {
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
+            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:sandboxes-machine-native`]: {
+                id: `reactNativeBundle:${pluginId}:sandboxes-machine-native`, pluginId, contributionKind: 'reactNativeBundle',
+                contributionId: 'sandboxes-machine-native', occurrenceId, executionOrigin,
+                generatedOwnerKind: 'renderer', artifactGraph, artifactSelectionOwner: 'daemonProjection',
+                entry: { artifactId, exportName: 'renderSurface' },
+                runtime: { decision: { state: 'load', reason: 'compatible' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest }, cacheKey: artifactDigest },
+            } } : {}),
+            [`reactNativeBundle:${pluginId}:${actionId}`]: {
             id: `reactNativeBundle:${pluginId}:${actionId}`, pluginId, contributionKind: 'reactNativeBundle', contributionId: actionId,
-            occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
-            generatedOwnerKind: 'clientContribution', artifactGraph,
-            ...(options.managedRepair ? { artifactSelectionOwner: 'daemonProjection' } : {}),
+            occurrenceId: occurrenceId, executionOrigin,
+            generatedOwnerKind: 'clientContribution', artifactGraph, entry: { artifactId, exportName: 'activate' },
+            artifactSelectionOwner: 'daemonProjection',
             runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest },
                 cacheKey: derivePluginReactNativeBundleCacheKey({ pluginId, contributionId: actionId, artifactId, artifactDigest, platform }) },
         } } } } });
@@ -264,15 +285,15 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const firstBundle = ownPluginUi.entriesById[`reactNativeBundle:${pluginId}:${actionId}`];
     daemon.projection = PluginProjectionV2Schema.parse({ ...daemon.projection,
         installedPackagesById: { ...daemon.projection.installedPackagesById, [peerPluginId]: { ...daemon.projection.installedPackagesById[pluginId], id: peerPluginId,
-            occurrenceId: 'peer-install', executionOrigin: { serverIdentityId, materializationRef: { machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install' } },
-            displayName: peerPluginId, source: { kind: 'registryPackage', locator: peerPluginId } } },
+            occurrenceId: 'peer-install', executionOrigin: peerExecutionOrigin, sourceCustody: peerExecutionOrigin.sourceRef.sourceCustody,
+            displayName: peerPluginId, source: { kind: 'localPath', locator: `/fixture/plugins/${peerPluginId}` } } },
         actionsById: { ...daemon.projection.actionsById, [`${peerPluginId}/next`]: { ...firstAction, ...projectedPeerAction, pluginId: peerPluginId,
             authorization: { ...firstAction.authorization, generation: { targetGeneration: 'peer-install',
                 desiredGeneration: 'peer-install', appliedGeneration: options.coldDaemon ? null : 'peer-install' } },
-            occurrenceId: 'peer-install', executionOrigin: { serverIdentityId, materializationRef: { machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install' } }, available: options.admitPeer === true } },
+            occurrenceId: 'peer-install', executionOrigin: peerExecutionOrigin, available: options.admitPeer === true } },
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: { ...ownPluginUi.entriesById,
             [`reactNativeBundle:${peerPluginId}:next`]: { ...firstBundle, id: `reactNativeBundle:${peerPluginId}:next`, pluginId: peerPluginId, contributionId: 'next',
-                occurrenceId: 'peer-install', executionOrigin: { serverIdentityId, materializationRef: { machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install' } }, artifactGraph: nextGraph,
+                occurrenceId: 'peer-install', executionOrigin: peerExecutionOrigin, artifactGraph: nextGraph,
                 runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest: successorDigest },
                     cacheKey: derivePluginReactNativeBundleCacheKey({ pluginId: peerPluginId, contributionId: 'next', artifactId: 'next', artifactDigest: successorDigest, platform }) } } } } } });
     const combined = daemon.projection;
@@ -284,9 +305,11 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [`reactNativeBundle:${peerPluginId}:next`]: combinedPluginUi.entriesById[`reactNativeBundle:${peerPluginId}:next`] } } } });
     daemon.projection = PluginProjectionV2Schema.parse({ ...combined,
         installedPackagesById: { [pluginId]: combined.installedPackagesById[pluginId] }, actionsById: { [`${pluginId}/${actionId}`]: firstAction },
-        familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [`reactNativeBundle:${pluginId}:${actionId}`]: firstBundle,
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
+            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:sandboxes-machine-native`]: ownPluginUi.entriesById[`reactNativeBundle:${pluginId}:sandboxes-machine-native`] } : {}),
+            [`reactNativeBundle:${pluginId}:${actionId}`]: firstBundle,
             ...(options.searchProvider ? { [`searchProvider:${pluginId}:entries`]: {
-                id: `searchProvider:${pluginId}:entries`, pluginId, occurrenceId: origin.materializationRef.materializationId,
+                id: `searchProvider:${pluginId}:entries`, pluginId, occurrenceId: occurrenceId,
                 contributionKind: 'searchProvider', descriptorId: 'entries',
                 // Match projectSearchProviders' closed descriptor arm; execution origin belongs to the referenced Action.
                 identity: { pluginId, localId: 'entries' }, action: { pluginId, localId: actionId },
@@ -303,24 +326,28 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const slot = { contributionId: actionId, artifactId, tier: 'reactNative' as const, platform, artifactDigest, hostUiApiRange: '^1.0.0' };
     const slots = [slot];
     const peerSlot = { ...slot, contributionId: 'next', artifactId: 'next', artifactDigest: successorDigest };
-    const archiveDigestSha256: PluginUiArtifactDigestV1 = `sha256:${'a'.repeat(64)}`;
-    const materialization = { serverIdentityId, machineId: machine.id, materializationId: origin.materializationRef.materializationId, pluginId,
-        version: '1.0.0', sourceClass: 'registryPackage' as const, portableRelease: true, archiveDigestSha256, uiArtifacts: slots, enabled: true, trustState: 'trusted' as const, observedAt: 1 } satisfies PluginAccountAvailabilitySnapshot['materializations'][number];
+    // These lifecycle cases exercise Machine-owned executable occurrences.
+    // A portable Account release would own client Actions independently of
+    // that Machine, so publish the host's release-less local installation.
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
+        engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] }, secrets: [], contributes });
+    const peerManifest = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, id: peerPluginId, displayName: peerPluginId, contributes: peerContributes });
+    const materialization = { serverIdentityId, machineId: machine.id, materializationId: occurrenceId, pluginId,
+        version: '1.0.0', sourceClass: 'localPath' as const, portableRelease: false, declaredManifest: manifest,
+        declaredUiEntries: projectPluginPortableUiDeclarationsV1(manifest, [artifactGraph]),
+        uiArtifacts: slots, enabled: true, trustState: 'trusted' as const, observedAt: 1 } satisfies PluginAccountAvailabilitySnapshot['materializations'][number];
     let snapshot: PluginAccountAvailabilitySnapshot = { availabilityCursor: 1,
         intentReads: [{ pluginId, response: { availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: false },
-            intent: { pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
-            release: { ref: { pluginId, version: '1.0.0' }, archiveDigestSha256, normalizedManifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
-                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] }, secrets: [], contributes }, collectionContracts: [], uiSlots: slots,
-                packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }, uiArtifacts: [] } }],
+            intent: { pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+            release: null, uiArtifacts: [] } }],
         materializations: [materialization], snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] }] };
     const ownIntent = snapshot.intentReads[0];
-    const peerMaterialization = { ...materialization, machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install', uiArtifacts: [peerSlot] };
+    const peerMaterialization = { ...materialization, machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install', uiArtifacts: [peerSlot],
+        declaredManifest: peerManifest, declaredUiEntries: projectPluginPortableUiDeclarationsV1(peerManifest, [nextGraph]) };
     const peerIntent = ownIntent?.response.intent;
-    const peerRelease = ownIntent?.response.release;
-    if (!ownIntent || !peerIntent || !peerRelease) throw new Error('Missing fixture release');
+    if (!ownIntent || !peerIntent) throw new Error('Missing fixture intent');
     const intentReads: PluginAccountAvailabilitySnapshot['intentReads'] = [...snapshot.intentReads, { pluginId: peerPluginId, response: { ...ownIntent.response,
-        intent: { ...peerIntent, pluginId: peerPluginId }, release: { ...peerRelease, ref: { ...peerRelease.ref, pluginId: peerPluginId },
-            normalizedManifest: { ...peerRelease.normalizedManifest, id: peerPluginId, displayName: peerPluginId, contributes: peerContributes }, uiSlots: [peerSlot] } } }];
+        intent: { ...peerIntent, pluginId: peerPluginId } } }];
     const materializations = [...snapshot.materializations, peerMaterialization];
     snapshot = { ...snapshot, intentReads, materializations, snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] },
         { serverIdentityId, machineId: peerMachine.id, materializations: [peerMaterialization] }] };
@@ -328,7 +355,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     availabilityReady.resolve(snapshot);
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot });
     const reader = readPluginAccountAvailability(lifetime.scope);
-    if (!options.managedRepair) expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'available' });
+    if (!options.managedRepair) expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'unavailable' });
     let observed: ReturnType<typeof useAppShellPluginUiProjection> | null = null;
     const readObserved = (): ReturnType<typeof useAppShellPluginUiProjection> | null => observed;
     let mountedState: ReturnType<typeof useMountedTargetedContributions> | null = null;
@@ -345,20 +372,20 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         return null;
     }
     const emptyTarget = PluginUiTargetedContributionsV1Schema.parse({
-        target: { pluginId, occurrenceId: origin.materializationRef.materializationId,
-            sourceCustody: { kind: 'managed', immutableGenerationId: origin.materializationRef.materializationId, installSource: 'npm' } },
+        target: { pluginId, occurrenceId: occurrenceId,
+            sourceCustody: executionOrigin.sourceRef.sourceCustody },
         points: [],
     });
     function MountedDemand() {
         const owner = useAppShellPluginUiProjection();
         mountedLifetime = useServerCredentialAccountScopeBinding(serverId).binding;
         mountedState = useMountedTargetedContributions({ accountLifetime: mountedLifetime, machineId: machine.id, serverId,
-            pluginId, mountedOccurrenceId: origin.materializationRef.materializationId, enabled: true,
+            pluginId, mountedOccurrenceId: occurrenceId, enabled: true,
             emptyTargetedContributions: emptyTarget });
         mountedController = useBoundPluginSurfaceController({ facts: {
             pluginId, contributionId: 'panel', surfaceId: 'mounted-only-client-action',
             placement: 'appSurface', platform, channel: 'internal', machineId: machine.id, serverId, sessionId: 'session-continuity',
-            occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin, accountLifetime: mountedLifetime,
+            occurrenceId: occurrenceId, executionOrigin, accountLifetime: mountedLifetime,
             targetedContributions: mountedState.targetedContributions,
             targetSourceCustody: emptyTarget.target.sourceCustody,
             actionInputSelectionFactsKey: mountedState.actionInputSelectionFactsKey,
@@ -389,11 +416,12 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const screen = await renderScreen(render());
     const unmountDemand = async () => { mountDemand = false; await screen.update(render()); };
     const composition = getInstalledPluginUiClientExecutableComposition();
-    const address = { family: 'actions' as const, pluginId, localId: actionId, target: { artifactId, exportName: 'activate', platform }, executionOrigin: origin,
-        occurrenceId: origin.materializationRef.materializationId };
+    const address = { family: 'actions' as const, pluginId, localId: actionId, target: { artifactId, exportName: 'activate', platform }, executionOrigin,
+        occurrenceId: occurrenceId };
     const dispatch = () => dispatchPluginSurfaceAction({ action: { pluginId, localId: actionId }, input: null, clientAction: { sessionId: 'session-continuity' },
         resolveContributedAction: identity => createPluginUiProjectedActionResolver(readObserved()?.pluginUiProjection?.actionsById)(identity) });
     const fixture = { lifetime, machine, peerMachine, materialization, snapshot, address, composition, screen, dispatch,
+        repairAction: { action: { pluginId, localId: actionId }, input: {} },
         readObserved, readMounted, readMountedController, readMountedLifetime, unmountDemand, readObservedAt: () => observedAt,
         readManagedPresentation: () => managedPresentation };
     if (options.waitForAdmission === false) return { ...fixture, registration: null };
@@ -405,14 +433,14 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     expect(lifetime.isCurrent()).toBe(true);
     const current = readObserved();
     expect(current?.accountLifetime).toBe(lifetime);
-    expect(readPluginAccountAvailability(lifetime.scope).readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'available' });
+    expect(readPluginAccountAvailability(lifetime.scope).readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'unavailable' });
     const normalizedTargets = resolveProjectedPluginUiClientExecutables({ actionProjection: current?.pluginUiProjection ? { projection: current.pluginUiProjection } : null, platform });
     expect(normalizedTargets).toHaveLength(options.admitPeer ? 2 : 1);
     expect(normalizedTargets.find(target => target.pluginId === pluginId)?.authority).toEqual({ machineId: machine.id, serverId });
     await vi.waitFor(async () => {
         await flushHookEffects();
         expect(observed).toMatchObject({ phase: 'current', clientExecutableActivation: { status: 'ready' } });
-        expect(observed?.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`]).toMatchObject({ available: true, occurrenceId: origin.materializationRef.materializationId });
+        expect(observed?.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`]).toMatchObject({ available: true, occurrenceId: occurrenceId });
         expect(resolveProjectedPluginUiClientExecutables({ actionProjection: observed?.pluginUiProjection ? { projection: observed.pluginUiProjection } : null, platform })).toHaveLength(options.admitPeer ? 2 : 1);
         expect(composition.read(address)).not.toBeNull();
     });
@@ -429,14 +457,15 @@ it('dispatches a controller prerequisite repair through the mounted managed cata
     await vi.waitFor(async () => {
         await flushHookEffects();
         expect(fixture.readManagedPresentation()?.projectionReady).toBe(true);
+        expect(fixture.composition.read(fixture.address)).not.toBeNull();
     });
     // The card's repair callback must execute the declared client Action, even
     // when this controller is not an ambient AppShell catalog demand.
     pluginBoundary.pending.resolve('install reviewed');
     const binding = fixture.readMountedLifetime();
     if (!binding) throw new Error('Missing routed repair lifetime');
-    const result = await fixture.readManagedPresentation()?.repair({ action: { pluginId, localId: actionId }, input: null }, binding);
-    expect(result, JSON.stringify(result)).toEqual({ ok: true, result: 'install reviewed' });
+    const result = await fixture.readManagedPresentation()?.repair(fixture.repairAction, binding);
+    expect(result).toEqual({ ok: true, result: 'install reviewed' });
     expect(opened).toHaveBeenCalledExactlyOnceWith('https://docs.docker.com/ai/sandboxes/install/');
 });
 
@@ -571,7 +600,7 @@ it('dispatches the same palette query from Session and Home beside portable Acco
     const { lifetime, readObserved, machine, composition, snapshot } = await mountClientExecutableFixture({ searchProvider: true, coldDaemon: true });
     const current = readObserved();
     expect(current?.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`]?.authorization?.generation)
-        .toMatchObject({ targetGeneration: origin.materializationRef.materializationId, appliedGeneration: null });
+        .toMatchObject({ targetGeneration: defaultOccurrenceId, appliedGeneration: null });
     const sections = buildPluginSearchProviderSections({
         projection: current?.pluginUiProjection, accountLifetime: lifetime,
         scopedLaunchFacts: { machineId: machine.id, serverId: lifetime.scope.serverId, interactionEnabled: true },
@@ -584,10 +613,10 @@ it('dispatches the same palette query from Session and Home beside portable Acco
 
     // The Account's portable renderer catalog intentionally has no runtime
     // search descriptors. Compose it through the same final merge as AppShell.
-    const release = snapshot.intentReads[0]?.response.release;
-    if (!release) throw new Error('Missing producer release');
-    const manifest = { ...release.normalizedManifest, contributes: PluginContributesV2Schema.parse({
-        ...release.normalizedManifest.contributes,
+    const declaredManifest = snapshot.materializations[0]?.declaredManifest;
+    if (!declaredManifest) throw new Error('Missing producer manifest');
+    const manifest = { ...declaredManifest, contributes: PluginContributesV2Schema.parse({
+        ...declaredManifest.contributes,
         ui: { renderers: [{ id: 'main', kind: 'reactNative', artifact: 'main', requiredHostMethods: [] }],
             views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, title: 'Entries', renderer: 'main' }] },
     }) };
@@ -640,8 +669,8 @@ it('refuses revoked and foreign scoped grants for a committed cold-client Action
     if (!projectedAction?.authorization) throw new Error('Missing producer authorization');
     const authorization = projectedAction.authorization;
     expect(authorization.generation).toMatchObject({
-        targetGeneration: origin.materializationRef.materializationId,
-        desiredGeneration: origin.materializationRef.materializationId, appliedGeneration: null,
+        targetGeneration: defaultOccurrenceId,
+        desiredGeneration: defaultOccurrenceId, appliedGeneration: null,
     });
     const producerGrant = authorization.scopedGrants[0];
     if (!producerGrant) throw new Error('Missing producer scoped grant');

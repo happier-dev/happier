@@ -168,6 +168,110 @@ it('activates separately authored Account code through the existing host and ret
     }
 });
 
+it('keeps a confirmed incumbent when an equal activation from a superseded request settles retired', async () => {
+    // Session open on a busy Account: AppShell supersedes its executable request while an
+    // equal request is confirming the committed incumbent with the host. That retired
+    // attempt must not tear down the incumbent, or the next request re-evaluates the module.
+    const accountOrigin = { kind: 'account' as const, serverId: 'home', accountId: 'account', custodyId: 'release-1' };
+    const accountTarget = { ...target, realm: 'account' as const };
+    const contributes = { actions: [{ ...projectedClientAction(), execution: {
+        target: 'account' as const, account: { artifactId: target.artifactId, exportName: target.exportName },
+    } }] };
+    const activate = vi.fn((api: PluginClientApi) => {
+        api.actions.register('open-preview', async () => null);
+    });
+    let afterHostActivate: (() => void) | null = null;
+    const composition = createPluginUiClientExecutableComposition({ createExecutableHost: () => {
+        const host = createPluginUiExecutableModuleHost();
+        return Object.freeze({ ...host, activate: async (input: Parameters<PluginUiExecutableModuleHost['activate']>[0]) => {
+            const result = await host.activate(input);
+            afterHostActivate?.();
+            return result;
+        } });
+    } });
+    const base = { pluginId, contributes, target: accountTarget, executionOrigin: null, occurrenceId: accountOrigin.custodyId,
+        hostUiApiRange, pluginVersion: '1.0.0', cache: cacheWithIdentity(), identity, moduleReference,
+        backend: backend(activate), authority: accountOrigin };
+    const address = { family: 'actions' as const, pluginId, localId: 'open-preview', target: accountTarget,
+        executionOrigin: null, occurrenceId: accountOrigin.custodyId };
+    try {
+        expect(await composition.reconcile([{ ...base, isCurrent: () => true }])).toMatchObject([{ result: { ok: true } }]);
+        let superseded = false;
+        afterHostActivate = () => { superseded = true; };
+        expect(await composition.reconcile([{ ...base, isCurrent: () => !superseded }]))
+            .toMatchObject([{ result: { ok: false } }]);
+        afterHostActivate = null;
+        const keptAfterRetiredAttempt = composition.read(address) !== null;
+        expect(await composition.reconcile([{ ...base, isCurrent: () => true }])).toMatchObject([{ result: { ok: true } }]);
+        expect({ keptAfterRetiredAttempt, registered: composition.read(address) !== null, evaluations: activate.mock.calls.length })
+            .toEqual({ keptAfterRetiredAttempt: true, registered: true, evaluations: 1 });
+    } finally {
+        await composition.unload();
+    }
+});
+
+it.each([
+    { differentBytes: false, conflictingRights: false },
+    { differentBytes: true, conflictingRights: false },
+    { differentBytes: false, conflictingRights: true },
+])('isolates ambient and mounted client Actions with module bytes differing=$differentBytes and rights conflicting=$conflictingRights', async ({ differentBytes, conflictingRights }) => {
+    const pluginId = 'happier.machine.docker-sandboxes';
+    const target = { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate', platform: 'web' as const };
+    const contributes = PluginContributesV2Schema.parse({ actions: [{ id: 'install-docs', title: 'Get Docker Sandboxes',
+        scopes: ['global'], surfaces: ['ui', 'plugin'], placementBindings: ['commandPalette'], dangerLevel: 'safe',
+        execution: { target: 'client', client: { artifactId: target.artifactId, exportName: target.exportName },
+            platforms: ['web', 'ios', 'android'] } }] });
+    const bundledOccurrence = JSON.stringify(['@happier-dev/plugins-machine-docker-sandboxes', pluginId, '0.0.0']);
+    const sourceOrigin = { serverIdentityId: 'srv_docker', sourceRef: { machineId: 'controller', pluginId,
+        sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/machine-docker-sandboxes' } } };
+    const cache = createPluginReactNativeBundleCache();
+    const bundledIdentity = { ...identity, pluginId, artifactId: target.artifactId };
+    const mountedIdentity = { ...bundledIdentity, artifactDigest: differentBytes
+        ? 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' as const
+        : bundledIdentity.artifactDigest };
+    for (const [exactIdentity, answer] of [[bundledIdentity, 'bundled'], [mountedIdentity, differentBytes ? 'mounted' : 'bundled']] as const) {
+        cache.putInstalledArtifact({ identity: exactIdentity, format: 'plainJs', bytes: new TextEncoder().encode(
+            `exports.activate = function(api) { api.actions.register('install-docs', async function() { return '${answer}'; }); };`,
+        ) });
+    }
+    const common = { pluginId, contributes, target, hostUiApiRange: '^1.1.0', cache, moduleReference: { exportName: 'activate' },
+        backend: createPluginUiCommonJsLoaderBackend(), isCurrent: () => true };
+    const bundled = { ...common, identity: bundledIdentity, pluginVersion: '0.0.0', executionOrigin: null, occurrenceId: bundledOccurrence,
+        authority: { kind: 'account' as const, serverId: 'home', accountId: 'account', custodyId: bundledOccurrence } };
+    const mounted = { ...common, identity: mountedIdentity, pluginVersion: differentBytes ? '1.0.0' : '0.0.0',
+        contributes: conflictingRights ? PluginContributesV2Schema.parse({ actions: [{ ...contributes.actions[0],
+            execution: { target: 'client', client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] } }] }) : contributes,
+        executionOrigin: sourceOrigin, occurrenceId: `${pluginId}:42`, authority: { serverId: 'home', machineId: 'controller' } };
+    const composition = createPluginUiClientExecutableComposition();
+    const address = (activation: typeof bundled | typeof mounted) => ({ family: 'actions' as const, pluginId, localId: 'install-docs',
+        target, executionOrigin: activation.executionOrigin, occurrenceId: activation.occurrenceId });
+    try {
+        const results = (await composition.reconcile([bundled, mounted])).map(attempt => attempt.result);
+        if (conflictingRights) {
+            expect(results).toMatchObject([{ ok: false, code: 'activation_failed' }, { ok: false, code: 'activation_failed' }]);
+            expect(composition.read(address(bundled))).toBeNull();
+            expect(composition.read(address(mounted))).toBeNull();
+            return;
+        }
+        expect(results).toEqual([{ ok: true }, { ok: true }]);
+        for (const [activation, answer] of [[bundled, 'bundled'], [mounted, differentBytes ? 'mounted' : 'bundled']] as const) {
+            const registration = composition.read(address(activation));
+            expect(registration).toMatchObject({ occurrenceId: activation.occurrenceId, executionOrigin: activation.executionOrigin,
+                authority: activation.authority, pluginVersion: activation.pluginVersion });
+            const handler = registration?.registration.value;
+            if (typeof handler !== 'function') throw new Error('Missing exact client Action handler');
+            expect(await Reflect.apply(handler, undefined, [])).toBe(answer);
+        }
+        const bundledRegistration = composition.read(address(bundled));
+        expect((await composition.reconcile([mounted])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+        expect(bundledRegistration?.lifecycle.signal.aborted).toBe(true);
+        expect(composition.read(address(bundled))).toBeNull();
+        expect(composition.read(address(mounted))).not.toBeNull();
+    } finally {
+        await composition.unload();
+    }
+});
+
 it('keeps registration rights separate when two plugins use the same executable bytes', async () => {
     const accountTarget = { ...target, realm: 'account' as const };
     const contributes = PluginContributesV2Schema.parse({ actions: [{ id: 'run', title: 'Run', scopes: ['global'],
@@ -308,6 +412,15 @@ const contributes = PluginContributesV2Schema.parse({
             exportName: target.exportName,
         },
     }],
+});
+
+it.each([false, true])('refuses duplicate authored registration rights with differing contracts=%s', differingContracts => {
+    const declared = contributes.voiceProviders[0]!;
+    const conflicting = PluginContributesV2Schema.parse({ voiceProviders: [declared,
+        differingContracts ? { ...declared, roles: ['conversation_stt'] } : declared] });
+    const index = createPluginUiClientExecutableRegistrationIndex();
+    expect(() => index.createScope({ pluginId, contributes: conflicting, target, executionOrigin, occurrenceId,
+        lifecycle: createLifecycle() })).toThrow("Duplicate contribution registration right 'voiceProviders/conversation'");
 });
 
 function projectedClientAction(): PluginProjectedActionV2 {

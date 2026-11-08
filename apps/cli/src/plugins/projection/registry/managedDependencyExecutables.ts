@@ -4,6 +4,7 @@ import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/
 import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/managedDependencies';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from './types';
@@ -26,6 +27,8 @@ export function resolveAgentRuntimeManagedDependencyId(
 export type ResolvedExecutableManagedDependency = Readonly<
     Omit<ResolvedInstallableContribution, 'definition'> & {
         definition: InstallableDependencyDescriptor;
+        /** Original dependency identity; an install source id is not the SDK dependency id. */
+        managedDependency?: PluginContributionIdentityV1;
     }
 >;
 
@@ -302,10 +305,11 @@ export function selectExecutableManagedDependencies(
                     : source.kind === 'managedJavaScriptPackage'
                         ? projectManagedJavaScriptPackageInstallableDescriptor({ ...common, source })
                         : projectGitHubReleaseBinaryInstallableDescriptor({ ...common, source });
-            if (!descriptor) continue;
+            if (!descriptor || !contribution.pluginId) continue;
             executable.push(Object.freeze({
                 ...contribution,
                 definition: descriptor,
+                managedDependency: { pluginId: contribution.pluginId, localId: parsed.data.id },
             }));
         }
     }

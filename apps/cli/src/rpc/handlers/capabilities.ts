@@ -58,7 +58,12 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { SavedSecretVaultInvocationV1Schema, type SavedSecretVaultInvocationResultV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { observeCurrentAgentSessionFactory, type AgentSessionFactoryObservations, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
-import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { acquireAuthoritativePluginRuntimeRegistryLease, tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { createStablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
+import { createV2ManagedDependencySourceModel } from '@/plugins/runtime/invocation/services/managedDependencySourceModel';
+import { createProductionManagedDependencySourceAdapter } from '@/plugins/runtime/invocation/services/managedDependencySourceAdapters';
+import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
 function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): InstalledPluginCapabilityEntryV1 {
@@ -505,9 +510,34 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     const installablesRegistry = createInstallablesRegistryFromResolvedContributions(
         resolvedContributionRegistry.managedDependencies ?? [],
     );
+    // Standalone Sessions have a resolved catalog but no applied daemon runtime.
+    // Use the same source-selection owner for their read-only status snapshot.
+    const standaloneDependencies = registryLease ? null : createStablePluginManagedDependenciesHost({
+        installablesRegistry,
+        sourceModel: createV2ManagedDependencySourceModel({
+            platform: process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
+            architecture: process.arch, contributions: resolvedContributionRegistry.managedDependencies ?? [],
+        }),
+        isCurrent: cliProbeDependencies.isAgentRegistryCurrent,
+        getSettings: () => ({}), resolveAdapter: getRuntimeInstallableAdapter,
+        resolveSourceAdapter: createProductionManagedDependencySourceAdapter,
+        async removeManagedInstall() { throw new Error('Capability status does not remove managed dependencies'); },
+    });
     const installableCapabilities = await createInstallableCapabilities({
         installablesRegistry,
         existingCapabilityIds,
+        managedDependencyContributions: resolvedContributionRegistry.managedDependencies,
+        readManagedDependencyStatus: async dependency => {
+            if (standaloneDependencies) return await standaloneDependencies.bind(dependency.pluginId).status(dependency.localId);
+            const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+            try {
+                const service = lease.registry.managedDependencies?.bind(dependency.pluginId)
+                    ?? createUnavailableManagedServices().dependencies;
+                return await service.status(dependency.localId);
+            } finally {
+                await lease.release();
+            }
+        },
     });
 
     return createCapabilitiesService({

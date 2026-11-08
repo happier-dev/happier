@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { CRABBOX_PLUGIN, CRABBOX_ROLE_SCHEMAS } from './manifest.js';
-import type { PluginAccountApi, PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginAccountApi, PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { resolveEffectiveInputFields, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { activate } from './activate.js';
 import { createHash } from 'node:crypto';
@@ -133,7 +133,8 @@ describe('Crabbox lazy family authoring', () => {
       nativeImageId: 'node:22-bookworm', localContainerRuntime: 'docker', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
     if (role === 'check') {
       expect(MachineProvisionerCheckResultV1Schema.parse(await runtime.handlers.get('check')!({}, context))).toMatchObject({ available: false, code: 'provider_unavailable',
-        prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox-cli' } }, status: 'unavailable' }] });
+        prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'crabbox-cli' } }, status: 'unavailable',
+          repairAction: { action: { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'install' }, input: {} } }] });
     } else {
       const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, context));
       expect(options.base).toMatchObject({ launch, available: false, unavailableReason: { code: 'provider_unavailable' } });
@@ -145,6 +146,24 @@ describe('Crabbox lazy family authoring', () => {
     expect(runtime.requests).toEqual([]);
   });
 
+  it('installs the declared native prerequisite only through the explicit repair Action', async () => {
+    const runtime = await coordinatorRoles();
+    const ensured: string[] = [];
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      managedServices: { dependencies: { ensure: async (id: string) => {
+        ensured.push(id);
+        return { state: 'ready', id, version: '0.72.0', executable: { kind: 'managedDependency', id } };
+      } } },
+    } } as unknown as PluginInvocationContext;
+    const action = CRABBOX_PLUGIN.manifest.contributes.actions?.find(action => action.id === 'install');
+    expect(action).toMatchObject({ execution: { target: 'daemon' }, surfaces: expect.arrayContaining(['ui']), dangerLevel: 'writesLocal', confirmation: expect.any(Object) });
+    const repair = runtime.handlers.get('install');
+    expect(repair).toBeDefined();
+    expect(await repair!({}, context)).toBeNull();
+    expect(ensured).toEqual(['crabbox-cli']);
+    expect(runtime.admissions.materializations).toBe(0);
+  });
+
   it.each(['check', 'options'] as const)('preserves an unexpected native dependency adapter failure from %s', async role => {
     const runtime = await coordinatorRoles();
     const failure = new Error('dependency adapter disconnected');
@@ -152,7 +171,7 @@ describe('Crabbox lazy family authoring', () => {
       connectedAccounts: { ...runtime.context.services.connectedAccounts, getBinding: async () => null },
       managedServices: { dependencies: { status: async () => { throw failure; } } },
     } } as unknown as PluginInvocationContext;
-    const input = role === 'check' ? {} : { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
+    const input: JsonValue = role === 'check' ? {} : { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
       nativeImageId: 'node:22-bookworm', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
     await expect(runtime.handlers.get(role)!(input, context)).rejects.toBe(failure);
   });
@@ -169,7 +188,7 @@ describe('Crabbox lazy family authoring', () => {
     } } as unknown as PluginInvocationContext;
     const launch = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
       nativeImageId: 'node:22-bookworm', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
-    const input = role === 'acquire' ? { launch, managedId: 'host-managed-row', bootstrapPublicKey: 'ssh-rsa AAAAB3Example' }
+    const input: JsonValue = role === 'acquire' ? { launch, managedId: 'host-managed-row', bootstrapPublicKey: 'ssh-rsa AAAAB3Example' }
       : { resource: { backendId: 'local-container', transport: 'direct', namespace: 'test-org', leaseId: runtime.leaseId, nativeInstanceId: 'c'.repeat(64) } };
     const result = await runtime.handlers.get(role)!(input, context);
     if (role === 'inspect') expect(result).toMatchObject({ availability: 'unavailable', reason: 'provider_unavailable' });

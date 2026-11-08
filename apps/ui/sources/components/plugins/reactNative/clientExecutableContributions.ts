@@ -11,6 +11,7 @@ import type { PluginUiResourceProjection, PluginUiConnectedAccountDescriptorProj
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { PluginAccountActionHandler, PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 
@@ -190,6 +191,8 @@ type PluginUiClientExecutableRegistrationScopeInput = Readonly<{
         pluginId: string;
         /** Every compatible declaration the shared module must register. */
         contributes: Readonly<Record<string, unknown>>;
+        /** Canonical rights combined once by the shared-module composition. */
+        registrationRights?: readonly PluginContributionRegistrationRight[];
         /**
          * The exact authority-owned declarations this activation may publish.
          * Omitted only when one activation owns the whole declaration set.
@@ -298,7 +301,7 @@ function awaitRegistrationPreparation<T>(work: Promise<T>, signal: AbortSignal):
     });
 }
 
-function registrationIndexKey(input: Readonly<{
+function registrationRightKey(input: Readonly<{
     family: string;
     pluginId: string;
     localId: string;
@@ -310,6 +313,15 @@ function registrationIndexKey(input: Readonly<{
             localId: input.localId,
         })),
     ].join('\u0000');
+}
+
+function registrationIndexKey(input: Omit<PluginUiClientExecutableRegistrationAddress, 'family'> & Pick<PluginContributionRegistrationRight, 'family'>): string {
+    return stableJsonStringify([
+        registrationRightKey(input),
+        freezeTarget(input.target),
+        input.executionOrigin,
+        input.occurrenceId,
+    ]);
 }
 
 function validateScopeInput(input: Readonly<{
@@ -428,7 +440,7 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
     function createScope(input: PluginUiClientExecutableRegistrationScopeInput): PluginUiExecutableRegistrationScope {
         const exact = validateScopeInput(input);
         const deriveRights = exact.target.realm === 'account' ? derivePluginAccountContributionRegistrationRights : derivePluginClientContributionRegistrationRights;
-        const rights = deriveRights(input.contributes, exact.target);
+        const rights = input.registrationRights ?? deriveRights(input.contributes, exact.target);
         if (rights.length === 0) {
             throw new Error('client_executable_target_has_no_registration_rights');
         }
@@ -442,12 +454,12 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
             : createPluginRegistrationScope({ pluginId: input.pluginId, rights,
                 target: Object.freeze({ ...exact.target, realm: 'client' as const }) });
         const ownerToken = Object.freeze({});
-        const rightsByKey = new Map(rights.map((right) => [registrationIndexKey({
+        const rightsByKey = new Map(rights.map((right) => [registrationRightKey({
             family: right.family,
             pluginId: input.pluginId,
             localId: right.localId,
         }), right] as const));
-        const publishedRightsByKey = new Map(publishedRights.map((right) => [registrationIndexKey({
+        const publishedRightsByKey = new Map(publishedRights.map((right) => [registrationRightKey({
             family: right.family,
             pluginId: input.pluginId,
             localId: right.localId,
@@ -495,12 +507,12 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                 const committedRegistrations = registrationScope.commit();
                 const nextEntries: Array<readonly [string, IndexedRegistration]> = [];
                 for (const registration of committedRegistrations) {
-                    const key = registrationIndexKey({
+                    const rightKey = registrationRightKey({
                         family: registration.family,
                         pluginId: input.pluginId,
                         localId: registration.localId,
                     });
-                    const right = rightsByKey.get(key);
+                    const right = rightsByKey.get(rightKey);
                     if (!right) {
                         throw new Error('client_executable_registration_right_missing');
                     }
@@ -508,7 +520,10 @@ export function createPluginUiClientExecutableRegistrationIndex(): PluginUiClien
                     // set while this authority owns only a family subset.
                     // Capture every registration for the module lifecycle,
                     // but publish only this activation's exact declarations.
-                    if (!publishedRightsByKey.has(key)) continue;
+                    if (!publishedRightsByKey.has(rightKey)) continue;
+                    const key = registrationIndexKey({ family: registration.family, pluginId: input.pluginId,
+                        localId: registration.localId, target: exact.target, executionOrigin: exact.executionOrigin,
+                        occurrenceId: input.occurrenceId });
                     if (nextEntries.some(([candidateKey]) => candidateKey === key)) {
                         throw new Error('client_executable_registration_duplicate');
                     }
@@ -1083,6 +1098,13 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                     const registrationScope = registrationIndex.createScope({
                         pluginId: activation.pluginId,
                         contributes: preparedTarget.registrationContributes,
+                        // Account discovery and a mounted Machine can admit the
+                        // same module. Share identical canonical rights once;
+                        // differing contracts still reach the scope's refusal.
+                        registrationRights: [...new Map((activation.target.realm === 'account'
+                            ? derivePluginAccountContributionRegistrationRights : derivePluginClientContributionRegistrationRights)(
+                            preparedTarget.registrationContributes, activation.target,
+                        ).map(right => [stableJsonStringify(right), right])).values()],
                         publishedContributes: activation.contributes,
                         target: activation.target,
                         executionOrigin: activation.executionOrigin,

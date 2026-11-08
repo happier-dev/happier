@@ -2,6 +2,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
@@ -89,7 +90,24 @@ export const CRABBOX_PLUGIN = definePlugin({
   ], optional: [] },
   managedDependencies: { [CRABBOX_DEPENDENCY_ID]: { id: CRABBOX_DEPENDENCY_ID, title: 'Crabbox', executable: 'crabbox',
     platforms: ['macos', 'linux', 'windows'], architectures: ['x64', 'arm64'],
-    sources: [{ kind: 'system', executableNames: ['crabbox'], versionArguments: ['--version'] }] } },
+    sources: [{ kind: 'system', executableNames: ['crabbox'], versionArguments: ['--version'] }, {
+      // v0.72.0 release API digests and .goreleaser.yaml: retain the complete
+      // archive, including crabbox-runtime beside its real executable.
+      kind: 'pinnedArchive', installId: 'dep.crabbox', version: '0.72.0', assetsByPlatform: {
+        'darwin-x64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_darwin_amd64.tar.gz',
+          sha256: '10ed0d477faafa3b426ccf2891231f885f140622f8e71d845ad197536e4ae674', executableSubpath: 'crabbox' },
+        'darwin-arm64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_darwin_arm64.tar.gz',
+          sha256: '2bb34a557f89274ccdc186719452dda19038302a6eeeb54029a1e422336d78c2', executableSubpath: 'crabbox' },
+        'linux-x64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_linux_amd64.tar.gz',
+          sha256: 'aa984d3f0954bafc67eea534c2b2e2a47c3abe90edbe1395a709b451cef1d942', executableSubpath: 'crabbox' },
+        'linux-arm64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_linux_arm64.tar.gz',
+          sha256: '9e7f04d9869e357c36021bdf1f93783e3ae998979cce95f05ac15340e08c500b', executableSubpath: 'crabbox' },
+        'win32-x64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_windows_amd64.zip',
+          sha256: 'ed0b407ed7edb45bdf4f7eaf23096c971e46b8da264cc21ace2394d540898b19', executableSubpath: 'crabbox.exe' },
+        'win32-arm64': { archiveUrl: 'https://github.com/openclaw/crabbox/releases/download/v0.72.0/crabbox_0.72.0_windows_arm64.zip',
+          sha256: '3abcbebe121e111a5b1af782ceb518de4dea547e130308b731a03dcb742fa9a8', executableSubpath: 'crabbox.exe' },
+      },
+    }] } },
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
   connectedAccountDescriptors: { coordinator: {
     declaration: {
@@ -126,6 +144,13 @@ export const CRABBOX_PLUGIN = definePlugin({
     [CRABBOX_COORDINATOR_PROVISIONER_ID]: CRABBOX_COORDINATOR_PROVISIONER },
   actions: {
     ...CRABBOX_COORDINATOR_ACTIONS,
+    install: { scopes: ['machine'], surfaces: ['ui', 'plugin'], execution: { target: 'daemon' }, title: 'Install Crabbox', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Install Crabbox on this computer?', body: 'Download the complete verified Crabbox distribution for this computer.', confirmLabel: 'Install' },
+      inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
+      async run(_input, context) {
+        await context.services.managedServices.dependencies.ensure(CRABBOX_DEPENDENCY_ID, { signal: context.signal });
+        return null;
+      } },
     reconcile: { ...defaults, title: 'Recover exact Crabbox lease', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
@@ -143,6 +168,7 @@ export const CRABBOX_PLUGIN = definePlugin({
           return machineCheckPresentation({ available: false, code: error.code, prerequisites: [{
             requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID } },
             status: 'unavailable',
+            repairAction: { action: { pluginId: CRABBOX_PLUGIN_ID, localId: 'install' }, input: {} },
           }] });
         }
       } },

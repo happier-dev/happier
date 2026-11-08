@@ -1346,6 +1346,15 @@ identity they consume. A Collection declaration
 claim or intent update names its plugin in the existing scoped refresh queue;
 initial bootstrap, structural recovery and explicit Retry retain full discovery.
 
+Collection writer rejoins use the same compact identities and declaration merge
+owner, without fetching Machine bodies or taking the Account publication lock.
+Changed claims capture and encode the complete Machine store before Account
+admission. A revision-only read after admission detects a changed incumbent and
+uses the existing transaction replay; the intent CAS writes the captured JSON
+without returning or decoding those manifests under the lock. Account-before-
+Collection lock ordering, quota admission and candidate-stage retirement remain
+with their existing owners.
+
 Bundled first-party file declarations are admitted by the bundled-plugin publisher
 and serialized inside the same shipped CLI closure. Runtime locator and packaged
 activation readers consume that result through the canonical ingester's typed
@@ -1840,6 +1849,12 @@ notifies a selector only when its selected value changes by `Object.is`.
 Freshness, pending work, errors and subscription state remain separate snapshot
 dimensions available to the selector. Disabled bodies acquire nothing; typed
 projection does not add a second reader, watch or polling lifecycle.
+In unreleased 0.3 source, a same-process host producer can supply its reconciled
+immutable content identity to this same store. The store then compares that
+identity without requesting transport bytes or a digest; the typed producer
+remains responsible for retaining unchanged facts. Usage uses this path and
+materializes exact JSON bytes and their SHA-256 digest only when a byte consumer
+requests them. Remote Host API content keeps its existing byte-digest contract.
 The returned `getSnapshot()` synchronously reads the same selected, admitted
 projection. Event handlers can use it to recheck a choice against current facts
 before dispatch, even before React has rendered a notification. It does not
@@ -2233,6 +2248,13 @@ validation, final policy, approval and post-decision currentness checks as other
 placements. There is no Account-specific invocation or settlement engine;
 refused, applied, uncertain and failed outcomes retain their existing meaning.
 An uncertain write is not automatically replayed.
+
+In 0.3 development source, bundled discovery and a selected Machine can supply
+the same client executable module. Compatible declarations share that module's
+registration rights, while the existing index publishes each exact target,
+execution origin and occurrence separately. Retiring one occurrence withdraws
+its registrations without withdrawing another current occurrence. Executable
+byte identity does not substitute for invocation authority or currentness.
 
 In 0.3 development source, a host's bundled Account declaration is identified by
 package, plugin id and version. Its process-local occurrence owns retirement;
@@ -3697,6 +3719,15 @@ executable without requiring an exact researched version. Native output and
 resource identities still pass through their existing parsers; a routine CLI
 update alone does not disable managed operations. Version references in native
 contract comments identify the research basis, not runtime equality checks.
+
+In 0.3 development source, Crabbox's missing native command is a managed-dependency
+prerequisite with a repair Action. The shared prerequisite presentation launches
+that Action; it delegates installation to the existing dependency service. The
+dependency's capability read uses the same service's selected status, including
+whether an executable is present, so an already available system command is not
+reported missing merely because a managed archive has not been installed. The
+managed Crabbox archive retains the accompanying runtime directory; it does not
+install a lone executable.
 
 An SSH bootstrap invocation may also receive the public key derived from that row's retained bootstrap credential. A leaf can install this public key through its qualified native setup path and return the existing credential reference with observed host-key evidence. The private key never becomes launch, resource, preset or native command-argument data. Lume uses the managed-row id for its unique VM name and inspects the recorded storage before Stop/Delete. Cua local leaves share one native adapter: private stdin is uploaded into a private guest directory, executed through the exact local sandbox and deleted. Unconfirmed cleanup fails the operation; cancellation can prevent further host-admitted native effects and must not be reported as confirmed cleanup.
 
