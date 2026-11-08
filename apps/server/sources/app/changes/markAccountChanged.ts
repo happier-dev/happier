@@ -1,13 +1,16 @@
-import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
-import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { afterTx, getTransactionContext, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { buildAccountChangeWakeUpdate, buildAccountSettingsChangedUpdate } from "@/app/events/eventPayloadBuilders";
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { ChangeKindSchema, readAccountSettingsVersionChangeV1, type ChangeKind } from '@happier-dev/protocol/changes';
+import { ChangeKindSchema, readAccountSettingsVersionChangeV1, readArtifactKindsV1, readArtifactKindsChangeHintV1, type ChangeKind } from '@happier-dev/protocol/changes';
 import { PluginDomainChangeHintSchema, buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
+import { DISCUSSION_CHANGE_HINT_V1, readDiscussionChangeHintV1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
+import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { coalesceSessionProjectionChangeHintInTx, retainSessionSourceChangeHint, sessionChangeHint,
+    mergeSessionReceiverAvailabilityHint, sessionReceiverAvailabilityHintSql } from './sessionProjectionChangeHint';
 import { acquireAccountSessionOwnerMetadataFencesInTx, acquireAccountSessionOwnerMetadataPublicationFencesInTx, type AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 
 /** An allocation intent, resolved only by the transaction's publication phase. */
@@ -23,6 +26,7 @@ interface AccountChangeWake {
     settingsVersion?: number;
     changeKinds: Set<ChangeKind>;
     entityIds: Set<string>;
+    artifactKinds?: Set<string> | null;
     sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null;
 }
 
@@ -155,11 +159,25 @@ function preserveCollectionFullHint(existingHint: unknown, nextHint: unknown): u
     };
 }
 
-function isExactCollectionHint(hint: unknown): boolean {
-    const parsed = PluginDomainChangeHintSchema.safeParse(hint);
-    return parsed.success
-        && parsed.data.pluginDomain === "dataCollection"
-        && !("full" in parsed.data && parsed.data.full === true);
+async function coalesceDiscussionChangeHintInTx(
+    tx: Tx, accountId: string, entityId: string, hint: unknown,
+): Promise<DiscussionChangeHintV1> {
+    const current = await tx.accountChange.findUnique({
+        where: { accountId_kind_entityId: { accountId, kind: 'discussion', entityId } },
+        select: { hint: true },
+    });
+    const next = readDiscussionChangeHintV1(hint) ?? DISCUSSION_CHANGE_HINT_V1;
+    if (!current) return next;
+    const existing = readDiscussionChangeHintV1(current.hint);
+    return {
+        v: 1,
+        discussions: true,
+        changes: {
+            ...(existing?.changes.readState || next.changes.readState ? { readState: true } : {}),
+            // Unknown retained hints cannot prove that only a cursor changed.
+            ...(!existing || existing.changes.resource || next.changes.resource ? { resource: true } : {}),
+        },
+    };
 }
 
 function compactHint(_kind: ChangeKind, hint: unknown): unknown {
@@ -192,6 +210,7 @@ function compactHint(_kind: ChangeKind, hint: unknown): unknown {
 function scheduleAccountChangeWake(
     tx: Tx, accountId: string, cursor: number, kind: ChangeKind, entityIds: readonly string[], hint?: unknown,
     currentViewSessionId?: string,
+    artifactKinds?: readonly string[] | null,
 ): void {
     const state = publicationPhase(tx);
     const wakes: NonNullable<AccountPublicationPhase['wakes']> = state.wakes ??= new Map();
@@ -208,6 +227,10 @@ function scheduleAccountChangeWake(
     } else {
         wake.changeKinds.add(kind);
         for (const entityId of entityIds) wake.entityIds.add(entityId);
+        if (kind === 'artifact' && wake.artifactKinds !== null) {
+            if (artifactKinds == null) wake.artifactKinds = null;
+            else for (const artifactKind of artifactKinds) (wake.artifactKinds ??= new Set()).add(artifactKind);
+        }
         collectSessionSystemRecordWakeTargets(wake, kind, entityIds, hint);
     }
     if (pending) return;
@@ -225,12 +248,36 @@ function scheduleAccountChangeWake(
             userId: accountId,
             payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12), {
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
+                ...(wake.artifactKinds ? { artifactKinds: [...wake.artifactKinds] } : {}),
                 ...(wake.sessionSystemRecords ? { sessionSystemRecords: [...wake.sessionSystemRecords.values()] } : {}),
             }),
             recipientFilter: { type: 'account-stored-content-v3',
                 ...(wake.currentViewSessionId ? { exceptSessionCurrentView: wake.currentViewSessionId } : {}) },
         });
     });
+}
+
+function artifactPublicationKinds(hint: unknown, storedKind: unknown): readonly string[] | null {
+    // A kind-changing writer supplies both the displaced and committed type;
+    // an explicit unknown must not be narrowed by the final row's type.
+    return hint !== null && typeof hint === 'object' && !Array.isArray(hint) && 'artifactKinds' in hint
+        ? readArtifactKindsChangeHintV1(hint) : readArtifactKindsV1([storedKind]);
+}
+
+async function coalesceArtifactChangeHintInTx(
+    tx: Tx, accountId: string, entityId: string, hint: unknown, kinds: readonly string[] | null,
+): Promise<Record<string, unknown>> {
+    const previous = await tx.accountChange.findUnique({
+        where: { accountId_kind_entityId: { accountId, kind: 'artifact', entityId } },
+        select: { hint: true },
+    });
+    const retainedKinds = previous ? readArtifactKindsChangeHintV1(previous.hint) : [];
+    const base = hint !== null && typeof hint === 'object' && !Array.isArray(hint)
+        ? Object.fromEntries(Object.entries(hint).filter(([key]) => key !== 'artifactKinds')) : {};
+    // A coalesced row covers every unconsumed change. An older unknown cannot
+    // be made precise by a later known write, including after delete/recreate.
+    return kinds && retainedKinds
+        ? { ...base, artifactKinds: [...new Set([...retainedKinds, ...kinds])] } : base;
 }
 
 function collectSessionSystemRecordWakeTargets(
@@ -315,8 +362,8 @@ export async function acquireAccountChangePublicationLocksInTx(
  *
  * Hint-bearing changes and other entity kinds take the ordered audience fence
  * before delegating to the point writer, which retains foreign-key and hint
- * coalescing ownership. Hint-free Session invalidation keeps the same Session
- * foreign key and provider-specific omitted-hint semantics as that writer.
+ * coalescing ownership. Hint-free Session and Machine invalidation keep the
+ * same foreign keys and provider-specific omitted-hint semantics as that writer.
  */
 export async function markAccountsChanged(
     tx: Tx,
@@ -326,6 +373,7 @@ export async function markAccountsChanged(
         kind?: ChangeKind;
         hint?: unknown;
         hintForAccount?: (accountId: string) => unknown;
+        /** This recipient's current-view publication replaces its duplicate viewer wake. */
         currentViewForAccount?: (accountId: string) => boolean;
     }>,
 ): Promise<AccountChangePublication[]> {
@@ -338,7 +386,7 @@ export async function markAccountsChanged(
     if (accountIds.length === 0) return [];
 
     if (params.hint !== undefined || params.hintForAccount || params.currentViewForAccount
-        || (kind !== "account" && kind !== "savedSecretResource" && kind !== "session")) {
+        || (kind !== "account" && kind !== "savedSecretResource" && kind !== "session" && kind !== "machine")) {
         // Project all caller-owned hints before locking any Account. Cursor
         // allocation and merge-sensitive hints remain solely point-writer-owned.
         const hints = new Map(accountIds.map(accountId => [accountId,
@@ -362,11 +410,16 @@ export async function markSessionAccountsChanged(
     return markAccountProjectionChanges(tx, "session", recipientsBySession);
 }
 
-async function markAccountProjectionChanges(
+/** Set-oriented projection publication with optional shared replacement hints.
+ * Merge-sensitive and per-recipient hints remain point-writer-owned.
+ */
+export async function markAccountProjectionChanges(
     tx: Tx,
-    kind: "account" | "savedSecretResource" | "session",
+    kind: "account" | "savedSecretResource" | "session" | "machine",
     recipientsByEntity: ReadonlyMap<string, readonly string[]>,
+    hint?: unknown,
 ): Promise<AccountChangePublication[]> {
+    const capturedHint = hint === undefined ? undefined : structuredClone(compactHint(kind, hint));
     const recipients = new Map([...recipientsByEntity].map(([entityId, accountIds]) =>
         [entityId, [...new Set(accountIds)].sort()] as const));
     const accountIds = [...new Set([...recipients.values()].flat())].sort();
@@ -376,7 +429,7 @@ async function markAccountProjectionChanges(
     if (pending.length === 0) return [];
     const state = publicationPhase(tx);
     const publish = async (transaction: Tx) => {
-        const cursors = await publishAccountProjectionChanges(transaction, kind, recipients);
+        const cursors = await publishAccountProjectionChanges(transaction, kind, recipients, capturedHint);
         if (cursors.length !== pending.length) throw new Error('Account publication allocation count changed');
         cursors.forEach((row, index) => pending[index].resolve(row.cursor));
     };
@@ -391,8 +444,9 @@ async function markAccountProjectionChanges(
 
 async function publishAccountProjectionChanges(
     tx: Tx,
-    kind: "account" | "savedSecretResource" | "session",
+    kind: "account" | "savedSecretResource" | "session" | "machine",
     recipientsByEntity: ReadonlyMap<string, readonly string[]>,
+    hint?: unknown,
 ): Promise<AccountChangeCursor[]> {
     const requests = [...recipientsByEntity.keys()].sort().flatMap(entityId =>
         [...new Set(recipientsByEntity.get(entityId))].sort().map(accountId => ({ accountId, entityId })));
@@ -403,45 +457,48 @@ async function publishAccountProjectionChanges(
     const changedAt = new Date();
     const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
     if (dialect === "postgres") {
-        // A locking SELECT cannot inline; its ordered rows fence the UPDATE
-        // without adding another round trip or relying on the UPDATE scan plan.
+        // The terminal publication owner already holds the complete ordered
+        // Account writer fence; allocation must not acquire it again.
         // Existing Account batches advanced updatedAt through Prisma; Session
-        // invalidation retains the PostgreSQL point writer's seq-only mutation.
+        // and Machine invalidation retain the PostgreSQL point writer's seq-only mutation.
         const rows = await tx.$queryRawUnsafe<Array<{ accountId: string; cursor: number | bigint }>>(
             `WITH requested AS (
                 SELECT * FROM jsonb_to_recordset($1::jsonb) AS r("accountId" text, "entityId" text)
             ), totals AS (
                 SELECT "accountId", count(*)::int AS total FROM requested GROUP BY "accountId"
-            ), locked AS (
-                SELECT "id" FROM "Account"
-                WHERE "id" IN (SELECT "accountId" FROM totals)
-                ORDER BY "id" FOR NO KEY UPDATE
             ), next AS (
                 UPDATE "Account" SET "seq" = "seq" + totals.total,
-                    "updatedAt" = CASE WHEN $2 = 'session' THEN "updatedAt" ELSE $3 END
-                FROM locked, totals WHERE "Account"."id" = locked."id" AND locked."id" = totals."accountId"
+                    "updatedAt" = CASE WHEN $2 IN ('session', 'machine') THEN "updatedAt" ELSE $3 END
+                FROM totals WHERE "Account"."id" = totals."accountId"
                 RETURNING "Account"."id", "Account"."seq"
             )
             INSERT INTO "AccountChange" (
-                "accountId", "kind", "entityId", "cursor", "changedAt", "sessionId"
+                "accountId", "kind", "entityId", "cursor", "changedAt", "hint", "sessionId", "machineId"
             )
             SELECT next."id", $2, requested."entityId",
                 next."seq" - totals.total + row_number() OVER (PARTITION BY next."id" ORDER BY requested."entityId"),
-                $3, CASE WHEN $2 = 'session' AND EXISTS (
+                $3, CASE WHEN $2 = 'session' THEN ${sessionReceiverAvailabilityHintSql('NULL::jsonb', '$4::jsonb', 'next."seq" - totals.total + row_number() OVER (PARTITION BY next."id" ORDER BY requested."entityId")')} ELSE $4::jsonb END,
+                CASE WHEN $2 = 'session' AND EXISTS (
                     SELECT 1 FROM "Session" WHERE "id" = requested."entityId"
+                ) THEN requested."entityId" ELSE NULL END,
+                CASE WHEN $2 = 'machine' AND EXISTS (
+                    SELECT 1 FROM "Machine" WHERE "id" = requested."entityId"
                 ) THEN requested."entityId" ELSE NULL END
             FROM requested JOIN next ON next."id" = requested."accountId"
                 JOIN totals ON totals."accountId" = next."id"
             ON CONFLICT ("accountId", "kind", "entityId") DO UPDATE SET
                 "cursor" = EXCLUDED."cursor",
                 "changedAt" = EXCLUDED."changedAt",
-                "hint" = NULL,
+                "hint" = CASE WHEN EXCLUDED."kind" = 'session' THEN
+                    ${sessionReceiverAvailabilityHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
+                    ELSE EXCLUDED."hint" END,
                 "sessionId" = EXCLUDED."sessionId",
-                "machineId" = NULL,
+                "machineId" = EXCLUDED."machineId",
                 "artifactId" = NULL,
                 "accountPetPackageId" = NULL
             RETURNING "accountId", "cursor"`,
-            JSON.stringify(requests), kind, changedAt,
+            JSON.stringify(requests), kind, changedAt, kind === 'session' ? JSON.stringify(sessionChangeHint(hint))
+                : hint === undefined ? null : JSON.stringify(hint),
         );
         if (rows.length !== requests.length) {
             throw new Error("markAccountsChanged: every Account recipient must exist");
@@ -454,7 +511,7 @@ async function publishAccountProjectionChanges(
             return { accountId: row.accountId, cursor };
         }).sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
-        scheduleAccountProjectionWakes(tx, kind, requests, cursors);
+        scheduleAccountProjectionWakes(tx, kind, requests, cursors, hint);
         return cursors;
     }
 
@@ -479,15 +536,15 @@ async function publishAccountProjectionChanges(
     }
 
     // The point writer's Prisma upsert omits an undefined hint on update.
-    // Preserve those retained Session hints after taking the same Account fence.
+    // Preserve retained Session/Machine hints after taking the same Account fence.
     const identities = requests.map(({ accountId, entityId }) => ({ accountId, kind, entityId }));
-    const retainedSessionHints = kind === "session"
+    const retainedEntityHints = kind === "session" || (kind === "machine" && hint === undefined)
         ? await tx.accountChange.findMany({
             where: { OR: identities },
             select: { accountId: true, entityId: true, hint: true },
         })
         : [];
-    const hintByIdentity = new Map(retainedSessionHints.map(row => [JSON.stringify([row.accountId, row.entityId]), row.hint]));
+    const hintByIdentity = new Map(retainedEntityHints.map(row => [JSON.stringify([row.accountId, row.entityId]), row.hint]));
     await tx.accountChange.deleteMany({
         where: { OR: identities },
     });
@@ -495,12 +552,22 @@ async function publishAccountProjectionChanges(
     const retainedSessionIds = kind === "session" ? new Set((await tx.session.findMany({
         where: { id: { in: [...recipientsByEntity.keys()] } }, select: { id: true },
     })).map(row => row.id)) : new Set<string>();
+    const retainedMachineIds = kind === "machine" ? new Set((await tx.machine.findMany({
+        where: { id: { in: [...recipientsByEntity.keys()] } }, select: { id: true },
+    })).map(row => row.id)) : new Set<string>();
     const changes = requests.map(({ accountId, entityId }) => {
         const cursor = nextCursorByAccountId.get(accountId)! + 1;
         nextCursorByAccountId.set(accountId, cursor);
-        return { accountId, kind, entityId, cursor, changedAt,
-            ...(kind === "session" ? { sessionId: retainedSessionIds.has(entityId) ? entityId : null,
-                hint: hintByIdentity.get(JSON.stringify([accountId, entityId])) ?? undefined } : {}),
+        return { accountId, kind, entityId, cursor, changedAt, hint,
+            ...(kind === "session" ? { sessionId: retainedSessionIds.has(entityId) ? entityId : null } : {}),
+            ...(kind === "machine" ? { machineId: retainedMachineIds.has(entityId) ? entityId : null } : {}),
+            ...(kind === "session" || kind === "machine" ? {
+                hint: kind === 'session'
+                    ? mergeSessionReceiverAvailabilityHint(hintByIdentity.get(JSON.stringify([accountId, entityId])),
+                        hint === undefined ? { ...sessionChangeHint(retainSessionSourceChangeHint(hintByIdentity.get(JSON.stringify([accountId, entityId])))),
+                            followReceiverAvailabilityChanged: false } : hint, cursor)
+                    : hint === undefined ? hintByIdentity.get(JSON.stringify([accountId, entityId])) ?? undefined : hint,
+            } : {}),
         };
     });
     await tx.accountChange.createMany({
@@ -510,7 +577,7 @@ async function publishAccountProjectionChanges(
     const cursors = changes.map(({ accountId, cursor }) => ({ accountId, cursor }))
         .sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
-    scheduleAccountProjectionWakes(tx, kind, requests, cursors);
+    scheduleAccountProjectionWakes(tx, kind, requests, cursors, hint);
     return cursors;
 }
 
@@ -519,6 +586,7 @@ export interface MarkAccountChangedParams {
     kind: ChangeKind;
     entityId: string;
     hint?: unknown;
+    /** Retain Machine/other-Session wakes; the current-view publisher covers this Session's viewers. */
     currentViewSessionId?: string;
     /** The coordinator has already locked this existing activation receipt. */
     accountEncryptionTransitionActivation?: Readonly<{
@@ -604,14 +672,24 @@ async function publishAccountChanged(
     // - write that cursor value into the coalesced AccountChange row.
     const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
     if (dialect === "postgres" && typeof (tx as { $queryRawUnsafe?: unknown }).$queryRawUnsafe === "function") {
+        // Terminal publication already holds PostgreSQL's Account writer fence.
+        // Discussion and Session share the ORM hint merge. Artifact projection
+        // and union stay in this statement beside the existing foreign-key read;
+        // encoded members are classified only by the protocol reader.
+        const persistedHint = kind === 'discussion'
+            ? await coalesceDiscussionChangeHintInTx(tx, accountId, entityId, hint)
+            : kind === 'session' ? await coalesceSessionProjectionChangeHintInTx(tx, accountId, entityId, hint)
+            : hint;
         const rows = await (tx as {
             $queryRawUnsafe: <TRow>(query: string, ...values: unknown[]) => Promise<TRow[]>;
-        }).$queryRawUnsafe<{ cursor: number | bigint; activationCount?: number }>(
+        }).$queryRawUnsafe<{ cursor: number | bigint; activationCount?: number; artifactKind?: unknown }>(
             `WITH next AS (
                 UPDATE "Account"
                 SET "seq" = "seq" + 1
                 WHERE "id" = $1
                 RETURNING "seq"
+            ), artifact_row AS (
+                SELECT "id", "kind" FROM "Artifact" WHERE "id" = $8
             ), published AS (
             INSERT INTO "AccountChange" (
                 "accountId",
@@ -631,10 +709,23 @@ async function publishAccountChanged(
                 $3,
                 next."seq",
                 $4,
-                $5::jsonb,
+                CASE
+                    WHEN $2 = 'session' THEN ${sessionReceiverAvailabilityHintSql('NULL::jsonb', '$5::jsonb', 'next."seq"')}
+                    WHEN $2 = 'artifact' THEN
+                        (CASE WHEN jsonb_typeof($5::jsonb) = 'object' THEN $5::jsonb ELSE '{}'::jsonb END - 'artifactKinds')
+                        || CASE
+                            WHEN jsonb_typeof($5::jsonb) = 'object' AND $5::jsonb ? 'artifactKinds'
+                            THEN CASE WHEN jsonb_typeof($5::jsonb->'artifactKinds') = 'array'
+                                THEN jsonb_build_object('artifactKinds', $5::jsonb->'artifactKinds') ELSE '{}'::jsonb END
+                            WHEN (SELECT "kind" FROM artifact_row) IS NOT NULL
+                            THEN jsonb_build_object('artifactKinds', jsonb_build_array((SELECT "kind" FROM artifact_row)))
+                            ELSE '{}'::jsonb
+                        END
+                    ELSE $5::jsonb
+                END,
                 CASE WHEN EXISTS (SELECT 1 FROM "Session" WHERE "id" = $6) THEN $6 ELSE NULL END,
                 CASE WHEN EXISTS (SELECT 1 FROM "Machine" WHERE "id" = $7) THEN $7 ELSE NULL END,
-                CASE WHEN EXISTS (SELECT 1 FROM "Artifact" WHERE "id" = $8) THEN $8 ELSE NULL END,
+                (SELECT "id" FROM artifact_row),
                 CASE WHEN EXISTS (SELECT 1 FROM "AccountPetPackage" WHERE "id" = $9) THEN $9 ELSE NULL END
             FROM next
             ON CONFLICT ("accountId", "kind", "entityId")
@@ -642,6 +733,23 @@ async function publishAccountChanged(
                 "cursor" = EXCLUDED."cursor",
                 "changedAt" = EXCLUDED."changedAt",
                 "hint" = CASE
+                    WHEN EXCLUDED."kind" = 'session' THEN
+                        ${sessionReceiverAvailabilityHintSql('"AccountChange"."hint"', 'EXCLUDED."hint"', 'EXCLUDED."cursor"')}
+                    WHEN EXCLUDED."kind" = 'artifact' THEN
+                        CASE WHEN
+                            jsonb_array_length(CASE WHEN jsonb_typeof("AccountChange"."hint"->'artifactKinds') = 'array'
+                                THEN "AccountChange"."hint"->'artifactKinds' ELSE '[]'::jsonb END) > 0
+                            AND jsonb_array_length(CASE WHEN jsonb_typeof(EXCLUDED."hint"->'artifactKinds') = 'array'
+                                THEN EXCLUDED."hint"->'artifactKinds' ELSE '[]'::jsonb END) > 0
+                        THEN jsonb_set(EXCLUDED."hint", '{artifactKinds}', (
+                            SELECT jsonb_agg(DISTINCT value) FROM jsonb_array_elements(
+                                ("AccountChange"."hint"->'artifactKinds') || (EXCLUDED."hint"->'artifactKinds')
+                            )
+                        ))
+                        ELSE EXCLUDED."hint" - 'artifactKinds' END
+                    WHEN EXCLUDED."hint"->>'pluginDomain' = 'dataCollection'
+                        AND jsonb_typeof(EXCLUDED."hint"->'indexChanges') = 'object'
+                    THEN jsonb_set(EXCLUDED."hint", '{indexChanges,previousCursor}', to_jsonb("AccountChange"."cursor"))
                     WHEN
                         "AccountChange"."hint"->>'pluginDomain' = 'dataCollection'
                         AND "AccountChange"."hint"->>'full' = 'true'
@@ -678,13 +786,14 @@ async function publishAccountChanged(
                     AND "AccountEncryptionTransition"."accountId" = $1
                     AND "AccountEncryptionTransition"."status" = 'authorized'
                 RETURNING "AccountEncryptionTransition"."id"
-            ) SELECT published."cursor", (SELECT count(*)::int FROM activation) AS "activationCount" FROM published`
-                : 'SELECT "cursor" FROM published'}`,
+            ) SELECT published."cursor", (SELECT "kind" FROM artifact_row) AS "artifactKind",
+                (SELECT count(*)::int FROM activation) AS "activationCount" FROM published`
+                : 'SELECT "cursor", (SELECT "kind" FROM artifact_row) AS "artifactKind" FROM published'}`,
             accountId,
             kind,
             entityId,
             now,
-            hint === undefined ? null : JSON.stringify(hint),
+            persistedHint === undefined ? null : JSON.stringify(persistedHint),
             sessionId,
             machineId,
             artifactId,
@@ -703,13 +812,15 @@ async function publishAccountChanged(
         if (params.accountEncryptionTransitionActivation && rows[0]?.activationCount !== 1) {
             throw new Error('Account publication requires its prelocked activation receipt');
         }
-        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId);
+        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId,
+            kind === 'artifact' ? artifactPublicationKinds(hint, rows[0]?.artifactKind) : undefined);
         return cursor;
     }
 
     // These nullable links detect orphaned changes; entityId/hint are the
     // durable removal invalidation. Match ON DELETE SET NULL when domain work
     // removed an entity after recording its publication intent.
+    let artifactKinds: readonly string[] | null = null;
     const fk = await (async () => {
         if (sessionId) {
             const row = await tx.session.findUnique({ where: { id: sessionId }, select: { id: true } });
@@ -720,7 +831,8 @@ async function publishAccountChanged(
             return { machineId: row?.id ?? null };
         }
         if (artifactId) {
-            const row = await tx.artifact.findUnique({ where: { id: artifactId }, select: { id: true } });
+            const row = await tx.artifact.findUnique({ where: { id: artifactId }, select: { id: true, kind: true } });
+            artifactKinds = artifactPublicationKinds(hint, row?.kind);
             return { artifactId: row?.id ?? null };
         }
         if (accountPetPackageId) {
@@ -740,7 +852,10 @@ async function publishAccountChanged(
     // The Account update above is the shared per-Account writer fence for the
     // Prisma providers. Read the coalesced row only after it, so a later
     // exact Collection write cannot observe and overwrite a stale full scope.
-    const current = isExactCollectionHint(hint)
+    const parsedCollectionHint = kind === 'pluginDomain' ? PluginDomainChangeHintSchema.safeParse(hint) : undefined;
+    const collectionHint = parsedCollectionHint?.success && parsedCollectionHint.data.pluginDomain === 'dataCollection'
+        ? parsedCollectionHint.data : undefined;
+    const current = collectionHint && !('full' in collectionHint)
         ? await tx.accountChange.findUnique({
             where: {
                 accountId_kind_entityId: {
@@ -749,12 +864,18 @@ async function publishAccountChanged(
                     entityId,
                 },
             },
-            select: { hint: true },
+            select: { hint: true, cursor: true },
         })
         : null;
-    const persistedHint = current
-        ? preserveCollectionFullHint(current.hint, hint)
-        : hint;
+    const preciseCollectionHint = collectionHint && 'indexChanges' in collectionHint && collectionHint.indexChanges
+        ? { ...collectionHint, indexChanges: { ...collectionHint.indexChanges, previousCursor: current?.cursor ?? 0 } }
+        : undefined;
+    const persistedHint = kind === 'artifact'
+        ? await coalesceArtifactChangeHintInTx(tx, accountId, entityId, hint, artifactKinds)
+        : kind === 'discussion'
+        ? await coalesceDiscussionChangeHintInTx(tx, accountId, entityId, hint)
+        : kind === 'session' ? await coalesceSessionProjectionChangeHintInTx(tx, accountId, entityId, hint, cursor)
+        : preciseCollectionHint ?? (current ? preserveCollectionFullHint(current.hint, hint) : hint);
 
     await tx.accountChange.upsert({
         where: {
@@ -794,6 +915,6 @@ async function publishAccountChanged(
         if (updated.count !== 1) throw new Error('Account publication requires its prelocked activation receipt');
     }
 
-    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId);
+    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId, artifactKinds);
     return cursor;
 }

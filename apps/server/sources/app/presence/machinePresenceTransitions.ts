@@ -22,11 +22,14 @@ export async function readMachinePresenceTransitionsInTx(tx: Pick<Tx, '$queryRaw
 }
 
 /** Retain only decided changes, with identity independent of heartbeat clocks.
- * The first alive observation has no prior offline occurrence and emits none. */
+ * Initial enrollment changes inventory without inventing an outage occurrence. */
 export async function retainMachinePresenceTransitionInTx(tx: Tx, input: Readonly<{
     machineId: string; active: boolean; occurredAt: number; recipientAccountIds: readonly string[];
 }>): Promise<void> {
     const previous = await readMachinePresenceTransitionsInTx(tx, input.machineId);
+    // Publication is queued until the containing transaction finishes domain
+    // writes, including the first inactive→active inventory change.
+    for (const accountId of input.recipientAccountIds) await markAccountChanged(tx, { accountId, kind: 'machine', entityId: input.machineId });
     if (input.active && previous === null) return;
     const revision = (previous?.revision ?? 0) + 1;
     const occurrence = { revision, occurredAt: input.occurredAt };
@@ -38,5 +41,4 @@ export async function retainMachinePresenceTransitionInTx(tx: Tx, input: Readonl
     // Like the owning presence write, this must leave content clocks untouched.
     if (dialect === 'mysql') await tx.$executeRaw`UPDATE \`Machine\` SET \`presenceTransitions\` = ${stored} WHERE \`id\` = ${input.machineId}`;
     else await tx.$executeRaw`UPDATE "Machine" SET "presenceTransitions" = ${stored} WHERE "id" = ${input.machineId}`;
-    for (const accountId of input.recipientAccountIds) await markAccountChanged(tx, { accountId, kind: 'machine', entityId: input.machineId });
 }

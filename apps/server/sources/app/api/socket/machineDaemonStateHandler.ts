@@ -175,7 +175,8 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                     });
                 }
                 afterTx(tx, () => callback?.({ result: 'success', version: expectedVersion + 1, daemonState }));
-                return { recipientAccountIds, wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt };
+                return { recipientAccountIds, wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt,
+                    accountChanges: publications };
             };
             const presence = await inTx(async tx => {
                 // Rejected/stale CAS requests and exact equal encoded content

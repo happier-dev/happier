@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { recordMachineAlive } from './presenceRecorder';
+import { recordMachineAlive, recordMachineAliveInTx } from './presenceRecorder';
 import { createMachinePresenceDeadlineOwner, stopLocalMachinePresenceTimeout, resolvePresenceTimeoutConfig } from './timeout';
 import { decodeBase64 } from 'privacy-kit';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
@@ -10,6 +10,7 @@ import { inTx } from '@/storage/inTx';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerMachineAccessRoutes } from '@/app/api/routes/machines/machineAccessRoutes';
+import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -28,8 +29,13 @@ it('retains the exact deadline decision and recovery, with no enrollment or hear
     const deadline = createMachinePresenceDeadlineOwner();
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
+        const before = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
         await beat();
         expect(await read()).toBeNull();
+        // The first false→true decision changes Account inventory even though
+        // it creates no historical offline/recovery occurrence.
+        expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } }))
+            .toEqual({ seq: before.seq + 1 });
         await deadline.start();
         await vi.advanceTimersByTimeAsync(resolvePresenceTimeoutConfig().machineTimeoutMs);
         await deadline.stop();
@@ -70,4 +76,19 @@ it('exposes structural occurrences to the owner and current grantees, and refuse
             headers: { 'x-test-user-id': other.id } });
         expect(denied.json()).toEqual({ kind: 'refused', code: 'machine_unavailable' });
     });
+});
+
+it('shares one Account publication with the semantic writer recovering the Machine', async () => {
+    const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}', active: false } });
+    const daemonState = encodePlainMachineStoredContent({ status: 'running' });
+    await inTx(tx => recordMachineAliveInTx(tx, { accountId: owner.id, machineId: machine.id, timestamp: Date.now() },
+        async (transaction, row) => {
+            await transaction.machine.update({ where: { id: machine.id }, data: { daemonState, daemonStateVersion: 1 } });
+            const accountChanges = await markAccountsChanged(transaction, { accountIds: [owner.id], kind: 'machine', entityId: machine.id });
+            return { recipientAccountIds: [owner.id], wasOffline: !row.active, lastActiveAt: row.lastActiveAt, accountChanges };
+        }));
+    expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } })).toEqual({ seq: 1 });
+    expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id }, select: { active: true, daemonState: true, daemonStateVersion: true } }))
+        .toEqual({ active: true, daemonState, daemonStateVersion: 1 });
 });
