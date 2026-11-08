@@ -268,12 +268,9 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
   }
   async function includeSkill<T extends Readonly<{ skillId: string; includedInSessionId: string | null }>>(base: T, sessionId: string | null, signal?: AbortSignal) {
     if (sessionId) {
-      try {
-        const result = await port.includeInSession(sessionId, base.skillId, signal);
-        if (!result.ok) return { ...base, inclusion: result, incomplete: 'session_include' as const };
-        return { ...base, inclusion: result, includedInSessionId: sessionId };
-      }
-      catch { return { ...base, incomplete: 'session_include' as const }; }
+      const result = await port.includeInSession(sessionId, base.skillId, signal);
+      if (!result.ok) return { ...base, inclusion: result, incomplete: 'session_include' as const };
+      return { ...base, inclusion: result, includedInSessionId: sessionId };
     }
     return base;
   }

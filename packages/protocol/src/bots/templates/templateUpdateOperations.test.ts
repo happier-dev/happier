@@ -9,7 +9,8 @@ import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV
 import { BotTemplateUpdateFailureDetailsV1Schema, readBotTemplateUpdateOfferV1 } from './templateUpdateActionsV1.js';
 import { computeActionInputApprovalDigestV1 } from '../../actions/decisionAuthority.js';
 import { skillFileFromBytesV1 } from '../../prompts/library/skills/skillZipV1.js';
-import type { ActionExecutorDeps } from '../../actions/executor/types.js';
+import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '../../connect/connectedServiceBindings.js';
 import { ActionsSettingsV1Schema } from '../../actions/actionSettings.js';
 import { createMcpServerActionExecuteV1 } from '../../mcp/servers/serverActionsV1.js';
@@ -21,8 +22,9 @@ import { readSessionCapabilityOverrideV1 } from '../../reach/sessionCapabilitySe
 import { createSkillActionExecuteV1 } from '../../prompts/library/skills/skillActionOperations.js';
 import type { SkillRulesActionPortV1 } from '../../prompts/library/skillRulesActionsV1.js';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '../../prompts/library/skills/skillActionSchemasV1.js';
-import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import type { SessionBotFaceV1 } from '../../sessions/identity/sessionBotFaceV1.js';
+import { executeActionOperationActionV1 } from '../../actions/executor/actionOperationActions.js';
+import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '../../actions/operations/v1.js';
 
 const sourceId = '80f7dabe-1f05-44b7-8e44-d98f2127f523';
 const baseId = '70f7dabe-1f05-44b7-8e44-d98f2127f523';
@@ -33,9 +35,8 @@ const base: BotTemplateReleaseV1 = { v: 1, version: '1.0.0', changelog: '', rele
 const upstream: BotTemplateReleaseV1 = { ...base, version: '1.1.0', content: { ...base.content,
   instructions: { markdown: 'author\ntwo\nnew three\n' }, memoryRules: [] } };
 
-async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'machineSetupApply'> = {},
-  pluginRelease?: BotTemplateOperationPortV1['resolvePluginRelease'],
-  signUpdate?: (request: { input: unknown; context: ActionExecutorContext; executionTarget?: { machineId: string; agentId: string } }) => Promise<ActionExecutorContext>) {
+async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'machineSetupApply' | 'actionOperationAction'> = {},
+  pluginRelease?: BotTemplateOperationPortV1['resolvePluginRelease'], executionContext: Partial<ActionExecutorContext> = {}) {
   const boundary = createWorkBoardArtifactBoundary();
   for (const [artifactId, release] of [[sourceId, upstream], [baseId, base]] as const) {
     const envelope = { v: 1 as const, state: 'released' as const, release };
@@ -67,7 +68,7 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
   let sourceReads = 0;
   let failSettlement = false;
   let refuseReport = false;
-  let failCapability = false;
+  let failCapability: boolean | 'refused' = false;
   let failFace = false;
   let title = 'My helper';
   let face: SessionBotFaceV1 | null = { style: 'pixel', body: 'cat', seed: 'mine' };
@@ -86,6 +87,7 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
       agent: { vendorResume: 'supported', skillsLiveReload: 'supported' }, launchRestart: 'automatic' }),
     resolveItem: async ({ id }) => id,
     writeMetadata: async ({ update }) => {
+      if (failCapability === 'refused') return 'conflict';
       if (failCapability) throw Object.assign(new Error('session_metadata_unavailable'), { code: 'session_metadata_unavailable' });
       capabilityMetadata = update(metadata()); revision++; return 'updated';
     },
@@ -96,24 +98,22 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
     writeRecord: async () => { throw new Error('Template update skills never acquire global reach'); },
   };
   const skillAction: NonNullable<ActionExecutorDeps['skillActionExecute']> = ({ actionId, input, context }) => createSkillActionExecuteV1({
-    store, skillRules, randomId: () => 'skill-rule', creationSessionId: context.invocationServices?.templateSkillSessionId,
+    store, skillRules, randomId: () => 'skill-rule',
     includeInSession: (sessionId, id) => setSessionCapabilityV1({ port: capabilities,
       request: { sessionId, kind: 'skill', id, state: 'on' }, context }),
-  })(actionId, input, { surface: context.surface ?? null }, context.signal);
-  const port: BotTemplateOperationPortV1 = { artifacts: { ...boundary.forAccount('recipient'), read: async (id, options) => {
+  })(actionId, input, { surface: context.surface ?? null, invocationServices: context.invocationServices }, context.signal);
+  const port: BotTemplateOperationPortV1 = { artifacts: { ...boundary.forAccount('recipient'), delete: boundary.transport.delete, read: async (id, options) => {
     sourceReads++; return boundary.forAccount('recipient').read(id, options);
   } }, randomId: () => '60f7dabe-1f05-44b7-8e44-d98f2127f523',
     readSourceDraftRef: async () => null, writeSourceDraftRef: async () => {}, grant: async () => {},
     ...(pluginRelease ? { resolvePluginRelease: pluginRelease } : {}),
     recipient: { readSession: async () => ({ metadata: metadata(), revision,
       executionTarget: { machineId: 'recipient-machine', agentId: 'codex' } }), writeInstance: async () => { throw new Error('birth only'); },
-      ...(signUpdate ? { prepareUpdateRequesterAdmission: signUpdate } : {}),
       updateInstance: async (_ref, next, expected) => {
         if (failSettlement) throw Object.assign(new Error('session_metadata_unavailable'), { code: 'session_metadata_unavailable' });
         expect(instance).toEqual(expected); instance = next; instanceWrites++; revision++;
       }, reportAcceptedVersion: async input => { reports.push(input); if (refuseReport) throw new Error('offline'); },
-      content: { promptDocGet: input => readPromptDocInLibrary({ store, ...input }), skillActionExecute: skillAction,
-        machineSetupPlan: options.machineSetupPlan } },
+      content: { promptDocGet: input => readPromptDocInLibrary({ store, ...input }), skillActionExecute: skillAction } },
   };
   const execute = createBotTemplateActionExecuteV1(port);
   const executor = createActionExecutor({ botTemplateAction: execute,
@@ -145,20 +145,26 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
   });
   const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'recipient',
     actionCaller: { kind: 'host' as const }, actionRequestId: 'update-request',
-    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), ...executionContext };
   const diff = async () => {
     const result = await executor.execute('template.updates.diff', { sessionRef: ref }, context);
     if (!result.ok) throw new Error(JSON.stringify(result));
     return result.result as import('./templateUpdateActionsV1.js').BotTemplateUpdateDiffResultV1;
   };
+  const applyInput = (review: Awaited<ReturnType<typeof diff>>, extra: object = {}) => ({
+    sessionRef: ref, expectedVersion: review.upstream.release.version, expectedRevision: review.upstream.revision,
+    instructions: { expectedRevision: review.instructions!.revision }, ...extra });
   const apply = (review: Awaited<ReturnType<typeof diff>>, extra: object = {}) => {
-    const input = { sessionRef: ref, expectedVersion: review.upstream.release.version, expectedRevision: review.upstream.revision,
-      expectedMetadataRevision: review.metadataRevision, instructions: { expectedRevision: review.instructions!.revision }, ...extra };
+    const input = applyInput(review, extra);
     return executor.execute('template.updates.apply', input, { ...context,
       presentUserConfirmation: { actionId: 'template.updates.apply', inputDigest: computeActionInputApprovalDigestV1('template.updates.apply', input),
         accountId: 'recipient', serverId: context.serverIdentityId, requestId: 'update-request', target: null } });
   };
-  return { diff, apply, executor, context, docs, doc, memory, store, writes, contentReads, reports, accountWrites, incumbentService, boundary,
+  return { diff, apply, prepareApply: (review: Awaited<ReturnType<typeof diff>>, extra: object = {}) => execute.prepareUpdate({
+    input: applyInput(review, extra), context, invokeChild: child => {
+      if (typeof child.action !== 'string') throw new Error('Unexpected contributed preparation');
+      return executor.execute(child.action, child.input, context);
+    } }), executor, context, docs, doc, memory, store, writes, contentReads, reports, accountWrites, incumbentService, boundary,
     metadata, catalog: () => catalog,
     seedMcp: (key: string, entry: McpServerCatalogV1['servers'][number]) => {
       instance = { ...instance, mcpServerIds: { ...instance.mcpServerIds, [key]: entry.id } };
@@ -170,7 +176,7 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
         context: { ...context, invocationServices: { templateSkillSessionId: ref.sessionId } } }));
       instance = { ...instance, skillIds: { ...instance.skillIds, [key]: result.skillId } }; return result.skillId;
     },
-    failCapability: (next = true) => { failCapability = next; },
+    failCapability: (next: boolean | 'refused' = true) => { failCapability = next; },
     accepted: (release: BotTemplateReleaseV1) => { const row = boundary.rows.get(baseId)!; const envelope = { v: 1 as const, state: 'released' as const, release };
       boundary.rows.set(baseId, { ...row, body: JSON.stringify(envelope), header: projectBotTemplateArtifactHeaderV1(envelope) }); },
     release: (release: BotTemplateReleaseV1) => { const row = boundary.rows.get(sourceId)!; const envelope = { v: 1 as const, state: 'released' as const, release };
@@ -182,6 +188,92 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
 }
 
 describe('template update composition', () => {
+  it.each([true, 'refused'] as const)('preserves the inclusion cause when taking a new skill (failure=%s)', async failure => {
+    const f = await fixture();
+    const entries = [skillFileFromBytesV1('SKILL.md', new TextEncoder().encode('---\nname: guide\ndescription: Review\n---\nGuide\n'))];
+    f.release({ ...upstream, content: { ...upstream.content, skills: [{ key: 'guide', title: 'Guide', bundleSchemaId: 'skills.skill_md_v1', entries }] } });
+    const review = await f.diff();
+    f.failCapability(failure);
+    const result = await f.apply(review, { skills: { guide: { choice: 'take' } } });
+    expect(result).toMatchObject({ ok: false, errorCode: failure === 'refused' ? 'conflict' : 'session_metadata_unavailable' });
+    expect(f.state().instance.acceptedVersion).toBe('1.0.0');
+    expect(f.docs.size).toBe(3);
+    if (failure === 'refused') {
+      if (result.ok) throw new Error('Expected inclusion refusal');
+      const retained = BotTemplateUpdateFailureDetailsV1Schema.parse(result.details);
+      f.failCapability(false);
+      expect(await f.apply(await f.diff(), { skills: { guide: { choice: 'take' } },
+        recovery: { skillIds: retained.skillIds ?? {}, mcpServerIds: retained.mcpServerIds ?? {} } }))
+        .toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0' } });
+      expect(f.docs.size).toBe(3);
+    }
+  });
+  it.each(['machines.setup.plan', 'machines.setup.apply'] as const)('refuses software Update before content or identity changes when its token lacks %s', async missing => {
+    let plans = 0;
+    const f = await fixture({ machineSetupPlan: async ({ input }) => {
+      plans++;
+      return { desiredRevision: 0, sources: input.sources ?? [], exclusions: [], support: [], recipePlans: [] };
+    } }, undefined, { externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential',
+      grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids:
+        ['template.updates.diff', 'template.updates.apply', 'machines.setup.plan', 'machines.setup.apply'].filter(id => id !== missing) } } } });
+    f.release({ ...upstream, content: { ...upstream.content, needs: { ...upstream.content.needs,
+      software: [{ key: 'git', name: 'Git', requirement: 'required', purpose: 'Review changes', skipConsequence: '',
+        recipe: { pluginId: 'test.tools', recipeId: 'git', revision: '1' } }] } } });
+    expect(await f.apply(await f.diff(), { takeIdentity: true,
+      setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }], accounts: [], mcpServers: [] } }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(plans).toBe(missing === 'machines.setup.plan' ? 0 : 1);
+    expect(f.writes).toEqual([]);
+    expect(f.state().instanceWrites).toBe(0);
+    expect(f.state().title).toBe('My helper');
+  });
+  it.each(['account', 'full-token', 'scoped-token'] as const)('retains software Update preparation for %s', async credential => {
+    const f = await fixture({ machineSetupPlan: async ({ input }) => ({ desiredRevision: 0,
+      sources: input.sources ?? [], exclusions: [], support: [], recipePlans: [] }) }, undefined, credential === 'account' ? {} : {
+      externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential', grant: credential === 'full-token' ? API_TOKEN_FULL_GRANT_V1
+          : { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.updates.diff', 'template.updates.apply', 'machines.setup.plan', 'machines.setup.apply'] } } },
+    });
+    f.release({ ...upstream, content: { ...upstream.content, needs: { ...upstream.content.needs,
+      software: [{ key: 'git', name: 'Git', requirement: 'required', purpose: 'Review changes', skipConsequence: '',
+        recipe: { pluginId: 'test.tools', recipeId: 'git', revision: '1' } }] } } });
+    expect(await f.prepareApply(await f.diff(), { setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }],
+      accounts: [], mcpServers: [] } })).toMatchObject({ approvalPreview: { softwarePlan: { recipePlans: [] } } });
+    expect(f.writes).toEqual([]);
+    expect(f.state().instanceWrites).toBe(0);
+  });
+  it('retains scoped Update preparation without software', async () => {
+    const f = await fixture({}, undefined, { externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential',
+      grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.updates.diff', 'template.updates.apply'] } } } });
+    expect(await f.prepareApply(await f.diff())).toMatchObject({ approvalPreview: { upstream: { release: { version: '1.1.0' } } } });
+    expect(f.writes).toEqual([]);
+  });
+  it('applies the reviewed update after an unrelated Session title change', async () => {
+    // OWNER-RULINGS 2026-11-05 (5), BT-OVERBUILD X3: item revisions and
+    // instance CAS own update conflicts; unrelated Session metadata does not.
+    const f = await fixture();
+    const review = await f.diff();
+    expect(await f.executor.execute('session.title.set', {
+      sessionId: ref.sessionId, title: 'My renamed helper',
+    }, f.context)).toMatchObject({ ok: true });
+    expect((await f.diff()).metadataRevision).toBeGreaterThan(review.metadataRevision);
+
+    const result = await f.apply(review);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0' } });
+    expect(f.state()).toMatchObject({ title: 'My renamed helper', instance: { acceptedVersion: '1.1.0' } });
+  });
+
+  it('projects changed first-task and Agent suggestions from the accepted base and current release', async () => {
+    const f = await fixture();
+    f.accepted({ ...base, content: { ...base.content, firstTask: 'Sort the harvest',
+      suggestedAgent: { agentId: 'claude', modelId: 'old-model' } } });
+    f.release({ ...upstream, content: { ...upstream.content, firstTask: 'Plan the planting',
+      suggestedAgent: { agentId: 'codex', modelId: 'new-model' } } });
+    const review = await f.diff();
+    expect(review.acceptedSuggestions).toEqual({ firstTask: 'Sort the harvest',
+      suggestedAgent: { agentId: 'claude', modelId: 'old-model' } });
+    expect(review.upstream.release.content).toMatchObject({ firstTask: 'Plan the planting',
+      suggestedAgent: { agentId: 'codex', modelId: 'new-model' } });
+  });
   it.each([null, { style: 'solid', body: 'crab', seed: 'theirs' }] as const)(
     'takes the author identity through the canonical title and face Actions: %j', async face => {
       const f = await fixture();
@@ -214,29 +306,31 @@ describe('template update composition', () => {
     expect(f.reports).toEqual([{ artifactId: sourceId, acceptedVersion: '1.1.0', copyId: ref.sessionId }]);
   });
 
-  it('discovers the owned Session target and admits the original requester before any template content read', async () => {
-    const admitted: unknown[] = [];
-    let previousReads = 0;
-    const f = await fixture({}, undefined, async request => {
-      expect(f.state().sourceReads).toBe(previousReads);
-      admitted.push(request.executionTarget);
-      return request.context;
-    });
-    const review = await f.diff(); previousReads = f.state().sourceReads;
-    const result = await f.apply(review);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-    expect(admitted).toEqual([{ machineId: 'recipient-machine', agentId: 'codex' }]);
+  it('applies a freshly reviewed skipped release and clears the skipped offer', async () => {
+    const f = await fixture();
+    expect(await f.executor.execute('template.updates.skip', { sessionRef: ref, version: '1.1.0' }, f.context))
+      .toMatchObject({ ok: true, result: { changed: true } });
+    const review = await f.diff();
+    expect(review.offer).toBe('skipped');
+    const applied = await f.apply(review);
+    expect(applied, JSON.stringify(applied)).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0' } });
+    expect(f.state().instance).toMatchObject({ acceptedVersion: '1.1.0', follow: true });
+    expect(f.state().instance.skippedVersion).toBeUndefined();
   });
+
   it('previews a pinned plugin release and adopts the offered release through reviewed update preparation', async () => {
     // Plugin acquisition is a transport boundary; the real update/diff/child owners remain beneath it.
     const f = await fixture({}, async (source, _context, _signal, purpose?: 'update') => readBotTemplateReleaseV1(
       purpose === 'update' ? upstream : base, { ...source, registryItem: { ...source.registryItem,
         version: purpose === 'update' ? '1.1.0' : source.registryItem.version } }));
+    f.accepted({ ...base, content: { ...base.content, firstTask: 'Plan the harvest',
+      suggestedAgent: { agentId: 'claude' } } });
     const selected = f.state().instance.source;
     expect(await f.executor.execute('template.preview', { source: selected }, f.context))
       .toMatchObject({ ok: true, result: { release: { version: '1.0.0' } } });
     const review = await f.diff();
     expect(review).toMatchObject({ offer: 'available', upstream: { release: { version: '1.1.0' } } });
+    expect(review.acceptedSuggestions).toEqual({ firstTask: 'Plan the harvest', suggestedAgent: { agentId: 'claude' } });
     expect(await f.apply(review)).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0' } });
     expect(f.state().instance.acceptedVersion).toBe('1.1.0');
     expect(f.state().instance.source).toEqual({ kind: 'plugin', registryItem: {
@@ -455,14 +549,15 @@ describe('template update composition', () => {
     expect(readSessionCapabilityOverrideV1(selection, 'skill', addedId)).toBe('on');
     expect(f.docs.get(incumbentId)).toEqual(incumbent);
   });
-  it('plans software once before approval and waits for the selected native effects before accepting the version', async () => {
+  it('keeps the accepted base behind terminal setup failure and accepts only after a successful reviewed retry', async () => {
     const recipe = { pluginId: 'test.tools', recipeId: 'git', revision: '1' };
     const setup = { items: [{ kind: 'softwareRecipe' as const, selection: { ref: recipe, inputs: {} } }] };
     const events: string[] = [];
-    let releaseEffect: (() => void) | undefined;
-    const effect = new Promise<void>(resolve => { releaseEffect = resolve; });
+    let releaseEffect: ((state: 'failed' | 'succeeded') => void) | undefined;
+    let effect = new Promise<'failed' | 'succeeded'>(resolve => { releaseEffect = resolve; });
     let enterEffect: (() => void) | undefined;
-    const entered = new Promise<void>(resolve => { enterEffect = resolve; });
+    let entered = new Promise<void>(resolve => { enterEffect = resolve; });
+    let attempt = 0;
     const f = await fixture({ machineSetupPlan: async ({ input }) => {
       expect(input.homeId).toBe('stable-home');
       events.push('plan');
@@ -471,23 +566,61 @@ describe('template update composition', () => {
           basis: { kind: 'setup', machineId: 'recipient-machine', desiredRevision: 0, selection: { ref: recipe, inputs: {} } },
           steps: [{ id: 'git', kind: 'package', manager: 'apt', packages: [{ name: 'git' }] }], planDigest: 'a'.repeat(64),
           nativeFacts: [{ stepId: 'git', status: 'drifted', facts: {} }] } }] };
-    }, machineSetupApply: async ({ input }) => {
+    }, machineSetupApply: async ({ input, context }) => {
+      expect(context.runtimeAccountId).toBe('recipient');
+      expect(context.presentUserApproval?.actionId).toBe('template.updates.apply');
       expect(input.homeId).toBe('stable-home');
       expect(input.targets[0]).toMatchObject({ machineId: 'recipient-machine', desiredRevision: 0, sources: [{ kind: 'direct', setup }] });
-      events.push('apply'); enterEffect!(); await effect; events.push('settled'); return { operationId: 'install-git' };
-    } });
+      events.push('receipt'); attempt++; return { operationId: `install-git-${attempt}` };
+    }, actionOperationAction: request => executeActionOperationActionV1({ ...request,
+      // Network boundary follows the setup producer: receipt first, blocking get settles later.
+      transport: async ({ serverId, machineId, method, payload }) => {
+        expect({ serverId, machineId, method, payload }).toEqual({ serverId: 'home', machineId: 'recipient-machine',
+          method: 'actionOperation.get.v2', payload: { operationId: `install-git-${attempt}`, waitForTerminal: true } });
+        expect(request.context.runtimeAccountId).toBe('recipient');
+        events.push('wait'); enterEffect!();
+        const state = await effect;
+        const operation: ActionOperationSnapshotV1 = { version: 1, operationId: `install-git-${attempt}`, revision: 2,
+          actionId: 'machines.setup.apply', state, scope: { accountId: 'recipient', machineId }, title: 'Install Git',
+          createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+          ...(state === 'failed' ? { error: { errorCode: 'package_install_failed', error: 'Package install failed' } } : {}) };
+        return ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation });
+      } }) });
     f.context.serverIdentityId = 'stable-home';
     f.release({ ...upstream, content: { ...upstream.content, needs: { ...upstream.content.needs, software: [{ key: 'git', name: 'Git',
       requirement: 'required', purpose: 'Read changes', skipConsequence: '', recipe }] } } });
     const review = await f.diff();
-    const pending = f.apply(review, { setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }], accounts: [], mcpServers: [] } });
-    // The native boundary signals entry; acceptance must remain behind its ordinary settled promise.
+    const selections = { setup: { software: [{ key: 'git', selection: { action: 'install', inputs: {} } }], accounts: [], mcpServers: [] } };
+    const pending = f.apply(review, selections);
     await Promise.race([entered, pending.then(result => { throw new Error(`Apply settled before the native effect: ${JSON.stringify(result)}`); })]);
-    expect(events).toEqual(['plan', 'apply']);
+    expect(events).toEqual(['plan', 'receipt', 'wait']);
     expect(f.state().instance.acceptedVersion).toBe('1.0.0');
-    releaseEffect!();
-    expect(await pending).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0', applied: ['instructions', 'software'] } });
-    expect(events).toEqual(['plan', 'apply', 'settled']);
+    expect(f.state().instanceWrites).toBe(0);
+    expect(f.reports).toEqual([]);
+    expect(f.boundary.rows.has(baseId)).toBe(true);
+    releaseEffect!('failed');
+    expect(await pending).toMatchObject({ ok: false, errorCode: 'package_install_failed',
+      details: { applied: ['instructions'], remaining: ['software', 'settlement'] } });
+    expect(f.state().instance).toMatchObject({ acceptedVersion: '1.0.0', acceptedBase: { artifactId: baseId } });
+    expect(f.boundary.rows.size).toBe(2);
+    const learnedMemory = structuredClone(f.docs.get(f.memory.artifactId));
+    const instructionWrites = f.writes.length;
+    effect = new Promise(resolve => { releaseEffect = resolve; });
+    entered = new Promise(resolve => { enterEffect = resolve; });
+    const retryReview = await f.diff();
+    const retry = f.apply(retryReview, selections);
+    await Promise.race([entered, retry.then(result => { throw new Error(`Retry settled before setup: ${JSON.stringify(result)}`); })]);
+    expect(f.state().instanceWrites).toBe(0);
+    releaseEffect!('succeeded');
+    expect(await retry).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0', applied: ['software'] } });
+    expect(f.state().instance).toMatchObject({ acceptedVersion: '1.1.0' });
+    expect(f.state().instanceWrites).toBe(1);
+    expect(f.boundary.rows.has(baseId)).toBe(false);
+    expect(f.reports).toHaveLength(1);
+    expect(f.writes).toHaveLength(instructionWrites);
+    expect(f.docs.get(f.memory.artifactId)).toEqual(learnedMemory);
+    expect(await f.executor.execute('template.follow.stop', { sessionRef: ref }, f.context)).toMatchObject({ ok: true });
+    expect(f.state().instance).toMatchObject({ acceptedVersion: '1.1.0', follow: false });
   });
   it('skip/stop only patch private intent and never load content; repeated choice writes nothing', async () => {
     const f = await fixture();

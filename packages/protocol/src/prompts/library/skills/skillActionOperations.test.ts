@@ -152,6 +152,15 @@ describe('skill library Actions', () => {
     else expect(h.rules()).toMatchObject([{ target: { t: 'allMachines' }, enabled: true }]);
     expect(h.artifacts.get('skill-1')).toMatchObject({ savedBy });
   });
+  it('rethrows an unexpected Session inclusion error instead of reporting an incomplete success', async () => {
+    const h = harness();
+    const error = new Error('Session persistence unavailable');
+    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, randomId: () => 'rule',
+      includeInSession: async () => { throw error; } });
+    await expect(execute('skills.create', { name: 'sample', files }, { surface: 'agent', sessionId: 'origin-session' }))
+      .rejects.toBe(error);
+    expect(h.artifacts.has('skill-1')).toBe(true);
+  });
   it('returns acknowledged saved identity and admitted creator when inclusion refuses, with no reread or second save', async () => {
     const h = harness();
     const savedBy = { kind: 'agent', accountId: 'owner', sessionId: 'origin-session' } as const;

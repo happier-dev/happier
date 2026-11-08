@@ -1,4 +1,5 @@
-import type { ActionExecutorContext, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '../../actions/executor/types.js';
+import type { ActionExecutorContext, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
+import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../../actions/executor/resultProjection.js';
 import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -13,7 +14,7 @@ import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibrar
 import { PromptDocReadResultV1Schema } from '../../prompts/library/promptDocV2.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { MachineSetupPlanResultV1Schema, MachineSetupApplyResultV1Schema, machineSetupApplyTargetFromPlanV1,
-  buildMachineSetupTargetApplyInput } from '../../machines/managed/actionsV1.js';
+  buildMachineSetupTargetApplyInput, waitForMachineSetupOperationV1 } from '../../machines/managed/actionsV1.js';
 import { BotTemplateUpdateApplyInputV1Schema, BotTemplateUpdateDiffInputV1Schema, BotTemplateUpdateDiffResultV1Schema,
   BotTemplateUpdateSkipInputV1Schema, BotTemplateFollowStopInputV1Schema, readBotTemplateUpdateOfferV1,
   type BotTemplateUpdateDiffResultV1 } from './templateUpdateActionsV1.js';
@@ -23,14 +24,13 @@ import { readBotTemplateArtifactV1, projectBotTemplateArtifactHeaderV1, type Bot
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { applyBotTemplateMcpSetupV1, prepareBotTemplateSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
+import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
 
 const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 function failure(error: unknown): ActionExecuteFailure {
   const observed = readActionFailureEnvelope(error);
   if (observed) return observed;
-  const record = readRecord(error);
-  const code = typeof record.code === 'string' ? record.code : 'template_update_failed';
-  return { ok: false, errorCode: code, error: code };
+  return { ok: false, ...normalizeActionExecutorThrownError(error) };
 }
 async function readInstance(port: BotTemplateOperationPortV1, ref: { serverId: string; sessionId: string }, context: ActionExecutorContext) {
   const recipient = port.recipient ?? fail('unsupported_action');
@@ -63,7 +63,7 @@ export async function readBotTemplateUpdateDiffV1(port: BotTemplateOperationPort
   let instructions: BotTemplateUpdateDiffResultV1['instructions'] = null;
   if (instructionRef?.kind === 'doc') {
     const get = recipient.content?.promptDocGet ?? fail('unsupported_action');
-    const raw = await get({ artifactId: instructionRef.artifactId, signal: context.signal });
+    const raw = await get({ artifactId: instructionRef.artifactId, signal: context.signal }, context);
     const refused = readActionFailureEnvelope(raw); if (refused) throw refused;
     if (readRecord(raw).ok === false) return fail('prompt_doc_unavailable');
     const doc = PromptDocReadResultV1Schema.parse(raw);
@@ -102,7 +102,10 @@ export async function readBotTemplateUpdateDiffV1(port: BotTemplateOperationPort
   return BotTemplateUpdateDiffResultV1Schema.parse({ sessionRef, metadataRevision: snapshot.revision, instance,
     ...(snapshot.executionTarget ? { executionTarget: snapshot.executionTarget } : {}),
     ...(snapshot.metadata.connectedServices ? { connectedServices: ConnectedServiceBindingsV2IngressSchema.parse(snapshot.metadata.connectedServices) } : {}),
-    offer: readBotTemplateUpdateOfferV1(instance, upstream.release.version), upstream, instructions, skills,
+    offer: readBotTemplateUpdateOfferV1(instance, upstream.release.version), upstream,
+    acceptedSuggestions: { ...(accepted.release.content.firstTask === undefined ? {} : { firstTask: accepted.release.content.firstTask }),
+      ...(accepted.release.content.suggestedAgent === undefined ? {} : { suggestedAgent: accepted.release.content.suggestedAgent }) },
+    instructions, skills,
     needs: changedNeeds(accepted.release, upstream.release) });
 }
 
@@ -121,17 +124,14 @@ export async function mutateBotTemplateFollowV1(port: BotTemplateOperationPortV1
 
 /** Admission captures one review; selected owner writes retain their existing revision checks. */
 export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV1,
-  request: Readonly<{ input: unknown; context: ActionExecutorContext }>,
-  resolve: (source: BotTemplateInstanceV1['source'], context: ActionExecutorContext) => Promise<BotTemplatePreviewResultV1>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure> {
+  request: HostReviewedChildrenPreparationRequestV1,
+  resolve: (source: BotTemplateInstanceV1['source'], context: ActionExecutorContext) => Promise<BotTemplatePreviewResultV1>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult> {
   try {
     const input = BotTemplateUpdateApplyInputV1Schema.parse(request.input);
     const opened = await readInstance(port, input.sessionRef, request.context);
-    let requesterContext = opened.recipient.prepareUpdateRequesterAdmission
-      ? await opened.recipient.prepareUpdateRequesterAdmission({ input, context: request.context,
-        executionTarget: opened.snapshot.executionTarget }) : request.context;
-    const review = await readBotTemplateUpdateDiffV1(port, { sessionRef: input.sessionRef }, requesterContext, resolve, opened);
+    const review = await readBotTemplateUpdateDiffV1(port, { sessionRef: input.sessionRef }, request.context, resolve, opened);
     if (review.offer !== 'available' && review.offer !== 'skipped') return fail('version_mismatch');
-    if (review.upstream.release.version !== input.expectedVersion || review.metadataRevision !== input.expectedMetadataRevision
+    if (review.upstream.release.version !== input.expectedVersion
       || review.instance.source.kind === 'artifact' && !input.expectedRevision
       || input.expectedRevision && !sameStrictJsonValue(input.expectedRevision, review.upstream.revision)) return fail('version_mismatch');
     if (input.instructions && (!review.instructions || !sameStrictJsonValue(input.instructions.expectedRevision, review.instructions.revision))) return fail('revision_conflict');
@@ -144,29 +144,24 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
     const createsSkill = (skill: BotTemplateUpdateDiffResultV1['skills'][number]) => skill.canTake && (skill.status === 'added' || skill.status === 'deleted');
     if (Object.keys(input.recovery?.skillIds ?? {}).some(key => !review.skills.some(skill => skill.key === key && createsSkill(skill)))) return fail('invalid_request');
     if (input.recovery?.acceptedBaseId) {
-      const stored = await port.artifacts.read(input.recovery.acceptedBaseId, { signal: requesterContext.signal });
+      const stored = await port.artifacts.read(input.recovery.acceptedBaseId, { signal: request.context.signal });
       const recovered = stored?.access === 'owner' ? readBotTemplateArtifactV1(stored) : null;
       if (!recovered || recovered.state !== 'released' || !sameStrictJsonValue(recovered.release, review.upstream.release)) return fail('invalid_request');
     }
     const setup = prepareBotTemplateSetupV1(review.needs, input.setup);
     // The common setup owners are attached by the admitted host below; never silently ignore selected effects.
     if ((setup.machineSetup || setup.connectedServices) && !review.executionTarget) return fail('machine_target_unavailable');
-    if (setup.machineSetup && !requesterContext.serverIdentityId) return fail('server_identity_unavailable');
-    const setupTarget = review.executionTarget && requesterContext.serverIdentityId
-      ? { homeId: requesterContext.serverIdentityId, machineId: review.executionTarget.machineId } : undefined;
+    if (setup.machineSetup && !request.context.serverIdentityId) return fail('server_identity_unavailable');
+    const setupTarget = review.executionTarget && request.context.serverIdentityId
+      ? { homeId: request.context.serverIdentityId, machineId: review.executionTarget.machineId } : undefined;
     const planInput = setup.machineSetup && setupTarget ? buildBotTemplateMachineSetupPlanInputV1(setupTarget, setup.machineSetup) : undefined;
-    if (opened.recipient.prepareUpdateRequesterAdmission && (planInput || review.upstream.requesterAuthorship))
-      requesterContext = await opened.recipient.prepareUpdateRequesterAdmission({ input, context: requesterContext,
-        executionTarget: review.executionTarget,
-        ...(review.upstream.requesterAuthorship ? { requesterAuthorship: review.upstream.requesterAuthorship } : {}),
-        ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}),
-        ...(planInput ? { machineSetupPlanInput: planInput } : {}) });
     let setupPlan: ReturnType<typeof MachineSetupPlanResultV1Schema.parse> | undefined;
     if (planInput) {
-      const plan = port.recipient?.content?.machineSetupPlan ?? fail('unsupported_action');
-      const result = await plan({ input: planInput, context: requesterContext, signal: requesterContext.signal });
-      const refused = readActionFailureEnvelope(result); if (refused) throw refused;
-      setupPlan = MachineSetupPlanResultV1Schema.parse(result);
+      const invoke = request.invokeChild ?? fail('admission_unavailable');
+      const result = await invoke({ action: 'machines.setup.plan', role: 'template_setup_plan',
+        input: projectNativeJsonValueForTransport(planInput) });
+      if (!result.ok || isDeferredApprovalResult(result)) return result;
+      setupPlan = MachineSetupPlanResultV1Schema.parse(result.result);
       if (!setupPlan.recipePlans) return fail('invalid_action_output');
     }
     const setupApply = setupPlan && setupTarget ? buildMachineSetupTargetApplyInput(machineSetupApplyTargetFromPlanV1(setupTarget, setupPlan)) : undefined;
@@ -186,16 +181,11 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
         { action: 'mcp.servers.create' as const, role: 'create_template_mcp' },
         ...setup.mcp.filter(item => review.instance.mcpServerIds[item.key]).map(item => ({ action: 'mcp.servers.update' as const, role: `update_template_mcp:${item.key}` })),
         ...setup.mcp.map(item => ({ action: 'session.capabilities.set' as const, role: `template_mcp:${item.key}` }))] : []),
-      ...(setupApply ? [{ action: 'machines.setup.apply' as const, role: 'template_setup_apply', input: projectNativeJsonValueForTransport(setupApply) }] : []),
+      ...(setupApply ? [{ action: 'machines.setup.apply' as const, role: BOT_TEMPLATE_SETUP_APPLY_ROLE_V1, input: projectNativeJsonValueForTransport(setupApply) },
+        { action: 'action.operations.get' as const, role: 'template_setup_wait' }] : []),
       ...(setup.connectedServices ? [{ action: 'session.connected_services_auth.set' as const, role: 'template_accounts' }] : []),
     ];
     return { children, approvalPreview: projectNativeJsonValueForTransport({ ...review, ...(setupPlan ? { softwarePlan: setupPlan } : {}) }),
-      // Requester preparation owns these routing/authentication fields; current review and cancellation stay with the host.
-      prepareExecutionContext: async context => ({ ...context,
-        externalActionExecutionAuthorization: requesterContext.externalActionExecutionAuthorization,
-        externalActionTarget: requesterContext.externalActionTarget,
-        originalActionEnvelope: requesterContext.originalActionEnvelope,
-        actionRequestId: requesterContext.actionRequestId }),
       executeAdmittedAction: async ({ context }) => {
       const execute = async (context: ActionExecutorContext): Promise<ActionExecuteResult> => {
         const applied: string[] = []; const kept: string[] = []; const resourceIds: string[] = [];
@@ -248,7 +238,8 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
                 const name = readSkillFrontmatterV1(new TextDecoder().decode(decodeBase64(entry.contentBase64, 'base64'))).name ?? fail('invalid_skill_name');
                 const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].parse(await invoke('skills.create', key, { name, files: next!.entries }, { templateSkillSessionId: input.sessionRef.sessionId }));
                 skillIds[skill.key] = result.skillId; createdSkillIds[skill.key] = result.skillId; resourceIds.push(result.skillId);
-                if (result.incomplete || result.includedInSessionId !== input.sessionRef.sessionId) return fail('skill_content_unavailable');
+                if (result.inclusion?.ok === false) return fail(result.inclusion.code);
+                if (result.incomplete || result.includedInSessionId !== input.sessionRef.sessionId) return fail('invalid_action_output');
               } else {
                 await invoke('session.capabilities.set', `recover_skill:${skill.key}`, {
                   sessionId: input.sessionRef.sessionId, kind: 'skill', id: skillIds[skill.key], state: 'on' });
@@ -286,9 +277,12 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
           }
           if (setupApply) {
             context.operationProgress?.update({ phase: 'setup' });
-            // Setup apply's ordinary promise settles its workflow; operationId is its settled receipt.
-            MachineSetupApplyResultV1Schema.parse(await invoke('machines.setup.apply', 'template_setup_apply',
+            const receipt = MachineSetupApplyResultV1Schema.parse(await invoke('machines.setup.apply', 'template_setup_apply',
               setupApply));
+            const failure = await waitForMachineSetupOperationV1(receipt.operationId, request => invoke(
+              'action.operations.get', 'template_setup_wait', { ...request,
+                serverId: input.sessionRef.serverId, machineId: setupApply.machineId }));
+            if (failure) throw failure;
             applied.push('software'); remaining.splice(remaining.indexOf('software'), 1);
           }
           context.operationProgress?.update({ phase: 'settlement' });

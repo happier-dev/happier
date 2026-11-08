@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
-import { isDeferredApprovalResult } from '../../actions/executor/resultProjection.js';
+import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../../actions/executor/resultProjection.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
@@ -35,9 +35,7 @@ const fail = (code: string): never => { throw Object.assign(new Error(code), { c
 function failure(error: unknown): ActionExecuteFailure {
   const observed = readActionFailureEnvelope(error);
   if (observed) return observed;
-  const code = readRecord(error).code;
-  const errorCode = typeof code === 'string' ? code : 'template_instantiation_failed';
-  return { ok: false, errorCode, error: errorCode };
+  return { ok: false, ...normalizeActionExecutorThrownError(error) };
 }
 
 /** Invocation-local admitted release; only the existing reviewed-child owner dispatches effects. */
@@ -159,7 +157,8 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
                 const created = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].parse(await invoke('skills.create', `skill:${skill.key}`,
                   { name, files: skill.entries }, { templateSkillSessionId: birth.sessionId }));
                 resourceIds.push(created.skillId);
-                if (!created.ok || created.incomplete || created.includedInSessionId !== birth.sessionId) return fail('skill_content_unavailable');
+                if (created.inclusion?.ok === false) return fail(created.inclusion.code);
+                if (created.incomplete || created.includedInSessionId !== birth.sessionId) return fail('invalid_action_output');
                 skillIds[skill.key] = created.skillId;
               }
               const mcpServerIds = await applyBotTemplateMcpSetupV1({ mcp: setup.mcp, sessionId: birth.sessionId,

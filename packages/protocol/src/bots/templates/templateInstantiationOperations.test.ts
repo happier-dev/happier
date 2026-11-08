@@ -31,7 +31,7 @@ const release: BotTemplateReleaseV1 = { v: 1, version: '1.0.0', changelog: '', r
   content: { v: 1, identity: { name: 'Helper', description: 'Reusable helper' }, instructions: { markdown: 'Help with work.' },
     memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] }, firstTask: 'Review my change' } };
 
-function fixture(carried = false, operations = false, observeCommit = false, failSkillWrite = false, setup = false, report = false, awaiting = false,
+function fixture(carried = false, operations = false, observeCommit = false, failSkillWrite: boolean | 'typed' = false, setup = false, report = false, awaiting = false,
   executionContext: Partial<ActionExecutorContext> = {},
   copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string },
   softwareAuthorizationUnavailable = false,
@@ -148,7 +148,8 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
         port: { readSession: async () => ({ metadata, sessionRunning: false,
           agent: { vendorResume: 'supported', skillsLiveReload: 'supported' }, launchRestart: 'automatic' }),
           resolveItem: async () => id, writeMetadata: async ({ update }) => {
-            if (failSkillWrite) throw new Error('Session persistence unavailable');
+            if (failSkillWrite === 'typed') throw Object.assign(new Error('Session persistence unavailable'), { code: 'session_unavailable' });
+            if (failSkillWrite) return 'conflict';
             metadata = readRecord(update(metadata)); revision++; return 'updated';
           } } }),
     })(actionId, input, { surface: context.surface ?? null, invocationServices: context.invocationServices }, context.signal),
@@ -478,11 +479,12 @@ describe('template instantiation through ordinary creation', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
     expect(f.counts()).toEqual({ births: 1, launches: 1 });
   });
-  it('retains the born Session and already-created skill when Session inclusion fails before launch', async () => {
-    const f = fixture(true, false, false, true);
-    expect(await f.run()).toMatchObject({ ok: false, errorCode: 'skill_content_unavailable',
-      details: { sessionId, resourceIds: ['doc-1', 'doc-2', 'doc-3'] } });
+  it.each([true, 'typed'] as const)('preserves the Session inclusion cause before launch (failure=%s)', async failure => {
+    const f = fixture(true, false, false, failure);
+    expect(await f.run()).toMatchObject({ ok: false, errorCode: failure === 'typed' ? 'session_unavailable' : 'conflict',
+      details: { sessionId, resourceIds: failure === 'typed' ? ['doc-1', 'doc-2'] : ['doc-1', 'doc-2', 'doc-3'] } });
     expect(f.counts()).toEqual({ births: 1, launches: 0 });
+    expect(f.docs.has('doc-3')).toBe(true);
     expect(f.metadata()).not.toHaveProperty('work.templateInstance');
     expect(f.boundary.rows.has(baseId)).toBe(false);
   });
