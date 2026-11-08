@@ -199,7 +199,11 @@ export async function applyDaemonServiceUninstallPlan(
   plan: DaemonServiceUninstallPlan,
   options: Readonly<{ runCommands?: boolean; commandFailureMode?: DaemonServiceCommandFailureMode }> = {},
 ): Promise<void> {
-  const commands = options.runCommands === false ? [] : plan.commands;
+  // The shared owner honours `allowFail`; this plan marks tolerated steps (legacy task cleanup)
+  // with `ignoreFailure`, so carry it across instead of letting those steps abort the uninstall.
+  const commands = options.runCommands === false
+    ? []
+    : plan.commands.map((command) => (command.ignoreFailure ? { ...command, allowFail: true } : command));
   const removals = plan.removals ?? plan.filesToRemove.map((path) => ({ path, beforeCommandIndex: commands.length }));
   await applyServicePlan({
     writes: [], commands,

@@ -85,6 +85,27 @@ describe('runDaemonServiceCommands', () => {
     });
   });
 
+  it('continues an uninstall past a failing step the plan tolerates', async () => {
+    await withTempDir('happier-uninstall-tolerated-', async (dir) => {
+      const { applyDaemonServiceUninstallPlan } = await import('./apply');
+      const definition = join(dir, 'daemon.service');
+      writeFileSync(definition, 'installed definition');
+      spawnSyncMock.mockImplementation((cmd: string) => (cmd === 'schtasks'
+        ? { status: 1, stdout: '', stderr: 'ERROR: There is no running instance of the task.' }
+        : { status: 0, stdout: '', stderr: '' }));
+
+      await applyDaemonServiceUninstallPlan({
+        platform: 'linux',
+        filesToRemove: [definition],
+        commands: [
+          { cmd: 'schtasks', args: ['/End', '/TN', 'Happier\\legacy'], ignoreFailure: true },
+          { cmd: 'systemctl', args: ['--user', 'daemon-reload'] },
+        ],
+      });
+      expect(existsSync(definition)).toBe(false);
+    });
+  });
+
   it('reports a failed definition removal', async () => {
     const { applyDaemonServiceUninstallPlan } = await import('./apply');
     await expect(applyDaemonServiceUninstallPlan({ platform: 'linux', filesToRemove: [commandsDir], commands: [] })).rejects.toThrow();

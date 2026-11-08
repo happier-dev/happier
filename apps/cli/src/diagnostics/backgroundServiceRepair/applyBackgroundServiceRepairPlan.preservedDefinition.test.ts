@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -99,7 +99,9 @@ function runtime(platform: 'darwin' | 'linux' | 'win32', homeDir: string) {
   const commandDir = join(homeDir, 'commands');
   mkdirSync(commandDir, { recursive: true });
   for (const command of ['systemctl', 'launchctl', 'powershell.exe', 'schtasks']) {
-    writeFileSync(join(commandDir, command), 'OS command fixture');
+    // The service owner only accepts executable PATH entries.
+    writeFileSync(join(commandDir, command), 'OS command fixture', { mode: 0o755 });
+    chmodSync(join(commandDir, command), 0o755);
     if (process.platform === 'win32' && !command.endsWith('.exe')) {
       writeFileSync(join(commandDir, `${command}.exe`), 'OS command fixture');
     }
