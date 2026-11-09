@@ -76,6 +76,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         : t('connectedServices.errors.generic');
 
     switch (code) {
+        case 'action_account_scope_changed':
+            return t('connectedServices.errors.accountConfigurationChanged');
         case 'connected_account_purpose_catalog_unavailable':
             return t('connectedServices.errors.catalogDefaultsUnavailable');
         case 'unauthorized':

@@ -13,9 +13,12 @@ import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountSco
 import { createFrontDoorActionExecute, requireActionSuccess, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { randomUUID } from '@/platform/randomUUID';
 
 const onExecuted = () => {};
-const retired = (): ActionExecuteResult => ({ ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
+const retired = (requestId = randomUUID()): ActionExecuteResult => ({ ok: false,
+    errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed', requestId,
+    details: { reason: 'client_account_scope_changed' } });
 type MountedExecutorOptions = Omit<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>, 'onBlockingApprovalPending'>;
 type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; executorOptions?: MountedExecutorOptions;
     /** Deliver an input admission receipt to its durable draft owner after navigation. */
@@ -85,14 +88,14 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         try { capturedInput = projectNativeJsonValueForTransport(input); } catch { /* The Action input owner reports invalid JSON. */ }
         const capturedScope = capturedBinding.scope;
         const caller = callerContext;
-        const requestId = callerContext?.actionRequestId ?? operation?.actionRequestId;
+        const requestId = callerContext?.actionRequestId ?? operation?.actionRequestId ?? randomUUID();
         // Retained approval custody requires a concrete signal even without a caller signal.
         const retirement = new AbortController();
         const subscription = accountWrite ? undefined : executionLifetime.onRetire(() => retirement.abort());
         const cancellation = mergeAbortSignals([retainEffect ? undefined : lifetime.controller.signal,
             retirement.signal, operation?.signal ?? callerContext?.signal]);
         const invocationCurrent = () => (accountWrite || capturedBinding.isCurrent()) && !cancellation.signal.aborted;
-        if (!capturedBinding.isCurrent() || cancellation.signal.aborted) { subscription?.dispose(); cancellation.dispose(); return retired(); }
+        if (!capturedBinding.isCurrent() || cancellation.signal.aborted) { subscription?.dispose(); cancellation.dispose(); return retired(requestId); }
         const frontDoorOptions = {
             ...options?.executorOptions,
             ...operation?.executorOptions,
@@ -137,7 +140,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         if (!result.ok) return result;
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (!pending.success) return result;
-        if (!invocationCurrent()) return retired();
+        if (!invocationCurrent()) return retired(requestId);
         return await resumeActionExecutionResult({ result, actionId, actionInput: capturedInput, scope: capturedScope,
             signal: cancellation.signal, ...(requestId ? { requestId } : {}),
             onApprovalPending: registration => {
@@ -147,19 +150,19 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
             },
         });
         } catch (error) {
-            if (!invocationCurrent()) return retired();
+            if (!invocationCurrent()) return retired(requestId);
             throw error;
         } finally { subscription?.dispose(); cancellation.dispose(); }
     }, [approval.requestApproval, binding, frontDoor, lifetime, options?.executorOptions, options?.onApprovalPending,
         options?.retainInvocation, options?.runner, presentBlockingApproval, scope]);
     const execute = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<ActionExecuteResult> => {
-        if (!binding || !scope || !isCurrent()) return retired();
+        if (!binding || !scope || !isCurrent()) return retired(operation?.actionRequestId);
         return executeCaptured(binding, actionId, input, operation);
     }, [binding, executeCaptured, isCurrent, scope]);
     /** The mounted command dispatcher binds an ordinary child to this same engine and its private ports. */
     const executeForCaller = React.useCallback(async (actionId: ActionId, input: unknown, caller: ActionExecutorContext,
         operation?: MountedOperation): Promise<ActionExecuteResult> => {
-        if (!binding || !scope || !isCurrent()) return retired();
+        if (!binding || !scope || !isCurrent()) return retired(caller.actionRequestId ?? operation?.actionRequestId);
         return executeCaptured(binding, actionId, input, operation, caller);
     }, [binding, executeCaptured, isCurrent, scope]);
     /** Value-parsing clients unwrap only the terminal receipt delivered by this same mounted owner. */

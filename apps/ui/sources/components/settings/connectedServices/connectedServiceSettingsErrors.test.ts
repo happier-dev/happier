@@ -17,6 +17,7 @@ describe('connected-service settings errors', () => {
     ['unsupported', 'accountOperationUnsupported'],
     ['unreachable', null],
     ['scope-retired', 'accountConfigurationChanged'],
+    ['action_account_scope_changed', 'accountConfigurationChanged'],
     ['source-currentness-unavailable', 'accountSaveUnavailable'],
     ['source-transfer-unavailable', 'accountSaveUnavailable'],
     ['source-version-conflict', 'accountConfigurationChanged'],
