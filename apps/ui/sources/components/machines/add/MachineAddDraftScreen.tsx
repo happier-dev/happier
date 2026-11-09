@@ -45,12 +45,13 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const routePath = readMachineAddRoutePath(params.path);
     const initialPath = routePath === 'create' ? undefined : routePath;
     // A phone's pushed way is titled by it; Back (the settings registry's parent) returns to the ways.
-    const pushedWay = useMachineAddPushesWays() ? routePath : undefined;
+    const pushesWays = useMachineAddPushesWays();
+    const pushedWay = pushesWays ? routePath : undefined;
     const initialCreating = pathParam === 'create' ? true
         : pathParam || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
         : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
-    const flow = useMachineAddFlow({ serverId, initialPath, initialCreating });
+    const flow = useMachineAddFlow({ serverId, initialPath, initialCreating, connectionPathVisible: !pushesWays || Boolean(routePath) });
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });

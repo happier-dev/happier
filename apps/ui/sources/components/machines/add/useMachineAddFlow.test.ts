@@ -57,6 +57,57 @@ beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTes
 afterEach(async () => { await act(async () => discardMachineAdd()); publishAppliedActiveServerRuntimeAvailability(false); vi.useRealTimers(); standardCleanup(); });
 describe('machine add flow lifetime', () => {
 
+    it.each([
+        { name: 'Create', initialPath: 'ssh', initialCreating: true, connectionPathVisible: true },
+        { name: 'Another computer', initialPath: 'anotherComputer', initialCreating: false, connectionPathVisible: true },
+        { name: 'undecided ways', initialPath: undefined, initialCreating: null, connectionPathVisible: true },
+        { name: 'phone ways menu with a retained SSH path', initialPath: 'ssh', initialCreating: false, connectionPathVisible: false },
+    ] as const)('loads local status and saved SSH hosts only when their path is selected from $name', async ({ initialPath, initialCreating, connectionPathVisible }) => {
+        const previous = storage.getState();
+        const serverId = await harness.addHome({ serverUrl: 'https://add-demand.example.test', name: 'Add demand', accountId: 'alice' });
+        const manual = createManualSystemTaskRunner('tauri');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const features = createRootLayoutFeaturesResponse({ features: { remoteHosts: { management: { enabled: true } } } });
+        const catalogPath = '/v1/account/entity-rows/remote-hosts';
+        vi.stubGlobal('isTauri', true);
+        let unmount: (() => Promise<void>) | undefined;
+        try {
+            await setActiveServerId(serverId);
+            await admitSsh(serverId, 'alice');
+            primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+            harness.answer(serverId, '/v1/features', { body: features });
+            harness.answer(serverId, '/v1/features/authenticated', { body: features });
+            harness.answer(serverId, catalogPath, { body: { status: 'present', revision: 1,
+                content: { t: 'plain', v: { v: 1, hosts: [{ id: 'saved-box', name: 'Saved box',
+                    createdAt: 1, updatedAt: 1, lastUsedAt: null, ssh: { target: 'alice@box', authMode: 'agent' } }] } } } });
+            let visible = connectionPathVisible;
+            const hook = await renderHook(() => useMachineAddFlow({ serverId, runner: manual.runner, initialPath, initialCreating, connectionPathVisible: visible }));
+            unmount = () => hook.unmount();
+            const statusReads = () => manual.bridge.start.mock.calls.filter(([spec]) => spec.kind === 'daemon.service.status.v1');
+            const configuredSshReads = () => manual.bridge.start.mock.calls.filter(([spec]) => spec.kind === 'local.ssh.discoverConfiguredHosts.v1');
+            expect({ localStatusReads: statusReads().length, sshCatalogReads: harness.requestsFor(catalogPath).length })
+                .toEqual({ localStatusReads: 0, sshCatalogReads: 0 });
+            expect(configuredSshReads()).toHaveLength(0);
+
+            // The real selection owner publishes the chosen connection path, leaving Create.
+            visible = true;
+            await act(async () => updateMachineAddFlowDraft(current => ({ ...current, creating: false, path: 'thisComputer' })));
+            await vi.waitFor(() => expect(statusReads()).toHaveLength(1));
+            const taskId = 'personal-home-task-1';
+            await act(async () => manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true,
+                data: { serviceInstalled: false, daemonRunning: false, needsAuth: true, machineId: null } }));
+            expect(hook.getCurrent().thisComputer.kind).toBe('needsAuth');
+            expect(harness.requestsFor(catalogPath)).toHaveLength(0);
+
+            await act(async () => hook.getCurrent().choosePath('ssh'));
+            await vi.waitFor(() => expect(hook.getCurrent().ssh.suggestions.some(host => host.id === 'saved-box')).toBe(true));
+            expect({ localStatusReads: statusReads().length, sshCatalogReads: harness.requestsFor(catalogPath).length })
+                .toEqual({ localStatusReads: 1, sshCatalogReads: 1 });
+            expect(configuredSshReads()).toHaveLength(1);
+        } finally { await unmount?.(); await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
+    });
+
     it('carries the mounted SSH review identity through its real Action start and secure continuation', async () => {
         const previous = storage.getState();
         const serverId = await harness.addHome({ serverUrl: 'https://mounted-identity.example.test', name: 'Mounted identity', accountId: 'alice' });
@@ -187,7 +238,10 @@ describe('machine add flow lifetime', () => {
         } finally { await act(async () => discardMachineAdd()); storage.setState(previous); }
     });
 
-    it('runs admitted This computer setup through the mounted executor and keeps its task after leaving the presenter', async () => {
+    it.each([
+        { name: 'Create', creating: true, connectionPathVisible: true },
+        { name: 'phone ways menu', creating: false, connectionPathVisible: false },
+    ])('runs admitted This computer setup through the mounted executor and retains its outcome without local reads on $name', async ({ creating, connectionPathVisible }) => {
         const previous = storage.getState();
         const serverId = await harness.addHome({ serverUrl: 'https://mounted-local.example.test', name: 'Mounted local', accountId: 'alice' });
         vi.stubGlobal('isTauri', true);
@@ -206,6 +260,23 @@ describe('machine add flow lifetime', () => {
             await hook.unmount();
             expect(readMachineAddFlowDraft().thisComputerTask?.taskId).toBe(taskId);
             expect(manual.bridge.cancel).not.toHaveBeenCalledWith(taskId);
+            const resumed = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialCreating: true, connectionPathVisible: false }));
+            expect(readMachineAddFlowDraft().creating).toBe(false);
+            expect(resumed.getCurrent().run).toMatchObject({ kind: 'thisComputer', running: true });
+            await resumed.unmount();
+            expect(readMachineAddFlowDraft().thisComputerTask?.taskId).toBe(taskId);
+            expect(manual.bridge.cancel).not.toHaveBeenCalledWith(taskId);
+            await act(async () => manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: false,
+                error: { code: 'cancelled', message: 'Setup cancelled' } }));
+            await act(async () => updateMachineAddFlowDraft(current => ({ ...current, creating })));
+            const statusReads = () => manual.bridge.start.mock.calls.filter(([spec]) => spec.kind === 'daemon.service.status.v1').length;
+            const readsBeforeOutcome = statusReads();
+            const outcome = await renderHook(() => useMachineAddFlow({ runner: manual.runner, initialCreating: creating, connectionPathVisible }));
+            try {
+                expect(outcome.getCurrent().run).toMatchObject({ kind: 'thisComputer', running: false });
+                expect(readMachineAddFlowDraft().thisComputerTask?.taskId).toBe(taskId);
+                expect(statusReads()).toBe(readsBeforeOutcome);
+            } finally { await outcome.unmount(); }
         } finally { await act(async () => discardMachineAdd()); storage.setState(previous); vi.unstubAllGlobals(); }
     });
 

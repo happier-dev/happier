@@ -15,10 +15,8 @@ import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolve
 import type { RelayDriftBanner } from './relayDriftTypes';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useAppAccountIdentity } from '@/components/settings/machines/localControl/useThisComputerConnection';
-import {
-    confirmThisComputerAccountMove,
-    presentThisComputerConnection,
-} from '@/components/settings/machines/localControl/thisComputerConnectionPresentation';
+import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { presentThisComputerConnection } from '@/components/settings/machines/localControl/thisComputerConnectionPresentation';
 
 /**
  * Facts from the desktop's own live read of THIS computer's daemon.
@@ -116,6 +114,16 @@ function resolveDoctorLocalRelayCandidate(params: Readonly<{
 }
 
 export function useRelayDriftBanner(): RelayDriftBanner | null {
+    const runner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
+    const localDaemonControl = useLocalDaemonControl({ runner });
+    return useRelayDriftBannerFromLocalControl(localDaemonControl, runner);
+}
+
+/** A surface that already owns local status consumes it here without starting another read. */
+export function useRelayDriftBannerFromLocalControl(
+    localDaemonControl: ReturnType<typeof useLocalDaemonControl>,
+    runner: SystemTaskRunner,
+): RelayDriftBanner | null {
     const activeServerSnapshot = getActiveServerSnapshot();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.relayDrift,
@@ -134,8 +142,6 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
         return resolved;
     }, [activeServerSnapshot.serverId, administrationTargetSelection]);
     const executionTarget = resolveRelayExecutionTarget();
-    const runner = React.useMemo(() => getDefaultSystemTaskRunner(), []);
-    const localDaemonControl = useLocalDaemonControl({ runner });
     const [repairTaskId, setRepairTaskId] = React.useState<string | null>(null);
     const [isRepairStarting, setIsRepairStarting] = React.useState(false);
     const repairTaskSnapshot = useSystemTaskSnapshot(runner, repairTaskId);
@@ -221,10 +227,6 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
                 || localDaemonControl.status?.machineId !== currentTarget.machine.id
             ) return;
         }
-        // R10 D1: switching this computer away from the account it is signed in to asks first,
-        // naming both accounts.
-        if (!(await confirmThisComputerAccountMove(connection))) return;
-
         setIsRepairStarting(true);
         try {
             await repairBackgroundService();
@@ -232,7 +234,6 @@ export function useRelayDriftBanner(): RelayDriftBanner | null {
             setIsRepairStarting(false);
         }
     }, [
-        connection,
         isRepairUnavailable,
         isRepairStarting,
         localDaemonFacts,

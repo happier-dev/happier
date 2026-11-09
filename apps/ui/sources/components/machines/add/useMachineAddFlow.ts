@@ -146,7 +146,7 @@ export function useMachineAddFlowServerId(requestedServerId?: string): string {
     return draftServerId ?? requestedServerId ?? active.serverId;
 }
 
-export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; initialCreating?: boolean | null; runner?: SystemTaskRunner }> = {}): {
+export function useMachineAddFlow(options: Readonly<{ serverId?: string; initialPath?: MachineAddPathId; initialCreating?: boolean | null; connectionPathVisible?: boolean; runner?: SystemTaskRunner }> = {}): {
     serverId: string;
     homeName: string;
     paths: ReturnType<typeof useMachineAddPaths>;
@@ -197,7 +197,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const runner = draft.thisComputerTask?.runner ?? draft.sshTask?.runner ?? options.runner ?? getSystemTasksRunner();
     const paths = useMachineAddPaths(serverId, runner);
     const progress = useMachineAddProgress();
-    const preflight = useThisComputerSetupPreflight({ runner });
+    const connectionPathVisible = options.connectionPathVisible !== false;
+    const localDemand = connectionPathVisible && !draft.creating && draft.path === 'thisComputer';
+    const sshDemand = connectionPathVisible && !draft.creating && draft.path === 'ssh';
+    const preflight = useThisComputerSetupPreflight({ runner, enabled: localDemand });
     const detectedOs = detectClientCommandOs();
     const initialized = React.useRef(false);
     React.useEffect(() => {
@@ -223,10 +226,10 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     const sshPrompt = resolveRemoteSshBootstrapPrompt(sshSnapshot);
     const hostScope = useActiveServerAccountScope(serverId);
     const sshActions = useMountedActionExecution(hostScope ?? serverId, { runner });
-    const hostCatalog = useRemoteHostCatalogSnapshot(hostScope);
     const managementEnabled = useFeatureEnabled('remoteHosts.management');
+    const hostCatalog = useRemoteHostCatalogSnapshot(sshDemand && managementEnabled && isActiveHome ? hostScope : null);
     const savedHosts = managementEnabled && isActiveHome ? hostCatalog?.data ?? EMPTY_REMOTE_HOSTS : EMPTY_REMOTE_HOSTS;
-    const configured = useConfiguredSshHostSuggestions({ runner, enabled: runner.mode === 'tauri' && draft.path === 'ssh' });
+    const configured = useConfiguredSshHostSuggestions({ runner, enabled: runner.mode === 'tauri' && sshDemand });
     const configuredHosts = React.useMemo(() => filterConfiguredSshHostSuggestions({ suggestions: configured.suggestions, remoteHosts: savedHosts }), [configured.suggestions, savedHosts]);
     const recordSshError = React.useCallback((error: unknown) => update((current) => current.serverId !== serverId || current.path !== 'ssh' ? current : ({ ...current, sshTask: {
         ...(current.sshTask ?? { runner, taskId: null, starting: false }), startError: error instanceof Error ? error.message : t('settings.systemTaskStartFailed'),

@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { Text } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
+import { useThisComputerSetupPreflight } from './useThisComputerSetupPreflight';
 
 const activeServerState = vi.hoisted(() => {
     let listener: ((snapshot: any) => void) | null = null;
@@ -65,7 +66,7 @@ vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () 
 }));
 
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
-    useRelayDriftBanner: () => null,
+    useRelayDriftBannerFromLocalControl: () => null,
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -75,8 +76,6 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 describe('useThisComputerSetupPreflight', () => {
     it('reacts to active server changes', async () => {
-        const { useThisComputerSetupPreflight } = await import('./useThisComputerSetupPreflight');
-
         function Harness() {
             const preflight = useThisComputerSetupPreflight();
             return (

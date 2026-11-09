@@ -1,4 +1,4 @@
-import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
@@ -27,6 +27,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
  */
 export type LocalDaemonSharedState<TStatus> = Readonly<{
     status: TStatus | null;
+    serviceStart: Readonly<{ taskId: string; scope: ServerAccountScope }> | null;
     setup: Readonly<{
         taskId: string | null;
         rereading: boolean;
@@ -54,7 +55,7 @@ function resolveStore<TStatus>(runner: SystemTaskRunner): Store<TStatus> {
     const existing = storesByRunner.get(runner);
     if (existing) return existing as Store<TStatus>;
     const created: Store<unknown> = {
-        state: { status: null, setup: { taskId: null, rereading: false, errorMessage: null, scope: null },
+        state: { status: null, serviceStart: null, setup: { taskId: null, rereading: false, errorMessage: null, scope: null },
             cliUpdate: { taskId: null, starting: false, errorMessage: null, rereading: false } },
         listeners: new Set(),
     };
@@ -84,6 +85,11 @@ export function readLocalDaemonSharedState<TStatus>(runner: SystemTaskRunner): L
 
 export function publishLocalDaemonStatus<TStatus>(runner: SystemTaskRunner, status: TStatus): void {
     update<TStatus>(runner, (state) => (state.status === status ? state : { ...state, status }));
+}
+
+/** The admitted native Action publishes its task for progress/cancel observers. */
+export function publishLocalDaemonServiceStartTask(runner: SystemTaskRunner, taskId: string, scope: ServerAccountScope): void {
+    update(runner, state => state.serviceStart?.taskId === taskId ? state : { ...state, serviceStart: { taskId, scope } });
 }
 
 /** Observe the runner's admitted setup; its outcome and scoped readback outlive Settings. */

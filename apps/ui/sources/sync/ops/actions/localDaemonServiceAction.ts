@@ -1,11 +1,12 @@
-import type { ActionExecutorDeps, SystemTaskResult } from '@happier-dev/protocol';
+import type { ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, LocalDaemonServiceAutostartInputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { refreshLocalDaemonStatus, readLocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
-import { isLocalCliUpdateRunning, publishLocalDaemonStatus, startLocalCliUpdate } from '@/components/settings/machines/localControl/localDaemonSharedState';
+import { isLocalCliUpdateRunning, publishLocalDaemonStatus, publishLocalDaemonServiceStartTask, startLocalCliUpdate } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import { setDesktopLoginStartMode } from '@/components/settings/desktop/desktopLoginStart';
 import { disconnectThisComputerFromHome } from '@/components/serverProfiles/disconnectThisComputerFromHome';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -64,6 +65,8 @@ export function createLocalDaemonServiceAction(options: Readonly<{ runner?: Syst
                 'machines.local.service.start': 'daemon.service.start.v1', 'machines.local.service.stop': 'daemon.service.stop.v1',
                 'machines.local.service.restart': 'daemon.service.restart.v1' } as const;
             const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec(kinds[actionId], scope));
+            if (actionId === 'machines.local.service.start') publishLocalDaemonServiceStartTask(runner, taskId,
+                { serverId: account.serverId, accountId: account.accountId });
             let result: SystemTaskResult;
             try { result = await waitForSystemTaskResult(runner, taskId, { signal }); }
             catch (error) { if (signal?.aborted) await runner.cancel(taskId); throw error; }

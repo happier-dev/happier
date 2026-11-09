@@ -4,17 +4,19 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolveWebappUrlFromServerUrl';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
-import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
+import { useRelayDriftBannerFromLocalControl } from '@/components/settings/server/useRelayDriftBanner';
 import { useThisComputerConnection } from '@/components/settings/machines/localControl/useThisComputerConnection';
 
 import { computeThisComputerMismatches } from './computeThisComputerMismatches';
 import type { ThisComputerSetupPreflight } from './types';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 
-export function useThisComputerSetupPreflight(options: Readonly<{ runner?: SystemTaskRunner }> = {}): ThisComputerSetupPreflight {
+export function useThisComputerSetupPreflight(options: Readonly<{ runner?: SystemTaskRunner; enabled?: boolean }> = {}): ThisComputerSetupPreflight {
     const uiAccountId = syncStorage((state) => state.profile?.id ?? null);
-    const daemon = useLocalDaemonControl(options);
-    const relayDriftBanner = useRelayDriftBanner();
+    const runner = options.runner ?? getSystemTasksRunner();
+    const daemon = useLocalDaemonControl({ ...options, runner });
+    const relayDriftBanner = useRelayDriftBannerFromLocalControl(daemon, runner);
     const activeServerSnapshot = useActiveServerSnapshot();
     const thisComputerConnection = useThisComputerConnection(daemon.status);
 
