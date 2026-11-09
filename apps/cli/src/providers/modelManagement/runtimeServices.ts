@@ -25,6 +25,7 @@ import { createProviderProbeHttpClient } from '@/providers/probe/client';
 import { createRuntimeProviderServices, projectProviderCatalogContextRuntimeState } from '@/providers/probe/runtimeServices';
 import type {
   RuntimeProviderOperationScope,
+  ResolveContributedProviderCatalogParsers,
   RuntimeProviderPresentationResolutionBasis,
   RuntimeProviderServices,
 } from '@/providers/probe/runtimeServices';
@@ -102,13 +103,23 @@ import type { ProviderSourceModelCatalogRequest, ProviderSourceModelCatalogResul
 import { createProviderSourceCatalogRevision, projectCurrentProviderSourceModelCatalogs } from './sourceCatalog';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { AccountScopedProviderReadInput } from './remoteProjection';
-import { createConnectedAccountModelObserver, type InvokeConnectedAccountNativeModels } from './connectedAccountModelObservation';
+import { createConnectedAccountModelObserver, type InvokeConnectedAccountNativeModels, type ObserveConnectedAccountSourceModels } from './connectedAccountModelObservation';
 import { createTeamCredentialNativeSourceServices, type TeamCredentialNativeSourceContext } from './nativeProviderSource';
 import type { PrepareTeamCredentialNativeProviderSourceResult } from '@/providers/broker/teamCredentialNativeProviderSource';
 
 export type ProviderModelManagementFeatureGate = Readonly<{
   isEnabled(featureId: 'providers' | 'providers.localModelManagement'): boolean;
 }>;
+
+function leasedCatalogParserResolver(lease: PluginRuntimeRegistryLease): ResolveContributedProviderCatalogParsers {
+  return async identity => {
+    const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
+    return acquired ? Object.freeze({
+      pluginId: identity.pluginId,
+      parsersByFormat: acquired.parsersByFormat,
+    }) : null;
+  };
+}
 
 type TeamCredentialRequestPolicyProtocolKind =
   DaemonProviderTeamCredentialRequestPolicySupportV1['protocolKind'];
@@ -174,6 +185,7 @@ export type RuntimeProviderAccountModelProjectionContext = Readonly<{
   resolveManagedPurposeBindingIntent: ResolveManagedProviderPurposeBindingIntent;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
+  observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
   signal: AbortSignal;
   isCurrent(): boolean | Promise<boolean>;
   accountReadScope?: AccountScopedProviderReadInput;
@@ -296,6 +308,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
+  observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   openTeamDirect?: Parameters<typeof createRuntimeProviderServices>[0]['openTeamDirect'];
 }>): RuntimeProviderModelManagementServices {
@@ -411,11 +424,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       const resolveSelection = input.resolveManagedPurposeBindingIntentSelection;
       if (!resolveSelection) return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') };
       const invoke = input.invokeConnectedAccountNativeModels;
+      const observe = input.observeConnectedAccountSourceModels;
       const projection = await awaitWithinProviderOperation(readConnectedAccountModelCatalog({ registry, resolveSelection, signal,
         request: { machineId: request.machineId, connectedAccountTarget: request.source.target, sourceCatalog: true,
           application: request.application, agentTargetKey: request.application?.agentTargetKey,
           refreshPolicy: request.refreshPolicy, forceRefresh: request.forceRefresh },
-        ...(invoke ? { observeModels: createConnectedAccountModelObserver({ registry: lease.registry, invoke }) } : {}),
+        ...(invoke || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke, observe,
+          resolveContributedCatalogParsers: leasedCatalogParserResolver(lease) }) } : {}),
       }), lifetime);
       if (projection.error) return { status: 'error', error: projection.error };
       if (projection.groups.length === 0 || !await awaitWithinProviderOperation(projection.isCurrent(), lifetime)) {
@@ -625,11 +640,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           error: createProviderErrorV1('provider_catalog_unavailable', { machineId: request.machineId }) });
         if (!resolveSelection || request.providerConnection || request.sourceConnectionId) return unavailable();
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
+        const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
         const projection = await awaitWithinProviderOperation(projectConnectedAccountCatalog({
           request, registry, ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
           providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
           resolveSelection, signal: operationLifetime.signal,
-          ...(invokeNative ? { observeModels: createConnectedAccountModelObserver({ registry: lease.registry, invoke: invokeNative }) } : {}),
+          ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
+            resolveContributedCatalogParsers: leasedCatalogParserResolver(lease) }) } : {}),
         }), operationLifetime);
         if (projection.error) return { status: 'error', error: projection.error };
         if (projection.groups.length === 0
@@ -682,17 +699,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
               },
             }
           : {}),
-        resolveContributedCatalogParsers: async (identity) => {
-          const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
-          return acquired
-            ? Object.freeze({
-                pluginId: identity.pluginId,
-                activationOccurrenceId: acquired.activationOccurrenceId,
-                parsersByFormat: acquired.parsersByFormat,
-                isCurrent: () => acquired.isCurrent(),
-              })
-            : null;
-        },
+        resolveContributedCatalogParsers: leasedCatalogParserResolver(lease),
         lifetime: operationLifetime,
       };
       // One picker projection is a point-in-time Account-settings read. Reuse

@@ -9,11 +9,11 @@ import type {
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import {
   CLIPROXYAPI_MANAGED_ENV,
-  CLIPROXYAPI_MANAGED_HEALTH_IDENTITY,
-  CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
+  CLIPROXYAPI_MANAGED_CLIENT_ACCESS,
   CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES,
   CLIPROXYAPI_MANAGED_SERVICE,
 } from './managedContract.js';
+import { CLIPROXYAPI_MANAGED_HEALTH_IDENTITY, CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED } from './managedProjection.js';
 import {
   CLIPROXYAPI_PROVIDER_CONTRIBUTION,
   CLIPROXYAPI_PROVIDER_LOCAL_ID,
@@ -256,7 +256,7 @@ async function resolveManagedPurposeSnapshot(
           localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
         },
         purpose: family.purpose,
-        allowedHttpsOrigin: family.requestAuth.materialization.origin,
+        allowedHttpsOrigins: family.requestAuth.materialization.origins,
         protocols: family.protocols,
       })),
     }),
@@ -276,12 +276,7 @@ function publicManagedServiceSpec(
           }),
         }
       : {}),
-    clientAccess: Object.freeze({
-      kind: 'hostBearer' as const,
-      injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.downstreamBearer,
-      headerName: 'authorization',
-      scheme: 'Bearer' as const,
-    }),
+    clientAccess: CLIPROXYAPI_MANAGED_CLIENT_ACCESS,
     mode: Object.freeze({
       kind: 'spawn' as const,
       launch: Object.freeze({

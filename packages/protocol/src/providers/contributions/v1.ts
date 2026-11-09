@@ -148,9 +148,14 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
     endpointTemplateIds: z.optional(z.array(ProviderLocalIdSchema).check(z.minLength(1))),
     /** Credential-free compatibility catalog for this exact upstream service, never account entitlement. */
     staticModels: z.optional(z.array(ProviderModelDescriptorV1Schema)),
+    /** Exact installed source that owns this service's account-aware model catalog. */
+    catalogObservation: z.optional(z.union([
+      z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema) }),
+      z.strictObject({ agent: asProtocolZod(PluginContributionIdentityV1Schema) }),
+    ])),
   })).check(z.superRefine((declarations, context) => {
     const checked = ConnectedAccountPurposeDeclarationsV1Schema.safeParse(
-      declarations.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
+      declarations.map(({ endpointTemplateIds: _endpoints, staticModels: _models, catalogObservation: _observation, ...declaration }) => declaration),
     );
     if (!checked.success) checked.error.issues.forEach((issue) => context.addIssue({ ...issue }));
     declarations.forEach((declaration, index) => {
@@ -233,6 +238,7 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
     credentialKinds?: ConnectedServiceCredentialKind[];
     endpointTemplateIds?: string[];
     staticModels?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['staticModels'];
+    catalogObservation?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['catalogObservation'];
   }>;
 
 export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
@@ -361,6 +367,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
         ...(credentialKinds === undefined ? {} : { credentialKinds }),
         ...(purposeEndpointTemplateIds === undefined ? {} : { endpointTemplateIds: purposeEndpointTemplateIds }),
         ...(staticModels === undefined ? {} : { staticModels }),
+        ...(declaration.catalogObservation === undefined ? {} : { catalogObservation: Object.freeze(declaration.catalogObservation) }),
       });
     }).sort((left, right) =>
       compareProviderCanonicalStringsV1(left.purpose, right.purpose));
@@ -374,6 +381,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     purpose: use.purpose,
     materialization: Object.freeze({
       ...use.materialization,
+      origins: Object.freeze([...use.materialization.origins].sort(compareProviderCanonicalStringsV1)),
       headerNames: Object.freeze([
         ...use.materialization.headerNames,
       ].sort(compareProviderCanonicalStringsV1)),

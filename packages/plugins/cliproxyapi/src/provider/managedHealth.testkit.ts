@@ -1,6 +1,7 @@
 import type { ManagedServiceResponse, ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
 
-import { CLIPROXYAPI_MANAGED_ENV, CLIPROXYAPI_MANAGED_HEALTH_IDENTITY } from './managedContract.js';
+import { CLIPROXYAPI_MANAGED_ENV } from './managedContract.js';
+import { CLIPROXYAPI_MANAGED_HEALTH_IDENTITY } from './managedProjection.js';
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid managed launch fixture');

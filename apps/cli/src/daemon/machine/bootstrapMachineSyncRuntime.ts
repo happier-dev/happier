@@ -1220,6 +1220,8 @@ export async function bootstrapMachineSyncRuntime(
       machineId: params.machineId,
       happyHomeDir: configuration.happyHomeDir,
       featureGate: providerFeatureGate,
+      ...(params.createAgentCatalogObservation ? { observeConnectedAccountSourceModels: request =>
+        agentCatalogObservation!.observe(request) } : {}),
       ...(connectedApiMachine ? { invokeConnectedAccountNativeModels: (request, signal) =>
         connectedApiMachine.getPeerMediationMachineRpcHandlerManager().invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, request,
           { signal, verifiedPeerAuthority: 'account_automation' }) } : {}),

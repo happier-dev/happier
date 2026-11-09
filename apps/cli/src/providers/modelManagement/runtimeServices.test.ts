@@ -567,6 +567,7 @@ describe('runtime provider model-management composition', () => {
       providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
         definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
           connectedAccounts: [{ purpose: 'openai-upstream', service, endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
+            catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
             staticModels: [{ id: 'gpt-5.5', name: 'Static' }] }] } }),
       }])) } };
     let current = true;

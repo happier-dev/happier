@@ -4,19 +4,25 @@ import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/de
 
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 
 import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog } from './connectedAccountCatalog';
 import { projectDaemonProviderTeamCredentialRequestPolicySupportV1 } from './runtimeServices';
-import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { createConnectedAccountModelObserver } from './connectedAccountModelObservation';
 
 afterEach(() => vi.restoreAllMocks());
 
 it('replaces static membership with one exact current account observation across route applications', async () => {
+  const service = { pluginId: 'acme.managed-run', localId: 'accounts' };
+  const fixture = await createManagedRunLaunchFixture({ connectedAccounts: [{ purpose: 'models', service: service.localId,
+    materializationKinds: ['httpHeaders'] }] });
+  try {
   const base = createBrokerProviderRegistry();
-  const registry = { ...base, providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
+  const registry = { ...base, agentDefinitionsById: fixture.lease.registry.contributes.agentDefinitionsById,
+    providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
     ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
       ...provider.definition.managedRuntime, connectedAccounts: [{ purpose: 'openai-upstream',
-        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        service, catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
         endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id), staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
     } }),
   }])) };
@@ -28,20 +34,22 @@ it('replaces static membership with one exact current account observation across
     assertTargetAccountMaterializable: unavailable,
     resolveTarget: async target => sourceCurrent && target.kind === 'account' ? { account: target.account, displayName: 'Exact source' } : null,
   });
-  const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'source-account' };
+  const account = { service, accountId: 'source-account' };
   const request = { machineId: 'broker', agentTargetKey: 'agent:happier.agent.codex/codex', sourceCatalog: true as const,
     connectedAccountTarget: { kind: 'account' as const, account } };
   let nativeReads = 0;
-  let models = [{ id: 'default', name: 'Default' }, { id: 'gpt-6.1-sol', name: 'Sol' }];
+  let models = [{ id: 'gpt-6.1-sol', name: 'Sol' }];
   let refreshError = false;
-  // The native executable is the process boundary; its canonical observation
-  // schema supplies the same producer envelope that model listing returns.
-  const observeModels = async (input: { account: typeof account }) => {
+  // Only the installed Machine capability transport is replaced; declared source
+  // resolution and native observation admission remain real.
+  const observeModels = createConnectedAccountModelObserver({ registry, invoke: async request => {
     nativeReads++;
-    expect(input.account).toEqual(account);
-    return AgentModelsProbeObservationSchema.parse({ agentId: 'codex', source: 'dynamic', supportsFreeform: false,
-      observedAt: 1, refreshError, availableModels: models });
-  };
+    expect(request.params).toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {
+      [`${service.pluginId}/${service.localId}`]: { source: 'connected', profileId: account.accountId },
+    } } });
+    return { ok: true, result: { agentId: fixture.agentId, source: 'dynamic', observedAt: 1, refreshError,
+      supportsFreeform: false, availableModels: models } };
+  } });
   const input = { registry, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1,
     resolveSelection: purposes.resolveBindingIntentSelection, request, observeModels };
   const observed = await projectConnectedAccountCatalog(input);
@@ -82,6 +90,7 @@ it('replaces static membership with one exact current account observation across
   expect(empty.groups).toHaveLength(3);
   expect(empty.groups.every(group => group.rows.length === 0)).toBe(true);
   expect(nativeReads).toBe(5);
+  } finally { await fixture.cleanup(); }
 });
 
 it('projects a thousand admitted descriptors without another per-model validation pass', async () => {

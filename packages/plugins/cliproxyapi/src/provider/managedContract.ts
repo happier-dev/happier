@@ -1,4 +1,29 @@
-import { CLIPROXYAPI_STATIC_MODELS, CLIPROXYAPI_STATIC_MODEL_SDK_VERSION } from './staticModels.generated.js';
+import type { ProviderContribution } from '@happier-dev/plugin-sdk/providers';
+
+export type ManagedGatewayFamily = Readonly<{
+  purpose: string;
+  title: Readonly<{ key: string; fallback: string }>;
+  authEntry: Readonly<{ id: string; provider: string }>;
+  protocols: readonly ProviderContribution['endpointTemplates'][number]['protocol'][];
+  connectedAccount: Readonly<{
+    service: Readonly<{ pluginId: string; localId: string }>;
+    required: false;
+    materializationKinds: readonly ['httpHeaders'];
+    catalogObservation?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['catalogObservation'];
+  }>;
+  requestAuth: Readonly<{ materialization: Readonly<{
+    kind: 'httpHeaders'; origins: readonly string[]; headerNames: readonly string[];
+  }> }>;
+  sdk: Readonly<{
+    catalog: Readonly<{ getter: string }>;
+    stripHeaderNames: readonly string[];
+    seed: Readonly<{
+      attributes: Readonly<Record<string, string>>;
+      metadata: Readonly<Record<string, string | boolean>>;
+    }>;
+    adapter: 'late-headers' | 'request-local-auth';
+  }>;
+}>;
 
 export const CLIPROXYAPI_MANAGED_ENV = Object.freeze({
   downstreamBearer: 'HAPPIER_CLIPROXYAPI_DOWNSTREAM_BEARER',
@@ -7,6 +32,14 @@ export const CLIPROXYAPI_MANAGED_ENV = Object.freeze({
   consumerAccessPath: 'HAPPIER_CLIPROXYAPI_CONSUMER_ACCESS_PATH',
   purposeConfiguration:
     'HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION',
+});
+
+// The managed service and its public declaration share the downstream auth fact.
+export const CLIPROXYAPI_MANAGED_CLIENT_ACCESS = Object.freeze({
+  kind: 'hostBearer' as const,
+  injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.downstreamBearer,
+  headerName: 'authorization',
+  scheme: 'Bearer' as const,
 });
 
 export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
@@ -21,22 +54,6 @@ export const CLIPROXYAPI_MANAGED_SERVICE = Object.freeze({
   healthPath: '/healthz',
 });
 
-export const CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED = true;
-
-export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
-  v: 1,
-  contractVersion: 'happier.cliproxyapi-managed/v3',
-  sdkVersion: CLIPROXYAPI_STATIC_MODEL_SDK_VERSION,
-  modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
-});
-
-// The managed catalog is projected from the pinned CLIProxyAPI SDK registry.
-// Version the adapter as well as the SDK: retain exact Thinking.Levels and
-// unsupported tool-round-trip facts for upstream image builtins. Older cached
-// descriptors must refresh; process restarts and credentials do not change facts.
-export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
-  `${CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion}:reasoning-image-capabilities-v2`;
-
 /**
  * CLIProxyAPI's one private managed-family owner. The manifest projection,
  * managed runtime launch snapshot, and Go wrapper process configuration all
@@ -45,6 +62,12 @@ export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
 export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
   Object.freeze({
     purpose: 'openai-upstream',
+    sdk: {
+      catalog: { getter: 'GetCodexProModels' },
+      stripHeaderNames: ['authorization', 'chatgpt-account-id'],
+      seed: { attributes: { plan_type: 'pro', websockets: 'false' }, metadata: { access_token: 'happier-registration-sentinel' } },
+      adapter: 'late-headers',
+    },
     title: Object.freeze({
       key: 'managedPurpose.openai.title',
       fallback: 'ChatGPT account or pool',
@@ -57,14 +80,14 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
         pluginId: 'happier.agent.codex',
         localId: 'openai-codex',
       }),
+      catalogObservation: Object.freeze({ agent: Object.freeze({ pluginId: 'happier.agent.codex', localId: 'codex' }) }),
       required: false,
-      staticModels: CLIPROXYAPI_STATIC_MODELS.codex,
       materializationKinds: Object.freeze(['httpHeaders'] as const),
     }),
     requestAuth: Object.freeze({
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origin: 'https://chatgpt.com',
+        origins: Object.freeze(['https://chatgpt.com']),
         headerNames: Object.freeze([
           'authorization',
           'chatgpt-account-id',
@@ -74,6 +97,12 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
   }),
   Object.freeze({
     purpose: 'anthropic-upstream',
+    sdk: {
+      catalog: { getter: 'GetClaudeModels' },
+      stripHeaderNames: ['authorization', 'x-api-key', 'x-claude-code-session-id'],
+      seed: { attributes: { websockets: 'false' }, metadata: { access_token: 'sk-ant-oat01-happier-registration-sentinel', skip_account_profile: true } },
+      adapter: 'late-headers',
+    },
     title: Object.freeze({
       key: 'managedPurpose.anthropic.title',
       fallback: 'Claude account or pool',
@@ -85,47 +114,61 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
         pluginId: 'happier.agent.claude',
         localId: 'claude-subscription',
       }),
+      catalogObservation: Object.freeze({ provider: Object.freeze({ pluginId: 'happier.agent.claude', localId: 'anthropic' }) }),
       required: false,
-      staticModels: CLIPROXYAPI_STATIC_MODELS.claude,
       materializationKinds: Object.freeze(['httpHeaders'] as const),
     }),
     requestAuth: Object.freeze({
       materialization: Object.freeze({
         kind: 'httpHeaders' as const,
-        origin: 'https://api.anthropic.com',
+        origins: Object.freeze(['https://api.anthropic.com']),
         headerNames: Object.freeze(['authorization']),
       }),
     }),
   }),
-]);
-
-export const CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS = Object.freeze(
-  CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => Object.freeze({
-    purpose: family.purpose,
-    title: family.title,
-    endpointTemplateIds: family.protocols.map((protocol) => resolveManagedEndpointTemplateId(protocol)!),
-    ...family.connectedAccount,
-  })),
-);
-
-export const CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES = Object.freeze(
-  CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => Object.freeze({
-    purpose: family.purpose,
-    ...family.requestAuth,
-  })),
-);
-
-export const CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS = Object.freeze(
-  [...new Set(CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.flatMap((family) =>
-    family.protocols.map((protocol) => resolveManagedEndpointTemplateId(protocol)!)))],
-);
-
-function resolveManagedEndpointTemplateId(protocol: string) {
-  const supported = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.some((family) => (
-    family.protocols.some((candidate) => candidate === protocol)
-  ));
-  if (!supported) return null;
-  return protocol === 'openai-chat'
-    ? 'cliproxyapi-openai-chat'
-    : protocol === 'openai-responses' ? 'cliproxyapi-openai-responses' : 'cliproxyapi-anthropic';
-}
+  Object.freeze({
+    purpose: 'meta-upstream',
+    title: Object.freeze({ key: 'managedPurpose.meta.title', fallback: 'Muse account or pool' }),
+    authEntry: Object.freeze({ id: 'meta', provider: 'meta' }),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    connectedAccount: Object.freeze({
+      service: Object.freeze({ pluginId: 'happier.agent.muse', localId: 'muse-account' }),
+      required: false,
+      materializationKinds: Object.freeze(['httpHeaders'] as const),
+    }),
+    requestAuth: Object.freeze({ materialization: Object.freeze({
+      kind: 'httpHeaders' as const,
+      origins: Object.freeze(['https://api.meta.ai']),
+      headerNames: Object.freeze(['authorization', 'x-api-version']),
+    }) }),
+    sdk: {
+      catalog: { getter: 'GetMetaModels' },
+      stripHeaderNames: ['authorization', 'x-api-version'],
+      seed: { attributes: { api_key: 'happier-registration-sentinel', websockets: 'false' }, metadata: {} },
+      adapter: 'late-headers',
+    },
+  }),
+  Object.freeze({
+    purpose: 'gemini-upstream',
+    title: Object.freeze({ key: 'managedPurpose.gemini.title', fallback: 'Gemini API key account or pool' }),
+    authEntry: Object.freeze({ id: 'gemini', provider: 'gemini' }),
+    protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
+    connectedAccount: Object.freeze({
+      service: Object.freeze({ pluginId: 'happier.agent.gemini', localId: 'gemini-account' }),
+      catalogObservation: Object.freeze({ agent: Object.freeze({ pluginId: 'happier.agent.gemini', localId: 'gemini' }) }),
+      required: false,
+      materializationKinds: Object.freeze(['httpHeaders'] as const),
+    }),
+    requestAuth: Object.freeze({ materialization: Object.freeze({
+      kind: 'httpHeaders' as const,
+      origins: Object.freeze(['https://generativelanguage.googleapis.com']),
+      headerNames: Object.freeze(['x-goog-api-key']),
+    }) }),
+    sdk: {
+      catalog: { getter: 'GetGeminiModels' },
+      stripHeaderNames: ['authorization', 'x-goog-api-key'],
+      seed: { attributes: { api_key: 'happier-registration-sentinel', websockets: 'false' }, metadata: {} },
+      adapter: 'late-headers',
+    },
+  }),
+] as const satisfies readonly ManagedGatewayFamily[]);
