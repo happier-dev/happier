@@ -6,6 +6,7 @@ import {
     resolveSessionCockpitLandingSurface,
     resolveSessionMobileSurfaceIntent,
     resolveSessionCockpitRouteFromPathname,
+    resolveSessionPaneIntentSurface,
     resolveSessionRoutePathForSurface,
     resolveSessionRightTabIdForSurface,
     shouldUseSessionCockpitExperience,
@@ -18,6 +19,14 @@ describe('sessionCockpitState', () => {
         expect(resolveSessionCockpitLandingSurface('tabs', true)).toBe('chat');
         expect(resolveSessionCockpitLandingSurface('plugin:acme:panel', true)).toBe('chat');
         expect(resolveSessionCockpitLandingSurface('browser', false)).toBe('browser');
+    });
+
+    it('lets a URL that names its own surface win over the open sidebar tab it still carries', () => {
+        // Show companion with Work open: `?right=agents&mobileSurface=companion` is a Companion request.
+        expect(resolveSessionPaneIntentSurface({ rightTabId: 'agents' }, true, 'companion')).toBe('companion');
+        expect(resolveSessionPaneIntentSurface({ rightTabId: 'browser' }, true, 'browser')).toBe('browser');
+        expect(resolveSessionPaneIntentSurface({ rightTabId: 'agents' }, true, null)).toBe('agents');
+        expect(resolveSessionPaneIntentSurface({ rightTabId: 'agents' }, true)).toBe('agents');
     });
 
     it('preserves Collaboration intent and exact Home through the root route', () => {

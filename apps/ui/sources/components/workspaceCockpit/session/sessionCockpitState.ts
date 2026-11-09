@@ -351,12 +351,15 @@ export function isSessionRootRoutePath(pathname: string | null | undefined, sess
 export function resolveSessionPaneIntentSurface(
     paneUrlState: SessionPaneUrlState | null | undefined,
     terminalTabAvailable: boolean,
+    explicitRootSurfaceHint?: string | null,
 ): SessionMobileSurface | null {
     if (!paneUrlState?.details && !paneUrlState?.rightTabId) return null;
     return resolveSessionMobileSurfaceIntent({
         routeKind: 'index',
         detailsTargetPresent: paneUrlState.details !== undefined,
         activeRightTabId: paneUrlState.details ? null : paneUrlState.rightTabId,
+        // A URL that names its own surface asks for that surface; the sidebar tab it still carries is retained layout.
+        persistedSurface: explicitRootSurfaceHint,
         terminalTabAvailable,
     });
 }

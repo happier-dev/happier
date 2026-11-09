@@ -25,7 +25,7 @@ import { PanePresentationProvider, usePanePresentation, type PanePresentation } 
 import { RightSidebarActionsContext, type RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { buildActiveDetailsRouteParams, buildSessionDetailsTabHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useOptionalWorkspaceNavigation, type WorkspacePhoneControls } from '@/components/appShell/workspace/WorkspaceNavigationContext';
-import { useDestinationPathname, useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationParamsSelector, useDestinationPathname, useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useSessionViewerPresentingReader } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 
@@ -476,6 +476,9 @@ const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
     );
 });
 
+const readExplicitSurfaceHint = (params: Readonly<Record<string, string | string[] | undefined>>) =>
+    typeof params.mobileSurface === 'string' ? params.mobileSurface : null;
+
 const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTabBarProps & Readonly<{
     cockpit: boolean;
     scopeId: string;
@@ -489,6 +492,7 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
     const activeSurface = normalizeSessionMobileSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
     const routeSurface = resolveSessionCockpitRouteFromPathname(useDestinationPathname())?.surface;
     const presentsDetails = routeSurface === 'tabs';
+    const explicitSurfaceHint = useDestinationParamsSelector(readExplicitSurfaceHint);
 
     // The navigator is also Chat's stable parent on wide screens. Save its
     // actual phone state (including Back history), temporarily present Chat,
@@ -530,7 +534,7 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
     const consumedRouteIntentRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!props.cockpit) return;
-        const paneIntentSurface = resolveSessionPaneIntentSurface(props.paneUrlState, props.terminalTabAvailable);
+        const paneIntentSurface = resolveSessionPaneIntentSurface(props.paneUrlState, props.terminalTabAvailable, explicitSurfaceHint);
         const hasPaneIntent = presentsDetails || paneIntentSurface !== null;
         // A Details route presents retained/contributed tabs even when its URL still carries a sidebar.
         const requestedSurface = presentsDetails ? 'tabs' : paneIntentSurface ?? props.requestedInitialSurface;
@@ -581,6 +585,7 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
         props.requestedInitialSurface,
         props.paneUrlState,
         props.terminalTabAvailable,
+        explicitSurfaceHint,
         requestedRouteIntent,
         props.state.routes,
         presentsDetails,

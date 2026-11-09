@@ -231,7 +231,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         // Details page on Tabs) is presentation. Projecting it onto `/session/<id>/details?details=…` would make the
         // workspace tab a Details link tab, which it would stay when the window widens again.
         if (isSessionRootRoutePath(pathname, next.sessionId)
-            && resolveSessionPaneIntentSurface(paneUrlState, registration.terminalTabAvailable) === next.surface) {
+            && resolveSessionPaneIntentSurface(paneUrlState, registration.terminalTabAvailable, explicitMobileSurfaceHint) === next.surface) {
             return;
         }
 
