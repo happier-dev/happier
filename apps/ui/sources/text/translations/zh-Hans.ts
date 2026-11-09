@@ -2081,6 +2081,7 @@ export const zhHans: TranslationStructure = {
 
   contextBar: { machine: "机器", projectDirectory: "项目目录" },
   promptLibrary: {
+      exportMarkdown: '导出为 Markdown',
       memoryUseInNewSessionsTitle: "在新会话中使用记忆",
       memoryUseInNewSessionsDescription: "在创建普通会话时生效，不影响现有会话。",
       memoryUpkeepInNewBotsTitle: "新机器人的记忆整理",

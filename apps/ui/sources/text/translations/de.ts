@@ -1889,6 +1889,7 @@ export const de: TranslationStructure = {
 
 	    contextBar: { machine: 'Rechner', projectDirectory: 'Projektverzeichnis' },
 	    promptLibrary: {
+	        exportMarkdown: 'Als Markdown exportieren',
 	        memoryUseInNewSessionsTitle: "Memory in neuen Sitzungen verwenden",
 	        memoryUseInNewSessionsDescription: "Gilt beim Erstellen gewöhnlicher Sitzungen, nicht für bestehende.",
 	        memoryUpkeepInNewBotsTitle: "Memory-Pflege für neue Bots",

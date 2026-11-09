@@ -4005,6 +4005,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     contextBar: { machine: "機器", projectDirectory: "專案目錄" },
     promptLibrary: {
+        exportMarkdown: '匯出為 Markdown',
         memoryUseInNewSessionsTitle: "在新的工作階段中使用記憶",
         memoryUseInNewSessionsDescription: "在建立一般工作階段時生效，不影響現有的工作階段。",
         memoryUpkeepInNewBotsTitle: "新機器人的記憶整理",

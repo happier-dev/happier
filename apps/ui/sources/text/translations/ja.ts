@@ -2250,6 +2250,7 @@ export const ja: TranslationStructure = {
 
   contextBar: { machine: "マシン", projectDirectory: "プロジェクト ディレクトリ" },
   promptLibrary: {
+      exportMarkdown: 'Markdown としてエクスポート',
       memoryUseInNewSessionsTitle: "新しいセッションでメモリーを使う",
       memoryUseInNewSessionsDescription: "通常のセッションの作成時に適用され、既存のセッションには適用されません。",
       memoryUpkeepInNewBotsTitle: "新しいボットのメモリー整理",

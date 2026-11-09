@@ -2034,6 +2034,7 @@ const enContextPages = {
 };
 // contextPages:const:end
 const enPromptLibrary = {
+  exportMarkdown: 'Export as Markdown',
   memoryUseInNewSessionsTitle: 'Use memory in new sessions',
   memoryUseInNewSessionsDescription: 'Applies when creating ordinary sessions, not to existing sessions.',
   memoryUpkeepInNewBotsTitle: 'Memory upkeep for new Bots',

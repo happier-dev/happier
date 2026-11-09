@@ -2103,6 +2103,7 @@ export const ca: TranslationStructure = {
 
     contextBar: { machine: "Màquina", projectDirectory: "Directori del projecte" },
     promptLibrary: {
+        exportMarkdown: 'Exporta com a Markdown',
         memoryUseInNewSessionsTitle: "Fes servir la memòria a les sessions noves",
         memoryUseInNewSessionsDescription: "S’aplica en crear sessions normals, no a les existents.",
         memoryUpkeepInNewBotsTitle: "Manteniment de la memòria per als bots nous",

@@ -373,7 +373,7 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
     const artifactId = props.artifactId;
     return [
       { id: 'duplicate', testID: 'promptDoc.duplicate', title: t('common.duplicate'), onSelect: () => entryActions.duplicate(artifactId) },
-      { id: 'export', testID: 'promptDoc.export', title: t('actionPresentation.titles.artifact_export'), onSelect: () => entryActions.exportDocument(artifactId) },
+      { id: 'export', testID: 'promptDoc.export', title: t('promptLibrary.exportMarkdown'), onSelect: () => entryActions.exportDocument(artifactId) },
       {
         id: 'delete',
         testID: 'promptDoc.delete',
