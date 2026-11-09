@@ -127,7 +127,6 @@ describe('createLocalServiceLauncherFeed', () => {
                     saveDesiredPlacement: async () => ({ status: 'applied', placement: request.desiredPlacement.value,
                         revision: 1, provenance: 'saved' }),
                     stopService: async () => old.stop(),
-                    revalidateDestination: async () => ({ status: 'admitted' }),
                     reviewDestinationSetup: async () => ({ status: 'admitted' }),
                     handoffPrepareBetween: async () => ({ ok: true, traversed: [] }),
                     startService: async () => {
@@ -427,8 +426,9 @@ describe('createLocalServiceLauncherFeed', () => {
             ],
             diagnostics: [],
         });
+        const previewId = previewIdForInventoryEntry('account-a', 'machine-a', 'session-a', 'inventory-a');
         registerLocalServicePreview(previewRegistry, {
-            previewId: previewIdForInventoryEntry('account-a', 'machine-a', 'session-a', 'inventory-a'),
+            previewId,
             sessionId: 'session-a',
             machineId: 'machine-a',
             owner: { kind: 'session', id: 'session-a' },
@@ -502,7 +502,7 @@ describe('createLocalServiceLauncherFeed', () => {
             },
         ]);
         expect(snapshot.targets.find(target => target.id === 'inventory:inventory-a')?.browserTarget)
-            .toMatchObject({ kind: 'localServicePreview', targetId: 'preview-a' });
+            .toMatchObject({ kind: 'localServicePreview', targetId: previewId });
     });
 
     it('preserves private-preview registration for a listening detected entry without a raw loopback target', async () => {

@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import type { ProjectSetupReviewV1 } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
+import { createProjectManifestActionClient } from '@/components/projects/projectSetup/projectManifestActionClient';
+import { ProjectSetupReviewFacts } from '@/components/projects/projectSetup/ProjectSetupReview';
 import { useUnistyles } from 'react-native-unistyles';
 import type {
   ProjectServicePlacementGetResultV1,
@@ -167,8 +170,8 @@ function choiceMatchesActual(
 
 type MoveState =
   | Readonly<{ phase: 'resolving'; destination: ProjectExecutionChoiceV1 }>
-  | Readonly<{ phase: 'confirm'; destination: ProjectExecutionChoiceV1; selectedMachineId: string }>
-  | Readonly<{ phase: 'requesting'; destination: ProjectExecutionChoiceV1; selectedMachineId: string }>
+  | Readonly<{ phase: 'confirm'; destination: ProjectExecutionChoiceV1; selectedMachineId: string; setupReview?: ProjectSetupReviewV1 }>
+  | Readonly<{ phase: 'requesting'; destination: ProjectExecutionChoiceV1; selectedMachineId: string; setupReview?: ProjectSetupReviewV1 }>
   | Readonly<{ phase: 'approval'; destination: ProjectExecutionChoiceV1; selectedMachineId: string; artifactId: string }>
   | Readonly<{ phase: 'refused'; text: string; description?: string; code?: string }>
   | null;
@@ -191,6 +194,8 @@ async function requestServiceRelocation(
     signal: AbortSignal;
     onApprovalPending: (registration: ActionApprovalRegistration) => void;
     runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+    setupReview?: ProjectSetupReviewV1;
+    confirmed?: true;
   }>,
 ): Promise<ServiceRelocationOutcome> {
   const managedServiceId =
@@ -207,7 +212,8 @@ async function requestServiceRelocation(
       const requestId = randomUUID();
       const result = await executeServiceRelocationAction({
         execute: input.runtimeActionExecute ?? (async request => {
-          const result = await executor.execute(request.actionId, request.input, request.context);
+          const result = await (input.confirmed ? executor.executeConfirmed : executor.execute)(
+            request.actionId, request.input, request.context);
           return result.ok ? result.result : result;
         }),
         request: {
@@ -234,7 +240,9 @@ async function requestServiceRelocation(
             value: { ...input.currentPlacement.placement, runsOn: input.destination },
           },
           selectedTarget: { machineId: input.selectedMachineId },
+          ...(input.setupReview ? { setupReview: input.setupReview } : {}),
         },
+        ...(input.confirmed ? { confirmed: true } : {}),
         context: {
           surface: 'ui',
           serverId: account.serverId,
@@ -526,10 +534,21 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
 
   async function reviewMove(destination: ProjectExecutionChoiceV1, selectedMachineId: string) {
     try {
-      const required = await isActionApprovalRequiredForHome('projects.service.relocate', { surface: 'ui' }, props.source.serverId);
       if (!binding?.isCurrent()) return;
-      if (required) setMove({ phase: 'confirm', destination, selectedMachineId });
-      else await confirmMove(destination, selectedMachineId);
+      const inspection = props.source.rootPath ? await createProjectManifestActionClient({
+        workspace: { serverId: props.source.serverId, machineId: props.source.machineId,
+          workspaceId: props.source.refId, rootPath: props.source.rootPath }, expectedAccountId: binding.accountId,
+      }).inspect({ kind: 'setup' }) : null;
+      if (inspection && !inspection.setupReview) throw new Error('project_setup_review_unavailable');
+      const setupReview = inspection?.setupReview;
+      const [moveRequired, setupRequired] = await Promise.all([
+        isActionApprovalRequiredForHome('projects.service.relocate', { surface: 'ui' }, props.source.serverId),
+        setupReview && inspection?.setupReadiness?.kind !== 'notRequired'
+          ? isActionApprovalRequiredForHome('projects.prepare', { surface: 'ui' }, props.source.serverId) : false,
+      ]);
+      if (!binding?.isCurrent()) return;
+      if (moveRequired || setupRequired) setMove({ phase: 'confirm', destination, selectedMachineId, ...(setupReview ? { setupReview } : {}) });
+      else await confirmMove(destination, selectedMachineId, setupReview);
     } catch (error) {
       if (!binding?.isCurrent()) return;
       setMove({ phase: 'refused', text: t('projectServices.moveUnknown'),
@@ -537,13 +556,13 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
     }
   }
 
-  async function confirmMove(destination: ProjectExecutionChoiceV1, selectedMachineId: string) {
+  async function confirmMove(destination: ProjectExecutionChoiceV1, selectedMachineId: string, setupReview?: ProjectSetupReviewV1, confirmed?: true) {
     if (!actual || !placement.canMove || !portable || !binding?.isCurrent() || observation.requestPending) return;
     if (!ready) {
       setMove({ phase: 'refused', text: t('projectServices.moveRefused'), code: 'service_target_selection_required' });
       return;
     }
-    setMove({ phase: 'requesting', destination, selectedMachineId });
+    setMove({ phase: 'requesting', destination, selectedMachineId, ...(setupReview ? { setupReview } : {}) });
     try {
       const exactDestination: ProjectExecutionChoiceV1 = destination.kind === 'primary' ? destination
         : { kind: 'workers', destination: { kind: 'machine', machineId: selectedMachineId } };
@@ -552,6 +571,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         currentPlacement: ready, selectedMachineId,
         expectedAccountId: binding.accountId, signal,
         runtimeActionExecute: observation.runtimeActionExecute,
+        ...(setupReview ? { setupReview } : {}), ...(confirmed ? { confirmed: true } : {}),
         onApprovalPending: registration => {
           onApprovalPending(registration);
           setMove({ phase: 'approval', destination, selectedMachineId,
@@ -694,7 +714,10 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
           } }} />
       ) : null}
       {move?.phase === 'confirm' || move?.phase === 'requesting' ? (
-        <AttentionBanner
+        <View testID={move.setupReview ? `${testID}.move.setup` : undefined}>
+          {move.setupReview ? <ProjectSetupReviewFacts testID={`${testID}.move.setup`} reviewedEffect={move.setupReview.reviewedEffect}
+            machineName={toName} sharedRunAs={pendingMachine?.isShared ? pendingMachine.metadata?.username ?? null : null} /> : null}
+          <AttentionBanner
           testID={`${testID}.move`}
           tone="neutral"
           title={t('projectServices.moveConfirm', { service: props.serviceName, from: fromName, to: toName })}
@@ -704,7 +727,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
             testID: `${testID}.move.confirm`,
             loading: move.phase === 'requesting',
             disabled: move.phase === 'requesting',
-            onPress: () => void confirmMove(move.destination, move.selectedMachineId),
+            onPress: () => void confirmMove(move.destination, move.selectedMachineId, move.setupReview, true),
           }}
           secondaryAction={{
             label: t('common.cancel'),
@@ -712,7 +735,8 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
             disabled: move.phase === 'requesting',
             onPress: () => setMove(null),
           }}
-        />
+          />
+        </View>
       ) : null}
       {move?.phase === 'approval' ? (
         <AttentionBanner testID={`${testID}.move.approval`} tone="neutral"

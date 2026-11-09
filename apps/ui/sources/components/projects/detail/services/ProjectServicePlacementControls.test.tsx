@@ -136,6 +136,7 @@ async function setup(options: Readonly<{
   beforeRender?: (serverId: string) => void;
   artifactBodyReads?: string[];
   onMove?: (input: unknown) => void;
+  setupReview?: Readonly<{ reviewedEffect: unknown; reviewedEffectDigest: string }>;
 }>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
   const poolReads: unknown[] = [];
@@ -296,6 +297,11 @@ async function setup(options: Readonly<{
   const workerStatusMethod = getActionSpec('projects.worker.status').bindings?.rpcMethod;
   if (!workerStatusMethod) throw new Error('missing_worker_status_method');
   remote.mockImplementation(async ({ machineId, method, payload: params }) => {
+    if (method === getActionSpec('projects.inspect').bindings?.rpcMethod && options.setupReview) return {
+      definition: { basis: { kind: 'absent' }, document: null },
+      detection: { entries: [], diagnostics: [], toolchains: [], devcontainers: [], coverage: 'complete' },
+      importCandidates: [], setupReview: options.setupReview,
+    };
     if (options.liveFeeds && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
     if (options.liveFeeds && (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT
       || method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)) return {
@@ -416,7 +422,7 @@ async function setup(options: Readonly<{
         key={options.sharedObservation ? 'list' : detail ? 'detail' : 'list'}
         testID="placement"
         serviceName="server"
-        source={{ serverId, refId, machineId: source.machineId }}
+        source={{ serverId, refId, machineId: source.machineId, ...(options.setupReview ? { rootPath: source.rootPath } : {}) }}
         declaration={{ portable: options.portable !== false, currentnessKey: declarationBasis }}
         lifecycleKey={lifecycleKey}
         showDivider={options.showDivider}
@@ -493,6 +499,28 @@ async function setup(options: Readonly<{
 }
 
 describe('Service Runs on through the placement and relocation Actions', () => {
+  it('reviews fresh destination setup in the existing Move confirmation and Cancel runs neither Move nor setup', async () => {
+    const setupReview = { reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: { commands: [
+      { kind: 'literal', source: { kind: 'command', command: 'echo install-on-destination' }, cwd: '.', os: 'linux' },
+    ], toolchain: { kind: 'host' } } };
+    const moves: unknown[] = [];
+    const h = await setup({ running: true, waiveMoveApproval: false, setupReview, onMove: input => moves.push(input) });
+    try {
+      await h.choose('hz-build-1');
+      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.setup')).toBeTruthy());
+      expect(h.screen.getTextContent()).toContain('echo install-on-destination');
+      expect(h.screen.findAllHostsByTestId('placement.move.confirm')).toHaveLength(1);
+      expect(moves).toEqual([]);
+      await h.screen.pressByTestIdAsync('placement.move.cancel');
+      expect(moves).toEqual([]);
+      expect(h.screen.findAllHostsByTestId('placement.move.confirm')).toHaveLength(0);
+      await h.choose('hz-build-1');
+      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.setup')).toBeTruthy());
+      await h.screen.pressByTestIdAsync('placement.move.confirm');
+      await vi.waitFor(() => expect(moves).toHaveLength(1));
+      expect(moves[0]).toMatchObject({ setupReview });
+    } finally { await h.screen.unmount(); }
+  });
   it('does not add a shared confirmation after the authored Move review under default host policy', async () => {
     const moves: unknown[] = [];
     const { Modal } = await import('@/modal');

@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { executeServiceRelocationAction } from './serviceRelocationAction';
 
 const request = ProjectServiceRelocateInputV1Schema.parse({
-  workspace: { serverId: 'home-1', refId: 'checkout' }, serviceName: 'web', requestId: 'move-1',
+  workspace: { serverId: 'home-1', refId: 'checkout' }, sourceMachineId: 'source', serviceName: 'web', requestId: 'move-1',
   currentTarget: { kind: 'managed_service', machineId: 'source', managedServiceId: 'instance' },
   destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } },
   desiredPlacement: { workspace: { serverId: 'home-1', refId: 'checkout' }, serviceName: 'web',

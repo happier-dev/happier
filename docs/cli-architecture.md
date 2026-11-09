@@ -861,22 +861,29 @@ active coordinator's existing abort owner; after that coordinator retires with
 an unknown outcome, its snapshot advertises cancellation as unsupported. The
 SOURCE and destination daemons need reload to consume these corrections.
 
-Move checks destination setup consent before saving placement or stopping the
-current Service. Its passive `projects.inspect` request asks for
-`reviewSetupConsent`; the ordinary setup admission owner supplies the result
-without executing setup or writing trust. Missing consent returns
-`project_setup_consent_required` (or `project_setup_effect_changed`). Review and
-run `projects.prepare` on the exact destination, then request a fresh Move. If
-the destination does not yet contain SOURCE's setup declaration, Move returns
-`project_setup_review_unavailable`; first bring that checkout current through
-its existing Sync relationship and review its setup. These refusals leave the
-current Service and saved placement untouched. The same preflight compares the
-setup reviewer's file digests on SOURCE and the destination: consent for retained
-bytes cannot authorize different setup inputs or native definitions arriving in
-the upcoming copy. Sync and review changed inputs before requesting a fresh Move.
-Clean copying and any admitted
-setup remain after confirmed Stop; the native starter rechecks the current
-effect before launch.
+In 0.3 development, Move includes incoming setup in its existing confirmation.
+The canonical SOURCE setup inspector supplies the reviewed commands, native file
+facts, toolchain and environment effect. The Move input retains that exact review;
+its compound Action review includes `projects.prepare` policy without launching a
+separate preparation. The Services confirmation and agent/Action approval show
+those setup facts together with the Move destination. Cancel performs neither
+Move nor setup and writes no remembered Project trust.
+
+Before saving placement or stopping the old Service, a passive `projects.inspect`
+checks consent through the ordinary setup admission owner. That owner consumes
+only the private admitted Move root and its exact effect digest; a public parent
+projection grants no consent. An empty or stale destination manifest therefore
+does not require a separate prepare flow. Normal Action Move reads the Account
+graph once for pre-review selection and once for the retained route used at
+execution; it does not reselect the destination after Stop.
+
+Clean copying and setup remain after confirmed Stop. The destination's setup
+owner remeasures the copied effect before execution. A changed platform, native
+resolution, toolchain or environment returns `project_setup_effect_changed`
+instead of approving different effects. The current seam reviews incoming setup
+on SOURCE, so a destination whose resolved effect differs may need a new review
+after Sync; that refusal can occur after the old Service has stopped. The native
+starter retains its ordinary current-effect and service-launch checks.
 
 Current Move snapshots retain their original qualified Source and selected
 destination separately from native custody. Services projects those received
@@ -2711,6 +2718,9 @@ omit them; archived-inclusive lists retain them. An explicit archive by a retain
 Team administrator is an unchanged success: it neither rewrites the Preset nor
 increments its revision. Restoring the Team restores only Presets not independently
 archived. Already admitted creation keeps its exact captured setup snapshot.
+Preset mutations authorize once after locking the mutation Accounts; an admitted
+save may finish when access is withdrawn, and the next mutation re-reads access.
+Audience locking and revision comparison still protect publication.
 These are development schema/CRUD contracts, not a claim that the setup-only
 editor or the complete live journey has been verified.
 
@@ -3067,6 +3077,11 @@ than acquiring another resource. Failed-setup Delete reviews the actual Machine
 reference census and uses the ordinary Delete Action on that same retained row.
 Declining review preserves recovery; an acknowledged Delete retires the local
 composer continuation without creating a Session or discarding its prompt.
+The controller reads one signed current row at each setup or Agent-start phase
+boundary. That row supplies enrollment/setup facts and detects changed intent;
+unavailable Home reads retain their transport or status failure. Finite setup
+uses local cancellation, while child Actions, secret acquisition and Session
+start retain their own admission boundaries.
 Apply uses the ordinary Ask-first
 `machines.setup.apply` Action and exact-Machine authorization; managed
 creation delegates through its existing signed creation proof, without granting
@@ -8498,42 +8513,53 @@ facts. Credential resolution stays Checking until the existing identity owner
 settles; missing transport material is not itself a failed read. Closing or
 hiding the last consumer releases its reads and parked Activity watch.
 
-The sampler uses one unref'ed timer at the per-Machine resources policy's
-`monitoring.intervalMs` (default 2 seconds). `monitoring.mode` is `off`,
-`while_viewing`, or `always` (the history-preserving default). Off admits no
-reader calls, timer fires or new history writes, even with held viewer demand;
-while-viewing releases the timer with the last consumer. The existing
+The sampler uses one unref'ed timer on two cadences. With no Live (Processes)
+or Overview demand, it reads once per wall-clock minute boundary: the 7-day minute
+history is exactly what the idle cadence must serve, and minute-record aggregation
+needs a sample after every boundary. The per-Machine resources policy's
+`monitoring.intervalMs` (default 2 seconds) applies only while a Live or Overview
+viewer holds demand; a selected interval of a minute or more still reads every
+boundary. Summary and Guard-preview watches do not raise the cadence.
+Project workers queued on available memory hold the same Live demand through
+[`projectWorkerMemorySource`](../apps/cli/src/workspaces/execution/projectWorkerMemorySource.ts)
+and admit only on a reading taken during that hold, so a minute-old sample never
+admits one; a worker admitted or cancelled releases it. A departing
+viewer's last read is followed by one settling read so its 2-second stamp cannot
+age into a stale chart before the next boundary; a watch re-arm within one viewer
+interval still counts as that viewer. `monitoring.mode` is `off`, `while_viewing`,
+or `always` (the history-preserving default). Off admits no reader calls, timer
+fires or new history writes, even with held viewer demand; while-viewing releases
+the timer with the last consumer. The existing
 resources-policy metadata/CAS owner persists these deliberate preferences and
 publishes monitoring-key changes separately from unrelated policy/revision
 changes. This is the data contract; rendered controls and the Machine-page Off
-state still need the UI lane. Positive safe-integer intervals retain their full
-deadline across platform timer chunks. Native helper failure retains its
+state still need the UI lane. Native helper failure retains its
 existing one-minute retry spacing, never shortening a longer selected interval.
 
-Summary, in-process live and Overview consumers share that base clock; changing
-demand does not insert another read. Only Overview requests GPU, thermal,
-battery and inotify detail, on its first base tick and every Nth base tick after
-that, where N is the 15-second slow-fact period rounded up to whole ticks
-(16 seconds at the default interval). The base power fact serves keep-awake **On power** and enabled
+Summary, in-process live and Overview consumers share that base clock. Live and
+Overview demand arriving after a read older than the selected interval reads
+immediately; a demand change otherwise inserts no read. Only Overview requests GPU, thermal,
+battery and shared-memory detail, on each selected base tick. These values belong
+to that observation; no separate extras schedule or cache carries an older value
+into a new sample. The base power fact serves keep-awake **On power** and enabled
 whole-disk scanning without a viewer: manual scans use it for worker sizing,
 and scheduled scans use it for admission and AC edges. The sampler reads their demand from the
 canonical resources policy; **On** and **Off** keep-awake modes need no AC facts.
 On macOS, the one Darwin reader runs `pmset -g batt` once per wall-clock minute
 while a power-dependent policy needs it, reusing that result across summary/live
-reads. Overview shares the same power reader at its existing extras boundary.
+reads. Overview shares the same power reader on each selected tick.
 With no Overview or power-dependent policy, idle, summary and Processes reads
 spawn no battery tool. A failed power read
 leaves the power fact unknown. Linux's base reader spawns zero processes. Its optional NVIDIA
 read first checks for an NVIDIA device and an executable `nvidia-smi` on PATH,
 then runs at most one system-tool call per extras read; a missing or failing tool
 does not hide the base sample. Non-Overview responses omit extras even when a
-concurrent Overview has populated that cache.
+concurrent Overview requested them.
 
-Linux's Overview-only inotify walk skips vanished processes and descriptors at
-their own loop boundaries. A known permission gap omits the entire optional
-used/max count, never a subtotal; unexpected I/O follows the reader's existing
-`reader_failed` path. File-watch presentation and limit attention consume that
-same fact. This does not add an idle walk or change the slow-fact cadence.
+Linux does not walk other processes' descriptor trees for an inotify count.
+The optional file-watch count and its limit attention are therefore unreported;
+file, PTY, daemon-descriptor and cgroup-process limits remain available from
+their direct kernel facts.
 The client's history range remains one global device UI lens, held by keyed
 persistent UI state rather than Settings; the existing migration owner imports
 its retired local-settings value without replacing a current lens.

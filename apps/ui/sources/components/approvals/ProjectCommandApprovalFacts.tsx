@@ -5,12 +5,13 @@ import { isProjectSetupTrustRequestV1, PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@
 import { ProjectSetupReviewV1Schema, type ProjectSetupReviewV1 } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
 import { ProjectExecutionChoiceV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierApprovalFields, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -25,6 +26,7 @@ import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { listReviewedSetupCommands } from '@/components/projects/projectSetup/projectSetupEffectPresentation';
 import { formatProjectInvocation } from '@/components/projects/projectSetup/projectScriptPresentation';
 import { ProjectSetupReviewFacts } from '@/components/projects/projectSetup/ProjectSetupReview';
+import { useApprovalFieldsLook } from './ActionApprovalFieldsCard';
 
 export type ProjectCommandApprovalPresentation =
   | Readonly<{
@@ -66,6 +68,7 @@ export type ProjectCommandApprovalPresentation =
       destination: Destination;
       workspace?: WorkspaceAddressV1;
       setupReview?: ProjectSetupReviewV1;
+      moveFromMachineId?: string;
     }>;
 type Destination =
   | Readonly<{ kind: 'primary' }>
@@ -80,6 +83,14 @@ type Destination =
 export function readProjectCommandApproval(
   approval: Pick<ApprovalRequest, 'actionId' | 'actionArgs'> & Partial<Pick<ApprovalRequest, 'preview'>>,
 ): ProjectCommandApprovalPresentation | null {
+  if (approval.actionId === 'projects.service.relocate') {
+    const move = ProjectServiceRelocateInputV1Schema.safeParse(approval.actionArgs);
+    if (!move.success) return null;
+    return { kind: 'service', serverId: move.data.workspace.serverId, sourceMachineId: move.data.sourceMachineId,
+      moveFromMachineId: move.data.currentTarget.machineId, name: move.data.serviceName, command: null,
+      destination: { kind: 'machine', machineId: move.data.selectedTarget.machineId },
+      ...(move.data.setupReview ? { setupReview: move.data.setupReview } : {}) };
+  }
   if (approval.actionId === 'localServices.launcher.start') {
     const review = LocalServiceStartApprovalReviewV1Schema.safeParse(isRecord(approval.preview) ? approval.preview.serviceStartReview : undefined);
     if (!review.success || !sameStrictJsonValue(review.data.request, approval.actionArgs)) return null;
@@ -195,7 +206,10 @@ export function describeProjectCommandApprovalTitle(
   presentation: ProjectCommandApprovalPresentation,
   sourceMachineName: string,
   runsOnMachineName: string = sourceMachineName,
+  moveFromMachineName: string = sourceMachineName,
 ): string {
+  if (presentation.kind === 'service' && presentation.moveFromMachineId)
+    return t('projectServices.moveConfirm', { service: presentation.name ?? '', from: moveFromMachineName, to: runsOnMachineName });
   // Remembered consent covers the Project on any of the person's machines, so its question names none.
   if (presentation.kind === 'setup')
     return presentation.remembersConsent
@@ -221,10 +235,13 @@ export function useProjectCommandApprovalTitle(
   const source = useServerScopedMachine(presentation?.serverId ?? null, presentation?.sourceMachineId ?? '');
   const runsOnId = presentation?.destination.kind === 'machine' ? presentation.destination.machineId : '';
   const runsOn = useServerScopedMachine(presentation?.serverId ?? null, runsOnId);
+  const fromId = presentation?.kind === 'service' ? presentation.moveFromMachineId ?? '' : '';
+  const from = useServerScopedMachine(presentation?.serverId ?? null, fromId);
   if (!presentation) return null;
   const sourceName = source ? getMachineSentenceName(source) : presentation.sourceMachineId;
   return describeProjectCommandApprovalTitle(presentation, sourceName,
-    runsOnId ? (runsOn ? getMachineSentenceName(runsOn) : runsOnId) : sourceName);
+    runsOnId ? (runsOn ? getMachineSentenceName(runsOn) : runsOnId) : sourceName,
+    from ? getMachineSentenceName(from) : fromId || sourceName);
 }
 
 /** The two decisions a Project approval asks, in the words of the Scripts page (setup), the Services page (Start) or the command card. */
@@ -232,7 +249,7 @@ export function describeProjectCommandApprovalDecisions(
   presentation: ProjectCommandApprovalPresentation,
 ): Readonly<{ approve: string; reject: string }> {
   if (presentation.kind === 'service')
-    return { approve: t('localServices.effectReview.start'), reject: t('localServices.effectReview.notNow') };
+    return { approve: t(presentation.moveFromMachineId ? 'projectServices.move' : 'localServices.effectReview.start'), reject: t('localServices.effectReview.notNow') };
   return presentation.kind === 'setup'
     ? {
         approve: presentation.remembersConsent ? t('projects.authoring.allowUntilChanged') : t('projects.scripts.setup.run'),
@@ -249,6 +266,7 @@ export const ProjectCommandApprovalFacts = React.memo(
     }>,
   ) {
     const { theme } = useUnistyles();
+    const fieldsLook = useApprovalFieldsLook();
     const { presentation } = props;
     const destination = presentation.destination;
     const source = useServerScopedMachine(
@@ -295,13 +313,16 @@ export const ProjectCommandApprovalFacts = React.memo(
       ...(presentation.kind === 'service' && !presentation.workspace
         ? []
         : [['checkout', t('common.path'), presentation.workspace!.rootPath] as const]),
-      [
-        'files',
-        t('projects.scripts.adhocFiles'),
-        destination.kind === 'primary'
-          ? t('projects.scripts.adhocFilesHere')
-          : t('projects.scripts.adhocFilesCopy', { machine: sourceName }),
-      ],
+      // A Service that starts where its checkout is runs from the Path above; only a copy elsewhere is news.
+      ...(presentation.kind === 'service' && destination.kind === 'primary'
+        ? []
+        : [[
+            'files',
+            t('projects.scripts.adhocFiles'),
+            destination.kind === 'primary'
+              ? t('projects.scripts.adhocFilesHere')
+              : t('projects.scripts.adhocFilesCopy', { machine: sourceName }),
+          ] as const]),
       ['as', t('projects.scripts.adhocAs'), runsAs],
     ];
     return (
@@ -347,23 +368,12 @@ export const ProjectCommandApprovalFacts = React.memo(
           <ProjectSetupReviewFacts testID={`${props.testID}.review`} reviewedEffect={presentation.setupReview.reviewedEffect}
             machineName={where} sharedRunAs={null} />
         ) : null}
-        <View style={styles.rows}>
-          {rows.map(([key, label, value]) => (
-            <View key={key} style={styles.row}>
-              <Text
-                style={[styles.label, { color: theme.colors.text.tertiary }]}
-              >
-                {label}
-              </Text>
-              <Text
-                style={[styles.value, { color: theme.colors.text.secondary }]}
-                testID={`${props.testID}.${key}`}
-              >
-                {value}
-              </Text>
-            </View>
-          ))}
-        </View>
+        <HappierApprovalFields
+          {...fieldsLook}
+          density="page"
+          testID={`${props.testID}.rows`}
+          rows={rows.map(([key, label, value]) => ({ kind: 'value' as const, key, label, value }))}
+        />
         {presentation.kind === 'exec' ? (
           <View
             style={[
@@ -387,9 +397,6 @@ export const ProjectCommandApprovalFacts = React.memo(
 const styles = StyleSheet.create(() => ({
   root: { gap: 10 },
   consent: { gap: 2 },
-  rows: { gap: 4 },
-  row: { flexDirection: 'row', gap: 12 },
-  label: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), width: 56 },
   value: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), flex: 1, minWidth: 0 },
   note: {
     flexDirection: 'row',

@@ -1,15 +1,6 @@
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { projectServiceMoveChildRole } from './projectServiceMoveChildren';
-import { projectServiceMoveSnapshotInput } from './projectServiceMoveChildren';
-import { projectServiceMoveStatusInput } from './projectServiceMoveChildren';
-import { projectServiceMoveStopInput } from './projectServiceMoveChildren';
-import { projectServiceMoveInspectionInput } from './projectServiceMoveChildren';
-import { projectServiceMoveStartInput } from './projectServiceMoveChildren';
-import { createHash } from 'node:crypto';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { createProjectServiceDeclarationTargetIdV1, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { ProjectWorkerStatusResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ProjectServicePlacementMutationResultV1Schema } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import type { ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -27,7 +18,10 @@ import {
 import { createProjectServiceRelocation } from '@/workspaces/execution/projectServiceRelocation';
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectServiceMoveStatusInput, projectServiceMoveSnapshotInput, projectServiceMoveStopInput,
+    projectServiceMoveInspectionInput, projectServiceMoveStartInput, projectServiceMoveChildRole } from './projectServiceMoveChildren';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 type CanonicalChildAction = NonNullable<RuntimeActionExecuteArgs['executeCanonicalAction']>;
 
@@ -197,63 +191,32 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 return { status: stopped.status === 'succeeded' ? 'stopped' as const
                     : stopped.reasonCode === 'service_control_unsupported' ? 'unsupported' as const : 'termination_incomplete' as const };
             },
-            revalidateDestination: async (_request, destination, signal) => {
-                const current = await resolveDestination(signal);
-                if (current.status === 'refused') return current;
-                if (createCanonicalJsonSigningInput(current.workspace) !== createCanonicalJsonSigningInput(destination)) {
-                    return refusal('selected_target_changed');
+            reviewDestinationSetup: async (_request, _destination, signal) => {
+                if (!execute || !request.setupReview) return refusal('project_setup_review_unavailable');
+                const prepared = context.hostReviewedChild?.preparedChildren
+                    ?.find(child => child.action === 'projects.inspect' && child.role === 'service.inspect.setup');
+                let inspectionInput: unknown = prepared?.input;
+                if (!inspectionInput) {
+                    const snapshot = await readWorkspaceSyncWorkerRouteSnapshot({ serverId: request.workspace.serverId,
+                        serverHttpBaseUrl: input.serverBaseUrl, targetMachineId: request.selectedTarget.machineId,
+                        sourceWorkspaceRefId: request.workspace.refId, credentials,
+                        authorization: context.externalActionExecutionAuthorization, ...(signal ? { signal } : {}) });
+                    const source = snapshot.workspaceRefs.find(ref => ref.serverId === request.workspace.serverId && ref.id === request.workspace.refId);
+                    if (!source) return refusal('project_setup_review_unavailable');
+                    inspectionInput = projectServiceMoveInspectionInput(source, true);
                 }
-                return { status: 'admitted' as const };
-            },
-            reviewDestinationSetup: async (_request, destination, signal) => {
-                if (!execute) return refusal('project_setup_review_unavailable');
-                const snapshot = await readWorkspaceSyncWorkerRouteSnapshot({ serverId: request.workspace.serverId,
-                    serverHttpBaseUrl: input.serverBaseUrl, targetMachineId: destination.machineId,
-                    sourceWorkspaceRefId: request.workspace.refId, credentials,
-                    authorization: context.externalActionExecutionAuthorization, ...(signal ? { signal } : {}) });
-                const source = snapshot.workspaceRefs.find(ref => ref.serverId === request.workspace.serverId && ref.id === request.workspace.refId);
-                if (!source) return refusal('project_setup_review_unavailable');
-                const inspect = async (workspace: typeof source, reviewSetupConsent?: true) => {
-                    const result = await execute('projects.inspect', projectServiceMoveInspectionInput(workspace, reviewSetupConsent));
-                    signal?.throwIfAborted();
-                    if (!result.ok) return { status: 'refused' as const, reasonCode: result.errorCode ?? 'project_setup_review_unavailable' };
-                    const parsed = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
-                    return parsed.success ? { status: 'inspected' as const, value: parsed.data } : refusal('project_setup_review_unavailable');
-                };
-                const original = await inspect(source);
-                if (original.status === 'refused') return original;
-                const target = await inspect(destination, true);
-                if (target.status === 'refused') return target;
-                const sourceManifest = original.value.definition.document?.status === 'valid' ? original.value.definition.document.manifest : null;
-                const targetManifest = target.value.definition.document?.status === 'valid' ? target.value.definition.document.manifest : null;
-                if (original.value.definition.document?.status === 'invalid' || target.value.definition.document?.status === 'invalid') return refusal('invalid_manifest');
-                // An empty/stale destination cannot prove consent for setup about to
-                // arrive from SOURCE. Review the current target through projects.prepare
-                // after its normal Sync copy, then request a fresh Move.
-                const setupDeclaration = (manifest: typeof sourceManifest) => ({ setup: manifest?.workspace?.setup ?? [],
-                    setupInputs: manifest?.workspace?.setupInputs ?? [], environment: manifest?.environment ?? { kind: 'host' },
-                    environmentVariables: manifest?.environmentVariables ?? [], devcontainer: manifest?.devcontainer ?? null });
-                if (createCanonicalJsonSigningInput(setupDeclaration(sourceManifest)) !== createCanonicalJsonSigningInput(setupDeclaration(targetManifest))) {
-                    return refusal('project_setup_review_unavailable', 'Review and prepare the current destination checkout with projects.prepare before moving the service.');
-                }
-                const copiedFileFacts = (effect: typeof original.value.setupReview) => {
-                    const reviewed = effect?.reviewedEffect;
-                    return reviewed && typeof reviewed === 'object' && !Array.isArray(reviewed) && 'files' in reviewed ? reviewed.files : undefined;
-                };
-                const sourceFiles = copiedFileFacts(original.value.setupReview);
-                const targetFiles = copiedFileFacts(target.value.setupReview);
-                if (!Array.isArray(sourceFiles) || !Array.isArray(targetFiles)) return refusal('project_setup_review_unavailable');
-                // Consent for retained target bytes cannot authorize different
-                // setup inputs/native definitions arriving in the upcoming copy.
-                if (createCanonicalJsonSigningInput(sourceFiles) !== createCanonicalJsonSigningInput(targetFiles)) {
-                    return refusal('project_setup_effect_changed', 'Sync and review destination setup with projects.prepare, then request a fresh Move. The current service is still running.');
-                }
-                const consent = target.value.setupConsent;
-                if (consent?.kind === 'admitted') return { status: 'admitted' as const };
-                const readiness = target.value.setupReadiness;
-                return refusal(consent?.kind === 'required' ? consent.code : consent?.code
-                    ?? (readiness?.kind === 'needsReview' || readiness?.kind === 'unknown' ? readiness.code : 'project_setup_review_unavailable'),
-                    'Review destination setup with projects.prepare, then request a fresh Move. The current service is still running.');
+                // Review the incoming SOURCE effect, not the stale destination manifest.
+                // Setup's owner consumes this Move's admitted decision without executing it.
+                const result = await execute('projects.inspect', inspectionInput);
+                signal?.throwIfAborted();
+                if (!result.ok) return refusal(result.errorCode ?? 'project_setup_review_unavailable');
+                const inspected = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
+                if (!inspected.success || !inspected.data.setupReview) return refusal('project_setup_review_unavailable');
+                if (inspected.data.definition.document?.status === 'invalid') return refusal('invalid_manifest');
+                if (inspected.data.setupReview.reviewedEffectDigest !== request.setupReview.reviewedEffectDigest) return refusal('project_setup_effect_changed');
+                const consent = inspected.data.setupConsent;
+                return consent?.kind === 'admitted' ? { status: 'admitted' as const }
+                    : refusal(consent?.code ?? 'project_setup_review_unavailable');
             },
             handoffPrepareBetween: async (preparation, signal) => {
                 const adapter = input.resolveWorkspaceSyncHandoffAdapter();

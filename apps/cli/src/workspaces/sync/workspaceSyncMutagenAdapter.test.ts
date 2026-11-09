@@ -71,6 +71,34 @@ function genericSessionFor(id: string, overrides: Record<string, unknown> = {}) 
 }
 
 describe('WorkspaceSyncMutagenAdapterClient', () => {
+  it('accepts benign additional labels without losing the session', async () => {
+    const labels = { ...labelsFor('r1'), ...Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`custom.${i}`, 'value'])) };
+    const adapter = createWorkspaceSyncMutagenAdapter({
+      send: async () => listPage([genericSession({ labels })]),
+      resolveWorkspaceRef: async id => ({ machineId: 'm1', rootPath: `/${id}` }),
+    });
+    await expect(adapter.rehydrate([relationship])).resolves.toEqual([
+      expect.objectContaining({ relationshipId: 'r1', state: 'watching' }),
+    ]);
+  });
+
+  it('projects a conflict with more than 1000 changes without failing the session', async () => {
+    const changes = Array.from({ length: 1001 }, (_, i) => ({ path: `src/${i}`, old: null, new: { kind: 'file' } }));
+    const adapter = createWorkspaceSyncMutagenAdapter({
+      send: async command => {
+        if (command.t === 'list') return listPage([]);
+        if (command.t === 'list_conflicts') return { totalCount: 1, shownCount: 1, truncatedCount: 0, nextCursor: null,
+          conflicts: [{ root: 'src', alphaChanges: changes, betaChanges: changes }] };
+        return genericSession();
+      },
+      resolveWorkspaceRef: async id => ({ machineId: 'm1', rootPath: `/${id}` }),
+    });
+    await adapter.ensure(relationship);
+    await expect(adapter.listConflicts({ relationshipId: 'r1', limit: 1 })).resolves.toMatchObject({
+      status: 'page', totalCount: 1, conflicts: [{ path: 'src' }],
+    });
+  });
+
   it('keeps a recovery-held session paused while reconciling an unrelated running link', async () => {
     const unaffected = { ...relationship, relationshipId: 'r2' };
     const send = vi.fn(async (command: Readonly<{ t: string }>) => {
@@ -495,11 +523,12 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
     ]);
   });
 
-  it('discovers an exact persisted copy_once definition for restart recovery', async () => {
+  it('discovers an exact persisted copy_once definition with benign extra labels for restart recovery', async () => {
     const persisted = genericSessionFor('copy-1', {
       identifier: 'mutagen-copy-session',
       labels: {
         ...labelsFor('copy-1'),
+        ...Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`custom.${i}`, 'value'])),
         'external.operation_kind': 'copy_once',
         'external.policy_selection': 'all_files',
       },
@@ -983,25 +1012,6 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
     await adapter.ensure(relationship);
     await expect(adapter.listConflicts({ relationshipId: 'r1', cursor: 'opaque-conflict-token', limit: 100 }))
       .resolves.toEqual({ status: 'cursor_invalidated', relationshipId: 'r1' });
-  });
-
-  it('terminates a claimed session with the stale Git-directory policy label before reporting the mismatch', async () => {
-    const commands: Array<{ t: string; sessionIdentifier?: string }> = [];
-    const send = vi.fn(async (command: { t: string; sessionIdentifier?: string }) => {
-      commands.push(command);
-      return command.t === 'list'
-        ? listPage([genericSession({ labels: { ...labelsFor('r1'), 'external.include_git_directory': 'false' } })])
-        : null;
-    });
-    const adapter = createWorkspaceSyncMutagenAdapter({
-      send, createRequestId: () => 'request-1', nowMs: () => 1234,
-      resolveWorkspaceRef: async (id) => ({ machineId: 'm1', rootPath: `/${id}` }),
-    });
-    await expect(adapter.ensure(relationship)).rejects.toMatchObject({ code: 'relationship_runtime_mismatch' });
-    expect(commands.map(({ t, sessionIdentifier }) => [t, sessionIdentifier])).toEqual([
-      ['list', undefined],
-      ['terminate', 'mutagen-session-1'],
-    ]);
   });
 
   it('surfaces claimed-session cleanup failure and never creates a replacement beside it', async () => {

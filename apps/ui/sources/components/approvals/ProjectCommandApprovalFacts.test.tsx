@@ -6,6 +6,13 @@ import { ProjectPrepareInputV1Schema } from '@happier-dev/protocol/actions/proje
 import { ProjectSetupReviewV1Schema } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
 import { MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools';
 
+/** The value beside a facts row's key (the shared approval fields draw label then value). */
+type FactNode = { props: { children?: unknown } };
+function factValue(host: { findAll: (predicate: (node: FactNode) => boolean) => FactNode[] } | null | undefined): unknown {
+    return host?.findAll((node) => typeof node.props.children === 'string').at(-1)?.props.children;
+}
+
+
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 installSessionSubagentCommonModuleMocks({
   storage: () =>
@@ -37,6 +44,23 @@ const workspace = {
 };
 
 describe('Project command approval facts', () => {
+  it('discloses incoming setup in the same Move approval for an agent request', async () => {
+    const destination = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } };
+    const address = { serverId: 'home', refId: 'checkout' };
+    const setupReview = { reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: { commands: [{ kind: 'command', command: 'install on destination' }] } };
+    const presentation = readProjectCommandApproval({ actionId: 'projects.service.relocate', actionArgs: {
+      workspace: address, sourceMachineId: 'devbox', serviceName: 'web', requestId: 'move',
+      currentTarget: { kind: 'managed_service', managedServiceId: 'old', machineId: 'incumbent' },
+      destination, selectedTarget: { machineId: 'worker' }, setupReview,
+      desiredPlacement: { workspace: address, serviceName: 'web', expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } },
+    } });
+    expect(presentation).toMatchObject({ kind: 'service', setupReview, destination: { kind: 'machine', machineId: 'worker' } });
+    if (!presentation) throw new Error('Missing Move review');
+    expect(describeProjectCommandApprovalDecisions(presentation).approve).toBe('Move');
+    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    expect(screen.getTextContent()).toContain('install on destination');
+    await screen.unmount();
+  });
   it('renders the native declared Service review with its exact target and setup before approval', async () => {
     const request = { machineId: 'worker', targetId: 'web', workspace,
       declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } },
@@ -57,7 +81,8 @@ describe('Project command approval facts', () => {
     const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
     expect(screen.getTextContent()).toContain('serve web');
     expect(screen.getTextContent()).toContain('install dependencies');
-    expect(screen.findHostByTestId('facts.checkout')?.props.children).toBe(target.rootPath);
+    expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(target.rootPath);
+    expect(screen.findByTestId('facts.rows.row:files')).not.toBeNull();
     expect(readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: { ...request, machineId: 'other' },
       preview: { serviceStartReview: review } })).toBeNull();
     const local = { ...request, machineId: workspace.machineId, choice: { kind: 'primary' } };
@@ -65,6 +90,23 @@ describe('Project command approval facts', () => {
       preview: { serviceStartReview: { ...review, request: local, target: workspace } } }))
       .toMatchObject({ destination: { kind: 'primary' } });
   });
+  it('says nothing about files for a Service that starts where its checkout is, and keeps the copy a worker needs', async () => {
+    const request = { machineId: 'devbox', targetId: 'web', workspace,
+      declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } },
+      choice: { kind: 'primary' } };
+    const review = { request, target: workspace, reviewedEffectDigest: 'a'.repeat(64),
+      reviewedEffect: { command: { source: { kind: 'command', command: 'serve web' } } },
+      setup: { required: true, project: { serverId: workspace.serverId, projectId: 'project' },
+        reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: { commands: [{ kind: 'command', command: 'install dependencies' }] } } };
+    const presentation = readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: request,
+      preview: { serviceStartReview: review } });
+    if (!presentation) throw new Error('Missing Service review');
+    const here = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    expect(here.findByTestId('facts.rows.row:checkout')).not.toBeNull();
+    expect(here.findByTestId('facts.rows.row:files')).toBeNull();
+    await here.unmount();
+  });
+
   it.each(['projects.script.run', 'projects.prepare'] as const)('renders distinct checkout identities for %s on the same Machine', async actionId => {
     const read = (selected: typeof workspace) => readProjectCommandApproval({ actionId,
       actionArgs: actionId === 'projects.prepare' ? { workspace: selected, phase: 'setup' }
@@ -79,7 +121,7 @@ describe('Project command approval facts', () => {
       const presentation = read(selected);
       if (!presentation) throw new Error('Expected a valid Project approval');
       const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
-      expect(screen.findHostByTestId('facts.checkout')?.props.children).toBe(selected.rootPath);
+      expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(selected.rootPath);
       await screen.unmount();
     }
   });
@@ -117,7 +159,7 @@ describe('Project command approval facts', () => {
     })).toMatchObject({ kind: 'service', command: expected });
     const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation!} testID="facts" />);
     expect(screen.getTextContent()).toContain(`$ ${expected}`);
-    expect(screen.findHostByTestId('facts.checkout')?.props.children).toBe(workspace.rootPath);
+    expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(workspace.rootPath);
     await screen.unmount();
   });
 

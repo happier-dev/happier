@@ -191,6 +191,9 @@ import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydra
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
+/** Private Session adapter receives IDs already resolved by Workflow/SCM admission. */
+export type ResolvedSessionPullRequestBindingInputV1 = SessionPullRequestBindingInputV1 & Readonly<{ sessionId: string }>;
+
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
 }
@@ -498,7 +501,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     return agentId ? (builtInAgentId && isBundledAgentId(agentId) ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId]
       : readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.identity) : undefined;
   };
-  const invokeSessionPullRequestBinding = async (input: SessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => {
+  const invokeSessionPullRequestBinding = async (input: ResolvedSessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => {
     const { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingResultV1Schema } = await import(
       '@happier-dev/channels-protocol/v1'
     );
@@ -961,6 +964,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const prepared = request.actionId === 'projects.service.relocate'
         ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
             context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl,
+            inspectSetup: workspace => projectDeps.projectDefinitionAction!({ actionId: 'projects.inspect',
+              input: { workspace: { serverId: workspace.serverId, machineId: workspace.machineId,
+                workspaceId: workspace.id, rootPath: workspace.rootPath }, read: { kind: 'setup' } }, context: request.context }),
             readRelationshipStatuses: async machineId => {
               const { WorkspaceSyncStatusV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
               const response = await callMachineAction({ machineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,

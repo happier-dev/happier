@@ -28,7 +28,6 @@ import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/s
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { discoverLocalServiceRunTargets } from './runTargets';
 import { createProjectServiceDeclarationStarter } from './projectDeclarations';
-import { logger } from '@/ui/logger';
 import { createLocalServicesDaemonRuntime } from '../runtime';
 import { createLocalServiceLauncherFeed } from './feed';
 import { createLocalServiceLauncherRoutes } from './routes';
@@ -39,7 +38,7 @@ import { createLocalServiceActionRoutes } from '../actions/routes';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { createProjectServiceRelocationRoute } from '../actions/projectServiceRelocationRoute';
 import { createLocalServicesDaemonFeatureGate } from '../featureGate';
-import { LocalServiceActionRequestV1Schema, LocalServiceManagedServiceActionTargetV1Schema, createLocalServiceActionConfirmationNonceV1, createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, createLocalServiceActionConfirmationNonceV1, createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ApiClient } from '@/api/api';
@@ -49,7 +48,8 @@ import { createProjectFiniteSourceManifestInspector } from '@/daemon/startup/cre
 import { createWorkspaceSyncWorkerPreparation, prepareWorkspaceSyncBetween } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -59,7 +59,7 @@ import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/da
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createDefaultWorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { createProcessActionOwnerAdapters } from '@/daemon/processes/actions/processActionOwnerAdapters';
 import { MachineProcessesStartAgainResultV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
@@ -69,8 +69,8 @@ import type { ProjectServicePlacementV1 } from '@happier-dev/protocol/workspaces
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
-import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ManagedServiceNativeInstanceV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { PluginApi, PluginInvocationContext, Disposable } from '@happier-dev/plugin-sdk';
+import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { readSupervisedPluginProcessIdForHost } from '@/plugins/runtime/exec/processSupervisor';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
@@ -82,14 +82,14 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { createPluginInvocationLifetime } from '@/plugins/runtime/invocation/lifetime';
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
 import { resolveManifestHostAccessRequestsForQualifiedContribution } from '@/plugins/runtime/hostAccess/manifestRequests';
-import { pixiPlugin, pixiRuntime, pixiAdapter, importedPixiEnvironment } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
+import { pixiPlugin, pixiRuntime, pixiAdapter, importedPixiToolchain } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 import * as processTreeBoundary from '@/processes/terminate/terminateProcessTree';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { assertActionOutputContract, withActionOutputContract } from '@/testkit/actionOutputContract';
 import { buildLocalServiceRows } from '../../../../../../../apps/ui/sources/sync/domains/local/services/serviceRow';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { inspectProjectSetup } from '@/workspaces/projectSetup/projectSetupPreparation';
@@ -101,11 +101,13 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import * as machineRpcBoundary from '@/session/transport/rpc/machineRpc';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createTargetedActionRpcRequestV1, TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1, ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorOperationSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 class ObservedSetupPty implements PtyProcess {
     constructor(private readonly observed?: () => void) {}
@@ -121,7 +123,7 @@ class ObservedSetupPty implements PtyProcess {
 }
 
 describe('accepted Project Service declaration starter', () => {
-    it('does not disclose a pending setup review after authority is revoked during its trust read', async () => {
+    it('finishes an admitted setup review and refuses the next request after revocation', async () => {
         const h = await fixture(true);
         let current = true;
         const post = h.post.getMockImplementation()!;
@@ -133,21 +135,22 @@ describe('accepted Project Service declaration starter', () => {
         const result = await h.starter.resolveStartTarget(h.request,
             { ...h.ingress, verifyMachineAdmissionCurrent: async () => current }, h.context);
         expect(current).toBe(false);
-        expect(result).toEqual({ ok: false, reasonCode: 'machine_admission_changed' });
+        expect(result).toMatchObject({ ok: false, reasonCode: 'project_setup_consent_required', reviewedEffectDigest: expect.any(String) });
+        expect(await h.starter.resolveStartTarget(h.request,
+            { ...h.ingress, verifyMachineAdmissionCurrent: async () => current }, h.context))
+            .toEqual({ ok: false, reasonCode: 'machine_admission_changed' });
         expect(h.setupProcesses).toEqual([]);
     });
 
-    it('bounds fresh SOURCE inspections and Machine admissions across all eight reviewed Start boundaries', async () => {
+    it('admits approval and Start once each without repeating authority across passive or causal effect reads', async () => {
         const h = await fixture(true, undefined, true, 'portable');
         // A retained destination permits passive approval; Start must still copy anew.
         await cp(h.root, h.targetRoot, { recursive: true });
-        let reviews = 0;
         let admissions = 0;
+        let requesterChecks = 0;
         let inspections = 0;
-        vi.spyOn(logger, 'debug').mockImplementation((message, details) => {
-            if (message === '[ProjectService] launch phase' && details && typeof details === 'object'
-                && 'phase' in details && details.phase === 'runtime') reviews++;
-        });
+        let current = true;
+        Object.assign(h.runtime, { isCurrent: async () => { requesterChecks++; return current; } });
         const delay = () => new Promise<void>(resolve => setTimeout(resolve, 20));
         const post = h.post.getMockImplementation()!;
         h.post.mockImplementation(async (url, body, options) => {
@@ -157,54 +160,43 @@ describe('accepted Project Service declaration starter', () => {
         const ingress = { ...h.ingress, verifyMachineAdmissionCurrent: async () => { admissions++; await delay(); return true; } };
         const approval = await h.starter.prepareStartApproval(h.request, ingress, h.context);
         if ('ok' in approval) throw new Error(approval.errorCode);
+        expect(admissions).toBe(1);
+        expect(requesterChecks).toBe(1);
+        expect(inspections).toBe(1);
         h.trustSetupDigest(approval.setup!.reviewedEffectDigest);
         const context = { ...h.context, nativeServiceStartApproval: approval };
         const selected = await h.starter.resolveStartTarget(h.request, ingress, context);
         if (!selected.ok) throw new Error(selected.reasonCode);
+        expect(admissions).toBe(2);
+        expect(requesterChecks).toBe(2);
+        expect(inspections).toBe(2);
         const completion = h.starter.startManagedDeclaration(selected.declaration, h.request, ingress, context);
         await Promise.race([h.setupStarted, completion]);
+        current = false;
         h.setupProcesses[0]?.pty.exit(0);
         expect(await completion).toMatchObject({ status: 'succeeded' });
-        // Three fresh fences per full review, plus the two setup-effect fences.
-        expect({ reviews, inspections, admissions }).toEqual({ reviews: 8, inspections: 3, admissions: 26 });
+        // Approval and Start are separate requests. Copy/setup/native preparation
+        // still review actual effect changes, without repeating their admission.
+        expect(admissions).toBe(2);
+        expect(requesterChecks).toBe(2);
+        expect(inspections).toBe(2);
+        console.info('Project Service admission shape', { requests: 2, admissions, requesterChecks, inspections });
+        expect(await h.starter.resolveStartTarget(h.request, ingress, context))
+            .toMatchObject({ ok: false, reasonCode: 'project_requester_credentials_unavailable' });
         await h.owner.listProjectServices()[0]?.stop();
     });
 
-    it.each([
-        [1, 'approval preparation'], [2, 'launcher'], [3, 'executor entry'], [4, 'post-copy'],
-        [5, 'setup reservation'], [6, 'post-setup'], [7, 'invocation capture'], [8, 'final authorization'],
-    ] as const)('refuses revoked authority at Start review %i (%s)', async (boundary, _label) => {
+    it.each(['approval', 'start'] as const)('refuses revoked authority before %s admission', async boundary => {
         const h = await fixture(true, undefined, true, 'portable');
         await cp(h.root, h.targetRoot, { recursive: true });
-        let reviews = 0;
-        let reviewAdmissions = 0;
-        // Observe the existing log boundary; replace only the external admission verdict.
-        vi.spyOn(logger, 'debug').mockImplementation((message, details) => {
-            if (message === '[ProjectService] launch phase' && details && typeof details === 'object'
-                && 'phase' in details && details.phase === 'runtime') { reviews++; reviewAdmissions = 0; }
-        });
-        // Revoke at the final fence, after the review's awaited reads have run.
-        const ingress = { ...h.ingress, verifyMachineAdmissionCurrent: async () => !(reviews === boundary && ++reviewAdmissions === 3) };
-        const approval = await h.starter.prepareStartApproval(h.request, ingress, h.context);
-        if (boundary === 1) {
-            expect(approval).toMatchObject({ ok: false, errorCode: 'machine_admission_changed' });
+        const ingress = { ...h.ingress, verifyMachineAdmissionCurrent: async () => false };
+        if (boundary === 'approval') {
+            expect(await h.starter.prepareStartApproval(h.request, ingress, h.context))
+                .toMatchObject({ ok: false, errorCode: 'machine_admission_changed' });
         } else {
-            if ('ok' in approval) throw new Error(approval.errorCode);
-            h.trustSetupDigest(approval.setup!.reviewedEffectDigest);
-            const context = { ...h.context, nativeServiceStartApproval: approval };
-            const selected = await h.starter.resolveStartTarget(h.request, ingress, context);
-            if (boundary === 2) {
-                expect(selected).toMatchObject({ ok: false, reasonCode: 'machine_admission_changed' });
-            } else {
-                if (!selected.ok) throw new Error(selected.reasonCode);
-                const completion = h.starter.startManagedDeclaration(selected.declaration, h.request, ingress, context);
-                await Promise.race([h.setupStarted, completion]);
-                h.setupProcesses[0]?.pty.exit(0);
-                expect(await completion).toMatchObject({ status: 'denied', reasonCode: boundary >= 7
-                    ? 'plugin_managed_service_establishment_failed' : 'machine_admission_changed' });
-            }
+            expect(await h.starter.resolveStartTarget(h.request, ingress, h.context))
+                .toMatchObject({ ok: false, reasonCode: 'machine_admission_changed' });
         }
-        expect(reviews).toBe(boundary);
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
@@ -221,16 +213,9 @@ describe('accepted Project Service declaration starter', () => {
         const changed = { ...h.manifest, services: { worker: { ...h.manifest.services!.worker,
             source: { kind: 'command', command: 'echo unapproved' } } } };
         if (scenario === 'source_before_copy') {
-            // Change real SOURCE bytes after its executor inspection response,
-            // so the causal copy brings bytes different from the approved basis.
-            const post = h.post.getMockImplementation()!;
-            h.post.mockImplementation(async (url, body, options) => {
-                const response = await post(url, body, options);
-                if (String(url).endsWith('/v1/actions/projects.inspect')) {
-                    await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(changed));
-                }
-                return response;
-            });
+            // The causal copy must compare the bytes it receives with the
+            // already reviewed SOURCE, even if SOURCE changes before transfer.
+            await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(changed));
         } else if (scenario === 'destination_after_copy') h.changeCopiedManifest(changed);
         else if (scenario === 'placement') h.afterCopy(() => h.savePlacement({ runsOn: { kind: 'primary' }, unavailable: 'primary' }));
         const completion = h.starter.startManagedDeclaration(selected.declaration, h.request, h.ingress, context);
@@ -248,18 +233,26 @@ describe('accepted Project Service declaration starter', () => {
         const h = await fixture();
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,
             services: { ...h.manifest.services, sibling: { source: { kind: 'command', command: 'echo sibling' } } } }));
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await h.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         let releaseScan!: () => void;
         const pendingScan = new Promise<void>(resolve => { releaseScan = resolve; });
+        let holdScan = false;
         const runtime = createLocalServicesDaemonRuntime({ machineId: h.workspace.machineId,
             startLoop: false, inventoryEnabled: () => true, projectManagedServices: h.owner,
             workspaceFacts: () => ({ facts: [{ id: h.workspace.id, path: h.root }], acceptedWorkspaceRefs: [h.workspace], diagnostics: [] }),
-            scan: async () => { await pendingScan; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; },
+            scan: async () => { if (holdScan) await pendingScan; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; },
             projectServiceStarter: { resolveRuntime: async () => h.runtime,
                 acquirePluginRuntime: async () => ({ registry: { projectManagedServices: h.owner,
                     retirementSignal: new AbortController().signal }, release: async () => {} }) } });
+        // Exact Start preserves admitted discovery; it does not discover previously unread siblings.
+        expect((await runtime.launcherRoutes.getSnapshot({ workspaceRoot: h.root })).targets)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ declaration: expect.objectContaining({
+                selection: { kind: 'manifest', name: 'sibling' },
+            }) })]));
+        holdScan = true;
         const inventory = runtime.refreshInventoryNow();
+        let receiptSettled = false;
         const completion = (async () => {
             const started = await runtime.launcherRoutes.startTarget!({ ...h.request,
                 expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
@@ -268,11 +261,14 @@ describe('accepted Project Service declaration starter', () => {
                     expect.objectContaining({ source: 'managed_service', serviceState: 'running' }),
                     expect.objectContaining({ declaration: expect.objectContaining({ selection: { kind: 'manifest', name: 'sibling' } }) }),
                 ]) } });
+            receiptSettled = true;
             return started;
         })();
         void completion.catch(() => {});
         try {
             await vi.waitFor(() => expect(h.owner.listProjectServices().some(handle => handle.snapshot().state === 'running')).toBe(true));
+            // Native readiness and the complete Start receipt must not wait for an unrelated Machine scan.
+            await vi.waitFor(() => expect(receiptSettled).toBe(true));
             releaseScan();
             await completion;
             const denied = await runtime.launcherRoutes.startTarget!({ ...h.request, expectedEffectDigest: 'changed' }, h.ingress, h.context);
@@ -392,7 +388,7 @@ describe('accepted Project Service declaration starter', () => {
         Object.assign(h.runtime, { inspectSourceProjectManifest: createProjectFiniteSourceManifestInspector({
             api: { getMachine: (machineId, options) => api.getMachine(machineId, { ...options, authorization: carrier }) },
             credentials: h.runtime.credentials!, serverId: 'home', serverHttpBaseUrl: 'https://home.example',
-            accountId: 'owner', ingress: { ...h.ingress, callerInputAuthorization: carrier }, isCurrent: admitted.isCurrent,
+            accountId: 'owner', ingress: { ...h.ingress, callerInputAuthorization: carrier },
         }) });
         const reviewed = await h.starter.prepareStartApproval(h.request, h.ingress, h.context);
         expect(reviewed).toMatchObject({ request: h.request, target: { machineId: h.targetWorkspace.machineId,
@@ -402,25 +398,38 @@ describe('accepted Project Service declaration starter', () => {
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
-    it.each([false, true])('retains accepted Start custody on browser disconnect, but still checks Machine authority (revoked=%s)', async revoked => {
+    it.each([false, true, 'already observed'] as const)('retains admitted Start custody on browser disconnect and later authority loss (revoked=%s)', async variant => {
+        const revoked = variant === true;
+        const alreadyObserved = variant === 'already observed';
         const h = await fixture(false, undefined, true, 'portable');
+        const boundaryFailures: unknown[] = [];
+        const post = h.post.getMockImplementation()!;
+        h.post.mockImplementation(async (url, body, options) => {
+            try { return await post(url, body, options); }
+            catch (error) { boundaryFailures.push(error); throw error; }
+        });
         let releaseCopy!: () => void;
         const copying = new Promise<void>(resolve => { releaseCopy = resolve; });
         let observeCopy!: () => void;
         const copyStarted = new Promise<void>(resolve => { observeCopy = resolve; });
         h.afterCopy(() => { observeCopy(); return copying; });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
+        expect(boundaryFailures).toEqual([]);
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         if (!review.reviewedEffectDigest) throw new Error('Expected service review');
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         const transport = new AbortController();
         const ingress = { ...h.ingress, signal: transport.signal,
-            verifyMachineAdmissionCurrent: async () => !transport.signal.aborted,
-            verifyMachineAuthorityCurrent: async () => !revoked || !transport.signal.aborted };
-        const completion = h.operationRuntime.runActionOperation({ actionId: 'localServices.launcher.start', input: request,
+            verifyMachineAdmissionCurrent: async () => !transport.signal.aborted };
+        const completion = alreadyObserved ? h.operationRuntime.observeExecution({ actionId: 'localServices.launcher.start', input: request,
+            actionRequestId: 'already-observed-service-start', rpcContext: ingress,
+            execute: async owned => ({ ok: true, result: await h.routes.startTarget!(request, ingress, { ...h.context, ...owned }) }),
+        }) : h.operationRuntime.runActionOperation({ actionId: 'localServices.launcher.start', input: request,
             context: { ...h.context, signal: transport.signal },
             execute: async context => ({ ok: true, result: await h.routes.startTarget!(request, ingress, context) }) });
         const scope = { accountId: 'owner', machineId: h.targetWorkspace.machineId };
         try {
+            if (alreadyObserved) await vi.waitFor(() => expect(h.copies()).toBe(1));
             await Promise.race([copyStarted, completion.then(result => {
                 throw new Error('Service Start settled before its copy phase: ' + JSON.stringify(result));
             })]);
@@ -428,16 +437,19 @@ describe('accepted Project Service declaration starter', () => {
             const start = h.operationRuntime.store.list(scope).items.find(item => item.actionId === 'localServices.launcher.start');
             expect(start).toMatchObject({ state: 'running', progress: { phase: 'copying' },
                 domainRef: { kind: 'projectService', purpose: 'start', sourceWorkspace: { serverId: 'home', refId: h.workspace.id },
-                    declaration: h.request.declaration } });
+                    workspace: { machineId: h.targetWorkspace.machineId, workspaceId: h.targetWorkspace.id, rootPath: h.targetRoot },
+                    declaration: { ...h.request.declaration, workspaceRefId: h.targetWorkspace.id } } });
             expect(ActionOperationSnapshotV1Schema.safeParse(start).success).toBe(true);
+            const pending = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+                snapshot: await h.routes.getSnapshot({ scope: 'machine', discovery: 'cached' }) }).snapshot;
+            expect(pending.targets).toEqual([expect.objectContaining({ machineId: h.targetWorkspace.machineId,
+                workspaceId: h.targetWorkspace.id, cwd: h.targetRoot, serviceState: 'starting', state: 'starting' })]);
+            expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: pending.targets, sessionId: null, scope: 'workspace' }))
+                .toEqual([expect.objectContaining({ status: 'starting' })]);
+            expect((await h.routes.getSnapshot({ workspaceRoot: h.root, discovery: 'cached' })).targets).toEqual([]);
             transport.abort();
             releaseCopy();
-            expect(await completion).toMatchObject({ ok: true, result: { status: revoked ? 'failed' : 'succeeded' } });
-            if (revoked) {
-                expect(h.owner.listProjectServices()).toEqual([]);
-                expect(h.operationRuntime.store.get(scope, start!.operationId)).toMatchObject({ state: 'failed' });
-                return;
-            }
+            expect(await completion).toMatchObject({ ok: true, result: { status: 'succeeded' } });
             expect(h.operationRuntime.store.list(scope).items.find(item => item.operationId === start!.operationId)).toMatchObject({ state: 'succeeded',
                 progress: { phase: 'starting' }, domainRef: { currentTarget: { managedServiceId: expect.any(String),
                     machineId: h.targetWorkspace.machineId, workspaceId: h.targetWorkspace.id } } });
@@ -448,7 +460,11 @@ describe('accepted Project Service declaration starter', () => {
             expect(h.operationSnapshots.filter(item => item.actionId === 'localServices.launcher.start')
                 .every(item => PredecessorOperationSchema.safeParse(projectActionOperationSnapshotForV1Reader(item)).success)).toBe(true);
             expect(new Set(h.operationSnapshots.filter(item => item.actionId === 'localServices.launcher.start').map(item => item.operationId)).size).toBe(1);
-        } finally { releaseCopy(); h.setupProcesses.forEach(process => process.pty.exit(0)); await completion; }
+        } finally {
+            releaseCopy(); h.setupProcesses.forEach(process => process.pty.exit(0));
+            // A self-join starts no native work and owns no process to retire.
+            if (!alreadyObserved || h.copies() > 0) await completion;
+        }
     });
 
     it.each([false, true])('binds Auto Service approval to the native worker before publication (withdrawn=%s)', async withdrawn => {
@@ -531,13 +547,13 @@ describe('accepted Project Service declaration starter', () => {
     }
 
     async function fixture(setup = false, source?: unknown, finiteAccepting = true, workerExecution?: 'portable' | 'primary', profileId = 'home', homeId = profileId, supervisorPlatform?: NodeJS.Platform,
-        environment?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectEnvironmentSelectionV1) {
+        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1) {
         const root = await mkdtemp(join(tmpdir(), 'happier-project-service-'));
         await mkdir(join(root, '.happier'));
         const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
         const manifest = ProjectManifestV1Schema.parse({ version: 1, services: { worker: { source: source ?? { kind: 'command', command },
             ...(workerExecution ? { execution: workerExecution } : {}) } },
-            ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : {}), ...(environment ? { environment } : {}) });
+            ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : {}), ...(toolchain ? { toolchain } : {}) });
         await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest));
         const workspace = { id: 'accepted', serverId: homeId, machineId: 'machine', rootPath: root, createdAtMs: 1, projectKey: 'project' };
         const targetRoot = workerExecution ? await mkdtemp(join(tmpdir(), 'happier-project-service-target-')) : root;
@@ -545,12 +561,20 @@ describe('accepted Project Service declaration starter', () => {
         const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
             credentialProvenance: 'stored_session' as const };
+        if (workerExecution) {
+            const channel = await createRequesterCurrentnessSocketHarness();
+            cleanups.push(() => channel.close());
+        }
         const serverIdentityId = homeId.startsWith('srv_') ? homeId : 'srv_serviceHome';
-        const machines = [workspace, ...(workerExecution ? [targetWorkspace] : [])].map(value => ExternalActionMachineBootstrapV1Schema.parse({
-            id: value.machineId, installationId: value.machineId === workspace.machineId ? 'source-installation' : 'installation',
-            kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
-        }));
+        const machines = [workspace, ...(workerExecution ? [targetWorkspace] : [])].map(value => {
+            const installationId = value.machineId === workspace.machineId ? 'source-installation' : 'installation';
+            const machine = ExternalActionMachineBootstrapV1Schema.parse({
+                id: value.machineId, installationId,
+                kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            });
+            return { ...machine, installationId };
+        });
         const sourceHandlers = new Map<string, (input: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
         let sourceListed = true;
         let mintedEpoch = 1;
@@ -573,6 +597,9 @@ describe('accepted Project Service declaration starter', () => {
         // HTTP is the only replaced boundary: A2 opening, trust and placement codecs remain real.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
             if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 0 } };
             if (path === '/v1/machines') return { status: 200, data: sourceListed ? machines : machines.filter(machine => machine.id !== workspace.machineId) };
             if (path.startsWith('/v1/machines/')) {
@@ -632,11 +659,24 @@ describe('accepted Project Service declaration starter', () => {
                     machineId: machine.id, installationId: machine.installationId, actionId: 'projects.inspect', requestId: envelope.requestId });
                 const handler = sourceHandlers.get(`${machine.id}:${getActionSpec('projects.inspect').bindings!.rpcMethod!}`);
                 if (!handler) throw new Error('SOURCE inspection handler is not registered');
+                // The real external receiver opens requester custody before invoking
+                // the installed RPC. A public signed binding alone is not admission.
+                const admitted = await admitRequesterAccountActionContext({ authorization: request.executionAuthorization!, credentials,
+                    serverId: profileId, serverIdentityId, serverHttpBaseUrl: 'https://home.example',
+                    isCurrent: async () => true, isCustodyCurrent: async () => true });
+                if (!admitted) throw new Error('SOURCE inspection requester custody was not admitted');
+                cleanups.push(() => admitted.dispose());
                 const output = await handler(envelope.input, { signal: options?.signal instanceof AbortSignal ? options.signal : ingress.signal,
-                    callerAuthority: 'account_automation', transportRequestId: envelope.requestId });
-                assertActionOutputContract('projects.inspect', output);
+                    callerAuthority: 'account_automation', callerInputAuthorization: admitted.authorization,
+                    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: machine.id,
+                        installationId: machine.installationId, role: 'manage', encryptionMode: 'plain' },
+                    verifyMachineAdmissionCurrent: admitted.isCurrent,
+                    localActionContext: { authority: 'account_automation', externalActionExecutionAuthorization: admitted.authorization },
+                    originalActionEnvelope: envelope, transportRequestId: envelope.requestId });
+                const refused = typeof output === 'object' && output !== null && 'ok' in output && output.ok === false;
+                if (!refused) assertActionOutputContract('projects.inspect', output);
                 return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect',
-                    requestId: envelope.requestId, execution: { ok: true, result: output } }) };
+                    requestId: envelope.requestId, execution: refused ? output : { ok: true, result: output } }) };
             }
             if (String(url).endsWith('/project-trust/read')) return { status: 200, data: trustedSetupDigest === null ? { status: 'absent' }
                 : { status: 'present', revision: 1, content: { t: 'plain', v: { project: { serverId: homeId, projectId: 'project' },
@@ -665,12 +705,12 @@ describe('accepted Project Service declaration starter', () => {
         // This fake OS process has no descendants after its supplied exit.
         } }, stopProcessTree: async () => {}, probeProcessGroup: () => 'absent',
             config: { bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
-                bufferRetentionMs: 600_000, urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 }, env: {}, platform: 'linux' });
+                urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 }, env: {}, platform: 'linux' });
         const operationSnapshots: ActionOperationSnapshotV1[] = [];
         let operationIndex = 0;
         const operationRuntime = createHostActionOperationRuntime({ machineId: targetWorkspace.machineId,
             custodyBinding: { serverId: homeId, installationId: 'installation' }, resolveAccountId: async () => 'owner',
-            publishSnapshot: snapshot => operationSnapshots.push(snapshot),
+            publishSnapshot: snapshot => { operationSnapshots.push(snapshot); },
             ...(workerExecution ? { generateOperationId: () => ++operationIndex === 1 ? 'service-start-operation' : `setup-operation${operationIndex === 2 ? '' : `-${operationIndex}`}` } : {}) });
         const owner = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon',
             ...(supervisorPlatform ? { platform: supervisorPlatform } : {}) }),
@@ -678,7 +718,7 @@ describe('accepted Project Service declaration starter', () => {
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope });
         cleanups.push(async () => { terminalSessions.dispose(); await owner.dispose(); await rm(root, { recursive: true, force: true });
             if (targetRoot !== root) await rm(targetRoot, { recursive: true, force: true }); });
-        const ingress: RpcHandlerContext = { signal: new AbortController().signal, transportRequestId: 'service-request',
+        const ingress: RpcHandlerContext = { signal: new AbortController().signal, transportRequestId: 'service-request', callerAuthority: 'account_automation',
             machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: targetWorkspace.machineId, installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
             verifyMachineAdmissionCurrent: async () => true };
         let nativeTool: Readonly<{ executablePath: string; args?: readonly string[]; version?: string }> | null = null;
@@ -699,6 +739,7 @@ describe('accepted Project Service declaration starter', () => {
                     conflictCount: 0, lastCycleObservedAtMs: null };
             } });
         const runtime: ProjectFiniteActionRuntime & { credentials: typeof credentials; hostEnvironment: Record<string, string | undefined> } = { serverId: profileId, machineId: targetWorkspace.machineId, accountId: 'owner', credentials,
+            requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: serverIdentityId }),
             serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true, operationRuntime, terminalSessions,
             workerAdmission: createProjectWorkerAdmission({ machineId: targetWorkspace.machineId, admissionDrain, readPolicy: async () => ({ status: 'ready', policy: { accepting: finiteAccepting, runAtMost: null }, source: 'stored', metadataVersion: 1 }) }),
             resolveWorkspaceExecutionConfig: async () => config, nativeIo: { resolveTool: async () => nativeTool },
@@ -727,7 +768,7 @@ describe('accepted Project Service declaration starter', () => {
                     serverId: profileId, serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null,
                     projectDefinitionAction: projectDefinitionActionFor(ref) })) });
             const inspectSourceProjectManifest = createProjectFiniteSourceManifestInspector({ api: await ApiClient.create(credentials),
-                credentials, serverId: profileId, serverHttpBaseUrl: 'https://home.example', accountId: 'owner', ingress, isCurrent: async () => true });
+                credentials, serverId: profileId, serverHttpBaseUrl: 'https://home.example', accountId: 'owner', ingress });
             Object.assign(runtime, { inspectSourceProjectManifest });
         }
         const projectionLifetime = new AbortController();
@@ -738,22 +779,39 @@ describe('accepted Project Service declaration starter', () => {
         if (!target || !('declaration' in target)) throw new Error('Fixture manifest did not produce a Service declaration');
         const request = { machineId: targetWorkspace.machineId, targetId: target.id, workspace: { serverId: homeId, machineId: 'machine', workspaceId: workspace.id, rootPath: root }, declaration: target.declaration,
             ...(workerExecution ? { choice: { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: targetWorkspace.machineId } } } : {}) };
-        const context = { authority: 'account_automation' as const, serverId: homeId, actionRequestId: 'service-request' };
+        // These owner cases explicitly exercise reviewed Start, independently
+        // of the Account's current default Direct/Ask preference.
+        const context = { authority: 'account_automation' as const, serverId: homeId, actionRequestId: 'service-request',
+            actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+                'localServices.launcher.start': { approvalRequiredSurfaces: ['rpc', 'api', 'agent', 'cli'] },
+            } }) };
         const history = createLocalServiceLauncherHistoryStore();
         const feed = createLocalServiceLauncherFeed({ machineId: targetWorkspace.machineId, history,
             inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
             projectManagedServices: owner,
+            startOperations: () => operationRuntime.store.list({ accountId: 'owner', machineId: targetWorkspace.machineId,
+                states: ['accepted', 'running'] }).items,
             runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace] }) });
         const routes = createLocalServiceLauncherRoutes({ feed, history, ...starter });
         return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, operationRuntime, operationSnapshots, runtime, admissionDrain, prepareBetween,
-            async createRuntimeActionExecutor(relocateService?: LocalServicesRuntimeActionRoutes['relocateService'], actionRoutes?: LocalServicesRuntimeActionRoutes['actionRoutes'], launcherRoutes = routes, runtimeIngress = ingress) {
+            async selectStart(selectedIngress: Parameters<typeof starter.resolveStartTarget>[1] = ingress) {
+                const selected = await starter.resolveStartTarget(request, selectedIngress, context);
+                if (!selected.ok) throw new Error(selected.reasonCode);
+                return selected.declaration;
+            },
+            async createRuntimeActionExecutor(relocateService?: LocalServicesRuntimeActionRoutes['relocateService'], actionRoutes?: LocalServicesRuntimeActionRoutes['actionRoutes'], launcherRoutes = routes, runtimeIngress = ingress,
+                prepareStartAction?: Parameters<typeof createLocalServicesDaemonRuntimeActionExecutor>[0]['prepareStartAction']) {
                 const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
                     features: FeaturesResponseSchema.parse({ features: { localServices: { enabled: true, inventory: { enabled: true },
                         managed: { enabled: true }, actions: { enabled: true }, launcher: { enabled: true } },
                         browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
                 await featureGate.refresh();
-                return createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress: runtimeIngress,
+                const execute = createLocalServicesDaemonRuntimeActionExecutor({ featureGate, ingress: runtimeIngress,
+                    ...(prepareStartAction ? { prepareStartAction } : {}),
                     routes: { launcherRoutes, ...(relocateService ? { relocateService } : {}), ...(actionRoutes ? { actionRoutes } : {}) } });
+                // Only these fixture calls install the real Move coordinator; other calls
+                // deliberately exercise substituted internal routes and are not producer evidence.
+                return relocateService ? withActionOutputContract(execute) : execute;
             },
             copies: () => copies, placementReads: () => placementReads, withdrawRelationship() { relationshipCurrent = false; },
             changeCopiedManifest(value: unknown) { copyManifestOverride = value; },
@@ -769,7 +827,7 @@ describe('accepted Project Service declaration starter', () => {
 
     it('retains admitted primary execution from the real starter through the installed Move route', async () => {
         const f = await fixture();
-        const review = await f.routes.startTarget!(f.request, f.ingress, f.context);
+        const review = await f.selectStart();
         const started = await f.routes.startTarget!({ ...f.request, expectedEffectDigest: review.reviewedEffectDigest }, f.ingress, f.context);
         if (started.status !== 'succeeded' || !started.currentTarget) throw new Error(`Service did not start: ${JSON.stringify(started)}`);
         expect(DaemonLocalServiceLauncherStartResponseV1Schema.safeParse(started).success).toBe(true);
@@ -777,9 +835,11 @@ describe('accepted Project Service declaration starter', () => {
         const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'other-machine' } };
         const move = createProjectServiceRelocationRoute({ serverBaseUrl: 'https://home.example',
             credentials: f.runtime.credentials!, projectManagedServices: f.owner, resolveWorkspaceSyncHandoffAdapter: () => null });
-        expect(await move({ workspace, serviceName: 'worker', requestId: 'move-primary', currentTarget: started.currentTarget,
+        const execute = await f.createRuntimeActionExecutor(move);
+        expect(await execute({ actionId: 'projects.service.relocate', input: {
+            workspace, sourceMachineId: f.workspace.machineId, serviceName: 'worker', requestId: 'move-primary', currentTarget: started.currentTarget,
             destination, selectedTarget: { machineId: 'other-machine' }, desiredPlacement: { workspace, serviceName: 'worker',
-                expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } }, f.context))
+                expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } }, context: f.context }))
             .toMatchObject({ ok: false, errorCode: 'primary_only' });
         expect(f.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
     });
@@ -791,7 +851,7 @@ describe('accepted Project Service declaration starter', () => {
         // the coordinator must still invoke its own clean preparation after Stop.
         if (f.root !== f.targetRoot) await cp(f.root, f.targetRoot, { recursive: true });
         let phase: 'running' | 'stopped' = 'running';
-        const handle = await f.owner.superviseProject({ workspace,
+        const handle = await f.owner.superviseProject({ kind: 'workspace', workspace,
             declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' } },
             cwd: workspace.rootPath, serviceId: 'worker', specIdentity: 'worker', execution: 'portable', isCurrent: () => true,
             requester: { serverId: f.workspace.serverId, accountId: 'owner', machineId: workspace.machineId, installationId: 'installation' },
@@ -812,57 +872,89 @@ describe('accepted Project Service declaration starter', () => {
     // persistence and the human decision are fixtures; real Artifact codecs/CAS and
     // approval transitions validate the subject. The returned context models the
     // canonical replay's already-approved invocation, including its compound children.
-    async function approvedMoveContext(f: Awaited<ReturnType<typeof fixture>>, request: unknown) {
+    async function approvedMoveContext(f: Awaited<ReturnType<typeof fixture>>, request: unknown, options?: Readonly<{
+        executor: Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
+        onApproved(artifactId: string, request: ReturnType<typeof ApprovalRequestV2Schema.parse>): void;
+    }>) {
         const priorGet = vi.mocked(axios.get).getMockImplementation()!;
         const priorPost = f.post.getMockImplementation()!;
         let artifact: Record<string, unknown> | undefined;
         vi.mocked(axios.get).mockImplementation(async (url, options) => {
             const path = new URL(String(url)).pathname;
-            if (artifact && path === `/v1/artifacts/${artifact.id}`) return { status: 200, data: artifact };
+            if (path.startsWith('/v1/artifacts/')) return artifact && path === `/v1/artifacts/${artifact.id}`
+                ? { status: 200, data: artifact } : { status: 404, data: { error: 'artifact_not_found' } };
             return await priorGet(url, options);
         });
         f.post.mockImplementation(async (url, body, options) => {
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/artifacts/read') {
+                const read = ArtifactReadBatchHttpInputV1Schema.parse(body);
+                const items = read.artifactIds.map(artifactId => {
+                    if (!artifact || artifact.id !== artifactId) return { artifactId, ok: false as const,
+                        error: 'artifact_not_found' as const, status: 404 as const, retryable: false };
+                    const { body: _body, ...header } = artifact;
+                    return 'projection' in read ? { artifactId, ok: true as const, artifact: header }
+                        : { artifactId, ok: true as const, artifact, recipientCensus: null };
+                });
+                return { status: 200, data: 'projection' in read
+                    ? ArtifactReadHeadersBatchResponseV1Schema.parse({ projection: 'headers', items })
+                    : ArtifactReadBatchResponseV1Schema.parse({ items }) };
+            }
             if (path === '/v1/artifacts') {
                 const input = readCarrierMutation(body);
-                artifact = { ...input, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+                artifact = { id: input.id, header: input.header, body: input.body, dataEncryptionKey: input.dataEncryptionKey,
+                    ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
                     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
                 return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
             }
             if (artifact && path === `/v1/artifacts/${artifact.id}`) {
                 const input = readCarrierMutation(body);
                 expect(input).toMatchObject({ expectedHeaderVersion: artifact.headerVersion, expectedBodyVersion: artifact.bodyVersion });
-                artifact = { ...artifact, ...input, headerVersion: Number(artifact.headerVersion) + 1, bodyVersion: Number(artifact.bodyVersion) + 1 };
+                artifact = { ...artifact, header: input.header, body: input.body,
+                    headerVersion: Number(artifact.headerVersion) + 1, bodyVersion: Number(artifact.bodyVersion) + 1 };
                 return { status: 200, data: { success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
             }
             return await priorPost(url, body, options);
         });
         const store = createCliApprovalsArtifactStore({ credentials: f.runtime.credentials!, serverId: 'home', getAccountEncryptionMode: async () => 'plain' });
-        const proposal = await createActionExecutor({ ...createUnavailableActionTransportDeps(), ...store }).execute('projects.service.relocate', request, {
+        const proposalExecutor = options?.executor ?? createActionExecutor({ ...createUnavailableActionTransportDeps(), ...store });
+        const proposal = await proposalExecutor.execute('projects.service.relocate', request, {
             ...f.context, surface: 'cli', runtimeAccountId: 'owner', executionRunTargetMachineId: f.workspace.machineId,
+            actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+                'projects.service.relocate': { approvalRequiredSurfaces: ['cli'] },
+            } }),
         });
+        if (!proposal.ok) throw new Error(JSON.stringify(proposal));
         expect(proposal).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         if (!proposal.ok || !proposal.result || typeof proposal.result !== 'object'
             || !('artifactId' in proposal.result)) throw new Error('Move approval was not recorded');
         const artifactId = String(proposal.result.artifactId);
         const open = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: 'home' }));
         expect(open).toMatchObject({ status: 'open', requestedSurface: 'cli', actionArgs: request });
+        if (options) {
+            expect(open.actionArgs).toMatchObject({ setupReview: { reviewedEffectDigest: expect.any(String) } });
+            expect(open.preview).toMatchObject({ hostReviewedChildren: {
+                children: expect.arrayContaining([expect.objectContaining({ action: 'projects.prepare', role: 'service.setup' })]),
+            } });
+        }
         const approved = ApprovalRequestV2Schema.parse({ ...open, status: 'approved',
             decision: { kind: 'approve', authority: 'present_user', decidedAtMs: open.updatedAtMs } });
         expect(await store.approvalsUpdate({ artifactId, serverId: 'home', request: approved })).toEqual({ ok: true });
         expect(await store.approvalsGet({ artifactId, serverId: 'home' })).toEqual(approved);
+        options?.onApproved(artifactId, approved);
         return { authority: 'present_user' as const, bypassApprovals: true,
             presentUserConfirmation: { actionId: 'projects.service.relocate' as const } };
     }
 
     it('retains confirmed Stop and the incumbent binding through installed Move operation wiring when cancelled after Stop', async () => {
         const f = await fixture(false, undefined, true, 'portable');
-        const review = await f.routes.startTarget!(f.request, f.ingress, f.context);
+        const review = await f.selectStart();
         const started = await f.routes.startTarget!({ ...f.request, expectedEffectDigest: review.reviewedEffectDigest }, f.ingress, f.context);
         if (started.status !== 'succeeded' || !started.currentTarget) throw new Error(`Portable Service did not start: ${JSON.stringify(started)}`);
         expect(DaemonLocalServiceLauncherStartResponseV1Schema.safeParse(started).success).toBe(true);
         const copiesBeforeMove = f.copies();
         const old = f.owner.listProjectServices()[0]!;
+        if (old.kind !== 'workspace') throw new Error('Expected workspace Service');
         expect(old.execution).toBe('portable');
         let content: WorkspaceExecutionConfigContentV1 | null = null;
         let revision = 0;
@@ -882,6 +974,7 @@ describe('accepted Project Service declaration starter', () => {
             credentials: f.runtime.credentials!, projectManagedServices: f.owner, resolveWorkspaceSyncHandoffAdapter: () => null });
         const executor = createCliActionExecutor({ token: f.runtime.credentials!.token, credentials: f.runtime.credentials!,
             serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null,
+            serverIdentityId: f.serverIdentityId, pluginActionExecutionOwner: 'current_process',
             runtimeActionMachineId: f.workspace.machineId,
             projectDefinitionAction: f.projectDefinitionActionFor(f.workspace),
             projectWorkerAction: serviceWorkerAction(f, f.workspace.machineId),
@@ -895,7 +988,7 @@ describe('accepted Project Service declaration starter', () => {
             resolveAccountId: async () => 'owner', generateOperationId: () => 'move-progress' });
         const workspace = { serverId: f.workspace.serverId, refId: f.workspace.id };
         const destination = { kind: 'primary' as const };
-        const request = { workspace, serviceName: 'worker', requestId: 'cancel-after-stop', currentTarget: started.currentTarget,
+        const request = { workspace, sourceMachineId: f.workspace.machineId, serviceName: 'worker', requestId: 'cancel-after-stop', currentTarget: started.currentTarget,
             destination, selectedTarget: { machineId: f.workspace.machineId }, desiredPlacement: { workspace, serviceName: 'worker',
                 expectedRevision: 'absent' as const, expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } } };
         const approved = await approvedMoveContext(f, request);
@@ -920,9 +1013,10 @@ describe('accepted Project Service declaration starter', () => {
         expect(f.owner.listProjectServices()).toHaveLength(0);
     });
 
-    it.each(['unbound', 'source-bound'] as const)('revalidates SOURCE to worker Move through two installed executors (%s)', async binding => {
-        const f = await fixture(false, undefined, true, 'portable');
+    it.each([['unbound', false], ['source-bound', false], ['unbound', true]] as const)('selects SOURCE to worker Move once through two installed executors (%s, setup=%s)', async (binding, setup) => {
+        const f = await fixture(setup, undefined, true, 'portable');
         const started = await seedWorkerService(f, f.workspace);
+        if (setup) await rm(join(f.targetRoot, '.happier/project.json'));
         const old = f.owner.listProjectServices()[0]!;
         const phases: string[] = [];
         const workerAction = (machineId: string) => createProjectWorkerAction({ machineId, serverId: 'home',
@@ -948,16 +1042,25 @@ describe('accepted Project Service declaration starter', () => {
             return result.result;
         };
         f.bindWorkerStatusTransport((envelope, signal) => readWorkerStatus(envelope.input, signal));
+        const syncObservation = { statuses: [{ relationshipId: 'source-worker', controllerMachineId: f.workspace.machineId,
+            state: 'watching', alphaPath: f.root, betaPath: f.targetRoot, mode: 'keep_synced',
+            endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+                beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } },
+            conflictCount: 0, lastCycleObservedAtMs: null }] };
         // Machine transport is the boundary. Both installed executors, status producers,
         // SOURCE coordinator, native custody, row readers and strict codecs stay real.
         vi.spyOn(machineRpcBoundary, 'callExactMachineRpc').mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return syncObservation;
             expect(call.machineId).toBe(f.targetWorkspace.machineId);
             expect(call.method).toBe(getActionSpec('projects.worker.status').bindings!.rpcMethod);
             expect(call.credentials.token).toBe(f.runtime.credentials!.token);
             return await readWorkerStatus(call.request, call.signal);
         });
-        // The Sync controller's optional last-clean observation is a network boundary.
-        vi.spyOn(machineRpcBoundary, 'callMachineRpc').mockRejectedValue(new Error('Controller observation unavailable'));
+        // Selection requires an active native copy; the network observation is real-schema input.
+        vi.spyOn(machineRpcBoundary, 'callMachineRpc').mockImplementation(async call => {
+            expect(call.method).toBe(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST);
+            return syncObservation;
+        });
         let content: WorkspaceExecutionConfigContentV1 | null = null;
         let revision = 0;
         vi.spyOn(axios, 'request').mockImplementation(async config => {
@@ -970,6 +1073,7 @@ describe('accepted Project Service declaration starter', () => {
             return { status: 200, data: { status: 'updated', revision: ++revision, cursor: revision } };
         });
         const source = createCliActionExecutor({ ...common, runtimeActionMachineId: f.workspace.machineId,
+            projectDefinitionAction: f.projectDefinitionActionFor(f.workspace),
             projectWorkerAction: workerAction(f.workspace.machineId),
             accountServerActionDeps: createAccountServerActionDeps(common),
             runtimeActionExecute: await f.createRuntimeActionExecutor(createProjectServiceRelocationRoute({
@@ -977,22 +1081,35 @@ describe('accepted Project Service declaration starter', () => {
                 resolveWorkspaceSyncHandoffAdapter: () => null })) });
         const workspace = { serverId: 'home', refId: f.workspace.id };
         const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: f.targetWorkspace.machineId } };
-        const request = { workspace, serviceName: 'worker', requestId: 'source-to-worker', currentTarget: started.currentTarget,
+        const request = { workspace, sourceMachineId: f.workspace.machineId, serviceName: 'worker', requestId: 'source-to-worker', currentTarget: started.currentTarget,
             destination, selectedTarget: { machineId: f.targetWorkspace.machineId }, desiredPlacement: { workspace, serviceName: 'worker',
                 expectedRevision: 'absent' as const, expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } } };
-        const approved = await approvedMoveContext(f, request);
-        const result = await source.execute('projects.service.relocate', request, { ...f.context, ...approved,
+        const graphReadsBefore = f.post.mock.calls.length;
+        let replay: { artifactId: string; request: ReturnType<typeof ApprovalRequestV2Schema.parse> } | undefined;
+        const approved = await approvedMoveContext(f, request, setup ? { executor: source,
+            onApproved: (artifactId, request) => { replay = { artifactId, request }; } } : undefined);
+        const executionContext = { ...f.context, ...approved,
             surface: 'cli', ...(binding === 'source-bound' ? { externalActionTarget: { kind: 'machine' as const, machineId: f.workspace.machineId } } : {}),
             operationProgress: { update(update) {
                 if (update.phase) phases.push(update.phase);
-            } } });
+            } } } satisfies Parameters<typeof source.execute>[2];
+        const replayed = replay ? await source.executeApproved({ ...replay, artifactServerId: 'home',
+            ctx: { ...executionContext, runtimeAccountId: 'owner' } }) : undefined;
+        const result = replayed ? 'exec' in replayed ? replayed.exec : replayed
+            : await source.execute('projects.service.relocate', request, executionContext);
         // Stop at the real unbound preparation port after status admission; this
         // measures destination dispatch without inventing clean-copy/start success.
         expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: false,
             errorCode: binding === 'unbound' ? 'workspace_sync_unavailable' : 'target_not_local' });
-        expect(statusRequests).toBe(binding === 'unbound' ? 2 : 0);
+        expect(statusRequests).toBe(binding === 'unbound' ? 1 : 0);
         expect(phases).toEqual(binding === 'unbound' ? ['stopping', 'stopped', 'copying'] : []);
         expect(old.snapshot().state).toBe(binding === 'unbound' ? 'stopped' : 'running');
+        // Include actual proposal preparation for Ask: its retained selection is
+        // replayed once, followed by the route's single setup-review basis read.
+        const graphReads = f.post.mock.calls.slice(graphReadsBefore).filter(([url, body]) =>
+            String(url).endsWith('/list') && typeof body === 'object' && body !== null
+            && 'kinds' in body && Array.isArray(body.kinds) && body.kinds.includes('relationship-graph'));
+        expect(graphReads).toHaveLength(binding === 'unbound' ? 2 : 0);
         expect(f.copies()).toBe(0);
     });
 
@@ -1074,6 +1191,7 @@ describe('accepted Project Service declaration starter', () => {
                 projectDefinitionAction: f.projectDefinitionActionFor(f.workspace) })) });
         const executor = createCliActionExecutor({ token: f.runtime.credentials!.token, credentials: f.runtime.credentials!,
             serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null,
+            serverIdentityId: f.serverIdentityId, pluginActionExecutionOwner: 'current_process',
             runtimeActionMachineId: f.workspace.machineId,
             projectWorkerAction: serviceWorkerAction(f, f.workspace.machineId),
             machineActionDirectTargetTransport: { machineId: f.workspace.machineId,
@@ -1088,7 +1206,7 @@ describe('accepted Project Service declaration starter', () => {
         const operations = createHostActionOperationRuntime({ machineId: f.workspace.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `remote-${outcome}` });
         const currentTarget = outcome === 'stale' ? { ...started.currentTarget, cwd: `${f.targetRoot}/changed` } : started.currentTarget;
-        const request = { workspace, serviceName: 'worker',
+        const request = { workspace, sourceMachineId: f.workspace.machineId, serviceName: 'worker',
             requestId: outcome === 'confirmed' ? 'r'.repeat(ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1) : `remote-${outcome}`, currentTarget,
             destination, selectedTarget: { machineId: f.workspace.machineId }, desiredPlacement: { workspace, serviceName: 'worker',
                 expectedRevision: 'absent' as const, expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } } };
@@ -1120,20 +1238,13 @@ describe('accepted Project Service declaration starter', () => {
         } else expect(phases).not.toContain('copying');
     });
 
-    it.each(['waiver', 'retained host admission'] as const)('honours Service Start %s without a second effect confirmation while preserving raw policy and digest checks', async admission => {
+    it('starts admitted Service work without deciding Ask again and still refuses a stale effect digest', async () => {
         const f = await fixture();
-        const context = { ...f.context, surface: 'agent' as const, actionsSettings: {
-            v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'localServices.launcher.start': ['agent' as const] },
-        } };
+        const context = { ...f.context, surface: 'agent' as const };
         expect(await f.routes.startTarget!({ ...f.request, expectedEffectDigest: 'stale' }, f.ingress, context))
             .toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
-        expect(await f.routes.startTarget!(f.request, f.ingress, { ...context, actionsSettings: normalizeActionsSettingsV1({
-            ...context.actionsSettings, actions: { 'localServices.launcher.start': { approvalRequiredSurfaces: ['agent'] } },
-        }) })).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
-        const admitted = admission === 'waiver' ? context : { ...f.context, bypassApprovals: true };
-        expect(await f.routes.startTarget!({ ...f.request, expectedEffectDigest: 'stale' }, f.ingress, admitted))
-            .toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
-        const started = await f.routes.startTarget!(f.request, f.ingress, admitted);
+        expect(f.owner.readResourceTargets()).toHaveLength(0);
+        const started = await f.routes.startTarget!(f.request, f.ingress, context);
         expect(started).toMatchObject({ status: 'succeeded' });
         expect(f.owner.readResourceTargets()).toHaveLength(1);
     });
@@ -1162,7 +1273,7 @@ describe('accepted Project Service declaration starter', () => {
         const executor = await f.createRuntimeActionExecutor();
         const action = (input: unknown) => executor({ actionId: 'localServices.launcher.start', input,
             context: f.context });
-        const review = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action(f.request));
+        const review = await f.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Missing service review');
         const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({
             ...f.request, expectedEffectDigest: review.reviewedEffectDigest,
@@ -1199,7 +1310,7 @@ describe('accepted Project Service declaration starter', () => {
         })));
         const executor = await f.createRuntimeActionExecutor();
         const action = (input: unknown) => executor({ actionId: 'localServices.launcher.start', input, context: f.context });
-        const review = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action(f.request));
+        const review = await f.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Missing Unix-socket service review');
         const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({ ...f.request, expectedEffectDigest: review.reviewedEffectDigest }));
         assertActionOutputContract('localServices.launcher.start', result);
@@ -1244,7 +1355,7 @@ describe('accepted Project Service declaration starter', () => {
             const executor = await f.createRuntimeActionExecutor();
             const action = (input: unknown) => executor({ actionId: 'localServices.launcher.start', input,
                 context: f.context });
-            const review = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action(f.request));
+            const review = await f.selectStart();
             if (!review.reviewedEffectDigest) throw new Error('Missing service review');
             const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({
                 ...f.request, expectedEffectDigest: review.reviewedEffectDigest,
@@ -1267,9 +1378,8 @@ describe('accepted Project Service declaration starter', () => {
         const snapshot = await f.routes.getSnapshot();
         assertActionOutputContract('localServices.launcher.snapshot', snapshot);
         expect(snapshot.targets).toHaveLength(1);
-        const review = await f.routes.startTarget!(f.request, f.ingress, f.context);
-        assertActionOutputContract('localServices.launcher.start', review);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await f.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         if (!review.reviewedEffectDigest) throw new Error('Service review has no effect digest');
         const started = await f.routes.startTarget!({ ...f.request, expectedEffectDigest: review.reviewedEffectDigest }, f.ingress, f.context);
         assertActionOutputContract('localServices.launcher.start', started);
@@ -1287,8 +1397,8 @@ describe('accepted Project Service declaration starter', () => {
 
     it.each([false, true])('reuses the original reviewed service Start after Stop, with changed definition=%s', async changed => {
         const f = await fixture();
-        const review = await f.routes.startTarget!(f.request, f.ingress, f.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await f.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         if (!review.reviewedEffectDigest) throw new Error('Original Start review did not produce a digest');
         const original = { ...f.request, expectedEffectDigest: review.reviewedEffectDigest };
         expect(await f.routes.startTarget!(original, f.ingress, f.context)).toMatchObject({ status: 'succeeded' });
@@ -1335,8 +1445,7 @@ describe('accepted Project Service declaration starter', () => {
                     homeServerIdentityId: homeId, canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }) };
             await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
             const h = await fixture(false, undefined, true, 'portable', profileId, homeId);
-            expect(await h.routes.startTarget!(h.request, h.ingress, h.context)).toMatchObject({ status: 'denied',
-                reasonCode: 'project_service_effect_review_required', reviewedEffectDigest: expect.any(String) });
+            expect(await h.selectStart()).toMatchObject({ reviewedEffectDigest: expect.any(String) });
             expect(h.runtime.serverId).toBe(profileId);
             for (const scenario of ['wrong', 'ambiguous', 'retired'] as const) {
                 const servers: Record<string, typeof profile> = scenario === 'ambiguous'
@@ -1395,9 +1504,9 @@ describe('accepted Project Service declaration starter', () => {
             machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'bob' } };
         if (state === 'retired') await admitted.dispose();
         cancelDuringHomeVerification = state === 'cancelled during Home verification';
-        const review = await h.routes.startTarget!(h.request, ingress, h.context);
-        expect(cancellation.signal.aborted).toBe(state === 'cancelled during Home verification');
         if (state !== 'current') {
+            const review = await h.routes.startTarget!(h.request, ingress, h.context);
+            expect(cancellation.signal.aborted).toBe(state === 'cancelled during Home verification');
             assertActionOutputContract('localServices.launcher.start', review);
             expect(review).toMatchObject({ status: 'denied', reasonCode: state === 'retired'
                 ? 'project_requester_credentials_unavailable' : 'cancelled' });
@@ -1405,10 +1514,13 @@ describe('accepted Project Service declaration starter', () => {
             await admitted.dispose();
             return;
         }
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await h.selectStart(ingress);
+        expect(cancellation.signal.aborted).toBe(false);
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
         const handle = h.owner.listProjectServices()[0]!;
+        if (handle.kind !== 'workspace') throw new Error('Expected workspace Service');
         expect(handle.requester.accountId).toBe('bob');
         await admitted.dispose();
         // Installed requester invocation retirement does not revoke custody of its already-running Service.
@@ -1418,8 +1530,8 @@ describe('accepted Project Service declaration starter', () => {
 
     it('reviews fresh accepted bytes, starts a URL-less owned process through final Exec, and retains exact requester custody', async () => {
         const h = await fixture();
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required', reviewedEffectDigest: expect.any(String) });
+        const review = await h.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         if (!review.reviewedEffectDigest) throw new Error('Expected reviewed effect');
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         h.history.dismiss(request.targetId);
@@ -1456,7 +1568,7 @@ const server = http.createServer((request, response) => response.end('observed')
 server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port)));`);
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,
             services: { worker: { source: { kind: 'command', command: `${JSON.stringify(process.execPath)} ${JSON.stringify(serverPath)}` } } } }));
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
         expect(started.status).toBe('succeeded');
         await expect.poll(() => readFile(portPath, 'utf8').then(Number).catch(() => null), { timeout: 10_000 }).toEqual(expect.any(Number));
@@ -1484,7 +1596,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const getBindings = async () => DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await rpc.invokeLocal(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, { machineId: 'machine', ...read }, { signal: h.ingress.signal, localActionContext: h.context })).snapshot;
         expect((await getBindings()).targets).toEqual([]);
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected Service review');
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
@@ -1571,9 +1683,12 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let settled = false;
         let identitiesVisible = captured;
         let project = '';
+        let nativeReads = 0;
         const id = 'a'.repeat(64);
         Object.assign(h.runtime, { environmentIo: { ...h.runtime.environmentIo, async run(request: Parameters<ProjectFiniteActionRuntime['environmentIo']['run']>[0]) {
+            nativeReads++;
             if (unavailable) return { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock' };
+            if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'test-compose-engine', OperatingSystem: 'Linux' }) };
             const filter = request.args.find(arg => arg.startsWith('label=com.docker.compose.project='));
             if (filter) project = filter.slice('label=com.docker.compose.project='.length);
             const stdout = request.args.includes('ps') ? identitiesVisible ? id : 'invalid-container-list'
@@ -1582,8 +1697,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                     State: { Status: settled ? 'exited' : 'running' }, NetworkSettings: { Ports: {} } }]) : '';
             return { exitCode: 0, stdout };
         } } });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        if (!review.reviewedEffectDigest) throw new Error('Expected Compose effect review');
+        const review = await h.selectStart();
+        if (!review.reviewedEffectDigest) throw new Error(`Expected Compose effect review: ${JSON.stringify(review)}`);
         const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
         expect(started).toMatchObject({ status: 'succeeded' });
         if (!started.currentTarget) throw new Error('Expected real managed Compose binding');
@@ -1591,6 +1706,15 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         if (!handle) throw new Error('Expected the launched Workspace service');
         expect(handle).toMatchObject({ declaration: { selection: { kind: 'manifest', name: 'worker' } } });
         const machineRow = h.owner.machineServiceRows.read(handle);
+        const readsBeforeIdentity = nativeReads;
+        const adapter = { pluginId: 'happier.machine.services', localId: 'compose' };
+        for (const tuple of [['test-compose-engine', project], ['test-compose-engine', project, 'worker']]) {
+            expect(h.owner.resolveNativeService({ adapter, nativeResourceId: JSON.stringify(tuple) },
+                { serverId: 'home', machineId: 'machine' })).toMatchObject({ authority: 'project', serviceId: handle.serviceId, handle });
+        }
+        expect(h.owner.resolveNativeService({ adapter, nativeResourceId: JSON.stringify(['other-engine', project]) },
+            { serverId: 'home', machineId: 'machine' })).toBeNull();
+        expect(nativeReads).toBe(readsBeforeIdentity);
         unavailable = true;
         const routes = createLocalServiceActionRoutes({ machineId: 'machine',
             inventoryRegistry: createLocalServiceInventoryRegistry(), projectManagedServices: h.owner,
@@ -1625,13 +1749,14 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let lists = 0;
         let recovered = false;
         Object.assign(h.runtime, { environmentIo: { ...h.runtime.environmentIo, async run(request: Parameters<ProjectFiniteActionRuntime['environmentIo']['run']>[0]) {
+            if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'test-compose-engine', OperatingSystem: 'Linux' }) };
             if (request.args.includes('ps') && ++lists > 2 && !recovered) return {
                 exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock',
             };
             return { exitCode: 0, stdout: '' };
         } } });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        if (!review.reviewedEffectDigest) throw new Error('Expected Compose effect review');
+        const review = await h.selectStart();
+        if (!review.reviewedEffectDigest) throw new Error(`Expected Compose effect review: ${JSON.stringify(review)}`);
         try {
             const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
             expect(started).toMatchObject({ status: 'succeeded' });
@@ -1653,11 +1778,12 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let lists = 0;
         let recovered = false;
         Object.assign(h.runtime, { environmentIo: { ...h.runtime.environmentIo, async run(request: Parameters<ProjectFiniteActionRuntime['environmentIo']['run']>[0]) {
+            if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'test-compose-engine', OperatingSystem: 'Linux' }) };
             if (request.args.includes('ps') && ++lists > 2 && !recovered) return { exitCode: 1, stdout: '', stderr: 'permission denied' };
             return { exitCode: 0, stdout: '' };
         } } });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        if (!review.reviewedEffectDigest) throw new Error('Expected Compose effect review');
+        const review = await h.selectStart();
+        if (!review.reviewedEffectDigest) throw new Error(`Expected Compose effect review: ${JSON.stringify(review)}`);
         try {
             const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
             expect(started.status).toBe('failed');
@@ -1670,8 +1796,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const h = await fixture(false, { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'worker' });
         await writeFile(join(h.root, 'compose.yaml'), 'services:\n  worker:\n    image: alpine:3.22\n    command: [sh, -c, "echo fx16-service-output; echo fx16-service-error >&2; exec sleep 3600"]\n');
         h.setNativeTool({ executablePath: process.env.FX16_DOCKER_PATH!, args: JSON.parse(process.env.FX16_DOCKER_ARGS ?? '[]') });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = LocalServiceStartApprovalReviewV1Schema.parse(await h.starter.prepareStartApproval(h.request, h.ingress, h.context));
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         const effect = review.reviewedEffect;
         if (!effect || typeof effect !== 'object' || !('command' in effect) || !effect.command || typeof effect.command !== 'object' || !('args' in effect.command)
             || !Array.isArray(effect.command.args) || !effect.command.args.every((arg: unknown) => typeof arg === 'string')) throw new Error('Expected reviewed native argv');
@@ -1718,7 +1844,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         }
     }, 120_000);
 
-    it.each(['foreground_native_service', 'no_setup_live_root', 'no_setup_worker', 'retired_worker', 'setup_live_root', 'setup_exited_root_with_live_descendant', 'no_setup_with_native_helper', 'pre_final_native_helper', 'detached_native_resource', 'detached_native_resource_failure_output', 'detached_native_resource_accepted_stop', 'detached_native_resource_accepted_stop_worker'] as const)('retains the actual selected plugin environment through Service Start and unconfirmed Stop until owned tree settlement (%s)', async fixtureKind => {
+    it.each(['foreground_native_service', 'no_setup_live_root', 'no_setup_worker', 'retired_worker', 'setup_live_root', 'setup_exited_root_with_live_descendant', 'no_setup_with_native_helper', 'pre_final_native_helper', 'detached_native_resource', 'detached_native_resource_without_output', 'detached_native_resource_failure_output', 'detached_native_resource_accepted_stop', 'detached_native_resource_accepted_stop_worker'] as const)('retains the actual selected plugin environment through Service Start and unconfirmed Stop until owned tree settlement (%s)', async fixtureKind => {
         const detachedNative = fixtureKind.startsWith('detached_native_resource');
         const foregroundNative = fixtureKind === 'foreground_native_service';
         let acceptedNativeStop = fixtureKind.includes('accepted_stop');
@@ -1744,7 +1870,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         } } } : !exitedRoot ? h.manifest : { ...h.manifest, services: { worker: {
             source: { kind: 'command', command: `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(treeScript)}` },
         } } };
-        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...manifest, environment: importedPixiEnvironment }));
+        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...manifest, toolchain: importedPixiToolchain }));
         const ingested = ingestCanonicalPluginManifest(pixiPlugin.manifest, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error('Expected admitted public native fixture');
         const environmentObservation: { signal?: AbortSignal } = {};
@@ -1753,6 +1879,21 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let nativeStopped = false;
         let nativeObservation: 'known' | 'unknown' | 'failed' = 'known';
         let nativeOutputReads = 0;
+        function nativeLogs(instance: ManagedServiceNativeInstanceV1, options: ManagedServiceNativeLogReadV1, context?: PluginInvocationContext): Promise<ManagedServiceNativeLogResultV1>;
+        function nativeLogs(instance: ManagedServiceNativeInstanceV1, options: ManagedServiceNativeLogWatchV1, context?: PluginInvocationContext): Promise<Disposable>;
+        async function nativeLogs(instance: ManagedServiceNativeInstanceV1, options: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1, context?: PluginInvocationContext): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
+            expect(instance).toEqual(nativeInstance);
+            expect(options.maxBytes).toBe(8_192);
+            if (!context) throw new Error('Native output lost admitted invocation services');
+            if (options.kind === 'watch') {
+                options.emit({ kind: 'unavailable', reason: 'unsupported' });
+                return { dispose() {} };
+            }
+            nativeOutputReads += 1;
+            const bytes = await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' });
+            return { kind: 'page' as const, page: { sourceRevision: instance.nativeResourceId,
+                text: `native output: ${new TextDecoder().decode(bytes)}`, nextCursor: null, truncated: false } };
+        }
         const stoppedResources: ManagedServiceNativeInstanceV1[] = [];
         const installedToolPath = join(h.root, process.platform === 'win32' ? 'pixi.exe' : 'pixi');
         if (withNativeHelper || detachedNative || foregroundNative) {
@@ -1786,14 +1927,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                                     cwd: request.root, reviewInputs: request.files, ...(detachedNative ? { nativeInstance } : {}) };
                             },
                             ...(detachedNative ? { nativeServiceLifecycle: {
-                                async logs(instance: typeof nativeInstance, options, context) {
-                                    expect(instance).toEqual(nativeInstance);
-                                    expect(options.maxBytes).toBe(8_192);
-                                    if (!context) throw new Error('Native output lost admitted invocation services');
-                                    nativeOutputReads += 1;
-                                    const bytes = await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' });
-                                    return `native output: ${new TextDecoder().decode(bytes)}`;
-                                },
+                                ...(fixtureKind === 'detached_native_resource_without_output' ? {} : { logs: nativeLogs }),
                                 async inspect(instance: typeof nativeInstance, _options, context) {
                                     expect(instance).toEqual(nativeInstance);
                                     if (!context) throw new Error('Native lifecycle lost admitted invocation services');
@@ -1810,7 +1944,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                                 },
                             } } : {}),
                         } : {}),
-                        async produceEnvironment(request, context) {
+                        async prepareToolchain(request, context) {
                             environmentObservation.signal = context.signal;
                             const bytes = await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' });
                             if (new TextDecoder().decode(bytes) !== configContent) throw new Error('Selected environment lost actual reviewed root');
@@ -1866,8 +2000,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         // The genuine Home boundary now returns the existing approving-Account
         // Trust row, not a Service waiver or fabricated human authority.
         h.trustSetupDigest(setupReview.reviewedEffectDigest);
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await h.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         expect(environmentObservation.signal).toBeUndefined();
         if (!review.reviewedEffectDigest) throw new Error('Expected actual Service environment review');
         if (fixtureKind === 'retired_worker') {
@@ -1929,11 +2063,60 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const started = await completion;
         expect(started.reasonCode).toBeUndefined();
         expect(started).toMatchObject({ status: 'succeeded' });
-        const handle = h.owner.listProjectServices()[0];
-        expect(handle?.snapshot()).toMatchObject({ state: 'running' });
+        const startedHandle = h.owner.listProjectServices()[0];
+        expect(startedHandle?.snapshot()).toMatchObject({ state: 'running' });
         expect(environmentObservation.signal?.aborted).toBe(false);
-        if (!handle) throw new Error('Expected actual owned Service');
-        if (foregroundNative) expect(handle.snapshot().mode).toBe('spawn');
+        if (!startedHandle) throw new Error('Expected actual owned Service');
+        let handle = startedHandle;
+        if (foregroundNative) {
+            expect(handle.snapshot().mode).toBe('spawn');
+            const original = handle;
+            const originalEnvironmentSignal = environmentObservation.signal;
+            const preparationFailures: unknown[] = [];
+            const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), restartManagedService: h.starter.restartManagedService,
+                verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request) });
+            const execute: ReturnType<typeof createLocalServicesDaemonRuntimeActionExecutor> = await h.createRuntimeActionExecutor(
+                undefined, actionRoutes, h.routes, h.ingress,
+                async (request, context) => {
+                    const prepared = await executor.prepare('localServices.launcher.start', request, context);
+                    if (prepared.kind === 'settled') preparationFailures.push(prepared.result);
+                    return prepared;
+                });
+            const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({
+                ...createCliActionDeps({ token: h.runtime.credentials.token, credentials: h.runtime.credentials,
+                    serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null }),
+                runtimeActionExecute: execute });
+            const restart = async (requestId: string, expectedEffectDigest: string) => {
+                const request = { requestId, action: 'restart_managed' as const, force: false, expectedEffectDigest,
+                    target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: original.instanceId,
+                        workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
+                return await execute({ actionId: 'localServices.actions.restartManaged',
+                    input: { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) },
+                    // This scenario tests native lifetime, not Ask. The separate
+                    // Restart policy cases below retain independent Start review.
+                    context: { ...h.context, surface: 'rpc', actionRequestId: requestId,
+                        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+                            'localServices.launcher.start': { approvalRequiredSurfaces: [] },
+                        } }) } });
+            };
+            const changed = LocalServiceActionResultV1Schema.parse(await restart('plugin-native-restart-changed', 'f'.repeat(64)));
+            expect(changed).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
+            expect(original.snapshot().state).toBe('running');
+            expect(originalEnvironmentSignal?.aborted).toBe(false);
+            if (!changed.reviewedEffectDigest) throw new Error('Expected current plugin Service effect review');
+            const restarted = LocalServiceActionResultV1Schema.parse(await restart('plugin-native-restart', changed.reviewedEffectDigest));
+            expect(restarted.reasonCode, JSON.stringify({ restarted, preparationFailures })).toBeUndefined();
+            expect(restarted.status).toBe('succeeded');
+            expect(original.snapshot().state).toBe('stopped');
+            expect(originalEnvironmentSignal?.aborted).toBe(true);
+            const replacement = h.owner.listProjectServices()[0];
+            if (!replacement) throw new Error('Expected replacement plugin Service');
+            handle = replacement;
+            expect(handle.instanceId).not.toBe(original.instanceId);
+            expect(handle.snapshot()).toMatchObject({ mode: 'spawn', state: 'running' });
+            expect(environmentObservation.signal?.aborted).toBe(false);
+        }
         if (detachedNative) {
             try {
                 await expect.poll(async () => {
@@ -1942,6 +2125,13 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 }).toBe(true);
                 expect(handle.snapshot()).toMatchObject({ mode: 'native', state: 'running', baseUrl: null });
                 expect(nativeOutputReads).toBe(0);
+                if (fixtureKind === 'detached_native_resource_without_output') {
+                    const output: ManagedServiceNativeLogResultV1[] = [];
+                    if (!handle.watchLogs) throw new Error('Expected native log follow');
+                    const subscription = await handle.watchLogs({ emit: result => { output.push(result); } });
+                    expect(output).toEqual([{ kind: 'unavailable', reason: 'unsupported' }]);
+                    await subscription.dispose();
+                }
                 if (fixtureKind === 'detached_native_resource_failure_output') {
                     nativeObservation = 'failed';
                     // Join the real watchdog's failure before checking the asynchronous diagnostic.
@@ -2086,8 +2276,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it('revalidates the selected Service after review and never runs changed bytes', async () => {
         const h = await fixture();
-        const review = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
-        if (review.ok || !review.reviewedEffectDigest) throw new Error('Expected reviewed effect');
+        const review = await h.selectStart();
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         const resolved = await h.starter.resolveStartTarget(request, h.ingress, h.context);
         if (!resolved.ok) throw new Error(resolved.reasonCode);
@@ -2107,8 +2296,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(await h.routes.startTarget!(h.request, h.ingress, h.context)).toMatchObject({ status: 'denied', reasonCode: 'admission_unavailable' });
         expect(h.copies()).toBe(0);
         h.mintSourceEpoch(1);
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required', reviewedEffectDigest: expect.any(String) });
+        const review = await h.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         expect(h.copies()).toBe(0);
         expect(h.owner.listProjectServices()).toEqual([]);
         if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
@@ -2132,8 +2321,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const h = await fixture(false, { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' }, false, 'portable');
         await writeFile(join(h.root, 'package.json'), JSON.stringify({ name: 'package', scripts: { dev: 'native service' } }));
         h.setNativeTool({ executablePath: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)', '--'] });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required', reviewedEffect: {
+        const review = LocalServiceStartApprovalReviewV1Schema.parse(await h.starter.prepareStartApproval(h.request, h.ingress, h.context));
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String), reviewedEffect: {
             command: { args: ['-e', 'setInterval(() => {}, 1000)', '--', 'run', 'dev'], cwd: '.' },
             files: [expect.objectContaining({ file: 'package.json' })],
         } });
@@ -2149,9 +2338,16 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(handle.snapshot()).toMatchObject({ state: 'running', baseUrl: null });
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
         expect(h.setupProcesses).toEqual([]);
-        // Launcher and executor each need fresh SOURCE; subsequent target/native
-        // checks use the executor's already copied basis without another copy.
-        expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/actions/projects.inspect'))).toHaveLength(2);
+        // Selection and execution retain this request's one SOURCE review;
+        // subsequent target checks compare actual copied bytes to that basis.
+        expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/actions/projects.inspect'))).toHaveLength(1);
+        for (const [, body] of h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/actions/projects.inspect'))) {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(ExternalActionRequestEnvelopeV1Schema.parse(request.envelope).input).toMatchObject({
+                read: { kind: 'execution', command: { usage: 'service', name: h.request.declaration.selection.kind === 'manifest'
+                    ? h.request.declaration.selection.name : undefined } },
+            });
+        }
         expect(h.copies() - previousCopies).toBe(2);
         await handle.stop();
     });
@@ -2161,8 +2357,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const h = await fixture(false, { kind: 'command', command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}` }, true, 'portable', 'home', 'home', undefined,
             { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' });
         await writeFile(join(h.root, 'mise.toml'), '[env]\nSERVICE_NATIVE_ROOT = "destination"\n');
-        const { findBuiltinNativeEnvironmentAdapterV1 } = await import('@happier-dev/protocol/plugins/contributions/projectNativeAdapters');
-        const version = findBuiltinNativeEnvironmentAdapterV1('mise', 'linux')!.nativeVersion;
+        const { findBuiltinNativeToolchainAdapterV1 } = await import('@happier-dev/protocol/plugins/contributions/projectNativeAdapters');
+        const version = findBuiltinNativeToolchainAdapterV1('mise', 'linux')!.nativeVersion;
         h.setNativeTool({ executablePath: process.execPath, version });
         const environmentRoots = join(h.targetRoot, 'environment-roots.jsonl');
         // Substitute the installed native executable only. Its process,
@@ -2175,8 +2371,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(setupReview).toMatchObject({ status: 'denied', reasonCode: 'project_setup_consent_required' });
         await expect(readFile(environmentRoots, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         h.trustSetupDigest(setupReview.reviewedEffectDigest!);
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const review = await h.selectStart();
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
         const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
         expect(started.reasonCode).toBeUndefined();
         expect(started).toMatchObject({ status: 'succeeded' });
@@ -2190,31 +2386,23 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         await h.owner.listProjectServices()[0]?.stop();
     });
 
-    it.each(['ready', 'unavailable', 'refused_start'] as const)('moves a portable native Service through the SOURCE coordinator, clean copy and registered destination starter (%s)', async outcome => {
-        const available = outcome !== 'unavailable';
+    it('refuses an unavailable portable native Move destination before stopping SOURCE', async () => {
         const h = await fixture(false, { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' }, true, 'portable');
         await writeFile(join(h.root, 'package.json'), JSON.stringify({ scripts: { dev: 'native service' } }));
         h.setNativeTool({ executablePath: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)', '--'] });
         const started = await seedWorkerService(h, h.workspace);
         const old = h.owner.listProjectServices()[0]!;
-        h.afterCopy(() => {
-            expect(old.snapshot().state).toBe('stopped');
-            if (outcome === 'refused_start') Object.assign(h.runtime, { isCurrent: async () => false });
-        });
         const common = { token: h.runtime.credentials!.token, credentials: h.runtime.credentials!, serverId: 'home', serverIdentityId: h.serverIdentityId,
             serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
             pluginActionExecutionOwner: 'current_process' as const };
         const worker = createCliActionExecutor({ ...common, runtimeActionMachineId: h.targetWorkspace.machineId,
             projectWorkerAction: createProjectWorkerAction({ machineId: h.targetWorkspace.machineId, serverId: 'home',
                 serverHttpBaseUrl: 'https://home.example', credentials: h.runtime.credentials!, accountId: 'owner',
-                admission: h.runtime.workerAdmission, isFiniteExecutionLive: () => false, isServiceExecutionLive: () => available }),
-            runtimeActionExecute: await h.createRuntimeActionExecutor() });
+                admission: h.runtime.workerAdmission, isFiniteExecutionLive: () => false, isServiceExecutionLive: () => false }) });
         const workerRpc = new RpcHandlerManager({ scopePrefix: h.targetWorkspace.machineId,
             localMachineId: h.targetWorkspace.machineId, encryptionMode: 'plain' });
         registerActionSpecRpcHandlers({ rpcHandlerManager: workerRpc, actionIds: ['projects.worker.status'],
             targetMachineId: h.targetWorkspace.machineId, defaultMachineTarget: true, actionExecutor: worker });
-        registerDaemonLocalServicesMachineRpcHandlers(workerRpc, { machineId: h.targetWorkspace.machineId, serverId: 'home',
-            localServicesLauncher: h.routes, resolveLauncherActionExecutor: () => worker });
         h.bindWorkerStatusTransport((envelope, signal) => {
             if (!envelope.target) throw new Error('Destination worker Status requires its exact target');
             return workerRpc.invokeLocal(getActionSpec('projects.worker.status').bindings!.rpcMethod!,
@@ -2223,22 +2411,9 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         });
         vi.spyOn(machineRpcBoundary, 'callExactMachineRpc').mockImplementation(async call => {
             expect(call.machineId).toBe(h.targetWorkspace.machineId);
-            if (call.method === getActionSpec('projects.worker.status').bindings!.rpcMethod) {
-                return await workerRpc.invokeLocal(call.method, call.request, { signal: call.signal ?? h.ingress.signal,
-                    rpcContext: h.ingress });
-            }
-            expect(call.method).toBe(getActionSpec('localServices.launcher.start').bindings!.rpcMethod);
-            expect(old.snapshot().state).toBe('stopped');
-            const transported = TargetedActionRpcRequestV1Schema.parse(call.request);
-            expect(transported.target).toEqual({ kind: 'machine', machineId: h.targetWorkspace.machineId });
-            expect(transported.input).toMatchObject({
-                machineId: h.targetWorkspace.machineId,
-                workspaceId: h.targetWorkspace.id,
-                declaration: { workspaceRefId: h.targetWorkspace.id, selection: h.request.declaration.selection },
-                choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.targetWorkspace.machineId } },
-            });
-            return await workerRpc.invokeLocal(call.method, call.request, { signal: call.signal ?? h.ingress.signal, rpcContext: h.ingress,
-                ...(call.externalAction ? { localActionContext: call.externalAction.context } : {}) });
+            expect(call.method).toBe(getActionSpec('projects.worker.status').bindings!.rpcMethod);
+            return await workerRpc.invokeLocal(call.method, call.request, { signal: call.signal ?? h.ingress.signal,
+                rpcContext: h.ingress });
         });
         vi.spyOn(machineRpcBoundary, 'callMachineRpc').mockRejectedValue(new Error('No optional cached controller observation'));
         let content: WorkspaceExecutionConfigContentV1 | null = null;
@@ -2267,7 +2442,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 resolveWorkspaceSyncHandoffAdapter: () => handoff }), undefined, h.routes, sourceIngress) });
         const workspace = { serverId: 'home', refId: h.workspace.id };
         const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: h.targetWorkspace.machineId } };
-        const request = { workspace, serviceName: 'worker', requestId: 'native-source-worker-move', currentTarget: started.currentTarget,
+        const request = { workspace, sourceMachineId: h.workspace.machineId, serviceName: 'worker', requestId: 'native-source-worker-move', currentTarget: started.currentTarget,
             destination, selectedTarget: { machineId: h.targetWorkspace.machineId }, desiredPlacement: { workspace, serviceName: 'worker',
                 expectedRevision: 'absent' as const, expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } } };
         const approved = await approvedMoveContext(h, request);
@@ -2280,33 +2455,11 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 operationProgress: { update(update) { context.operationProgress.update(update); if (update.phase) phases.push(update.phase); } } });
             return result;
         } });
-        const operation = await operations.runner.waitForTerminal({ accountId: 'owner', machineId: h.workspace.machineId }, 'native-move');
-        if (!available) {
-            expect(result).toMatchObject({ ok: false, errorCode: 'project_worker_unsupported' });
-            expect(old.snapshot().state).toBe('running');
-            expect(phases).toEqual([]);
-            expect(h.copies()).toBe(0);
-            return;
-        }
-        if (outcome === 'refused_start') {
-            expect(operation, JSON.stringify(operation)).toMatchObject({ state: 'failed', progress: { phase: 'stopped' },
-                error: { errorCode: 'project_requester_credentials_unavailable' } });
-            expect(phases).toEqual(['stopping', 'stopped', 'copying', 'starting', 'stopped']);
-            expect(operation).not.toHaveProperty('observation');
-            expect(old.snapshot().state).toBe('stopped');
-            expect(h.owner.listProjectServices()).toHaveLength(0);
-            expect(await operations.handlers.cancel({ operationId: 'native-move' })).toEqual({ kind: 'already_settled' });
-            return;
-        }
-        expect(operation).toMatchObject({ state: 'succeeded' });
-        expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: true, result: { status: 'moved', currentTarget: {
-            machineId: h.targetWorkspace.machineId, workspaceId: h.targetWorkspace.id, cwd: h.targetRoot,
-        } } });
-        expect(phases).toEqual(['stopping', 'stopped', 'copying', 'starting']);
-        expect(h.copies()).toBe(1);
-        expect(h.owner.listProjectServices()).toHaveLength(1);
-        expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
-        await h.owner.listProjectServices()[0]?.stop();
+        await operations.runner.waitForTerminal({ accountId: 'owner', machineId: h.workspace.machineId }, 'native-move');
+        expect(result).toMatchObject({ ok: false, errorCode: 'project_worker_unsupported' });
+        expect(old.snapshot().state).toBe('running');
+        expect(phases).toEqual([]);
+        expect(h.copies()).toBe(0);
     });
 
     it('refuses native worker configuration changed by the copy before any service is launched', async () => {
@@ -2327,9 +2480,39 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
+    it('runs fresh worker setup once from the exact admitted Move review without a second prepare', async () => {
+        const h = await fixture(true, undefined, true, 'portable');
+        const inspection = ProjectDefinitionInspectOutputSchema.parse(await h.projectDefinitionActionFor(h.workspace)({
+            actionId: 'projects.inspect', input: { workspace: { serverId: h.workspace.serverId,
+                machineId: h.workspace.machineId, workspaceId: h.workspace.id, rootPath: h.root }, read: { kind: 'setup' } }, context: h.context }));
+        if (!inspection.setupReview) throw new Error('Expected incoming setup review');
+        const workspace = { serverId: h.workspace.serverId, refId: h.workspace.id };
+        const destination = { kind: 'workers', destination: { kind: 'machine', machineId: h.targetWorkspace.machineId } };
+        const move = { workspace, sourceMachineId: h.workspace.machineId, serviceName: 'worker', requestId: 'move-with-setup',
+            currentTarget: { kind: 'managed_service', managedServiceId: 'old', machineId: h.workspace.machineId,
+                workspaceId: h.workspace.id, declaration: h.request.declaration }, destination,
+            selectedTarget: { machineId: h.targetWorkspace.machineId }, setupReview: inspection.setupReview,
+            desiredPlacement: { workspace, serviceName: 'worker', expectedRevision: 'absent', expected: { kind: 'absent' },
+                value: { runsOn: destination, unavailable: 'fail' } } };
+        // Host issuance is the real compound approval seam; only native process and HTTP IO are substituted.
+        const completion = invokeHostReviewedChildV1({ parent: { actionId: 'projects.service.relocate', input: JSON.parse(JSON.stringify(move)) },
+            context: { ...h.context, surface: 'agent' }, child: { action: 'localServices.launcher.start',
+                role: 'service.localServices.launcher.start', input: JSON.parse(JSON.stringify(h.request)) },
+            admittedReview: { action: 'localServices.launcher.start', role: 'service.localServices.launcher.start', surface: 'agent' },
+            execute: async (_request, context) => h.routes.startTarget!(h.request, h.ingress, context) });
+        await vi.waitFor(() => expect(h.setupProcesses).toHaveLength(1));
+        expect(h.copies()).toBe(1);
+        expect(h.setupProcesses[0]?.params).toMatchObject({ options: { cwd: h.targetRoot } });
+        h.setupProcesses[0]!.pty.exit(0);
+        expect(await completion).toMatchObject({ status: 'succeeded' });
+        expect(h.setupProcesses).toHaveLength(1);
+        expect(h.post.mock.calls.some(([url]) => String(url).endsWith('/project-trust/mutate'))).toBe(false);
+        await h.owner.listProjectServices()[0]?.stop();
+    });
+
     it('holds real worker setup review in the same operation, resumes after Remember, and releases its slot before service custody', async () => {
         const h = await fixture(true, undefined, true, 'portable');
-        const reviewed = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const reviewed = await h.selectStart();
         if (!reviewed.reviewedEffectDigest) throw new Error('Expected SOURCE service review');
         const request = { ...h.request, expectedEffectDigest: reviewed.reviewedEffectDigest };
         const completion = h.routes.startTarget!(request, h.ingress, h.context);
@@ -2359,7 +2542,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it('refuses copied declaration drift and a withdrawn exact route without native launch', async () => {
         const h = await fixture(false, undefined, false, 'portable');
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
         h.changeCopiedManifest({ ...h.manifest, services: { worker: { ...h.manifest.services!.worker,
             source: { kind: 'command', command: 'echo changed' } } } });
@@ -2375,10 +2558,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it.each(['platform', 'configEnvironment'] as const)('binds the receiving %s to SOURCE review and refuses its change after copy', async fact => {
         const h = await fixture(false, undefined, false, 'portable');
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-        expect(review).toMatchObject({ reviewedEffect: { serviceEffect: {
-            command: { kind: 'literal', cwd: h.targetRoot }, environment: { kind: 'host' }, platform: { os: 'linux', arch: 'x64' },
-        } } });
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
         h.afterCopy(() => { Object.assign(h.runtime, fact === 'platform' ? { platform: 'darwin' } : { configEnvironment: { PORT: 'changed' } }); });
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
@@ -2390,7 +2570,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it('refuses a new no-finite-prerequisite worker Service when the actual daemon drains before or during copy', async () => {
         const h = await fixture(false, undefined, false, 'portable');
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         const releaseDrain = h.admissionDrain.beginTemporaryDrain();
@@ -2471,8 +2651,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
 
     it('starts a service with no finite prerequisite when finite admission is off', async () => {
         const h = await fixture(false, undefined, false);
-        const review = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
-        if (review.ok || !review.reviewedEffectDigest) throw new Error('Expected Service effect review');
+        const review = await h.selectStart();
         const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         const selected = await h.starter.resolveStartTarget(request, h.ingress, h.context);
         if (!selected.ok) throw new Error(selected.reasonCode);
@@ -2484,7 +2663,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
 
     it('starts an accepted native package declaration with the actual resolved executable and argv', async () => {
-        const h = await fixture(false, { kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev' });
+        // A manifest-owned native source has no duplicate detected row; leave dev unclaimed for direct-native admission.
+        const h = await fixture(false);
         await writeFile(join(h.root, 'package.json'), JSON.stringify({ name: 'package', scripts: { dev: 'package-authored server command' } }));
         // A system-tool wrapper is a genuine OS resolution boundary. The native codec must retain its argv prefix.
         h.setNativeTool({ executablePath: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)', '--'] });
@@ -2493,8 +2673,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             && target.declaration.selection.source.kind === 'native' && target.declaration.selection.source.tool === 'package_script');
         if (!target || !('declaration' in target)) throw new Error('Expected direct accepted package declaration');
         const selectedRequest = { ...h.request, targetId: target.id, declaration: target.declaration };
-        const review = await h.routes.startTarget!(selectedRequest, h.ingress, h.context);
-        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required', reviewedEffect: {
+        const review = LocalServiceStartApprovalReviewV1Schema.parse(await h.starter.prepareStartApproval(selectedRequest, h.ingress, h.context));
+        expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String), reviewedEffect: {
             command: { args: ['-e', 'setInterval(() => {}, 1000)', '--', 'run', 'dev'] },
         } });
         if (!review.reviewedEffectDigest) throw new Error('Expected native effect review');
@@ -2528,8 +2708,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         };
         try {
             phase = 'effect review';
-            const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
-            expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+            const review = await h.selectStart();
+            expect(review).toMatchObject({ reviewedEffectDigest: expect.any(String) });
             if (!review.reviewedEffectDigest) throw new Error('Expected Flox Service review');
             const request = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
             phase = 'admitted Start';
@@ -2599,8 +2779,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         if (setupReview.ok || setupReview.reasonCode !== 'project_setup_consent_required' || !setupReview.reviewedEffectDigest) throw new Error('Expected setup review');
         // The Home boundary now reports the pre-existing approved D18 setup row, not a Service trust grant.
         h.trustSetupDigest(setupReview.reviewedEffectDigest);
-        const serviceReview = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
-        if (serviceReview.ok || !serviceReview.reviewedEffectDigest) throw new Error('Expected Service review');
+        const serviceReview = await h.selectStart();
         const request = { ...h.request, expectedEffectDigest: serviceReview.reviewedEffectDigest };
         const resolved = await h.starter.resolveStartTarget(request, h.ingress, h.context);
         if (!resolved.ok) throw new Error(resolved.reasonCode);
@@ -2630,7 +2809,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 snapshot: { v: 1, machineId: h.workspace.machineId, updatedAt: 1, targets: [] },
                 startReview: { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' } });
         });
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected current Service review');
         const start = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
         expect(await h.routes.startTarget!(start, h.ingress, h.context)).toMatchObject({ status: 'succeeded' });
@@ -2690,7 +2869,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
     it('keeps the legacy Machine control transport behind the same current Agent approval policy', async () => {
         const h = await fixture();
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected current Service effect');
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
@@ -2730,7 +2909,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
     it('reaches fresh replacement through the actual receiving Machine Restart Action handler', async () => {
         const h = await fixture();
-        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const review = await h.selectStart();
         if (!review.reviewedEffectDigest) throw new Error('Expected Service effect review');
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
@@ -2746,6 +2925,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
             authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
                 resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
+                resolveHomeServerIdentityId: async () => h.serverIdentityId,
                 verifyMachineAdmission: async () => true }) });
         registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine', serverId: 'home', localServicesActions: actionRoutes,
             resolveLauncherActionExecutor: ({ ingress }) => {
@@ -2763,7 +2943,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
         expect(await rpc.handleRequest({ method: 'machine:daemon.localServices.actions.restartManaged',
             params: { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) },
-            requestId: request.requestId, machineAdmission: h.ingress.machineAdmission })).toMatchObject({ status: 'succeeded' });
+            requestId: request.requestId, callerAuthority: 'present_user', machineAdmission: h.ingress.machineAdmission })).toMatchObject({ status: 'succeeded' });
         expect(old.snapshot().state).toBe('stopped');
         expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(old.instanceId);
         expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');

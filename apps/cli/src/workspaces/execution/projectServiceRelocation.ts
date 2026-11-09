@@ -1,4 +1,3 @@
-import type { WorkspaceProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -11,7 +10,7 @@ import { isLocalServiceStateRunningV1, type DaemonLocalServiceLauncherStartRespo
 
 import type { ManagedServiceProcessStopResult } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ActionOperationProgressUpdate, ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
-
+import type { WorkspaceProjectManagedServiceWitness } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 
@@ -31,7 +30,6 @@ export interface ProjectServiceRelocationPorts {
   }>>;
   saveDesiredPlacement(input: ProjectServiceRelocateInputV1['desiredPlacement'], signal?: AbortSignal): Promise<ProjectServicePlacementMutationResultV1>;
   stopService(target: ManagedTarget, signal?: AbortSignal): Promise<ManagedServiceProcessStopResult>;
-  revalidateDestination(input: ProjectServiceRelocateInputV1, destination: WorkspaceRefV1, signal?: AbortSignal): Promise<Refusal | Readonly<{ status: 'admitted' }>>;
   reviewDestinationSetup(input: ProjectServiceRelocateInputV1, destination: WorkspaceRefV1, signal?: AbortSignal): Promise<Refusal | Readonly<{ status: 'admitted' }>>;
   /** Must be production handoffPrepareBetween: it routes to the real Sync controller. */
   handoffPrepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
@@ -90,11 +88,6 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
           workspaceId: current.workspace.id, rootPath: current.workspace.rootPath },
         declaration: current.currentTarget.declaration, currentTarget: current.currentTarget } });
       if (!sameTarget) {
-        // Destination selection admitted the target once. Keep the exact
-        // domain operands current before the irreversible old Stop.
-        const admitted = await ports.revalidateDestination(input, selected, signal);
-        if (admitted.status === 'refused') return failure(admitted.reasonCode, admitted.error);
-        if (signal?.aborted) return failure('cancelled');
         const setup = await ports.reviewDestinationSetup(input, selected, signal);
         if (setup.status === 'refused') return failure(setup.reasonCode, setup.error);
         if (signal?.aborted) return failure('cancelled');
@@ -144,9 +137,6 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       // Retain the native Stop fact even if cancellation or changed operands prevent copy.
       progress('stopped', 'Service stopped');
       if (signal?.aborted) return failure('cancelled');
-      const currentDestination = await ports.revalidateDestination(input, selected, signal);
-      if (currentDestination.status === 'refused') return failure(currentDestination.reasonCode, currentDestination.error);
-      if (signal?.aborted) return failure('cancelled');
       progress('copying', 'Copying current files');
       try {
         const prepared = await ports.handoffPrepareBetween({ sourceWorkspaceRefId: input.workspace.refId,
@@ -155,10 +145,6 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       } catch (error) {
         return signal?.aborted ? failure('cancelled') : await projectActionOperationFailure(error, 'service_preparation_failed');
       }
-      if (signal?.aborted) return failure('cancelled');
-      // Never re-rank Auto after the approved exact destination has been selected.
-      const admitted = await ports.revalidateDestination(input, selected, signal);
-      if (admitted.status === 'refused') return failure(admitted.reasonCode, admitted.error);
       if (signal?.aborted) return failure('cancelled');
       const selectedDeclaration = { workspaceRefId: selected.id, selection: current.currentTarget.declaration.selection };
       // Retain actual dispatch routing, not an invented native instance or running fact.

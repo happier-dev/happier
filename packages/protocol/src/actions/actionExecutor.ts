@@ -11,7 +11,7 @@ import { prepareHostReviewedChildrenV1, prepareHostReviewedChildPolicyV1, readHo
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
   readHostReviewedChildOriginalAuthorizationV1,
-  readHostAdmittedReviewedChildV1, isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
+  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 export { WorkflowApprovedOperationParentV1Schema as HostReviewedParentV1Schema } from './approvedOperationV1.js';
 export { resolveApprovalSurface } from './actionApprovalSurface.js';
@@ -5236,7 +5236,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const result = await dispatchRuntimeAction({
           actionId,
-          input: parsed.data,
+          input: admittedInput,
           context: ctx,
           runtimeActionExecute: deps.runtimeActionExecute,
           executeCanonicalAction: (nestedActionId, nestedInput) => executeHostChild(nestedActionId, nestedInput, ctx),

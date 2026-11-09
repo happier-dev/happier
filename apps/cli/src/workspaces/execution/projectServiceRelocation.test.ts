@@ -16,7 +16,7 @@ const oldTarget = { kind: 'managed_service' as const, managedServiceId: 'old-nat
 const newTarget = { kind: 'managed_service' as const, managedServiceId: 'new-native', machineId: 'new', workspaceId: 'new-ref', cwd: '/new',
   declaration: { ...declaration, workspaceRefId: 'new-ref' } };
 const destination = { id: 'new-ref', serverId: 'home', machineId: 'new', rootPath: '/new', createdAtMs: 1 };
-const request = { workspace: { serverId: 'home', refId: 'primary' }, serviceName: 'worker', requestId: 'move-1',
+const request = { workspace: { serverId: 'home', refId: 'primary' }, sourceMachineId: 'source', serviceName: 'worker', requestId: 'move-1',
   currentTarget: oldTarget, destination: { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'new' } },
   desiredPlacement: { workspace: { serverId: 'home', refId: 'primary' }, serviceName: 'worker', expectedRevision: 'absent' as const,
     expected: { kind: 'absent' as const }, value: { runsOn: { kind: 'workers' as const,
@@ -62,7 +62,6 @@ async function harness(stopStatus: 'stopped' | 'accepted' | 'unsupported' | 'ter
     saveDesiredPlacement: async () => ({ status: 'applied', placement: request.desiredPlacement.value,
       revision: 1, provenance: 'saved' }),
     stopService: async (_target, signal) => await handle.stop({ signal }),
-    revalidateDestination: async () => ({ status: 'admitted' }),
     reviewDestinationSetup: async () => ({ status: 'admitted' }),
     handoffPrepareBetween: async () => { effects.push('prepare'); return { ok: true, traversed: [] }; },
     startService: async () => { effects.push('start'); return { status: 'succeeded', currentTarget: replacementTarget }; },
@@ -71,14 +70,10 @@ async function harness(stopStatus: 'stopped' | 'accepted' | 'unsupported' | 'ter
 }
 
 describe('confirmed service relocation', () => {
-  it.each(['revalidation', 'preparation'] as const)('retains the typed %s failure in the stopped operation snapshot', async stage => {
+  it('retains the typed preparation failure in the stopped operation snapshot', async () => {
     const h = await harness();
     const fault = new RpcError('Destination refused Authorization: Bearer synthetic-private-token', RPC_ERROR_CODES.FORBIDDEN);
-    if (stage === 'preparation') h.ports.handoffPrepareBetween = async () => { throw fault; };
-    else h.ports.revalidateDestination = async () => {
-      if (h.handle.snapshot().state === 'stopped') throw fault;
-      return { status: 'admitted' };
-    };
+    h.ports.handoffPrepareBetween = async () => { throw fault; };
     const store = createActionOperationStore();
     const scope = { accountId: 'requester', machineId: 'source' };
     const runner = createActionOperationRunner({ store, generateOperationId: () => 'diagnostic-move',
@@ -86,16 +81,33 @@ describe('confirmed service relocation', () => {
     await runner.observe({ actionId: 'projects.service.relocate', scope, input: h.request,
       execute: createProjectServiceRelocation(h.ports).bind(undefined, h.request) });
     const operation = await runner.waitForTerminal(scope, 'diagnostic-move');
-    expect(operation).toMatchObject({ state: 'failed', progress: { phase: stage === 'preparation' ? 'copying' : 'stopped' },
+    expect(operation).toMatchObject({ state: 'failed', progress: { phase: 'copying' },
       error: { errorCode: RPC_ERROR_CODES.FORBIDDEN, error: expect.stringContaining('Destination refused') } });
     expect(JSON.stringify(operation)).not.toContain('synthetic-private-token');
     expect(ActionOperationGetV1ResponseSchema.safeParse({ kind: 'found', operation }).success).toBe(true);
     expect(h.handle.snapshot().state).toBe('stopped');
     expect(h.effects).not.toContain('start');
   });
+  it('uses destination selection and setup review once, then finishes Move without graph re-admission', async () => {
+    const h = await harness();
+    let graphReads = 0;
+    h.ports.resolveDestination = async () => {
+      graphReads++;
+      return { status: 'resolved', workspace: destination };
+    };
+    h.ports.reviewDestinationSetup = async () => {
+      graphReads++;
+      return { status: 'admitted' };
+    };
+    await expect(createProjectServiceRelocation(h.ports)(h.request)).resolves.toMatchObject({
+      ok: true, result: { status: 'moved', currentTarget: h.newTarget },
+    });
+    expect(graphReads).toBe(2);
+    expect(h.effects).toEqual(['stop', 'prepare', 'start']);
+  });
   it('keeps the incumbent running when the destination refuses admission before Stop', async () => {
     const h = await harness();
-    h.ports.revalidateDestination = async () => ({ status: 'refused', reasonCode: 'target_unavailable' });
+    h.ports.resolveDestination = async () => ({ status: 'refused', reasonCode: 'target_unavailable' });
     await expect(createProjectServiceRelocation(h.ports)(h.request)).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     expect(h.handle.snapshot().state).toBe('running');
     expect(h.effects).toEqual([]);
@@ -224,58 +236,38 @@ describe('confirmed service relocation', () => {
     await expect(runner.observe(invoke)).resolves.toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
     expect(effects).toEqual(['stop']);
   });
-  it.each(['cancel_after_stop', 'cancel_during_revalidation', 'destination_refused'] as const)(
-    'retains confirmed Stop before copying when %s', async outcome => {
-      const { effects, ports, handle, request, oldTarget } = await harness();
-      const store = createActionOperationStore();
-      const scope = { accountId: 'requester', machineId: 'source-coordinator' };
-      const operationId = 'stopped-move-operation';
-      const runner = createActionOperationRunner({ store, generateOperationId: () => operationId,
-        resolveAction: actionId => ({ actionId, title: 'Move service', operation: {
-          version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' },
-        } }),
-      });
-      if (outcome === 'cancel_after_stop') {
-        const stopService = ports.stopService;
-        ports.stopService = async (target, signal) => {
-          const stopped = await stopService(target, signal);
-          runner.cancel(scope, operationId);
-          return stopped;
-        };
-      }
-      let phaseBeforeRevalidation: string | undefined;
-      ports.revalidateDestination = async () => {
-        // Initial admission precedes Stop; this scenario changes admission only
-        // after the old owner has authoritatively confirmed its stop.
-        if (handle.snapshot().state !== 'stopped') return { status: 'admitted' };
-        const progress = store.get(scope, operationId)?.progress;
-        phaseBeforeRevalidation = progress?.kind === 'phase' ? progress.phase : undefined;
-        if (outcome === 'cancel_during_revalidation') runner.cancel(scope, operationId);
-        return outcome === 'destination_refused'
-          ? { status: 'refused', reasonCode: 'target_offline' }
-          : { status: 'admitted' };
-      };
-      const invoke = { actionId: 'projects.service.relocate', requestId: request.requestId, input: request, scope,
-        cancellation: 'supported' as const, execute: createProjectServiceRelocation(ports).bind(undefined, request) };
-      await runner.observe(invoke);
-      await runner.waitForTerminal(scope, operationId);
-      const operation = store.get(scope, operationId);
-      expect(handle.snapshot().state).toBe('stopped');
-      expect(effects).toEqual(['stop']);
-      expect(operation).toMatchObject({
-        state: outcome === 'destination_refused' ? 'failed' : 'cancelled',
-        progress: { kind: 'phase', phase: 'stopped' },
-        domainRef: { kind: 'projectService', purpose: 'relocation',
-          workspace: { serverId: 'home', machineId: 'old', workspaceId: 'old-ref', rootPath: '/old' },
-          declaration, currentTarget: oldTarget },
-      });
-      expect(operation).not.toHaveProperty('observation');
-      if (outcome !== 'cancel_after_stop') expect(phaseBeforeRevalidation).toBe('stopped');
-      await expect(runner.observe(invoke)).resolves.toMatchObject({ ok: false,
-        errorCode: outcome === 'destination_refused' ? 'target_offline' : 'cancelled' });
-      expect(effects).toEqual(['stop']);
-    },
-  );
+  it('retains confirmed Stop when cancelled before copying', async () => {
+    const { effects, ports, handle, request, oldTarget } = await harness();
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'source-coordinator' };
+    const operationId = 'stopped-move-operation';
+    const runner = createActionOperationRunner({ store, generateOperationId: () => operationId,
+      resolveAction: actionId => ({ actionId, title: 'Move service', operation: {
+        version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' },
+      } }),
+    });
+    const stopService = ports.stopService;
+    ports.stopService = async (target, signal) => {
+      const stopped = await stopService(target, signal);
+      runner.cancel(scope, operationId);
+      return stopped;
+    };
+    const invoke = { actionId: 'projects.service.relocate', requestId: request.requestId, input: request, scope,
+      cancellation: 'supported' as const, execute: createProjectServiceRelocation(ports).bind(undefined, request) };
+    await runner.observe(invoke);
+    await runner.waitForTerminal(scope, operationId);
+    const operation = store.get(scope, operationId);
+    expect(handle.snapshot().state).toBe('stopped');
+    expect(effects).toEqual(['stop']);
+    expect(operation).toMatchObject({ state: 'cancelled', progress: { kind: 'phase', phase: 'stopped' },
+      domainRef: { kind: 'projectService', purpose: 'relocation',
+        workspace: { serverId: 'home', machineId: 'old', workspaceId: 'old-ref', rootPath: '/old' },
+        declaration, currentTarget: oldTarget },
+    });
+    expect(operation).not.toHaveProperty('observation');
+    await expect(runner.observe(invoke)).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(effects).toEqual(['stop']);
+  });
   it('refuses an observed native binding outside the actual retained workspace before Stop', async () => {
     const { effects, ports, handle, oldTarget, request } = await harness();
     ports.readService = async () => ({ status: 'resolved', execution: 'portable', currentTarget: oldTarget,

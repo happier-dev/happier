@@ -4,7 +4,8 @@ import type { ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/worksp
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ActionExecutorContext, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { StoredCredentials } from '@/persistence';
@@ -46,7 +47,7 @@ export function projectServiceMoveStartInput(request: ProjectServiceRelocateInpu
 export function projectServiceMoveChildRole(actionId: string, input: unknown): string {
     return actionId === 'projects.inspect'
         ? input && typeof input === 'object' && 'reviewSetupConsent' in input && input.reviewSetupConsent === true
-            ? 'service.inspect.destination' : 'service.inspect.source'
+            ? 'service.inspect.setup' : 'service.inspect.source'
         : `service.${actionId}`;
 }
 
@@ -57,6 +58,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     credentials?: StoredCredentials;
     serverBaseUrl: string;
     readRelationshipStatuses?: Parameters<typeof readWorkspaceSyncWorkerTargetSnapshot>[0]['readRelationshipStatuses'];
+    inspectSetup(workspace: WorkspaceRefV1): Promise<unknown>;
 }>) {
     const fail = (code: string) => ({ ok: false as const, errorCode: code, error: code });
     const { request, context } = input;
@@ -83,6 +85,14 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     const incumbent = snapshot.workspaceRefs.find(workspace => workspace.serverId === request.workspace.serverId
         && workspace.machineId === request.currentTarget.machineId && workspace.id === request.currentTarget.workspaceId);
     if (!incumbent) return fail('service_inputs_changed');
+    const relocates = basis.target.machineId !== incumbent.machineId || basis.target.id !== incumbent.id;
+    const inspection = relocates ? ProjectDefinitionInspectOutputSchema.safeParse(await input.inspectSetup(basis.source)) : undefined;
+    if (inspection && (!inspection.success || !inspection.data.setupReview)) return fail('project_setup_review_unavailable');
+    const setup = inspection?.success ? inspection.data : undefined;
+    if (request.setupReview && setup?.setupReview && request.setupReview.reviewedEffectDigest !== setup.setupReview.reviewedEffectDigest) {
+        return fail('project_setup_effect_changed');
+    }
+    const preparedInput = setup?.setupReview ? { ...request, setupReview: setup.setupReview } : request;
     const children: HostReviewedChildrenPlanV1['children'][number][] = [];
     const add = (action: ActionId, value: unknown) => {
         const normalized = projectNativeJsonValueForTransport(getActionSpec(action).inputSchema.parse(value));
@@ -90,12 +100,16 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     };
     add('localServices.launcher.snapshot', projectServiceMoveSnapshotInput(request, incumbent));
     add('projects.service.placement.set', request.desiredPlacement);
-    if (basis.target.machineId !== incumbent.machineId || basis.target.id !== incumbent.id) {
+    if (relocates) {
+        // Policy is reviewed by the parent; the starter alone executes setup after Sync.
+        if (setup?.setupReadiness?.kind !== 'notRequired') {
+            children.push({ action: 'projects.prepare', role: 'service.setup', scopeInput: {
+                workspace: workspaceAddressFromRefV1(basis.target), phase: 'setup' } });
+        }
         add('projects.worker.status', projectServiceMoveStatusInput(request, basis.target.machineId));
-        add('projects.inspect', projectServiceMoveInspectionInput(basis.source));
-        add('projects.inspect', projectServiceMoveInspectionInput(basis.target, true));
+        add('projects.inspect', projectServiceMoveInspectionInput(basis.source, true));
         add('localServices.actions.stopManaged', projectServiceMoveStopInput(request));
         add('localServices.launcher.start', projectServiceMoveStartInput(request, basis.target));
     }
-    return { children } satisfies HostReviewedChildrenPlanV1;
+    return { children, input: projectNativeJsonValueForTransport(preparedInput) } satisfies HostReviewedChildrenPreparationV1;
 }

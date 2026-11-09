@@ -1,7 +1,7 @@
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 
 /** The SOURCE checkout owns the declaration, including its copies admitted on workers. */
-export type ProjectServiceSource = Readonly<{ serverId: string; refId: string; machineId: string }>;
+export type ProjectServiceSource = Readonly<{ serverId: string; refId: string; machineId: string; rootPath?: string }>;
 
 export function isProjectServiceTargetFromSource(
   source: ProjectServiceSource,

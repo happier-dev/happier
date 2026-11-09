@@ -20,6 +20,7 @@ import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ProjectAccountWorkspaceRefV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectWorkspaceUpdateInputV1, ProjectWorkspaceUpdateOutputV1, ProjectWorkspaceForgetInputV1, ProjectWorkspaceForgetOutputV1 } from '@happier-dev/protocol/projects/projectWorkspaceActionsV1';
@@ -396,6 +397,7 @@ export function createCliProjectActionDeps(
       // A signed local root still needs the same private requester admission as
       // a transported UI read. Native placement alone supplies no review custody.
       const originalAccountInspection = actionId === 'projects.inspect' && params.credentials
+        && !readHostAdmittedReviewedRootV1(context)
         && (!params.machineActionDirectTargetTransport || context.surface === 'cli' || context.surface === 'mcp')
         && !context.externalActionCredential && !context.externalActionExecutionAuthorization
         && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');

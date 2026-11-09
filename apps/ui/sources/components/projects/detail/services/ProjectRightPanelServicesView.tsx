@@ -52,8 +52,9 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
             [name, { portable: service.execution === 'portable', currentnessKey }])) : {};
     }, [inspection.read]);
     const placementSource = React.useMemo(() => props.serverId && props.machineId && props.workspaceRefId
-        ? { serverId: props.serverId, machineId: props.machineId, refId: props.workspaceRefId } : null,
-    [props.machineId, props.serverId, props.workspaceRefId]);
+        ? { serverId: props.serverId, machineId: props.machineId, refId: props.workspaceRefId,
+            ...(props.workspaceRoot ? { rootPath: props.workspaceRoot } : {}) } : null,
+    [props.machineId, props.serverId, props.workspaceRefId, props.workspaceRoot]);
     // What a declared service runs, in the Scripts page's own words ("yarn storybook", the file it comes from).
     const describeDeclaration = React.useMemo<DescribeServiceDeclaration | undefined>(() => {
         if (!inspection.read || !('value' in inspection.read)) return undefined;

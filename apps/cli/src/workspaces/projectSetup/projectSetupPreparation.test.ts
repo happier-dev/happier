@@ -21,7 +21,7 @@ import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProvid
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
-import { pixiAdapter, pixiPlugin, pixiRuntime, importedPixiEnvironment } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
+import { pixiAdapter, pixiPlugin, pixiRuntime, importedPixiToolchain } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { prepareProjectSetup, reviewProjectSetupEffect, inspectProjectSetup, inspectProjectSetupReadiness, type ProjectSetupPreparationInput } from './projectSetupPreparation';
@@ -29,6 +29,8 @@ import { projectNativeSystemIo } from './projectNativeSystemIo';
 import * as scmProcess from '@/scm/runtime';
 import { performance } from 'node:perf_hooks';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 describe('current Project setup effect and preparation admission', () => {
     function requesterIdentity(actorAccountId = 'approving-user') {
@@ -147,11 +149,12 @@ describe('current Project setup effect and preparation admission', () => {
             .toMatchObject({ kind: 'refused', code: 'native_tool_version_mismatch' });
     });
 
-    it.skipIf(process.platform === 'win32').each(['member', 'unknown'] as const)('keeps %s setup provenance unavailable without running repository commands', async actor => {
+    it.skipIf(process.platform === 'win32').each(['owner', 'member', 'unknown'] as const)('inspects %s setup consent without making approved preparation wait for display', async actor => {
         const { root, input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         runScmExecutable(root, 'git', ['init', '-b', 'main']);
         runScmExecutable(root, 'git', ['-c', 'user.name=Provenance test', '-c', 'user.email=provenance@example.invalid',
             'commit', '--allow-empty', '-m', 'initial']);
+        const headCommit = runScmExecutable(root, 'git', ['rev-parse', 'HEAD']);
         const marker = join(root, 'fsmonitor-executed');
         const hook = join(root, 'fsmonitor-hook');
         await writeFile(hook, `#!/bin/sh\nprintf 'executed\\n' >> ${JSON.stringify(marker)}\nprintf 'token\\0'\n`, { mode: 0o700 });
@@ -171,17 +174,53 @@ describe('current Project setup effect and preparation admission', () => {
         expect(direct.reviewedEffect.presentation.provenance.kind).toBe('repository');
         await expect(access(marker)).resolves.toBeUndefined();
         await rm(marker);
+        const runScmCommand = scmProcess.runScmCommand;
         const commands = vi.spyOn(scmProcess, 'runScmCommand');
         trustTransport(null);
         const inspect = () => inspectProjectSetup({ ...preparation,
-            requesterIdentity: actor === 'unknown' ? undefined : requesterIdentity('member') }, { reviewConsent: true });
-        const inspection = await inspect();
+            requesterIdentity: actor === 'unknown' ? undefined : requesterIdentity(actor === 'owner' ? 'approving-user' : 'member') }, { reviewConsent: true });
+        const inspection = await (async () => {
+            if (actor !== 'owner') return inspect();
+            let release!: () => void;
+            let entered!: () => void;
+            let repeated!: () => void;
+            const held = new Promise<void>(resolve => { release = resolve; });
+            const started = new Promise<void>(resolve => { entered = resolve; });
+            const secondStatus = new Promise<'status'>(resolve => { repeated = () => resolve('status'); });
+            let statuses = 0;
+            // Genuine OS command boundary: keep passive display work pending while
+            // the already-approved effect becomes available for native launch.
+            commands.mockImplementation(async request => {
+                if (request.args.includes('status')) {
+                    if (++statuses === 1) entered(); else repeated();
+                    await held;
+                }
+                return runScmCommand(request);
+            });
+            const publication = inspect();
+            await started;
+            const admission = prepareProjectSetup({ ...preparation, effectDecision: { authority: 'present_user',
+                project: preparation.projectAssociation.project, reviewedEffectDigest: direct.reviewedEffectDigest } });
+            try {
+                expect(await Promise.race([admission.then(() => 'admitted'), secondStatus])).toBe('admitted');
+                expect(await admission).toMatchObject({ kind: 'prepared', plan: { reviewedEffectDigest: direct.reviewedEffectDigest } });
+                expect(statuses).toBe(1);
+            } finally {
+                release();
+                await admission;
+                await publication;
+            }
+            return publication;
+        })();
         expect(inspection).toMatchObject({
             setupReadiness: { kind: 'unprepared' }, setupConsent: { kind: 'required' },
             setupReview: { reviewedEffectDigest: direct.reviewedEffectDigest,
-                reviewedEffect: { presentation: { provenance: { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' } } } },
+                reviewedEffect: { presentation: { provenance: actor === 'owner'
+                    ? { kind: 'repository', file: '.happier/project.json', headCommit, branch: 'main', fileState: 'untracked' }
+                    : { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' } } } },
         });
-        {
+        if (actor === 'owner') await expect(access(marker)).resolves.toBeUndefined();
+        else {
             const retained = await reviewProjectSetupEffect({ ...preparation,
                 requesterIdentity: actor === 'unknown' ? undefined : requesterIdentity('member') }, direct.reviewedEffect.presentation);
             expect(retained).toMatchObject({ kind: 'reviewed', plan: { reviewedEffect: {
@@ -278,7 +317,7 @@ describe('current Project setup effect and preparation admission', () => {
     });
 
     it('reviews ordered real native/literal commands across accepted Machines without running anything or hashing unrelated metadata', async () => {
-        const manifest = { version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, workspace: { setup: [
+        const manifest = { version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, workspace: { setup: [
             { kind: 'native', tool: 'make', file: 'Makefile', target: 'setup' },
             { kind: 'command', command: 'touch should-not-exist', cwd: '.' },
         ], setupInputs: ['input.bin'] }, scripts: { unrelated: { source: { kind: 'command', command: 'old unrelated' } } }, futureMetadata: 'old' };
@@ -326,7 +365,7 @@ describe('current Project setup effect and preparation admission', () => {
         const changedEnvironmentConfig = await reviewed(a.input);
         expect(changedEnvironmentConfig.reviewedEffectDigest).not.toBe(first.reviewedEffectDigest);
         expect(changedEnvironmentConfig.executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
-        await writeFile(join(a.root, '.happier/project.json'), JSON.stringify({ ...manifest, environment: { kind: 'host' } }));
+        await writeFile(join(a.root, '.happier/project.json'), JSON.stringify({ ...manifest, toolchain: { kind: 'host' } }));
         expect((await reviewed(a.input)).executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
     });
 
@@ -376,6 +415,31 @@ describe('current Project setup effect and preparation admission', () => {
         const decision = { authority: 'present_user' as const, project: plan.project, reviewedEffectDigest: plan.reviewedEffectDigest };
         expect(await prepareProjectSetup({ ...waived, effectDecision: { ...decision, authority: 'account_automation' } as unknown as typeof decision }))
             .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+    });
+
+    it('consumes the exact setup reviewed in an admitted Move without trusting a public parent projection or changed target effects', async () => {
+        const { root, input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        trustTransport(null);
+        const plan = await reviewed(input);
+        const workspace = { serverId: 'home', refId: 'source' };
+        const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: input.workspace.machineId } };
+        const move = { workspace, sourceMachineId: 'source-machine', serviceName: 'worker', requestId: 'move',
+            currentTarget: { kind: 'managed_service', managedServiceId: 'old', machineId: 'source-machine', workspaceId: 'source' },
+            selectedTarget: { machineId: input.workspace.machineId }, destination,
+            desiredPlacement: { workspace, serviceName: 'worker', expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } },
+            setupReview: { reviewedEffect: plan.reviewedEffect, reviewedEffectDigest: plan.reviewedEffectDigest } };
+        const parent = { actionId: 'projects.service.relocate' as const, input: JSON.parse(JSON.stringify(move)) };
+        const context = { surface: 'agent' as const, actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'projects.prepare': { approvalRequiredSurfaces: ['agent'] } } }) };
+        expect(await prepareProjectSetup({ ...input, approvalContext: { ...context, hostReviewedChild: { parent } } as typeof context }))
+            .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+        const run = (platform = input.platform) => invokeHostReviewedChildV1({ parent, context,
+            child: { action: 'localServices.launcher.start', role: 'service.localServices.launcher.start', input: { machineId: input.workspace.machineId } },
+            admittedReview: { action: 'localServices.launcher.start', role: 'service.localServices.launcher.start', surface: 'agent' },
+            execute: async (_request, admitted) => prepareProjectSetup({ ...input, platform, approvalContext: admitted }) });
+        expect(await run()).toMatchObject({ kind: 'prepared', consent: 'thisTime' });
+        expect(await run({ os: 'darwin', arch: input.platform.arch })).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed' });
+        await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
+        expect(await run()).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed' });
     });
 
     it('prepares an admitted child with its inherited manifest while its physical controller is offline', async () => {
@@ -428,12 +492,12 @@ describe('current Project setup effect and preparation admission', () => {
     it('skip cannot bypass a missing selected tool/config/secret binding and contained inputs reject symlink escapes', async () => {
         const native = await fixture({ version: 1, workspace: { setup: [{ kind: 'native', tool: 'make', file: 'Makefile', target: 'setup' }] } }, { Makefile: 'setup:\n\techo setup\n' });
         expect(await prepareProjectSetup({ ...native.input, skipForInvocation: true, nativeIo: { resolveTool: async () => null } })).toMatchObject({ kind: 'refused', code: 'native_tool_unavailable' });
-        const env = await fixture({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'missing.toml' } });
+        const env = await fixture({ version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: 'missing.toml' } });
         expect(await prepareProjectSetup({ ...env.input, skipForInvocation: true })).toMatchObject({ kind: 'refused', code: 'native_configuration_missing' });
-        const partial = await fixture({ version: 1, environment: { kind: 'toolchain', tool: 'devbox', configPath: 'devbox.json' } },
+        const partial = await fixture({ version: 1, toolchain: { kind: 'toolchain', tool: 'devbox', configPath: 'devbox.json' } },
             { 'devbox.json': JSON.stringify({ packages: [], include: ['unresolved.json'] }) });
         expect(await prepareProjectSetup({ ...partial.input, skipForInvocation: true }))
-            .toMatchObject({ kind: 'refused', code: 'native_environment_dynamic_unsupported' });
+            .toMatchObject({ kind: 'refused', code: 'native_toolchain_dynamic_unsupported' });
         const secret = await fixture({ version: 1, environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] });
         expect(await prepareProjectSetup({ ...secret.input, skipForInvocation: true })).toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
         const contained = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }], setupInputs: ['escape.bin'] } });
@@ -559,8 +623,8 @@ describe('current Project setup effect and preparation admission', () => {
     });
 
     it('reviews a selected external environment through the canonical lease without evaluating it and binds its installed adapter provenance', async () => {
-        const { input } = await fixture({ version: 1, environment: importedPixiEnvironment }, { 'pixi.toml': '[tasks]\ncheck = "echo checked"' });
-        const produceEnvironment = vi.fn(pixiRuntime.produceEnvironment);
+        const { input } = await fixture({ version: 1, toolchain: importedPixiToolchain }, { 'pixi.toml': '[tasks]\ncheck = "echo checked"' });
+        const prepareToolchain = vi.fn(pixiRuntime.prepareToolchain);
         async function reviewInstalled(version: string) {
             const ingested = ingestCanonicalPluginManifest({ ...pixiPlugin.manifest, version }, { sourceProvenance: 'registryCustodied' });
             if (!ingested.ok) throw new Error('Expected admitted external fixture');
@@ -572,14 +636,14 @@ describe('current Project setup effect and preparation admission', () => {
                 occurrenceIdsByPluginId: new Map([[pixiAdapter.pluginId, createPluginRuntimeOccurrenceId(pixiAdapter.pluginId)]]), generation: 1,
                 // External module loading is the filesystem boundary; real registration/activation/lease logic remains below it.
                 resolveActivationSource: () => ({ kind: 'bundled', moduleId: '@acme/pixi/daemon', load: async () => ({ activate(api: PluginApi) {
-                    api.projectNativeAdapters.register(pixiAdapter.localId, { ...pixiRuntime, produceEnvironment });
+                    api.projectNativeAdapters.register(pixiAdapter.localId, { ...pixiRuntime, prepareToolchain });
                 } }) }),
             });
             try {
                 const plan = await reviewed({ ...input, plugins: {
                     resolveProjectNativeAdapter: (reference, role) => resolveProjectNativeAdapter({ reference, role, targets, registry }),
                 } });
-                expect(plan.environmentAdapterLease?.isCurrent()).toBe(true);
+                expect(plan.toolchainAdapterLease?.isCurrent()).toBe(true);
                 return { reviewedEffectDigest: plan.reviewedEffectDigest, executionEnvironmentEffectDigest: plan.executionEnvironmentEffectDigest };
             } finally { await registry.dispose(); }
         }
@@ -588,6 +652,6 @@ describe('current Project setup effect and preparation admission', () => {
         const changedAdapter = await reviewInstalled('2.0.0');
         expect(changedAdapter.reviewedEffectDigest).not.toBe(first.reviewedEffectDigest);
         expect(changedAdapter.executionEnvironmentEffectDigest).not.toBe(first.executionEnvironmentEffectDigest);
-        expect(produceEnvironment).not.toHaveBeenCalled();
+        expect(prepareToolchain).not.toHaveBeenCalled();
     });
 });

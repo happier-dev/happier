@@ -1,4 +1,5 @@
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectServiceRelocateResultV1Schema, type ProjectServiceRelocateInputV1, type ProjectServiceRelocateResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission } from '@/components/sessions/localServices/localServiceActionAdmission';
 import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -11,10 +12,14 @@ export async function executeServiceRelocationAction(input: Readonly<{
   execute: FrontDoorRuntimeActionExecute;
   request: ProjectServiceRelocateInputV1;
   context: Parameters<FrontDoorRuntimeActionExecute>[0]['context'];
+  /** The mounted Move review disclosed this exact request and the person pressed Move. */
+  confirmed?: true;
   admission: LocalServiceActionAdmission & Required<Pick<LocalServiceActionAdmission, 'onApprovalPending'>> & Readonly<{ expectedAccountId: string }>;
 }>): Promise<ServiceRelocationOutcome> {
   const value = await executeLocalServiceActionWithAdmission({ execute: input.execute,
-    request: { actionId: 'projects.service.relocate', input: input.request, context: input.context }, admission: input.admission });
+    request: { actionId: 'projects.service.relocate', input: input.request, context: input.context }, admission: input.admission,
+    ...(input.confirmed ? { confirmation: async (review) => review.actionId === 'projects.service.relocate'
+      && sameStrictJsonValue(review.input, input.request) } : {}) });
   const failure = ActionExecuteFailureSchema.safeParse(value);
   if (failure.success) return { status: 'failed', errorCode: failure.data.errorCode };
   const result = ProjectServiceRelocateResultV1Schema.safeParse(value);

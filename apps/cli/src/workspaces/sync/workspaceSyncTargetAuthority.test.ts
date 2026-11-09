@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import * as fileSystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { connect } from 'node:net';
 import { join } from 'node:path';
@@ -25,7 +26,6 @@ import { composeBindChildSourcePhaseTestRuntime } from '@/daemon/startup/createP
 import * as productionWorkspaceSync from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SocketRpcMachineAdmissionContextV1Schema, WorkspaceSyncSourceRoutingV1Schema,
   WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -1478,7 +1478,7 @@ describe('committed-copy retirement at the target authority', () => {
     const service = {
       inspectCommittedCopyHere: async (request, signal, context) => {
         if (!('kind' in request)) throw new Error('Preview fixture never executes an approved removal');
-        const assertCurrent = async () => await productionWorkspaceSync.assertCurrentPersonalWorkspaceCopyPreview({
+        const assertCurrent = async () => await productionWorkspaceSync.assertCurrentWorkspaceCopyPreview({
           request, context, serverId: 'server-1', machineId: 'machine-b', credentials,
           isCurrent: async () => credentialCurrent,
         });
@@ -1510,7 +1510,7 @@ describe('committed-copy retirement at the target authority', () => {
     });
     const controllerService = { inspectCommittedCopyHere: async (preview, signal, context) => {
       if (!('kind' in preview)) throw new Error('Preview fixture never executes an approved removal');
-      await productionWorkspaceSync.assertCurrentPersonalWorkspaceCopyPreview({ request: preview, context,
+      await productionWorkspaceSync.assertCurrentWorkspaceCopyPreview({ request: preview, context,
         serverId: 'server-1', machineId: 'machine-a', credentials, isCurrent: async () => credentialCurrent });
       return await controller.authority.previewCommittedCopyAtTarget({ ...preview, ...(signal ? { signal } : {}) });
     } } satisfies Pick<MachineWorkspaceSyncRpcService, 'inspectCommittedCopyHere'>;
@@ -1550,10 +1550,9 @@ describe('committed-copy retirement at the target authority', () => {
       await expect(inspect(request, { ...machineAdmission, custodianAccountId: 'foreign-account' }))
         .resolves.toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       const refusedPreview = await inspect(request, { ...machineAdmission, actorAccountId: 'foreign-account' });
-      // The UI/CLI front doors consume this exact Action failure schema before
-      // the strict successful preview. An RPC error without ok:false is lost.
-      expect(ActionExecuteFailureSchema.safeParse(refusedPreview).success).toBe(true);
-      expect(refusedPreview).toMatchObject({ ok: false, errorCode: 'forbidden' });
+      // The RPC registrar serializes domain refusals; the Action entry owns
+      // projection into an Action failure rather than the preview success DTO.
+      expect(refusedPreview).toMatchObject({ errorCode: 'forbidden' });
       await expect(inspect(request, { ...machineAdmission, role: 'use' }))
         .resolves.toMatchObject({ errorCode: 'forbidden' });
       await expect(rpc.handleRequest({ method: `machine-b:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`, params: request }))
@@ -1786,7 +1785,7 @@ function createAuthorityHarness(options: Readonly<{
         ? {}
         : {
             materializeRemoteSeed: options.materializeRemoteSeed ?? (async () => ({
-              receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+              receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
               bindPromotedTarget: async () => undefined,
               commit: async () => undefined,
               abort: async () => undefined,
@@ -2306,7 +2305,7 @@ describe('workspace sync target authority', () => {
         extraRefs: [{ id: 'workspace-gamma', machineId: 'machine-b', rootPath: gammaRoot }],
       }),
       materializeRemoteSeed: async () => ({
-        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
         bindPromotedTarget: async () => undefined,
         commit: async () => undefined,
         abort: materializationIndex++ === 0 ? firstAbort : secondAbort,
@@ -2378,7 +2377,7 @@ describe('workspace sync target authority', () => {
     const harness = createAuthorityHarness({
       getProjectSnapshot: () => snapshot(alphaRoot, betaRoot, { includeRelationship: false }),
       materializeRemoteSeed: async () => ({
-        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
         bindPromotedTarget: async () => undefined,
         commit: async () => undefined,
         abort,
@@ -2654,7 +2653,7 @@ describe('workspace sync target authority', () => {
       getProjectSnapshot: () => snapshot(alphaRoot, betaRoot, { includeRelationship: false }),
       writeReadyFact,
       materializeRemoteSeed: async () => ({
-        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
         bindPromotedTarget: async () => undefined,
         commit,
         abort,
@@ -2711,7 +2710,7 @@ describe('workspace sync target authority', () => {
       getProjectSnapshot: () => snapshot(alphaRoot, betaRoot, { includeRelationship: false }),
       writeReadyFact,
       materializeRemoteSeed: async () => ({
-        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+        receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
         bindPromotedTarget: async () => undefined,
         commit,
         abort,
@@ -2760,7 +2759,7 @@ describe('workspace sync target authority', () => {
     const abort = vi.fn(async () => undefined);
     const harness = createAuthorityHarness({
       getProjectSnapshot: () => snapshot(alphaRoot, betaRoot, { relationshipEnabled: true }),
-      materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null }, bindPromotedTarget: async () => undefined, commit, abort }),
+      materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null }, bindPromotedTarget: async () => undefined, commit, abort }),
     });
     try {
       await harness.authority.prepareBootstrapHere(await approvedPrepareRequest(harness, betaRoot));
@@ -2903,6 +2902,68 @@ describe('workspace sync target authority', () => {
 });
 
 describe('workspace sync target bootstrap authority', () => {
+  it('completes an admitted finite source copy after its Sync relationship stops', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-stop-finite-source-copy-'));
+    const alphaRoot = join(fixture, 'alpha');
+    const sourceRoot = join(fixture, 'spoke');
+    const targetRoot = join(fixture, 'copy');
+    await Promise.all([mkdir(alphaRoot), mkdir(sourceRoot), mkdir(targetRoot)]);
+    await writeFile(join(sourceRoot, 'source.txt'), 'source bytes');
+    await writeFile(join(targetRoot, 'existing.txt'), 'existing bytes');
+    const canonicalSourceRoot = await realpath(sourceRoot);
+    let current = snapshot(alphaRoot, sourceRoot);
+    const harness = createAuthorityHarness({ getProjectSnapshot: () => current });
+    let loan: Awaited<ReturnType<typeof harness.authority.borrowSourceRootForCopy>> = null;
+    let custody: Awaited<ReturnType<typeof materializeLocalWorkspaceSyncSeed>> | undefined;
+    let stoppedDuringCopy = false;
+    // Hold the real OS copy boundary while stopping the source relationship;
+    // the export, staging, promotion and rollback owners all remain real.
+    const performCopy = fileSystem.copyFile;
+    const copy = vi.spyOn(fileSystem, 'copyFile').mockImplementation(async (...args) => {
+      if (args[0] === join(canonicalSourceRoot, 'source.txt') && !stoppedDuringCopy) {
+        current = snapshot(alphaRoot, sourceRoot, { includeRelationship: false });
+        await harness.authority.reconcileRetainedBootstraps();
+        stoppedDuringCopy = true;
+      }
+      await performCopy(...args);
+    });
+    try {
+      await harness.authority.prepareBootstrapHere(prepareRequest({ targetBootstrap: 'use_existing' }));
+      await harness.authority.releaseBootstrapHere({ v: 1, bootstrapOperationId: relationshipId,
+        targetWorkspaceRefId: 'workspace-beta', reason: 'relationship_committed' });
+      loan = await harness.authority.borrowSourceRootForCopy({ operationId: 'finite-copy', workspaceRefId: 'workspace-beta' });
+      if (!loan) throw new Error('Expected a committed source spoke');
+      const copying = materializeLocalWorkspaceSyncSeed({ operationId: 'finite-copy', activeServerDir: fixture,
+        sourcePath: loan.handle.owner.canonicalRoot, targetPath: targetRoot,
+        workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] }, registry: createScmBackendRegistry([]),
+      }).then(result => { custody = result; return result; });
+      const completed = await copying;
+      expect(stoppedDuringCopy).toBe(true);
+      await expect(readFile(join(targetRoot, 'source.txt'), 'utf8')).resolves.toBe('source bytes');
+      await expect(readFile(join(targetRoot, 'existing.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await completed.abort();
+      custody = undefined;
+      await expect(readFile(join(targetRoot, 'existing.txt'), 'utf8')).resolves.toBe('existing bytes');
+      await expect(readFile(join(targetRoot, 'source.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await loan.release();
+      loan = null;
+      custody = await materializeLocalWorkspaceSyncSeed({ operationId: 'finite-copy-retry', activeServerDir: fixture,
+        sourcePath: sourceRoot, targetPath: targetRoot,
+        workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] }, registry: createScmBackendRegistry([]),
+      });
+      await custody.commit();
+      custody = undefined;
+      await expect(readFile(join(targetRoot, 'source.txt'), 'utf8')).resolves.toBe('source bytes');
+      await expect(readFile(join(targetRoot, 'existing.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      copy.mockRestore();
+      await custody?.abort();
+      await loan?.release();
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
   it('keeps a linked spoke fence alive for a source-only copy loan after its relationship stops', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-spoke-source-loan-'));
     const alphaRoot = join(fixture, 'alpha');
@@ -3446,7 +3507,7 @@ describe('workspace sync target bootstrap authority', () => {
       bootstrap: {
         materializationDirectory,
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory }),
-        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
+        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
       },
     });
     const first = create();
@@ -3506,7 +3567,7 @@ describe('workspace sync target bootstrap authority', () => {
     const materializeRemoteSeed = vi.fn(async ({ canonicalRoot }: { canonicalRoot: string }) => {
       await writeFile(join(canonicalRoot, 'from-source.txt'), 'seeded');
       return {
-        receipt: { v: 1 as const, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null },
+        receipt: { v: 1 as const, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null },
         bindPromotedTarget: async () => undefined,
         commit: async () => undefined,
         abort: async () => undefined,
@@ -4412,7 +4473,7 @@ describe('workspace sync target bootstrap authority', () => {
       bootstrap: {
         materializationDirectory,
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory }),
-        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
+        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
       },
     });
     try {
@@ -4724,7 +4785,7 @@ describe('workspace sync target bootstrap authority', () => {
       bootstrap: {
         materializationDirectory,
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory }),
-        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null, expectedBackupIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
+        materializeRemoteSeed: async () => ({ receipt: { v: 1, previousTargetName: null, originalTargetIdentity: null, promotedTargetIdentity: null }, bindPromotedTarget: async () => undefined, commit: async () => undefined, abort: async () => undefined }),
       },
     });
     const first = create();

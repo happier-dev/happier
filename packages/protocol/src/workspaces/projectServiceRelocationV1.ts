@@ -12,6 +12,7 @@ import { ProjectWorkerStatusInputV1Schema } from '../actions/specs/projectWorker
 import { ProjectServicePlacementGetV1Schema, ProjectServicePlacementSetV1Schema } from './projectServicePlacementV1.js';
 import { ProjectExecutionChoiceV1Schema } from './projectWorkerPreferencesV1.js';
 import { ProjectDefinitionInspectInputSchema } from '../actions/projectDefinitionActionFamily.js';
+import { ProjectSetupReviewV1Schema } from '../actions/projectSetupConsentFailure.js';
 
 /** Reuses Local Services' exact managed identity; input never establishes control authority. */
 export const ProjectServiceRelocateInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProjectServicePlacementGetV1Schema, {
@@ -24,6 +25,8 @@ export const ProjectServiceRelocateInputV1Schema = lazyZodSchema(() => (<T exten
   destination: ProjectExecutionChoiceV1Schema,
   /** Exact target and native effect basis reviewed before approval; Auto is never re-ranked later. */
   selectedTarget: z.strictObject({ machineId: z.string().check(z.minLength(1)) }),
+  /** Incoming setup disclosed in this Move's review; the receiving setup owner remeasures it after Sync. */
+  setupReview: z.optional(ProjectSetupReviewV1Schema),
 })));
 export type ProjectServiceRelocateInputV1 = z.infer<typeof ProjectServiceRelocateInputV1Schema>;
 

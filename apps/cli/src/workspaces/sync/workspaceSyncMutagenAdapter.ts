@@ -5,6 +5,7 @@ import type { WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1 } f
 import type { WorkspaceSyncMutagenAdapter, WorkspaceSyncResolvedRef } from './workspaceSyncController';
 import {
   deriveWorkspaceSyncEndpointId,
+  parseMutagenStateIndex,
   type MutagenControlCommandV1,
   type MutagenSessionDefinition,
 } from './transport/workspaceSyncBrokerProtocol';
@@ -158,8 +159,7 @@ function endpoint(value: unknown, name: string): GenericEndpoint {
 }
 function conflict(value: unknown): GenericConflict {
   const input = record(value, 'conflict');
-  if (!Array.isArray(input.alphaChanges) || !Array.isArray(input.betaChanges)
-    || input.alphaChanges.length > 1_000 || input.betaChanges.length > 1_000) throw new Error('Invalid generic Mutagen conflict changes');
+  if (!Array.isArray(input.alphaChanges) || !Array.isArray(input.betaChanges)) throw new Error('Invalid generic Mutagen conflict changes');
   return { root: boundedExactPath(input.root, 'conflict.root'), alphaChanges: input.alphaChanges, betaChanges: input.betaChanges };
 }
 function session(value: unknown): GenericSession {
@@ -169,7 +169,6 @@ function session(value: unknown): GenericSession {
     'successfulCycles', 'conflictCount', 'lastError', 'lastErrorCode',
   ], 'session');
   const labelsInput = record(input.labels, 'session.labels');
-  if (Object.keys(labelsInput).length > 16) throw new Error('Invalid generic Mutagen session labels');
   const labels: Record<string, string> = {};
   for (const [key, label] of Object.entries(labelsInput)) labels[boundedString(key, 'label key', 256)] = boundedString(label, 'label value', 256);
   if (input.mode !== 'one-way-safe' && input.mode !== 'one-way-replica' && input.mode !== 'two-way-safe') throw new Error('Invalid generic Mutagen mode');
@@ -375,7 +374,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     const generic = session(value);
     const operationId = 'relationshipId' in definition ? definition.relationshipId : definition.operationId;
     const labels = expectedLabels(definition);
-    if (generic.name !== operationId || Object.keys(generic.labels).length !== Object.keys(labels).length
+    if (generic.name !== operationId
       || Object.entries(labels).some(([key, label]) => generic.labels[key] !== label)
       || generic.alpha.endpointId !== deriveWorkspaceSyncEndpointId(operationId, 'alpha')
       || generic.beta.endpointId !== deriveWorkspaceSyncEndpointId(operationId, 'beta')) throw definitionConflict('Mutagen session identity does not match workspace sync settings');
@@ -393,8 +392,8 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     const generic = this.acceptSession(value, definition);
     const operationId = 'relationshipId' in definition ? definition.relationshipId : definition.operationId;
     const [alpha, beta] = await Promise.all([
-      this.options.resolveWorkspaceRef(definition.alphaWorkspaceRefId, 'operationId' in definition ? operationId : undefined),
-      this.options.resolveWorkspaceRef(definition.betaWorkspaceRefId, 'operationId' in definition ? operationId : undefined),
+      this.options.resolveWorkspaceRef(definition.alphaWorkspaceRefId, operationId),
+      this.options.resolveWorkspaceRef(definition.betaWorkspaceRefId, operationId),
     ]);
     if (completedFlush) signal?.throwIfAborted();
     if (!alpha || !beta) throw Object.assign(new Error('Workspace sync endpoint is unavailable'), { code: 'peer_unavailable' });
@@ -480,7 +479,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
       if (generic.labels['external.operation_kind'] !== 'copy_once'
         || generic.labels['external.owner'] !== 'happier-workspace-sync') continue;
       const definition = recoverCopyOnceDefinition(generic, await this.listAllPolicyPatterns(generic.identifier, signal));
-      if (!definition || Object.keys(generic.labels).length !== Object.keys(expectedLabels(definition)).length
+      if (!definition
         || Object.entries(expectedLabels(definition)).some(([key, label]) => generic.labels[key] !== label)) {
         await this.terminateRuntimeSession(generic.name, generic.identifier, signal);
         continue;
@@ -667,6 +666,15 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         this.lastCleanSyncAtMs.delete(operation.operationId);
       }
     }
+  }
+  async waitForChange(previousStateIndex: string, signal: AbortSignal): Promise<string> {
+    const value = record(await this.options.send({
+      t: 'wait_for_change', requestId: this.requestId(), previousStateIndex,
+    }, signal), 'change observation');
+    strictFields(value, ['stateIndex'], 'change observation');
+    const index = parseMutagenStateIndex(value.stateIndex);
+    if (index === '0' || index === previousStateIndex) throw new Error('Invalid generic Mutagen unchanged state index');
+    return index;
   }
   async get(relationshipId: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1 | null> {
     const definition = this.definitions.get(relationshipId);

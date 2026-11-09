@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { ProjectCommandSourceV1, ProjectEnvironmentSelectionV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import type { ProjectCommandSourceV1, ProjectToolchainSelectionV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectManifestFileSnapshot } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { QualifiedProjectTrustProjectV1Schema, type QualifiedProjectTrustProjectV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import type { ProjectSetupSuccessV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1';
@@ -22,7 +24,7 @@ import { createNonRepositoryScmSnapshotResponse, runScmRoute } from '@/scm/rpc/d
 import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
-import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
+import { resolveProjectToolchainSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
 import { readProjectManifest } from './projectManifestFile';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -67,7 +69,7 @@ export type ProjectSetupPreparationInput = Readonly<{
     /** Supplied only by the admitted host human-review producer, never Action params or custodian credentials. */
     effectDecision?: Readonly<{ authority: 'present_user'; project: QualifiedProjectTrustProjectV1; reviewedEffectDigest: string }>;
     /** The admitted host's original surface and Account policy, never Project Action input. */
-    approvalContext?: Pick<ActionExecutorContext, 'surface' | 'actionsSettings'>;
+    approvalContext?: ActionExecutorContext;
     signal?: AbortSignal;
 }>;
 
@@ -89,7 +91,7 @@ export type ProjectSetupReviewedEffect = Readonly<{
     v: 1;
     purpose: 'setup' | 'teardown';
     commands: readonly unknown[];
-    environment: Readonly<{ selection: ProjectEnvironmentSelectionV1; adapterVersion?: string; tool?: Readonly<{ executable?: string; version?: string }> }>;
+    toolchain: Readonly<{ selection: ProjectToolchainSelectionV1; adapterVersion?: string; tool?: Readonly<{ executable?: string; version?: string }> }>;
     files: readonly Readonly<{ file: string; digest: string }>[];
     setupInputs: readonly Readonly<{ file: string; digest: string }>[];
     bindings: readonly Readonly<{ name: string; ref: string; revision?: number }>[];
@@ -104,10 +106,10 @@ export type PreparedProjectSetupPlan = Readonly<{
     manifest: ProjectManifestV1 | null;
     fileBasis: ProjectManifestFileSnapshot['basis'];
     commands: readonly PreparedProjectSetupCommand[];
-    environment: ProjectEnvironmentSelectionV1;
-    environmentAdapterLease?: ProjectNativeAdapterLeaseV1;
+    toolchain: ProjectToolchainSelectionV1;
+    toolchainAdapterLease?: ProjectNativeAdapterLeaseV1;
     /** Host-private config facts consumed by the same selected adapter at final production. */
-    environmentReviewInputs: readonly ProjectNativeFileFact[];
+    toolchainReviewInputs: readonly ProjectNativeFileFact[];
     configEnvironment: Readonly<Record<string, string>>;
     /** Host-private execution baseline; excludes setup/teardown commands and explicit setupInputs. */
     executionEnvironmentEffectDigest: string;
@@ -166,11 +168,17 @@ async function readReviewProvenance(input: ProjectSetupPreparationInput, root: s
     if (presentation) return presentation.provenance;
     const manifestPresent = basis.kind === 'present';
     const base = { file: '.happier/project.json' as const, fileState: manifestPresent ? 'unknown' as const : 'absent' as const };
+    const registryStartedAt = performance.now();
+    let registryReady = false;
     try {
         return await runWithScmBackendRegistryLease(input.scmRegistry, async (registry): Promise<ProjectSetupReviewPresentation['provenance']> => {
+            registryReady = true;
+            logger.debug('[ProjectSetup] launch phase', { phase: 'review_provenance_registry',
+                durationMs: Math.round(performance.now() - registryStartedAt) });
             // No installed detector has observed the path; absence of a catalog is not non-repository evidence.
             if (registry.listBackends().length === 0) return { ...base, kind: 'unavailable' };
             let committedAt: string | undefined;
+            const statusStartedAt = performance.now();
             const response = await runScmRoute<{ cwd: string }, ScmStatusSnapshotResponse>({
                 request: { cwd: root }, workingDirectory: root, registry, signal: input.signal,
                 onNonRepository: ({ cwd, workingDirectory }) => createNonRepositoryScmSnapshotResponse({ cwd, workingDirectory }),
@@ -191,6 +199,9 @@ async function readReviewProvenance(input: ProjectSetupPreparationInput, root: s
                     }
                     return status;
                 },
+            }).finally(() => {
+                logger.debug('[ProjectSetup] launch phase', { phase: 'review_provenance_status',
+                    durationMs: Math.round(performance.now() - statusStartedAt) });
             });
             if (!response.success || !response.snapshot) return { ...base, kind: 'unavailable' };
             const snapshot = response.snapshot;
@@ -206,8 +217,10 @@ async function readReviewProvenance(input: ProjectSetupPreparationInput, root: s
                 // Preserve the legacy enum; only the separate proven fact means committed.
                 fileState: !manifestPresent ? 'absent' : entry ? entry.kind === 'untracked' ? 'untracked' : 'modified' : 'unknown',
             };
-        });
+        }, { includeHostingProviders: false });
     } catch {
+        if (!registryReady) logger.debug('[ProjectSetup] launch phase', { phase: 'review_provenance_registry',
+            outcome: 'unavailable', durationMs: Math.round(performance.now() - registryStartedAt) });
         return { ...base, kind: 'unavailable' };
     }
 }
@@ -252,20 +265,20 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const manifest = snapshot.document?.manifest ?? null;
         const namespaceRefusal = await readProjectSetupNamespaceRefusal(input, manifest);
         if (namespaceRefusal) return namespaceRefusal;
-        const environmentSelection = manifest?.environment ?? { kind: 'host' as const };
-        const selectedEnvironment = await resolveProjectEnvironmentSelection({ root, selection: environmentSelection });
-        if (selectedEnvironment.kind === 'refused') return refuse(selectedEnvironment.code);
+        const toolchainSelection = manifest?.toolchain ?? { kind: 'host' as const };
+        const selectedToolchain = await resolveProjectToolchainSelection({ root, selection: toolchainSelection });
+        if (selectedToolchain.kind === 'refused') return refuse(selectedToolchain.code);
         // Unevaluated Nix is a passive inspection fact, not an unsupported
         // toolchain. Review its bytes here; the qualified native producer
         // evaluates under the admitted setup consent or terminal approval.
-        if (selectedEnvironment.coverage === 'partial'
-            && (selectedEnvironment.diagnostics.length === 0
-                || selectedEnvironment.diagnostics.some(diagnostic => diagnostic.code !== 'unevaluated_nix'))) {
-            return refuse('native_environment_dynamic_unsupported');
+        if (selectedToolchain.coverage === 'partial'
+            && (selectedToolchain.diagnostics.length === 0
+                || selectedToolchain.diagnostics.some(diagnostic => diagnostic.code !== 'unevaluated_nix'))) {
+            return refuse('native_toolchain_dynamic_unsupported');
         }
-        const environment = selectedEnvironment.selection;
-        const environmentReviewInputs: ProjectNativeFileFact[] = selectedEnvironment.file !== undefined && selectedEnvironment.content !== undefined
-            ? [{ file: selectedEnvironment.file, content: selectedEnvironment.content }] : [];
+        const toolchain = selectedToolchain.selection;
+        const toolchainReviewInputs: ProjectNativeFileFact[] = selectedToolchain.file !== undefined && selectedToolchain.content !== undefined
+            ? [{ file: selectedToolchain.file, content: selectedToolchain.content }] : [];
         const files = new Map<string, string>();
         async function addFile(file: string, expectedContent?: string): Promise<ProjectSetupPreparationRefusal | null> {
             const result = await readProjectDefinitionFileBytes(root, file);
@@ -279,27 +292,27 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             files.set(normalized, value);
             return null;
         }
-        if (selectedEnvironment.file !== undefined) {
-            const result = await addFile(selectedEnvironment.file, selectedEnvironment.content);
+        if (selectedToolchain.file !== undefined) {
+            const result = await addFile(selectedToolchain.file, selectedToolchain.content);
             if (result) return result;
         }
-        let environmentAdapterLease: ProjectNativeAdapterLeaseV1 | undefined;
-        let environmentAdapterVersion: string | undefined;
-        let environmentTool: Readonly<{ executablePath: string; version?: string }> | undefined;
-        if (environment.kind === 'pluginToolchain') {
+        let toolchainAdapterLease: ProjectNativeAdapterLeaseV1 | undefined;
+        let toolchainAdapterVersion: string | undefined;
+        let toolchainTool: Readonly<{ executablePath: string; version?: string }> | undefined;
+        if (toolchain.kind === 'pluginToolchain') {
             if (!input.plugins) return refuse('native_adapter_unavailable');
-            const selected = await input.plugins.resolveProjectNativeAdapter(environment.adapter, 'produceEnvironment');
+            const selected = await input.plugins.resolveProjectNativeAdapter(toolchain.adapter, 'prepareToolchain');
             if (selected.kind === 'refused') return refuse(selected.code);
-            environmentAdapterLease = selected.lease;
-            environmentAdapterVersion = selected.lease.pluginVersion;
-        } else if (environment.kind === 'toolchain') {
-            environmentTool = await input.nativeIo.resolveTool(environment.tool === 'nix_flake' ? 'nix' : environment.tool, {
+            toolchainAdapterLease = selected.lease;
+            toolchainAdapterVersion = selected.lease.pluginVersion;
+        } else if (toolchain.kind === 'toolchain') {
+            toolchainTool = await input.nativeIo.resolveTool(toolchain.tool === 'nix_flake' ? 'nix' : toolchain.tool, {
                 cwd: root, ...(input.signal ? { signal: input.signal } : {}),
             }) ?? undefined;
-            if (!environmentTool) return refuse('native_tool_unavailable');
-            if (!isAbsolute(environmentTool.executablePath) || environmentTool.executablePath.includes('\0')) return refuse('native_tool_invalid');
-            if (reviewPath(root, environmentTool.executablePath) !== environmentTool.executablePath) {
-                const result = await addFile(relative(root, environmentTool.executablePath));
+            if (!toolchainTool) return refuse('native_tool_unavailable');
+            if (!isAbsolute(toolchainTool.executablePath) || toolchainTool.executablePath.includes('\0')) return refuse('native_tool_invalid');
+            if (reviewPath(root, toolchainTool.executablePath) !== toolchainTool.executablePath) {
+                const result = await addFile(relative(root, toolchainTool.executablePath));
                 if (result) return result;
             }
         }
@@ -325,16 +338,16 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const config = resolveProjectSetupConfigEnvironment(manifest, input.configEnvironment);
         if (config.kind === 'refused') return config;
         const configEnvironment = config.environment;
-        const reviewedEnvironment = {
-            selection: environment,
-            ...(environmentAdapterVersion ? { adapterVersion: environmentAdapterVersion } : {}),
-            ...(environmentTool ? { tool: {
-                ...(reviewPath(root, environmentTool.executablePath) !== environmentTool.executablePath ? { executable: reviewPath(root, environmentTool.executablePath) } : {}),
-                ...(environmentTool.version ? { version: environmentTool.version } : {}),
+        const reviewedToolchain = {
+            selection: toolchain,
+            ...(toolchainAdapterVersion ? { adapterVersion: toolchainAdapterVersion } : {}),
+            ...(toolchainTool ? { tool: {
+                ...(reviewPath(root, toolchainTool.executablePath) !== toolchainTool.executablePath ? { executable: reviewPath(root, toolchainTool.executablePath) } : {}),
+                ...(toolchainTool.version ? { version: toolchainTool.version } : {}),
             } } : {}),
         };
-        // Capture only environment-owned current bytes before command definitions/setupInputs join the full consent effect.
-        const executionEnvironmentEffectDigest = digest({ v: 1, environment: reviewedEnvironment,
+        // Capture only toolchain-owned current bytes before command definitions/setupInputs join the full consent effect.
+        const executionEnvironmentEffectDigest = digest({ v: 1, toolchain: reviewedToolchain,
             files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })),
             bindings, configEnvironment });
         const commands: PreparedProjectSetupCommand[] = [];
@@ -385,7 +398,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 // Installed tool identity/version are provenance; its target-local installation path is not the effect.
                 reviewedCommands.push({ source: provenance, ...(projectExecutable !== resolved.command ? { executable: projectExecutable } : {}), args: resolved.reviewInvocation.args.map(arg => reviewPath(root, arg)),
                     cwd: reviewPath(root, resolved.cwd), toolchain: resolved.toolchain,
-                    ...(resolved.nativeCommandEnvironment ? { nativeCommandEnvironment: resolved.nativeCommandEnvironment } : {}),
+                    ...(resolved.nativeCommandToolchain ? { nativeCommandToolchain: resolved.nativeCommandToolchain } : {}),
                     ...(resolved.reviewInvocation.environmentOverlay ? { environmentOverlay: Object.fromEntries(Object.entries(resolved.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(root, value)])) } : {}),
                 });
             } else return refuse('native_adapter_result_invalid');
@@ -398,7 +411,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             setupInputs.push({ file: normalized, digest: files.get(normalized)! });
         }
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
-        const semanticEffect = { v: 1 as const, purpose: input.purpose, commands: reviewedCommands, environment: reviewedEnvironment,
+        const semanticEffect = { v: 1 as const, purpose: input.purpose, commands: reviewedCommands, toolchain: reviewedToolchain,
             files: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, digest]) => ({ file, digest })), setupInputs, bindings, configEnvironment };
         const reviewedEffectDigest = digest(semanticEffect);
         // SCM provenance is display context, excluded from the consent digest.
@@ -408,14 +421,14 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         logger.debug('[ProjectSetup] launch phase', { phase: 'review_provenance', retained: presentation !== undefined,
             durationMs: Math.round(performance.now() - provenanceStartedAt) });
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
-        if (environmentAdapterLease && !environmentAdapterLease.isCurrent()
+        if (toolchainAdapterLease && !toolchainAdapterLease.isCurrent()
             || commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
         const reviewedEffect: ProjectSetupReviewedEffect = { ...semanticEffect, presentation: { bindings: displayBindings, provenance } };
         const setupInputsDigest = digest(setupInputs);
         const successBasis = { cwd: root, platform: input.platform, reviewedEffectDigest, setupInputsDigest,
             environmentBindingReferences: bindings.map(binding => createCanonicalJsonSigningInput(binding)) };
         return { kind: 'reviewed', plan: { workspace: input.workspace, project: input.projectAssociation.project, purpose: input.purpose, manifest,
-            fileBasis: snapshot.basis, commands, environment, environmentReviewInputs, ...(environmentAdapterLease ? { environmentAdapterLease } : {}),
+            fileBasis: snapshot.basis, commands, toolchain, toolchainReviewInputs, ...(toolchainAdapterLease ? { toolchainAdapterLease } : {}),
             configEnvironment: Object.freeze(configEnvironment), executionEnvironmentEffectDigest, reviewedEffect, reviewedEffectDigest, successBasis } };
     } catch (error) {
         preserveUnconfirmedNativeProcess(error);
@@ -453,7 +466,7 @@ async function readReviewedProjectSetupReadiness(input: ProjectSetupPreparationI
     if (plan.commands.some(command => command.kind === 'pluginNativeReference')) {
         return { kind: 'unknown', code: 'native_setup_readiness_unresolved' };
     }
-    if (plan.commands.length === 0 && plan.environment.kind === 'host') {
+    if (plan.commands.length === 0 && plan.toolchain.kind === 'host') {
         return { kind: 'notRequired', reviewedEffectDigest: plan.reviewedEffectDigest };
     }
     if (!input.successHomeDir) return { kind: 'unknown', code: 'project_setup_success_unavailable' };
@@ -462,7 +475,7 @@ async function readReviewedProjectSetupReadiness(input: ProjectSetupPreparationI
             serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id,
         }, plan.successBasis);
         if (input.signal?.aborted) return { kind: 'unknown', code: 'project_setup_cancelled' };
-        if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
+        if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()
             || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) {
             return { kind: 'needsReview', code: 'native_adapter_retired' };
         }
@@ -487,37 +500,63 @@ export function readProjectActionApprovalSettings(input: Pick<ProjectSetupPrepar
 
 /** Produces an execution plan and consent facts. It never launches or records completion. */
 export async function prepareProjectSetup(input: ProjectSetupPreparationInput & Readonly<{ expectedEffectDigest?: string; skipForInvocation?: boolean }>,
-    presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>): Promise<ProjectSetupPreparationOutcome> {
+    presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>,
+    admittedConsent?: Extract<ProjectSetupPreparationOutcome, { kind: 'prepared' }>['consent']): Promise<ProjectSetupPreparationOutcome> {
     const startedAt = performance.now();
-    const reviewed = await reviewProjectSetupEffect(input, presentation);
+    // Admission needs effect bytes, not repository display. Passive inspection
+    // publishes provenance independently when ready; a consent hold still gets
+    // the same full presentation before it is returned to its reviewer.
+    const reviewed = await reviewProjectSetupEffect(input, presentation ?? {
+        provenance: { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' },
+    });
     logger.debug('[ProjectSetup] launch phase', { phase: 'effect_review', durationMs: Math.round(performance.now() - startedAt) });
     if (reviewed.kind === 'refused') return reviewed;
     const admissionStartedAt = performance.now();
-    const result = await admitReviewedProjectSetup(input, reviewed.plan);
+    const result = await admitReviewedProjectSetup(input, reviewed.plan, admittedConsent);
     logger.debug('[ProjectSetup] launch phase', { phase: 'consent_admission', durationMs: Math.round(performance.now() - admissionStartedAt) });
+    if (result.kind === 'pendingApproval' && presentation === undefined) {
+        const plan = result.plan;
+        const provenance = await readReviewProvenance(input, resolve(plan.workspace.rootPath), plan.fileBasis);
+        return { ...result, plan: { ...plan, reviewedEffect: { ...plan.reviewedEffect,
+            presentation: { ...plan.reviewedEffect.presentation, provenance } } } };
+    }
     return result;
 }
 
-/** Apply current consent/completion to an effect already read in this checkpoint. */
+/** Admit consent once per finite run while checking the reviewed effect at every checkpoint. */
 export async function admitReviewedProjectSetup(input: ProjectSetupPreparationInput & Readonly<{ expectedEffectDigest?: string; skipForInvocation?: boolean }>,
-    plan: PreparedProjectSetupPlan): Promise<ProjectSetupPreparationOutcome> {
+    plan: PreparedProjectSetupPlan,
+    admittedConsent?: Extract<ProjectSetupPreparationOutcome, { kind: 'prepared' }>['consent']): Promise<ProjectSetupPreparationOutcome> {
     if (input.expectedEffectDigest !== undefined && input.expectedEffectDigest !== plan.reviewedEffectDigest) {
         return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };
     }
+    const root = readHostAdmittedReviewedRootV1(input.approvalContext);
+    const move = root?.actionId === 'projects.service.relocate' ? ProjectServiceRelocateInputV1Schema.safeParse(root.input) : null;
+    const moveReview = move?.success && move.data.workspace.serverId === plan.project.serverId ? move.data.setupReview : undefined;
+    // The compound Action admitted projects.prepare policy in its single review.
+    // Only the private admitted root carries that decision; a public parent projection does not.
+    // Destination-native resolution (including platform, tools and environment) must still match.
+    if (moveReview && moveReview.reviewedEffectDigest !== plan.reviewedEffectDigest) {
+        return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };
+    }
     if (input.skipForInvocation) return { kind: 'skippedForInvocation', plan };
-    if (plan.commands.length === 0 && plan.environment.kind === 'host') return { kind: 'notRequired', plan };
+    if (plan.commands.length === 0 && plan.toolchain.kind === 'host') return { kind: 'notRequired', plan };
     try {
         const previousSuccess = input.purpose === 'setup' && input.successHomeDir !== undefined
             ? await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).matches({
                 serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id,
             }, plan.successBasis) : false;
         let consent: 'trusted' | 'thisTime' | 'completed';
-        if (input.effectDecision !== undefined) {
+        if (admittedConsent !== undefined) {
+            consent = admittedConsent;
+        } else if (input.effectDecision !== undefined) {
             const decision = input.effectDecision;
             if (decision.authority !== 'present_user') return { kind: 'pendingApproval', code: 'project_setup_consent_required', plan };
             const project = QualifiedProjectTrustProjectV1Schema.safeParse(decision.project);
             if (!project.success || project.data.serverId !== plan.project.serverId || project.data.projectId !== plan.project.projectId) return refuse('project_setup_consent_invalid');
             if (decision.reviewedEffectDigest !== plan.reviewedEffectDigest) return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };
+            consent = 'thisTime';
+        } else if (moveReview) {
             consent = 'thisTime';
         } else if (previousSuccess) {
             // Exact target completion skips setup effects; it is not a remembered
@@ -537,7 +576,7 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
             }
         }
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
-        if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
+        if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()
             || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
         return { kind: 'prepared', plan, consent, previousSuccess };
     } catch (error) {
