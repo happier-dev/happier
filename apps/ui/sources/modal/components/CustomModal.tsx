@@ -116,6 +116,12 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
     }, [dismissible, requestDismiss]);
 
     const setChrome = React.useCallback((nextChrome: CustomModalChromeConfig | null) => {
+        // Null retires the content's own override: the card returns to the chrome it was opened with (its title,
+        // size and presentation), so a step that cleans up on unmount never leaves the next step an untitled card.
+        if (nextChrome === null) {
+            setChromeOverride(undefined);
+            return;
+        }
         setChromeOverride((prevOverride) => {
             const prevEffective = prevOverride === undefined ? (config.chrome ?? null) : prevOverride;
             const nextEffective = mergeChromeConfig(prevEffective, nextChrome);

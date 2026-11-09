@@ -141,6 +141,15 @@ function domain(
 }
 
 /** The network boundary only; the shared controller, tab hooks and page composition run for real. */
+/** An Environment whose stored template runs one PostgreSQL database, the thing Backups copies. */
+function withDatabase(detail: ReturnType<typeof createDeploymentEnvironmentDetailV1>) {
+  return { ...detail, content: { ...detail.content, template: {
+    templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
+    definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+    services: ['postgres'], data: [{ engine: 'postgres' as const, version: '17', service: 'postgres', port: 5432 }],
+  } } } as ReturnType<typeof createDeploymentEnvironmentDetailV1>;
+}
+
 async function renderTab(
   tab: string,
   detail: Detail,
@@ -169,7 +178,10 @@ async function renderTab(
     pluginUiProjection?: Readonly<{ value: object; serverId: string; accountLifetime: unknown }>;
   }>;
   const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+  // Sheets the page opens (Backups setup) render through the canonical modal testkit host.
+  const { ModalProvider } = await import('@/modal');
   const page = (
+    <ModalProvider>
     <PresentedDetailNavigationProvider>
       <DeploymentEnvironmentDetail
         controller={controller}
@@ -185,6 +197,7 @@ async function renderTab(
         {...detailProps}
       />
     </PresentedDetailNavigationProvider>
+    </ModalProvider>
   );
   const screen = await renderScreen(pluginUiProjection ? (
     <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: pluginUiProjection.value as never,
@@ -1161,7 +1174,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
       serverIdentityId: 'srv_backup_setup', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
-    const detail = createDeploymentEnvironmentDetailV1();
+    const detail = withDatabase(createDeploymentEnvironmentDetailV1());
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
     const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
@@ -1211,9 +1224,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await vi.waitFor(() => expect(screen.findByTestId(`${id}.start`)).not.toBeNull());
       expect(screen.findByTestId(`${id}.store`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.start`);
-      const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+      // The optional transport settings open from More options inside the one setup sheet.
+      expect(await settle(`${id}.more`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.more`);
       const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
-      const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
+      const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
       const field = (name: string) => screen.findAllByType(HappierInputField).find((node) => node.props.field.path === name)!;
       expect(field('addressing')?.props.options.map((option: { value: string }) => option.value)).toEqual(['auto', 'dns', 'path']);
       await act(async () => {
@@ -1226,14 +1241,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await act(async () => { field('enabled').props.onChange(false); });
       await act(async () => { field('attempts').props.onChange(3); });
       await act(async () => { field('advanced').props.onChange({ label: 'QA' }); });
-      await act(async () => {
-        screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.service`)!.props.onDraftChange('postgres');
-      });
       // The descriptor marks the session token optional: it is labeled so and left out of the required bindings.
       expect(screen.findByTestId(`${id}.role.sessionToken`)).not.toBeNull();
       expect(screen.getTextContent()).toContain('Optional');
       await act(async () => { field('attempts').props.onChange('invalid integer'); });
-      expect(screen.findAllByType(SectionActionButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
+      expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
       expect(updateEnvironment).not.toHaveBeenCalled();
       await act(async () => { field('attempts').props.onChange(3); });
       await screen.pressByTestIdAsync(`${id}.save`);
@@ -1257,12 +1269,31 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
+  it('offers no backup setup for an Environment that runs no database and leads to Add a database instead', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'No database', serverUrl: 'https://no-database.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const detail = createDeploymentEnvironmentDetailV1();
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      serverId, environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.backups.setup';
+    try {
+      expect(await settle(`${id}.noDatabase`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.start`)).toBeNull();
+      const { Modal } = await import('@/modal');
+      vi.mocked(Modal.show).mockClear();
+      await screen.pressByTestIdAsync(`${id}.addDatabase`);
+      expect(vi.mocked(Modal.show).mock.calls.map(([config]) => config.chrome?.testID)).toEqual(['project-deployments.add.modal']);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
   it('leads to the Store for backup storage when no destination is available, in plain words', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'No destination', serverUrl: 'https://no-destination.test',
       accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
-    const detail = createDeploymentEnvironmentDetailV1();
+    const detail = withDatabase(createDeploymentEnvironmentDetailV1());
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { storage } = await import('@/sync/domains/state/storageStore');

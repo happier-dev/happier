@@ -34,6 +34,8 @@ export const SharedSavedSecretValueItem = React.memo(
   function SharedSavedSecretValueItem(
     props: Readonly<{
       testID: string;
+      /** The row's name where the surface around it knows what this value is (a database's password). Defaults to "Value". */
+      title?: string;
       scope: ServerAccountScope;
       entry: SavedSecretCatalogEntryV1;
       /** The row is on screen; leaving it (collapsing the parent) forgets a revealed value. */
@@ -144,7 +146,7 @@ export const SharedSavedSecretValueItem = React.memo(
     return (
       <Item
         testID={props.testID}
-        title={t('secretsSettings.valueTitle')}
+        title={props.title ?? t('secretsSettings.valueTitle')}
         subtitle={subtitle.node}
         subtitleTestID={subtitle.testID}
         subtitleLines={0}

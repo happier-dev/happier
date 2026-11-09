@@ -346,7 +346,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     }
 
     // A removed Environment keeps its address and record; the page says it is gone instead of drawing a live one.
-    if (detail.environment.deletedAtMs === -1) {
+    if (detail.environment.deletedAtMs !== undefined) {
       return (
         <ItemList testID="project-deployments.environment.removed">
           <PageHeader
@@ -538,7 +538,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         initialTargetKey: initialTargetKey ?? null,
         name: detail.content.name,
         environment: { id: detail.environment.id, revision: detail.environment.revision,
-          projectSourceId: detail.environment.projectSourceId },
+          projectSourceId: detail.environment.projectSourceId, controllerMachineId: detail.environment.controllerMachineId },
         ownerAccountId: props.accountId,
         lifetime,
         actions: platformLink,
@@ -554,6 +554,12 @@ export const DeploymentEnvironmentDetail = React.memo(
       ? retainedBackupFromSummary(backupSummary.result.value, deploymentSourceLabel(servingReceipt.content)) : null;
     const restoreAction = props.restore ?? null;
     const restoreOperands = retainedBackup ? deploymentRestoreOperands(detail, retainedBackup) : null;
+    // P10: the Add sheet opens over the Environment, in place; it never leaves for Store. Settings › Backups reuses it.
+    const openAddDatabase = lifetime ? () => {
+      showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
+        onNavigate: (destination) => openTab(destination.tab),
+        ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) });
+    } : null;
     const openRestore = restoreAction && retainedBackup && restoreOperands ? () => {
       showDeploymentRestoreSheet({
         name: detail.content.name,
@@ -869,7 +875,12 @@ export const DeploymentEnvironmentDetail = React.memo(
                     mode="info"
                   />
                 )}
-                <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id} compact={props.phone} />
+                {/* The Environment's own agent actions sit on the facts' edge; Deploy stays the page's one primary. */}
+                <View style={styles.agentActions}>
+                  <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
+                    controllerMachineId={detail.environment.controllerMachineId}
+                    compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} />
+                </View>
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
               {runtime && runtime.members.length > 1 ? (
@@ -926,10 +937,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               <DeploymentDataCard detail={detail} place={knownMachine(machineIds[0])}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
-                // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
-                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
-                  onNavigate: (destination) => openTab(destination.tab),
-                  ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) }); }} />
+                onAdd={() => { openAddDatabase?.(); }} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
@@ -1021,6 +1029,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               review={review}
               lifetime={props.lifetime ?? null}
               editing={environmentEditing}
+              onAddDatabase={openAddDatabase}
               onOpenMachineServices={(machineId) => router.push(machinePageHref({
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
               }) as never)}
@@ -1215,6 +1224,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s8,
   },
   factsLine: { color: theme.colors.text.secondary },
+  agentActions: { paddingHorizontal: theme.space.s16, alignItems: 'flex-start', gap: theme.space.s8 },
   mono: Typography.mono(),
   danger: { color: theme.colors.state.danger.textForeground },
   warning: { color: theme.colors.state.attention.textForeground },
@@ -1891,6 +1901,7 @@ function EnvironmentAdminLoginRow(props: Readonly<{ refId: string; scope: Server
   return entry ? (
     <SharedSavedSecretValueItem
       testID="project-deployments.environment.services.login"
+      title={t('projects.deployments.adminPassword')}
       scope={props.scope}
       entry={entry}
       active

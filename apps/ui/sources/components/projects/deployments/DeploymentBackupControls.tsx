@@ -28,6 +28,18 @@ import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInpu
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
+import type { CustomModalInjectedProps } from '@/modal/types';
+import { engineNames } from './DeploymentDataCard';
+import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -394,16 +406,28 @@ const STORE_BACKUP_QUERY = 'backup';
 const BACKUP_DESTINATION_SECTIONS = Object.freeze(['familiesById.backupDestinations']);
 const destinationFieldOptions = buildSessionActionFieldOptionsResolver({});
 
+type BackupDestination = NonNullable<NonNullable<ReturnType<typeof usePluginUiProjectionCurrentness>['pluginUiProjection']>['backupDestinationsById']>[string];
+
+/** One database the setup dumps: the template's data services, named the way Overview's Data section names them. */
+function setupDatabases(detail: DeploymentEnvironmentReadDetailV1) {
+  return detail.content.template?.data ?? [];
+}
+
 /**
- * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): an S3-transport destination the backup-destinations
- * family publishes (its identity, configuration fields and credential roles come from that descriptor), the database
- * service to dump and the keep counts, saved once as `environments.update` patch.backup (T2-DATA's configuration owner).
- * Credentials and the nightly schedule follow on the saved setup, through their own Actions.
+ * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): the row opens one sheet that asks where the copies
+ * go (the S3-transport destination the backup-destinations family publishes, its fields and credential roles from that
+ * descriptor) and how many to keep, saved once as `environments.update` patch.backup. Credentials and the nightly
+ * schedule follow on the saved setup, through their own Actions. No database means nothing to back up yet: the row says
+ * so and leads to Add a database rather than asking for a service.
  */
 export function DeploymentBackupSetup(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   serverId: string;
-  onSave: (configuration: DeploymentBackupConfigurationV1) => Promise<boolean>;
+  review: DeploymentReviewHandle;
+  save: (configuration: DeploymentBackupConfigurationV1) => ReturnType<ActionsFactory['updateEnvironment']>;
+  onChanged: () => void;
+  machineName: (machineId: string) => string;
+  onAddDatabase?: (() => void) | null;
   testID: string;
 }>) {
   const router = useRouter();
@@ -414,49 +438,22 @@ export function DeploymentBackupSetup(props: Readonly<{
   const destinations = projection.pluginUiProjection?.backupDestinationsById;
   const destination = React.useMemo(() => Object.values(destinations ?? {})
     .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
-  const [fields, setFields] = React.useState<Record<string, unknown> | null>(null);
-  const inputHints = React.useMemo(() => deriveActionInputHints(destination?.definition.configSchema, undefined), [destination]);
-  const [service, setService] = React.useState('');
-  const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
-  const [saving, setSaving] = React.useState(false);
   const id = `${props.testID}.setup`;
-  const retention = retentionFromDraft(keep);
-  const config = React.useMemo(() => {
-    if (!fields || !destination) return null;
-    const parsed = DeploymentBackupConfigurationV1Schema.shape.config.safeParse(
-      Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)));
-    return parsed.success && validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.definition, config: parsed.data })
-      ? parsed.data : null;
-  }, [fields, destination]);
-  const complete = projection.interactionEnabled && fields !== null && destination !== null && retention !== null && service.trim() !== ''
-    && config !== null;
-  const configFields = resolveEffectiveInputFields({ inputHints }, fields ?? {});
-  const start = () => {
-    if (!destination || !projection.interactionEnabled) return;
-    setFields(Object.fromEntries(configFields.filter(field => field.required && (field.widget === 'text' || field.widget === 'url'))
-      .map(field => [field.path, ''])));
-    setService(props.detail.content.template?.data?.[0]?.service ?? '');
-  };
-  const save = async () => {
-    if (!fields || !destination || !retention || !complete || !config || saving) return;
-    const selectedService = service.trim();
-    setSaving(true);
-    const saved = await props.onSave({
-      configRevision: 1, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
-      // The host captures the destination's current occurrence when it prepares the setup.
-      occurrenceId: destination.definition.id,
-      config,
-      // Required roles must be bound before backups run; optional roles stay out until the storage needs them.
-      credentialBindings: destination.definition.credentialRoles.filter((entry) => entry.optional !== true).map((entry) => entry.role)
-        .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
-      sources: [{ kind: 'dump', sourceId: selectedService, service: selectedService, consistency: 'logical' }],
-      ownership: { environmentId: props.detail.environment.id, prefix: typeof config.prefix === 'string' ? config.prefix : '' },
-      retention,
-    });
-    setSaving(false);
-    if (saved) setFields(null);
-  };
-  const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
+  const databases = setupDatabases(props.detail);
+  if (databases.length === 0) {
+    return (
+      <Item
+        testID={`${id}.noDatabase`}
+        title={t('projects.deployments.settingsSections.setupNoDatabaseTitle')}
+        subtitle={t('projects.deployments.settingsSections.setupNoDatabaseBody')}
+        mode="info"
+        rightElement={props.onAddDatabase ? (
+          <SectionActionButton testID={`${id}.addDatabase`} title={t('projects.deployments.dataAdd')}
+            onPress={props.onAddDatabase} />
+        ) : undefined}
+      />
+    );
+  }
   if (projection.phase === 'establishing') {
     return <Item testID={id} title={t('projects.deployments.loading')} mode="info" />;
   }
@@ -480,71 +477,146 @@ export function DeploymentBackupSetup(props: Readonly<{
       />
     );
   }
+  const target = deploymentDataTargetOperands(props.detail);
+  const open = () => {
+    if (!projection.interactionEnabled) return;
+    showDeploymentSheet({
+      component: DeploymentBackupSetupSheet,
+      props: { detail: props.detail, destination, databases, testID: id, review: props.review, save: props.save,
+        onChanged: props.onChanged,
+        machine: props.machineName(target?.machineId ?? props.detail.environment.controllerMachineId) },
+      title: t('projects.deployments.settingsSections.setupSheetTitle'),
+      testID: `${id}.modal`,
+    });
+  };
   return (
-    <>
-      <Item
-        testID={id}
-        title={t('projects.deployments.settingsSections.setupTitle')}
-        subtitle={fields && !complete ? t('projects.deployments.settingsSections.setupIncomplete')
-          : t('projects.deployments.settingsSections.setupBody')}
-        {...(fields ? { mode: 'info' as const } : { onPress: start })}
-        rightElement={fields ? (
-          <View style={styles.checks}>
-            <SectionActionButton testID={`${id}.cancel`} title={t('projects.deployments.settingsSections.setupCancel')}
-              disabled={saving} onPress={() => setFields(null)} />
-            <SectionActionButton testID={`${id}.save`} title={t('projects.deployments.settingsSections.setupSave')}
-              disabled={saving || !complete} onPress={save} />
-          </View>
-        ) : (
-          <SectionActionButton testID={`${id}.start`} title={t('projects.deployments.settingsSections.setupStart')}
-            icon="plus" disabled={!projection.interactionEnabled} onPress={start} />
-        )}
-      />
-      {fields ? <>
-        <ActionInputFields fields={configFields} input={fields} editable={!saving} busy={saving}
-          resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
-          onPatch={patch => setFields(current => current ? { ...current, ...patch } : current)} />
-        <FieldValueItem
-          testID={`${id}.service`}
-          fieldTestID={`${id}.service.input`}
-          title={t('projects.deployments.settingsSections.setupService')}
-          accessoryLayout="stacked"
-          autoCapitalize="none"
-          value={service}
-          allowEmpty
-          disabled={saving}
-          onDraftChange={setService}
-          onCommit={(text) => { setService(text); return text; }}
-        />
-      </> : null}
-      {fields && destination ? destination.definition.credentialRoles.map(({ role, optional }) => (
-        <Item
-          key={role}
-          testID={`${id}.role.${role}`}
-          title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
-          subtitle={optional
-            ? t('projects.deployments.settingsSections.setupRoleOptional')
-            : t('projects.deployments.settingsSections.setupRoleRequired')}
-          mode="info"
-        />
-      )) : null}
-      {fields ? (['daily', 'weekly'] as const).map((field) => (
-        <FieldValueItem
-          key={field}
-          testID={`${id}.keep.${field}`}
-          fieldTestID={`${id}.keep.${field}.input`}
-          title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)}
-          kind="integer"
-          allowEmpty
-          value={keep[field]}
-          stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
-          compactStepper
-          disabled={saving}
-          onDraftChange={setKeepField(field)}
-          onCommit={(text) => { setKeepField(field)(text); return text; }}
-        />
-      )) : null}
-    </>
+    <Item
+      testID={id}
+      title={t('projects.deployments.settingsSections.setupTitle')}
+      subtitle={t('projects.deployments.settingsSections.setupBody')}
+      onPress={open}
+      rightElement={
+        <SectionActionButton testID={`${id}.start`} title={t('projects.deployments.settingsSections.setupStart')}
+          icon="plus" disabled={!projection.interactionEnabled} onPress={open} />
+      }
+    />
+  );
+}
+
+/**
+ * The setup form as one composition (lab `database/destination`): where the copies go, the optional transport settings
+ * folded away, which database when there is more than one, and the keep counts. Nothing is written until Save.
+ */
+function DeploymentBackupSetupSheet(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  destination: BackupDestination;
+  databases: ReturnType<typeof setupDatabases>;
+  machine: string;
+  review: DeploymentReviewHandle;
+  save: (configuration: DeploymentBackupConfigurationV1) => ReturnType<ActionsFactory['updateEnvironment']>;
+  onChanged: () => void;
+  testID: string;
+}> & CustomModalInjectedProps) {
+  const { destination, databases, onClose, setChrome } = props;
+  const id = props.testID;
+  const inputHints = React.useMemo(() => deriveActionInputHints(destination.definition.configSchema, undefined), [destination]);
+  const [fields, setFields] = React.useState<Record<string, unknown>>(() => Object.fromEntries(
+    resolveEffectiveInputFields({ inputHints }, {}).filter(field => field.required && (field.widget === 'text' || field.widget === 'url'))
+      .map(field => [field.path, ''])));
+  const [service, setService] = React.useState(databases[0]?.service ?? '');
+  const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
+  const [more, setMore] = React.useState(false);
+  const save = useDeploymentChangePress({ request: (artifactId) => { onClose(); props.review.request(artifactId); } },
+    () => { onClose(); props.onChanged(); });
+  const retention = retentionFromDraft(keep);
+  const config = React.useMemo(() => {
+    const parsed = DeploymentBackupConfigurationV1Schema.shape.config.safeParse(
+      Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)));
+    return parsed.success && validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.definition, config: parsed.data })
+      ? parsed.data : null;
+  }, [fields, destination]);
+  const configFields = resolveEffectiveInputFields({ inputHints }, fields);
+  const required = configFields.filter(field => field.required);
+  const optional = configFields.filter(field => !field.required);
+  const complete = retention !== null && service !== '' && config !== null;
+  const busy = save.running;
+  const submit = () => {
+    if (!retention || !config || !complete || busy) return;
+    void save.press(() => props.save({
+      configRevision: 1, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
+      // The host captures the destination's current occurrence when it prepares the setup.
+      occurrenceId: destination.definition.id,
+      config,
+      // Required roles must be bound before backups run; optional roles stay out until the storage needs them.
+      credentialBindings: destination.definition.credentialRoles.filter((entry) => entry.optional !== true).map((entry) => entry.role)
+        .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
+      sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
+      ownership: { environmentId: props.detail.environment.id, prefix: typeof config.prefix === 'string' ? config.prefix : '' },
+      retention,
+    }));
+  };
+  const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
+  const footer = (
+    <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}>
+      <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
+        disabled={!complete || busy} loading={busy} onPress={submit} />
+    </ModalCardFooterActions>
+  );
+  React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
+  React.useEffect(() => () => setChrome?.(null), [setChrome]);
+  const refused = save.outcome?.kind === 'refused' ? save.outcome : null;
+  const inputs = (subset: typeof configFields) => (
+    <ActionInputFields fields={subset} input={fields} editable={!busy} busy={busy}
+      resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
+      onPatch={patch => setFields(current => ({ ...current, ...patch }))} />
+  );
+  return (
+    <ListPresentationProvider value="page" pageInsets="contained">
+      <View testID={id} style={deploymentSheetStyles.body}>
+        <Text style={deploymentSheetStyles.lead}>
+          {t('projects.deployments.settingsSections.setupSheetLead', { machine: props.machine })}
+        </Text>
+        {inputs(required)}
+        {more ? inputs(optional) : null}
+        <ItemGroup header="none">
+          {optional.length > 0 && !more ? (
+            <Item testID={`${id}.more`} title={t('projects.deployments.settingsSections.setupMoreOptions')}
+              subtitle={optional.map((field) => field.title).join(', ')} onPress={() => setMore(true)} />
+          ) : null}
+          {databases.length > 1 ? (
+            <FieldItem label={t('projects.deployments.settingsSections.setupService')}>
+              <ValueFieldSelect testID={`${id}.service`} label={t('projects.deployments.settingsSections.setupService')}
+                items={databases.map((database) => ({ id: database.service, title: `${engineNames[database.engine]}${database.version ? ` ${database.version}` : ''} · ${database.service}` }))}
+                selectedId={service} onSelect={setService} fill />
+            </FieldItem>
+          ) : null}
+          {(['daily', 'weekly'] as const).map((field) => (
+            <FieldValueItem
+              key={field}
+              testID={`${id}.keep.${field}`}
+              fieldTestID={`${id}.keep.${field}.input`}
+              title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)}
+              kind="integer"
+              allowEmpty
+              value={keep[field]}
+              stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+              compactStepper
+              disabled={busy}
+              onDraftChange={setKeepField(field)}
+              onCommit={(text) => { setKeepField(field)(text); return text; }}
+            />
+          ))}
+        </ItemGroup>
+        {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
+          reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : (
+            <Text style={deploymentSheetStyles.lead}>
+              {complete ? t('projects.deployments.settingsSections.setupSheetNext')
+                : t('projects.deployments.settingsSections.setupIncomplete')}
+            </Text>
+          )}
+        {setChrome ? null : footer}
+      </View>
+    </ListPresentationProvider>
   );
 }
 

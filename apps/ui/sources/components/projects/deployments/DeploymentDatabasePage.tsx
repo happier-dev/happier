@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
   DeploymentEnvironmentDestinationV1,
@@ -29,6 +29,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -47,7 +48,9 @@ import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetShe
 import { StoreRegistryItemPicker } from '@/components/store/StoreKindPage';
 import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
-import { useRegistryItem } from '@/registries/useRegistryItem';
+import { useStoreAppListing } from '@/components/store/useStoreAppListing';
+import { StoreMachineScopeContext } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { randomUUID } from '@/platform/randomUUID';
@@ -183,6 +186,7 @@ export function DeploymentDatabasePage(
     props.onBack,
   );
   const id = 'project-deployments.database';
+  const { theme } = useUnistyles();
 
   if (!detail) {
     return (
@@ -317,6 +321,10 @@ export function DeploymentDatabasePage(
   }) : null;
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
+  // The variables that carry this database to its Environment's apps, by the names its template declares.
+  const databaseVariableNames = database.kind === 'selfHosted'
+    ? Object.values(database.data.variables ?? {}).filter((name): name is string => !!name)
+    : [];
   // Connect to an app: another Environment reads this database through one of its shared exports.
   const controller = props.controller;
   const connectExports = database.kind === 'selfHosted'
@@ -355,8 +363,11 @@ export function DeploymentDatabasePage(
             }
             meta={meta}
             actionsPlacement="page"
-            {...(openConnect ? { primaryAction: { title: t('projects.deployments.databaseConnectTitle'),
+            // Connect leads the page only once another Environment can use it; until it is shared, Private network says how.
+            {...(openConnect && connectExports.length > 0 ? { primaryAction: { title: t('projects.deployments.databaseConnectTitle'),
               testID: `${id}.connect`, onPress: openConnect } } : {})}
+            {...(openConnect && connectExports.length === 0 ? { actions: <SectionActionButton testID={`${id}.connect`}
+              title={t('projects.deployments.databaseConnectTitle')} onPress={openConnect} /> } : {})}
           />
           {missed ? (
             <AttentionBanner
@@ -400,23 +411,34 @@ export function DeploymentDatabasePage(
               data={database.data}
               catalog={catalog}
               scope={lifetime?.scope ?? null}
+              {...(detail.environment.capabilities.manage
+                ? { onShare: () => props.onNavigate({ tab: 'settings', section: 'servers-build' }) } : {})}
             />
           ) : null}
 
-          <ItemGroup
-            testID={`${id}.usedBy`}
-            title={t('projects.deployments.databaseUsedByTitle')}
-            description={t('projects.deployments.databaseUsedByDescription')}
-          >
-            <Item
-              testID={`${id}.variables`}
-              title={t('projects.deployments.dataVariables')}
-              icon="list"
-              onPress={() =>
-                props.onNavigate({ tab: 'variables', section: null })
-              }
-            />
-          </ItemGroup>
+          {database.kind === 'selfHosted' && !backupConfiguration ? (
+            // Nothing copies this database yet: say what that means and lead to the one place that sets it up.
+            <ItemGroup
+              testID={`${id}.backups`}
+              title={t('projects.deployments.dataBackups')}
+              description={t('projects.deployments.databaseBackupsUnprotected')}
+            >
+              <Item
+                testID={`${id}.lastGood`}
+                title={t('projects.deployments.databaseLastBackup')}
+                mode="info"
+                detail={t('projects.deployments.databaseNoBackupYet')}
+              />
+              {detail.environment.capabilities.manage ? (
+                <Item
+                  testID={`${id}.backups.setUp`}
+                  title={t('projects.deployments.settingsSections.setupTitle')}
+                  icon={<Icon name="gear" size={18} color={theme.colors.text.secondary} />}
+                  onPress={() => props.onNavigate({ tab: 'settings', section: 'backups' })}
+                />
+              ) : null}
+            </ItemGroup>
+          ) : null}
 
           {database.kind === 'selfHosted' && backupConfiguration ? (
             <ItemGroup
@@ -449,7 +471,7 @@ export function DeploymentDatabasePage(
                 testID={`${id}.destination`}
                 title={t('projects.deployments.backupDestination')}
                 subtitle={t('projects.deployments.databaseDestinationDetail')}
-                icon="gear"
+                icon={<Icon name="gear" size={18} color={theme.colors.text.secondary} />}
                 onPress={() =>
                   props.onNavigate({ tab: 'settings', section: 'backups' })
                 }
@@ -516,6 +538,22 @@ export function DeploymentDatabasePage(
             </ItemGroup>
           ) : null}
 
+          <ItemGroup
+            testID={`${id}.usedBy`}
+            title={t('projects.deployments.tabVariables')}
+            description={t('projects.deployments.databaseUsedByDescription')}
+          >
+            <Item
+              testID={`${id}.variables`}
+              title={t('projects.deployments.dataVariables')}
+              icon={<Icon name="list" size={18} color={theme.colors.text.secondary} />}
+              {...(databaseVariableNames.length > 0 ? { subtitle: databaseVariableNames.join(', ') } : {})}
+              onPress={() =>
+                props.onNavigate({ tab: 'variables', section: null })
+              }
+            />
+          </ItemGroup>
+
           {database.kind === 'managed' ? (
             <ItemGroup
               testID={`${id}.provider`}
@@ -570,6 +608,8 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   const [chosen, setChosen] = React.useState<RegistryCatalogItemSummary | null>(null);
   const select = React.useCallback((item: RegistryCatalogItemSummary) => setChosen(item), []);
   const { detail } = props;
+  const machineScope = React.useMemo(() => ({ serverId: props.lifetime.scope.serverId,
+    machineId: detail.environment.controllerMachineId }), [props.lifetime.scope.serverId, detail.environment.controllerMachineId]);
   const link = detail.runtimeTargetLink;
   const member = link?.targetKind === 'ownServer' ? link.members[0] : undefined;
   const definition = detail.content.definition;
@@ -600,11 +640,13 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
     return (
       <View testID="project-deployments.add.choose" style={deploymentSheetStyles.body}>
         <StoreRegistryItemPicker presented initialFilters={props.catalogFilters} onSelect={select}
+          machine={machineScope}
           testID="project-deployments.add.picker" />
       </View>
     );
   }
   return (
+    <StoreMachineScopeContext.Provider value={machineScope}>
     <DeploymentAddReview item={chosen} detail={detail} lifetime={props.lifetime} review={props.review}
       machine={props.machineName(member.machineId)} onBack={back!} onClose={onClose} setChrome={setChrome}
       {...(props.onOpenRecovery ? { onOpenRecovery: props.onOpenRecovery } : {})}
@@ -613,6 +655,7 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
         environment: { kind: 'existing', environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
         target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: member.installationId },
         destination: { kind: 'stored', contentRevision: definition.contentRevision, composeDigest: definition.composeDigest } }} />
+    </StoreMachineScopeContext.Provider>
   );
 }
 
@@ -636,13 +679,10 @@ function DeploymentAddReview(props: Readonly<{
   onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
   setChrome: CustomModalInjectedProps['setChrome'];
 }>) {
-  const read = useRegistryItem({ kind: 'app', sourceId: props.item.sourceId, itemId: props.item.itemId,
-    ...(props.item.version ? { version: props.item.version } : {}) }, true);
-  const item = read.stale ? null : read.item;
-  const templateRef = item && item.payload.kind === 'app' && item.payload.state !== 'needs_review' && item.summary.version
-    ? { sourceId: item.summary.sourceId, itemId: item.summary.itemId, version: item.summary.version, ref: item.payload.ref } : null;
-  const needsReview = item?.payload.kind === 'app' && item.payload.state === 'needs_review';
-  const app = item?.payload.kind === 'app' && item.payload.state !== 'needs_review' ? item.payload.app : null;
+  const read = useStoreAppListing({ selection: props.item, lifetime: props.lifetime, demand: { presented: true } });
+  const templateRef = read.kind === 'ready' ? read.templateRef : null;
+  const needsReview = read.kind === 'needs_review';
+  const app = read.kind === 'ready' ? read.app : null;
   const operands = app ? { ...props.operands, ...buildCatalogAppTemplateBindings(app) } : null;
   const actions = React.useMemo(() => createDeploymentActions(props.lifetime, props.detail.environment.projectSourceId),
     [props.lifetime, props.detail.environment.projectSourceId]);
@@ -681,10 +721,12 @@ function DeploymentAddReview(props: Readonly<{
     });
   };
   const title = props.item.title;
-  const footer = added || partial ? (
+  // A lost confirmation means the Add may have landed: pressing it again would race the change it just made.
+  const outcomeUnknown = press.outcome?.kind === 'refused' && press.outcome.code === 'outcome_unknown';
+  const footer = added || partial || outcomeUnknown ? (
     <ModalCardFooterActions>
       <RoundButton testID="project-deployments.add.done" size="normal"
-        title={t(partial && props.onNavigate ? 'projects.deployments.openEnvironment' : 'common.done')}
+        title={t(partial && props.onNavigate ? 'projects.deployments.openEnvironment' : outcomeUnknown ? 'common.close' : 'common.done')}
         onPress={() => {
           props.onClose();
           if (partial) props.onNavigate?.({ tab: deploymentPartialRecoveryTab(partial) });
@@ -715,21 +757,26 @@ function DeploymentAddReview(props: Readonly<{
           </>
         ) : (
           <>
+            <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.addDeploysNow', { name: title, machine: props.machine })}</Text>
             <ItemGroup testID="project-deployments.add.facts" header="none">
               <Item testID="project-deployments.add.template" title={title} subtitle={props.item.description ?? undefined} mode="info" />
-              <Item testID="project-deployments.add.where" title={t('projects.deployments.machine')} detail={props.machine} mode="info" />
               {app && app.generatedSecrets.length > 0 ? (
                 <Item testID="project-deployments.add.secrets" mode="info"
                   title={t('capabilities.store.appPage.secretsTitle', { count: app.generatedSecrets.length })}
                   subtitle={t('capabilities.store.appPage.secretsBody')} />
               ) : null}
-              <Item testID="project-deployments.add.preflight" title={t('projects.deployments.addPreflight')} mode="info"
+              {read.kind === 'ready' ? <Item testID="project-deployments.add.preflight" title={t('projects.deployments.addPreflight')} mode="info"
                 detail={preflight.status === 'checking' ? t('projects.deployments.addChecking')
                   : preflight.status === 'failed' ? undefined
                     : preflight.shortOn.length === 0 ? t('projects.deployments.addRoomOk') : undefined}
                 {...(preflight.status === 'ready' && preflight.shortOn.length > 0 ? { subtitle: t(preflight.shortOn.includes('memoryBytes')
-                  ? 'projects.deployments.addShortMemory' : 'projects.deployments.addShortDisk') } : {})} />
+                  ? 'projects.deployments.addShortMemory' : 'projects.deployments.addShortDisk') } : {})} /> : null}
             </ItemGroup>
+            {read.kind === 'loading' ? <SurfaceStateCard testID="project-deployments.add.itemLoading" size="line" kind="loading"
+              title={t('common.loading')} /> : null}
+            {read.kind === 'unavailable' ? <SurfaceStateCard testID="project-deployments.add.itemUnavailable" size="line" kind="error"
+              title={t('projects.deployments.addRefused')} reason={describeRegistrySourceFailure(read.status)} diagnosticCode={read.error}
+              action={{ label: t('common.retry'), onPress: () => { void read.refresh(); } }} /> : null}
             {needsReview ? <SurfaceStateCard testID="project-deployments.add.needsReview" size="line" kind="unavailable"
               title={t('projects.deployments.addNeedsReview')} /> : null}
             {partial && press.outcome?.kind === 'refused' && press.outcome.failure ? (
@@ -825,7 +872,7 @@ function DeploymentConnectSheet(props: Readonly<{
           <SurfaceStateCard testID="project-deployments.connect.needsShare" size="line" kind="empty"
             title={t('projects.deployments.databaseConnectNeedsShare')}
             {...(props.onOpenSettings ? { action: {
-              label: t('projects.deployments.sectionServersBuild'), testID: 'project-deployments.connect.openSettings',
+              label: t('projects.deployments.databaseShare'), testID: 'project-deployments.connect.openSettings',
               onPress: () => { onClose(); props.onOpenSettings?.(); },
             } } : {})} />
         ) : (
@@ -873,6 +920,8 @@ function ConnectionSection(
     data: TemplateData;
     catalog: ReturnType<typeof useSavedSecretCatalogEntries>;
     scope: ServerAccountScopeLifetime['scope'] | null;
+    /** Opens Private sharing, where this Environment shares a service; absent where this viewer cannot manage it. */
+    onShare?: () => void;
   }>,
 ) {
   const { data, detail } = props;
@@ -917,13 +966,14 @@ function ConnectionSection(
         subtitle={
           shared ? undefined : t('projects.deployments.databaseNotSharedDetail')
         }
-        detail={
-          shared?.privateNetwork
-            ? t('projects.deployments.databasePrivateShared', {
-                network: shared.privateNetwork,
-              })
-            : t('projects.deployments.databaseNotShared')
-        }
+        {...(!shared && props.onShare ? {
+          rightElement: <SectionActionButton testID={`${props.testID}.private.share`}
+            title={t('projects.deployments.databaseShare')} onPress={props.onShare} />,
+        } : {
+          detail: shared?.privateNetwork
+            ? t('projects.deployments.databasePrivateShared', { network: shared.privateNetwork })
+            : t('projects.deployments.databaseNotShared'),
+        })}
       />
       <Item
         testID={`${props.testID}.public`}
@@ -953,6 +1003,7 @@ function ConnectionSection(
               <SharedSavedSecretValueItem
                 key={secret.name}
                 testID={`${props.testID}.secret.${secret.name}`}
+                title={secret.name === data.variables?.password ? t('projects.deployments.databasePassword') : t('projects.deployments.databaseUsername')}
                 scope={props.scope!}
                 entry={entry}
                 active

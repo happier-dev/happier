@@ -103,6 +103,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       review?: DeploymentReviewHandle;
       /** Opens a Machine's Services page (health checks); absent where no Home is known. */
       onOpenMachineServices?: ((machineId: string) => void) | null;
+      /** Opens Add a database for an Environment with nothing to back up yet. */
+      onAddDatabase?: (() => void) | null;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -466,6 +468,8 @@ type SectionProps = Readonly<{
   lifetime?: ServerAccountScopeLifetime | null;
   review?: DeploymentReviewHandle;
   editing?: DeploymentEnvironmentEditing | null;
+  /** Opens Add a database for an Environment with nothing to back up yet. */
+  onAddDatabase?: (() => void) | null;
   testID: string;
 }>;
 
@@ -550,24 +554,16 @@ function BackupRows(props: SectionProps) {
     : null, [editing, backup, retentionChange.press, props.detail.environment]);
   if (!backup && backups.result.status === 'empty' && editing && actions) {
     return (
-      <>
-        <DeploymentBackupSetup
-          detail={props.detail}
-          serverId={editing.serverId}
-          testID={props.testID}
-          onSave={(configuration) => retentionChange.press(() =>
-            editing.actions.updateEnvironment(props.detail.environment, { backup: configuration }))}
-        />
-        {retentionChange.outcome ? (
-          <DeployOutcomeBanner
-            outcome={retentionChange.outcome}
-            pending={retentionChange.outcome.kind === 'approval' && editing.review.pendingId === retentionChange.outcome.artifactId}
-            machine={props.machineName(props.detail.environment.controllerMachineId)}
-            onOpenReview={editing.review.open}
-            copy="setting"
-          />
-        ) : null}
-      </>
+      <DeploymentBackupSetup
+        detail={props.detail}
+        serverId={editing.serverId}
+        testID={props.testID}
+        review={editing.review}
+        onChanged={editing.onChanged}
+        machineName={props.machineName}
+        onAddDatabase={props.onAddDatabase}
+        save={(configuration) => editing.actions.updateEnvironment(props.detail.environment, { backup: configuration })}
+      />
     );
   }
   if (!backup || backups.result.status !== 'ready') {

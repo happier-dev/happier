@@ -24,7 +24,10 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
-import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
+import { DeploymentTemplateV1Schema, BUILT_IN_REGISTRY_SOURCES_V1, projectPluginRegistrySourceDeclarationV1,
+  REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
+import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierAppCatalog';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -410,6 +413,101 @@ async function renderDatabase(
 }
 
 describe('Environment → Data → Add (P10)', () => {
+  it.each(['ready', 'unreachable'] as const)('hydrates the selected database on its Environment controller and settles its read (%s)', async outcome => {
+    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
+    const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { createConnectedAccountDescriptorProjectionLoadingState } = await import('@/sync/domains/connectedServices/connectedAccountDescriptorProjection');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const serverIdentityId = `srv_database_controller_${outcome}`;
+    const serverId = await homes.addHome({ name: 'Controller database', serverUrl: `https://database-controller-${outcome}.test`,
+      serverIdentityId, accountId: 'account-owner', currentAccount: true });
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2, sources: [],
+      disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id) } }] });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
+      homes.answer(serverId, path, { body: await (await catalog.handle(path))!.json() });
+    }
+    const bundled: unknown = JSON.parse(await readFile(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+    if (!bundled || typeof bundled !== 'object' || !('apps' in bundled) || !Array.isArray(bundled.apps)) throw new Error('Expected bundled catalog');
+    const appCatalog = { schemaVersion: 1 as const, apps: bundled.apps };
+    const base = createDeploymentEnvironmentDetailV1();
+    const link = createDeploymentTargetLinkHeaderV1();
+    if (link.targetKind !== 'ownServer') throw new Error('Expected own server');
+    const member = link.members[0]!;
+    const detail = { ...base, environment: { ...base.environment, controllerMachineId: member.machineId }, runtimeTargetLink: link, memberVersions: {},
+      content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  app:\n    image: app:1\n', profiles: [], services: ['app'], primaryService: 'app' } } };
+    const pluginId = 'happier.deployment-templates';
+    const occurrenceId = 'database-templates:1';
+    const declaration = projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
+      id: 'apps', title: 'Data services', format: 'happier-catalog', kinds: ['app'], packageContent: { path: 'resources/registry/apps.json' },
+    } });
+    const sourceId = declaration.id;
+    const packageContent = { pluginId, pluginVersion: '1.0.0', occurrenceId, path: 'resources/registry/apps.json' };
+    const selectedItem = readHappierAppCatalogItemV1({ sourceId, catalog: appCatalog, fetchedAt: 1, itemId: 'postgresql', packageContent });
+    const arbitrary = createMachineFixture({ id: 'c71-arbitrary-own-machine', createdAt: 2, activeAt: Date.now() });
+    const controller = createMachineFixture({ id: member.machineId, createdAt: 1, activeAt: Date.now(), installationId: member.installationId });
+    const inventory = [arbitrary, controller];
+    const reads: string[] = [];
+    const previews: unknown[] = [];
+    const machines = { machineId: controller.id, installationId: member.installationId, tokenEpoch: 0,
+      additionalMachines: [{ machineId: arbitrary.id }] };
+    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.list', execute: () =>
+      REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse({ pages: [listHappierAppCatalogV1({ sourceId, catalog: appCatalog, fetchedAt: 1 })] }) });
+    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'registries.items.read',
+      failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+      execute: (_input, transport) => {
+        reads.push(transport.target.machineId);
+        return transport.target.machineId !== controller.id || outcome === 'unreachable'
+          ? { ok: false, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope' }
+          : REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse({ item: selectedItem });
+      } });
+    await answerExternalActionAccountForHome(homes, serverId, { ...machines, actionId: 'deployments.templates.instantiate', execute: raw => {
+      const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
+      previews.push(input);
+      return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'preview', review: { templateRef: input.templateRef,
+        profiles: [], services: ['postgresql'], bindings: [], generatedSecrets: [], domains: [], capacity: [] } });
+    } });
+    homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true, environment: detail.environment, targetLinks: [] } });
+    const account = await captureLazyActionAccountContext(serverId);
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope,
+      machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])), machineListByServerId: { [serverId]: inventory },
+      machineListStatusByServerId: { [serverId]: 'idle' } });
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const origins = inventory.map(machine => ({ serverIdentityId, materializationRef: { machineId: machine.id, pluginId, materializationId: 'database-templates' } }));
+    const pluginUiProjection = unionPluginUiProjections(inventory.map((machine, index) => ({ machineId: machine.id, serverId, phase: 'current' as const,
+      interactionEnabled: true, selectableExecutionOrigins: [origins[index]!], projection: normalizePluginInstalledUiDeclarations({}, undefined, {
+        id: pluginId, displayName: 'Data services', version: '1.0.0', enabled: true, occurrenceId, source: { kind: 'path', locator: '/plugins/database-templates' },
+      }, [{ ...declaration, occurrenceId, executionOrigin: origins[index]! }]) })), new Map([[pluginId, origins[1]!]])).pluginUiProjection;
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection, pluginBrowserProjection: null,
+      phase: 'current', interactionEnabled: true, machineId: controller.id, serverId, platform: 'web', accountLifetime: account.accountLifetime,
+      reloadConnectedAccountProjection: () => {}, connectedAccountProjectionState: createConnectedAccountDescriptorProjectionLoadingState('database-controller'),
+      clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} }}><ModalProvider /></AppShellPluginUiProjectionValueProvider>);
+    try {
+      await act(async () => showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'Controller',
+        catalogFilters: { source: { include: [sourceId], exclude: [] } }, lifetime: account.accountLifetime }));
+      const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
+      await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+      await screen.pressByTestIdAsync(rowId);
+      if (outcome === 'ready') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
+        expect(previews).toEqual([expect.objectContaining({ mode: 'preview', machineId: controller.id,
+          templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql' }) })]);
+      } else {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.itemUnavailable')).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain('Checking');
+        expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(true);
+        expect(previews).toEqual([]);
+      }
+      expect(new Set(reads)).toEqual(new Set([controller.id]));
+    } finally { await screen.unmount(); account.dispose(); }
+  });
+
   it.each(['applied', 'template_service_conflict', 'partial'] as const)('applies the reviewed database from the Add button through the confirmed Action front door (%s)', async outcome => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
@@ -776,7 +874,7 @@ describe('Environment → Data → Database page (P9)', () => {
   it('says an unprotected database is not backed up and leads to Set up backups', async () => {
     const view = await renderDatabase({ noBackup: true });
     try {
-      expect(await view.settle(`${page}.backups.lastGood`)).not.toBeNull();
+      expect(await view.settle(`${page}.lastGood`)).not.toBeNull();
       expect(view.screen.getTextContent()).toContain('None yet');
       await view.screen.pressByTestIdAsync(`${page}.backups.setUp`);
       expect(view.navigate).toHaveBeenCalledWith({ tab: 'settings', section: 'backups' });
