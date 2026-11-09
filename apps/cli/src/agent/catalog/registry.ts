@@ -3,7 +3,19 @@ import type {
   CatalogAgentLookupId,
 } from './types';
 import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import { resolveAgentIdFromSessionMetadata, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from './snapshot';
+
+/** Reads only the selected current declaration, including its absence of coverage. */
+export function resolveCatalogAgentRequestCoverageOptions(input: Readonly<{
+  agentId?: string | null;
+  metadata?: unknown;
+}>): AgentStateRequestCoverageOptions | undefined {
+  const agentId = input.agentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
+  return agentId
+    ? readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.richDefinition?.definition.requestCoverage
+    : undefined;
+}
 
 /**
  * The one catalog lookup failure contract. A caller must never substitute a
@@ -32,22 +44,22 @@ export const AGENTS: Record<string, AgentCatalogEntry> = new Proxy(AGENT_PROXY_T
     if (typeof property !== 'string') {
       return Reflect.get(_target, property);
     }
-    return readCatalogEntriesSnapshot()[property];
+    return readAgentCatalogSnapshot().catalogEntriesById[property];
   },
   has(_target, property) {
     if (typeof property !== 'string') {
       return Reflect.has(_target, property);
     }
-    return Object.prototype.hasOwnProperty.call(readCatalogEntriesSnapshot(), property);
+    return Object.prototype.hasOwnProperty.call(readAgentCatalogSnapshot().catalogEntriesById, property);
   },
   ownKeys() {
-    return Reflect.ownKeys(readCatalogEntriesSnapshot());
+    return Reflect.ownKeys(readAgentCatalogSnapshot().catalogEntriesById);
   },
   getOwnPropertyDescriptor(_target, property) {
     if (typeof property !== 'string') {
       return Reflect.getOwnPropertyDescriptor(_target, property);
     }
-    const value = readCatalogEntriesSnapshot()[property];
+    const value = readAgentCatalogSnapshot().catalogEntriesById[property];
     if (!value) {
       return undefined;
     }
@@ -69,7 +81,7 @@ const NO_DECLARED_CONNECTED_ACCOUNT_SERVICE_KEYS: readonly ConnectedAccountServi
  * that lease's entry directly.
  */
 export function findCatalogEntry(agentId: string): AgentCatalogEntry | null {
-  return AGENTS[agentId] ?? null;
+  return (readAgentCatalogSnapshot().catalogEntriesById[agentId] as AgentCatalogEntry | undefined) ?? null;
 }
 
 /**
