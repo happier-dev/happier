@@ -5,6 +5,7 @@ import { isMachineRequestReachabilityFailure } from '@/sync/domains/machines/rea
 import { isMachineStoppedAnsweringError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { subscribeActionOperationByRequestId } from './subscribeActionOperationByRequestId';
+import { isActionOperationTerminal } from './actionOperationStore';
 
 /** Follow an issued request through publication/reconnect, then join its existing finite runner. */
 export function observeActionOperationByRequestId(input: Readonly<{
@@ -19,6 +20,7 @@ export function observeActionOperationByRequestId(input: Readonly<{
         let reading = false;
         let changedWhileReading = false;
         let retained: ActionOperationSnapshotV1 | null = null;
+        const readController = new AbortController();
         const releases: Array<() => void> = [];
         const matches = (operation: ActionOperationSnapshotV1) => operation.actionId === input.requestIdentity.actionId
             && operation.requestId === input.requestIdentity.requestId && operation.scope.accountId === input.accountId
@@ -27,15 +29,23 @@ export function observeActionOperationByRequestId(input: Readonly<{
             if (finished) return;
             finished = true;
             releases.splice(0).forEach(release => release());
+            readController.abort();
             resolve(operation);
         };
         const read = async () => {
             if (finished) return;
+            // Reconciled pushes can settle an outstanding terminal read whose reply
+            // was lost. List summaries omit result and still need the full record.
+            if (retained && isActionOperationTerminal(retained.state) && retained.result !== undefined) {
+                finish(retained);
+                return;
+            }
             if (reading) { changedWhileReading = true; return; }
             reading = true;
             try {
                 if (!retained) {
-                    const page = await listActionOperations({ ...input, request: { requestIdentity: input.requestIdentity } });
+                    const page = await listActionOperations({ ...input, signal: readController.signal,
+                        request: { requestIdentity: input.requestIdentity } });
                     if (finished) return;
                     // A push may have located this request while the list was in flight.
                     retained ??= page.items.find(matches) ?? null;
@@ -44,7 +54,8 @@ export function observeActionOperationByRequestId(input: Readonly<{
                 }
                 const selected = retained;
                 if (!selected) return; // Publication or reconnect wakes this same observer; absence is not failure.
-                const read = await getActionOperation({ ...input, operationId: selected.operationId, waitForTerminal: true });
+                const read = await getActionOperation({ ...input, signal: readController.signal,
+                    operationId: selected.operationId, waitForTerminal: true });
                 if (finished) return;
                 if (read.kind === 'not_found') {
                     if (retained?.revision === selected.revision) retained = null;
@@ -68,12 +79,15 @@ export function observeActionOperationByRequestId(input: Readonly<{
         input.signal?.addEventListener('abort', abort, { once: true });
         releases.push(() => input.signal?.removeEventListener('abort', abort));
         if (input.signal?.aborted) { finish(null); return; }
-        releases.push(subscribeActionOperationByRequestId({ ...input, requestId: input.requestIdentity.requestId,
+        const releaseObservation = subscribeActionOperationByRequestId({ ...input, requestId: input.requestIdentity.requestId,
             onUpdate: operation => {
                 if (!matches(operation)) return;
                 retained = operation;
                 void read();
-            } }));
+            } });
+        // Subscription immediately publishes a retained result when one exists.
+        if (finished) { releaseObservation(); return; }
+        releases.push(releaseObservation);
         releases.push(subscribeMachineRpcRecovery({ ...input, expectedAccountId: input.accountId }, () => { void read(); }));
         void read();
     });

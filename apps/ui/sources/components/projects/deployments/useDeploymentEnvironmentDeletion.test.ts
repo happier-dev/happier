@@ -21,7 +21,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ renderCustomModals: true }).module);
@@ -341,7 +341,72 @@ describe('Environment deletion client over the Action owner', () => {
         actionOperationStore.reset();
     });
 
-    it.each(['succeeded', 'failed', 'unrelated'] as const)('settles a lost teardown response from its exact retained operation (%s)', async settlement => {
+    it('ends the removed Environment spinner from its settled record while the terminal-read reply is lost', async () => {
+        const f = await setup();
+        const machineId = f.detail.environment.controllerMachineId!;
+        let operationRequestId: string | undefined;
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: raw => {
+                const input = DeploymentTeardownActionInputV1Schema.parse(raw);
+                operationRequestId = computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+                    input.serverId, input.environmentId, input.requestKey,
+                ]);
+                throw new TypeError('net::ERR_NETWORK_CHANGED');
+            } });
+        const reply = createDeferred<unknown>();
+        let readSignal: AbortSignal | undefined;
+        let retained: ActionOperationSnapshotV1 | undefined;
+        operationRpc.mockImplementation((params: { method: string; signal?: AbortSignal }) => {
+            if (params.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
+                retained = { version: 1, operationId: 'removed-environment', revision: 1,
+                    actionId: 'deployments.teardown', requestId: operationRequestId, state: 'running',
+                    scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
+                    createdAt: 1, startedAt: 2, cancellation: 'supported' };
+                return Promise.resolve({ items: [retained], nextCursor: null });
+            }
+            expect(params.method).toBe(ACTION_OPERATION_RPC_METHODS_V2.get);
+            readSignal = params.signal;
+            return reply.promise;
+        });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        let completed = false;
+        const caller = new AbortController();
+        const pending = hook.getCurrent().stopAndRemove(null, { signal: caller.signal }).then(result => { completed = true; return result; });
+        let settled: ActionOperationSnapshotV1 | undefined;
+        try {
+            await waitForHomeGovernance(() => expect(readSignal).toBeDefined());
+            expect(hook.getCurrent().busy).toBe(true);
+            vi.useFakeTimers();
+            await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
+            expect(completed).toBe(false);
+            settled = { ...retained!, revision: 2, state: 'succeeded', settledAt: 3, result: {
+                ok: true, environmentId: f.detail.environment.id, revision: f.detail.environment.revision + 3,
+                deploymentId: 'teardown-1', deploymentRevision: 1, state: 'succeeded', environmentRemoved: true } };
+            await act(async () => {
+                await consumeActionOperationSnapshotPush({ accountId: 'owner', accountEncryptionMode: 'plain',
+                    sourceServerId: resolveServerProfileScopeIdForIdentifier(f.serverId),
+                    update: { type: 'action-operation-updated', machineId, content: { t: 'plain', v: settled! } },
+                    readSnapshot: async () => ({ kind: 'found', operation: settled! }) });
+                await flushHookEffects();
+            });
+            expect(completed).toBe(true);
+            expect(await pending).toEqual({ kind: 'deleted', detached: false });
+            expect(hook.getCurrent().busy).toBe(false);
+            expect(readSignal?.aborted).toBe(true);
+            expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+            caller.abort();
+            reply.resolve({ kind: 'found', operation: settled ?? retained });
+            await pending;
+            actionOperationStore.reset();
+        }
+    });
+
+    it.each(['succeeded', 'succeeded-summary', 'failed', 'unrelated'] as const)('settles a lost teardown response from its exact retained operation (%s)', async settlement => {
         const f = await setup();
         const machineId = f.detail.environment.controllerMachineId!;
         let requestId: string | undefined;
@@ -363,7 +428,9 @@ describe('Environment deletion client over the Action owner', () => {
             calls.push(params.method);
             const retained: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-teardown', revision: 1,
                 actionId: 'deployments.teardown', requestId: settlement === 'unrelated' ? 'another-click' : operationRequestId,
-                state: 'running', scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
+                state: settlement === 'succeeded-summary' ? 'succeeded' : 'running',
+                ...(settlement === 'succeeded-summary' ? { settledAt: 3 } : {}),
+                scope: { accountId: 'owner', machineId }, title: 'Stop and remove',
                 createdAt: 1, startedAt: 2, cancellation: 'supported' };
             if (params.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
                 expect(requestId).not.toBe(operationRequestId);
@@ -382,7 +449,7 @@ describe('Environment deletion client over the Action owner', () => {
             lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
             controller: null, demand: shown }));
         await act(async () => {
-            expect(await hook.getCurrent().stopAndRemove(null)).toMatchObject(settlement === 'succeeded'
+            expect(await hook.getCurrent().stopAndRemove(null)).toMatchObject(settlement === 'succeeded' || settlement === 'succeeded-summary'
                 ? { kind: 'deleted', detached: false }
                 : { kind: 'refused', code: settlement === 'failed' ? 'deployment_conflict' : 'outcome_unknown' });
         });
