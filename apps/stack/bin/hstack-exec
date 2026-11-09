@@ -256,6 +256,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
   heavyweight_admission_root=
   heavyweight_admission_class=validation
   heavyweight_admission_machine=local
+  heavyweight_admission_requested_cpu=0
   heavyweight_no_wait=0
   heavyweight_exec_admitted=0
   heavyweight_require_inherited=0
@@ -266,6 +267,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
       --class=*) heavyweight_admission_class=${1#--class=} ;;
       --machine=*) heavyweight_admission_machine=${1#--machine=} ;;
+      --cpu-cores=*) heavyweight_admission_requested_cpu=${1#--cpu-cores=} ;;
       --failure-id=*) heavyweight_failure_id=${1#--failure-id=} ;;
       --workspace-locks=*) heavyweight_workspace_locks=${1#--workspace-locks=} ;;
       --required-tools=*)
@@ -2184,7 +2186,7 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$admission_failure_id") --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id") --"
   if [ -n "$remote_workspace_lock_argument" ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi

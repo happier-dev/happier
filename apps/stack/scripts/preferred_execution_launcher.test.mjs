@@ -858,6 +858,9 @@ test('Linux local and remote worker allowances use admitted CPU demand and prese
   // Retain one admitted owner while leaving capacity for the payload's own slot.
   const fixture = await runtimeAdmissionTransportFixture(t, { availableKiB: 2 * resolveHeavyweightMemoryFloorKiB('validation') });
   const worker = fixture.workers.starved;
+  const held = await worker.brokerStatus();
+  assert.deepEqual([held.totalCpuCores, held.reservedCpuCores, held.unreservedCpuCores], [8, 1, 7]);
+  const focused = args => ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=focused-validation', '--machine=fixture', '--', ...args];
   await executable(join(fixture.binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
   await executable(join(fixture.binDir, 'sysctl'), '#!/bin/sh\nprintf "{ 999 999 999 }\\n"\n');
   await executable(join(fixture.binDir, 'systemctl'), '#!/bin/sh\nexit 1\n');
@@ -874,16 +877,16 @@ test('Linux local and remote worker allowances use admitted CPU demand and prese
   // One held slot leaves seven declared cores. An explicit worker request
   // reserves that demand once and supplies the default payload governor.
   for (const invoke of [local, remote]) {
-    const vitest = invoke(['vitest', 'run', 'fixture.test.ts'], { GOMAXPROCS: '7' });
+    const vitest = invoke(focused(['vitest', 'run', 'fixture.test.ts']), { GOMAXPROCS: '7' });
     assert.equal(vitest.status, 0, vitest.stderr);
     assert.match(vitest.stdout, /workers:7 go:7/);
-    const explicit = invoke(['vitest', 'run', 'fixture.test.ts', '--maxWorkers=6']);
+    const explicit = invoke(focused(['vitest', 'run', 'fixture.test.ts', '--maxWorkers=6']));
     assert.equal(explicit.status, 0, explicit.stderr);
-    assert.match(explicit.stdout, /workers:unset/);
+    assert.match(explicit.stdout, /workers:6 go:6/);
     assert.match(explicit.stdout, /args:run fixture.test.ts --maxWorkers=6/);
-    const explicitEnv = invoke(['vitest', 'run', 'fixture.test.ts'], { VITEST_MAX_THREADS: '3' });
+    const explicitEnv = invoke(focused(['vitest', 'run', 'fixture.test.ts']), { VITEST_MAX_THREADS: '3' });
     assert.equal(explicitEnv.status, 0, explicitEnv.stderr);
-    assert.match(explicitEnv.stdout, /workers:unset/);
+    assert.match(explicitEnv.stdout, /workers:3 go:3/);
     // Cold, warm and explicit search all reach the same real worker adapter.
     for (const args of [['rg', 'needle', 'sources'], ['rg', 'needle', 'sources'], ['rg', '--threads=3', 'needle']]) {
       const search = invoke(args);
@@ -3763,7 +3766,9 @@ test('explicit local execution uses admitted heavy CPU demand and retains light 
       availableKiB: 72000000 - resolveHeavyweightMemoryFloorKiB('validation'),
     });
   }
-  const result = spawnSync('/bin/sh', [launcher, '--local', '--', 'vitest', 'run', 'fixture.test.ts'], {
+  const held = await native.brokerStatus();
+  assert.deepEqual([held.totalCpuCores, held.reservedCpuCores, held.unreservedCpuCores], [8, 3, 5]);
+  const result = spawnSync('/bin/sh', [launcher, '--local', '--', 'apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=focused-validation', '--machine=fixture', '--', 'vitest', 'run', 'fixture.test.ts'], {
     cwd: repoRoot,
     env: {
       ...executionNeutralEnv,

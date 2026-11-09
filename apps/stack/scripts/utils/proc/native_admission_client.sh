@@ -111,6 +111,10 @@ run_heavyweight_admission() {
   ensure_native_job_cpu_budget || exit 1
   heavyweight_prepare_export_request "$@"
   heavyweight_requested_cpu=$(heavyweight_requested_cpu_cores "$@") || exit 1
+  case "${heavyweight_admission_requested_cpu-0}" in
+    ''|0) ;;
+    *) heavyweight_include_requested_cpu "$heavyweight_admission_requested_cpu" ;;
+  esac
   case "$(uname -s 2>/dev/null || true)" in
     Linux) ;;
     *)
