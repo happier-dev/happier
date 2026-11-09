@@ -292,8 +292,11 @@ it.each([['selection', 1], ['admission', 2]] as const)('preserves a transient Ho
       // The selected policy snapshot was admitted before the binding changed.
       expect(await start()).toMatchObject({ status: 'success', phase: 'running' });
       const beforeNextAdmission = resolvedAccounts.length;
-      expect(await start()).toMatchObject({ status: 'success', phase: 'running' });
+      // A later request must not reuse the retained gateway's old bindings.
+      expect(await start()).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
       expect(resolvedAccounts.slice(beforeNextAdmission)).toContain('other-account');
+      // The owner retired the mismatched claim; an explicit retry can recover.
+      expect(await start()).toMatchObject({ status: 'success', phase: 'running' });
     } finally { await fixture.cleanup(); }
   });
 });
