@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useIsFocused } from '@react-navigation/native';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { createWorkBoardV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -9,6 +9,10 @@ import { normalizeWidgetSizeForSurfaceV1, type WidgetInstanceV1 } from '@happier
 import { HappierSurfaceStateFrame } from '@happier-dev/plugin-ui/presentation';
 
 import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { DetailsPaneHost, type DetailsPaneContent } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { ITEM_DETAILS_PREFERRED_WIDTH_PX } from '@/components/appShell/panes/details/DetailsPaneSlot';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
+import { InboxItemDetail } from '@/components/inbox/detail/InboxItemDetail';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { readWidgetDescriptor, resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
@@ -16,7 +20,7 @@ import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWi
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { createInboxItemRoute } from '@/components/inbox/inboxItemFocus';
+import { createInboxItemRoute, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -45,7 +49,7 @@ import { useWorkBoardEntityBinding } from './model/workBoardEntityBinding';
 import { widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
 import { useBoardLiveCards } from './model/useBoardContent';
 import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
-import { resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardCardOpenTarget';
+import { readBoardCardDetailFocus, resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
 import { BoardReadState, useBoardIndexSaidByColumn } from './BoardReadState';
@@ -98,12 +102,13 @@ export const FilteredBoardScreen = React.memo(function FilteredBoardScreen(props
     const board = React.useMemo(() => ({ ...createWorkBoardV1({ id: 'filtered-view', name: t('boards.title') }),
         mode: 'by_status' as const, source: { picked: [], filter: props.filter } }), [props.filter]);
     const { cards, membership } = useBoardLiveCards(board, { enabled: routeFocused });
-    const onOpen = useOpenBoardCard();
+    const opener = useOpenBoardCard();
+    const onOpen = opener.open;
     useLoadPickedRuns(cards);
-    return <BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}><View style={styles.root} testID="board-filter-view">
+    return <BoardCardDetailsHost opener={opener}><BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}><View style={styles.root} testID="board-filter-view">
         <PageHeader title={board.name} alwaysShowTitle columnWidth="pane" />
         <BoardByStatus cards={cards} onOpen={onOpen} onAction={onOpen} stacked={phone} active={routeFocused} />
-    </View></BoardTaskRefreshContext.Provider>;
+    </View></BoardTaskRefreshContext.Provider></BoardCardDetailsHost>;
 });
 
 /**
@@ -143,13 +148,33 @@ const MissingBoard = React.memo(function MissingBoard(props: Readonly<{ boardId:
     );
 });
 
-function useOpenBoardCard(): (card: BoardCard, action?: BoardCardAction) => void {
+type BoardCardOpener = Readonly<{
+    open: (card: BoardCard, action?: BoardCardAction) => void;
+    details: DetailsPaneContent | null;
+    close: () => void;
+}>;
+
+/**
+ * The one way a card opens, for every kind and the task card's Session button. Where a pane can stand
+ * beside the page, a card with a detail opens over the board and the route does not change; on a phone,
+ * or for a kind with no detail, it goes to the item's own page.
+ */
+function useOpenBoardCard(): BoardCardOpener {
     const router = useRouter();
     const destinations = useCompactAppDestinations();
     const inboxAvailable = destinations.some((destination) => destination.id === 'inbox');
-    return React.useCallback((card: BoardCard, action?: BoardCardAction) => {
+    const inPlace = useDetailsPaneAvailable();
+    const [opened, setOpened] = React.useState<Readonly<{ focus: InboxItemFocus; inboxWork: boolean }> | null>(null);
+    const close = React.useCallback(() => setOpened(null), []);
+    const open = React.useCallback((card: BoardCard, action?: BoardCardAction) => {
         const target = resolveBoardCardOpenTarget(card, { inboxAvailable, action });
         if (!target) return;
+        const focus = inPlace ? readBoardCardDetailFocus(target) : null;
+        if (focus) {
+            setOpened({ focus, inboxWork: target.kind === 'inbox' });
+            return;
+        }
+        setOpened(null);
         if (target.kind === 'inbox') {
             // The Inbox owns needs-you work; the board never answers it. It opens on this card's item.
             router.push(createInboxItemRoute(target.item) as never);
@@ -179,8 +204,26 @@ function useOpenBoardCard(): (card: BoardCard, action?: BoardCardAction) => void
                 router.push(machinePageHref({ door: 'rail', target: { machineId: id, serverId } }) as never);
                 return;
         }
-    }, [inboxAvailable, router]);
+    }, [inPlace, inboxAvailable, router]);
+    const details = React.useMemo<DetailsPaneContent | null>(() => opened === null ? null : {
+        overPage: true,
+        accessibilityLabel: t('ui.modalPane.details'),
+        content: <InboxItemDetail focus={opened.focus} resolvedReceipt={opened.inboxWork} onClose={close} />,
+    }, [close, opened]);
+    return React.useMemo(() => ({ open, details, close }), [close, details, open]);
 }
+
+/**
+ * The board and the card opened over it. Nothing dims the board: the next card is one press away and swaps
+ * the detail in place, while a press on the board itself (never on a card, which takes its own press) closes it.
+ */
+const BoardCardDetailsHost = React.memo(function BoardCardDetailsHost(props: Readonly<{ opener: BoardCardOpener; children: React.ReactNode }>) {
+    const { details, close } = props.opener;
+    return <DetailsPaneHost testID="board-card-details" details={details} onCloseDetails={close}
+        detailsPreferredWidthPx={ITEM_DETAILS_PREFERRED_WIDTH_PX}
+        main={<Pressable testID="board-open-dismiss" accessible={false} focusable={false} disabled={details === null}
+            onPress={close} style={styles.dismiss}>{props.children}</Pressable>} />;
+});
 
 /** Picked runs that no window has loaded are read once each, by the exact-run owner. */
 function useLoadPickedRuns(cards: readonly BoardCard[]): void {
@@ -219,7 +262,8 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     /** The card just added with ⌘↵ "Add and place": focused on Canvas so arrows or a drag place it. */
     const [placingKey, setPlacingKey] = React.useState<string | null>(null);
     const clearPlacing = React.useCallback(() => setPlacingKey(null), []);
-    const onOpen = useOpenBoardCard();
+    const opener = useOpenBoardCard();
+    const onOpen = opener.open;
     useLoadPickedRuns(cards);
 
     const onBoardKeys = React.useMemo(() => new Set(membership.members.map((member) => member.key)), [membership.members]);
@@ -331,6 +375,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const failure = resolveBoardSaveFailure(saveState, board.id);
 
     return (
+        <BoardCardDetailsHost opener={opener}>
         <BoardTaskRefreshContext.Provider value={membership.refreshTaskItems}>
         <View ref={rootRef} collapsable={false} testID={`board:${board.id}`} style={styles.root} onLayout={() => {
             void measureWindowBounds(toTreeDropMeasurableRef(root.current)).then(bounds => { nativeBounds.current = bounds; binding?.runtime.refresh(); });
@@ -459,6 +504,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             </PopoverScope>
         </View>
         </BoardTaskRefreshContext.Provider>
+        </BoardCardDetailsHost>
     );
 });
 
@@ -502,6 +548,12 @@ const styles = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
+    },
+    // Only a real press target shows the hand; the whole board is not one.
+    dismiss: {
+        flex: 1,
+        minHeight: 0,
+        ...(Platform.OS === 'web' ? { cursor: 'auto' as const } : {}),
     },
     body: {
         flex: 1,

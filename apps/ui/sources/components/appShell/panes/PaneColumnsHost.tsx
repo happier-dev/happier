@@ -58,6 +58,8 @@ export type PaneColumnsHostProps = Readonly<{
     detailsOpen?: boolean;
     /** A destination's selected content survives losing the optional side-panel presentation. */
     destinationOwnsDetails?: boolean;
+    /** The open details float over a page that keeps its width, position and presses. */
+    detailsOverPage?: boolean;
     bottomOpen?: boolean;
     /** The open neighbours take the retained main column's place. */
     mainHidden?: boolean;
@@ -253,6 +255,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         destinationOwnsDetails: props.destinationOwnsDetails,
         rightPreferOverlayWhenPreferredDoesNotFit: rightPrefersOverlay,
         detailsPreferOverlayWhenPreferredDoesNotFit: detailsPrefersOverlay,
+        detailsOverPage: props.detailsOverPage,
         detailsOpenedFrom: props.detailsOpenedFrom ?? null,
         mainMinPx,
         mainMinPxThreePane,
@@ -632,6 +635,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 // A drawer beside the docked side column only quiets main (lab FB1), however Details was opened
                 // (the side list, a cold file link); a drawer alone over main shades it.
                 detailsScrim={!mirrored && resolvedLayout.right === 'docked' ? 'soft' : 'standard'}
+                detailsOverPage={props.detailsOverPage}
                 layout={resolvedLayout}
                 rightDockWidthPx={effectivePaneSizing.rightWidthPx}
                 detailsDockWidthPx={effectivePaneSizing.detailsWidthPx}

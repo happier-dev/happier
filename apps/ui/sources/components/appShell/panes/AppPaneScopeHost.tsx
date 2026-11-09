@@ -75,6 +75,8 @@ export type AppPaneDestinationDetails = Readonly<{
      * beside another open side pane, that pane folds to the rail while the companion shows.
      */
     companion?: true;
+    /** Opened over the page rather than beside it: the page stays where it is and stays live underneath. */
+    overPage?: true;
 }>;
 
 export type AppPaneScopeHostProps = Readonly<{
@@ -760,7 +762,8 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             rightOpen={presentedRightOpen}
             rightPlacement={rightOpen ? rightPlacement : 'side'}
             detailsOpen={effectiveDetailsOpen}
-            destinationOwnsDetails={destinationOwnsDetails && destinationDetails?.companion !== true}
+            destinationOwnsDetails={destinationOwnsDetails && destinationDetails?.companion !== true && destinationDetails?.overPage !== true}
+            detailsOverPage={destinationDetails?.overPage}
             // A companion docks beside the page it was opened from; a side pane that no longer fits folds to the rail.
             detailsOpenedFrom={destinationDetails?.companion === true ? 'main' : detailsOpenedFrom}
             bottomOpen={bottomOpen}

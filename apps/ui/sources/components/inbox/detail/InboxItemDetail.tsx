@@ -57,6 +57,8 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
   props: Readonly<{
     focus: InboxItemFocus;
     onClose: () => void;
+    /** False when the item is not Inbox work here (a Board's ordinary card): nothing was answered to report. */
+    resolvedReceipt?: boolean;
   }>,
 ) {
   const router = useRouter();
@@ -70,7 +72,7 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
     sessionScopes: model?.source.audienceScopes });
   // An answered attention item may still be an unread Update. The receipt describes
   // clearing this view and always requires the source owner's positive disposition.
-  const resolved = positivelyResolved && selected?.view !== view;
+  const resolved = props.resolvedReceipt !== false && positivelyResolved && selected?.view !== view;
   const next = resolved && model ? moveInboxItem(selectInboxItemsForView(model.items, view), selected?.key ?? null, 1) : null;
   const scopeKey = `inbox-detail:${React.useId()}`;
   const notice = focus.kind === 'notice'

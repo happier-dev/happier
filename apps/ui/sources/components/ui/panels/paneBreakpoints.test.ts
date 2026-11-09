@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { resolvePaneLayout } from './paneBreakpoints';
 
 describe('resolvePaneLayout', () => {
+    it('never docks an item opened over its page, so the page keeps its width at every size', () => {
+        const input = { deviceType: 'tablet' as const, multiPaneEnabled: true, detailsOpen: true, detailsOverPage: true,
+            detailsPreferredPx: 750, rightPreferredPx: 380 };
+        expect(resolvePaneLayout({ ...input, containerWidthPx: 1440, rightOpen: false }))
+            .toMatchObject({ kind: 'overlayStack', main: 'docked', right: 'hidden', details: 'overlay' });
+        // The side column beside the page stays; only the page is covered.
+        expect(resolvePaneLayout({ ...input, containerWidthPx: 1440, rightOpen: true }))
+            .toMatchObject({ kind: 'twoPane', main: 'docked', right: 'docked', details: 'overlay' });
+        expect(resolvePaneLayout({ ...input, containerWidthPx: 600, rightOpen: true }))
+            .toMatchObject({ kind: 'overlayStack', right: 'hidden', details: 'overlay' });
+    });
     it('keeps the editor permanent and folds side then session in editor-first', () => {
         const input = { arrangement: 'editor' as const, deviceType: 'tablet' as const, multiPaneEnabled: true,
             rightOpen: true, detailsOpen: false, rightPreferredPx: 340, sessionWidthPx: 440 };

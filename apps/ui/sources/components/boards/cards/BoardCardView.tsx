@@ -23,8 +23,6 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { formatNextScheduledRun, readNextScheduledRunRefreshAtMs } from '@/components/workflows/triggers/formatTriggerSummary';
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionReader } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { Modal } from '@/modal';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -32,7 +30,7 @@ import { dispatchBoardTaskTransition, readBoardTaskTransitionAction } from '../m
 import { BoardTaskRefreshContext } from '../model/useBoardTaskItems';
 
 import type { BoardCard, BoardCardBody } from '../model/boardCards';
-import type { BoardCardAction } from '../model/boardCardOpenTarget';
+import type { BoardCardAction, BoardCardSecondaryAction } from '../model/boardCardOpenTarget';
 
 /** Board domain facts and controls, bound to the existing shared card and widget-frame anatomy. */
 
@@ -120,7 +118,7 @@ function describeBody(body: BoardCardBody, nowMs: number, shownWord: string | nu
 }
 
 /** The card's one secondary action: Run now for a readable workflow, Review for a held Run. */
-export function resolveBoardCardAction(card: BoardCard): BoardCardAction | null {
+export function resolveBoardCardAction(card: BoardCard): BoardCardSecondaryAction | null {
     if (card.availability !== 'ready') return null;
     // A parent hold is enough to open its native detail, not to claim a review/permission type.
     // Aggregate attention (including stopped/uncertain custody) does not establish a hold.
@@ -205,7 +203,7 @@ export function BoardCardActionButton(props: Readonly<{
 }>) {
     const { card, onAction } = props;
     if (card.ref.kind === 'task' && card.body.kind === 'task' && card.availability === 'ready') {
-        return <BoardTaskCardActions card={card} disabled={props.disabled} />;
+        return <BoardTaskCardActions card={card} onAction={onAction} disabled={props.disabled} />;
     }
     const action = resolveBoardCardAction(card);
     if (!action || !onAction) return null;
@@ -220,8 +218,7 @@ export function BoardCardActionButton(props: Readonly<{
     </View>;
 }
 
-function BoardTaskSessionButton(props: Readonly<{ cardKey: string; serverId: string; sessionId: string; disabled?: boolean }>) {
-    const router = useRouter();
+function BoardTaskSessionButton(props: Readonly<{ cardKey: string; serverId: string; sessionId: string; onOpen: () => void; disabled?: boolean }>) {
     const isSessionVisible = useSessionRecordingVisibility();
     const name = getStorage()(state => {
         if (!isSessionVisible(props)) return t('boards.kinds.session');
@@ -230,11 +227,11 @@ function BoardTaskSessionButton(props: Readonly<{ cardKey: string; serverId: str
     });
     return <RoundButton testID={`board-card:${props.cardKey}:session:${props.serverId}:${props.sessionId}`} size="small" display="secondary"
         disabled={props.disabled} title={t('inbox.openSession', { session: name })}
-        onPress={() => router.push(buildScopedSessionRouteHref({ serverId: props.serverId, sessionId: props.sessionId }) as never)} />;
+        onPress={props.onOpen} />;
 }
 
 /** Transient invocation state only; live task facts stay with the public reader. */
-function BoardTaskCardActions(props: Readonly<{ card: BoardCard; disabled?: boolean }>) {
+function BoardTaskCardActions(props: Readonly<{ card: BoardCard; onAction?: (card: BoardCard, action: BoardCardAction) => void; disabled?: boolean }>) {
     const refreshTaskItems = React.useContext(BoardTaskRefreshContext);
     const readCurrentView = useAppShellPluginUiProjectionReader();
     const selected = useAppShellPluginUiProjection(view => ({
@@ -279,7 +276,8 @@ function BoardTaskCardActions(props: Readonly<{ card: BoardCard; disabled?: bool
     };
     return <View style={styles.action}>
         {item.linkedSessions.map(link => <BoardTaskSessionButton key={JSON.stringify([link.serverId, link.sessionId])}
-            cardKey={props.card.key} {...link} disabled={props.disabled} />)}
+            cardKey={props.card.key} {...link} disabled={props.disabled}
+            onOpen={() => props.onAction?.(props.card, { session: { serverId: link.serverId, sessionId: link.sessionId } })} />)}
         {transitions.map(option => <RoundButton key={option.id} testID={`board-card:${props.card.key}:transition:${option.id}`}
             size="small" display="secondary" title={option.label} loading={pending === option.id}
             disabled={props.disabled || pending !== null} onPress={() => transition(option.id)} />)}

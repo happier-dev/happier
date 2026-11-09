@@ -15,6 +15,8 @@ export type DetailsPaneContent = Readonly<{
     accessibilityLabel?: string;
     /** A companion beside the page's own content (an Environment's Logs), not an item of a list: the page stays. */
     companion?: true;
+    /** An item opened over the page (a Board's card): the page keeps its width, scroll and presses underneath. */
+    overPage?: true;
 }>;
 
 export type DetailsPaneHostProps = Readonly<{
@@ -84,6 +86,7 @@ export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: Detail
         pane: <DetailsPaneContentView details={details} onClose={onClose} testID={testID} />,
         onClose,
         ...(details.companion ? { companion: true as const } : {}),
+        ...(details.overPage ? { overPage: true as const } : {}),
     } : null), [details, onClose, testID]);
     return (
         <AppScopePaneHost

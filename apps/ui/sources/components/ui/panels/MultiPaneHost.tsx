@@ -100,6 +100,8 @@ export type MultiPaneHostProps = Readonly<{
      * the context, so main is only quieted, not shaded (details lab 2, Q1).
      */
     detailsScrim?: 'standard' | 'soft';
+    /** The details overlay floats over a page that stays live: no scrim, and the page keeps focus and presses. */
+    detailsOverPage?: boolean;
     /**
      * Set when the shell stands this page's right panel on the canvas (calm-shell R4-2): while docked
      * the right column renders in `host`, beside the page sheet, and `hidden` while this page is not on
@@ -158,7 +160,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const sharedMainModal = mainModalActive && hasMainSurface;
     const settledMainProgress = React.useRef(new Animated.Value(1)).current;
     const rightModalActive = !rightInMain && layout.right === 'overlay' && rightPresence.present && !mainModalActive;
-    const detailsModalActive = layout.details === 'overlay' && detailsPresence.present && !rightModalActive && !mainModalActive;
+    const detailsOverlayActive = layout.details === 'overlay' && detailsPresence.present && !rightModalActive && !mainModalActive;
+    const detailsModalActive = detailsOverlayActive && props.detailsOverPage !== true;
     const rightModalLabel = t('ui.modalPane.right');
     const detailsModalLabel = t('ui.modalPane.details');
     const detailsModalBoundary = useModalPaneBoundary({
@@ -167,11 +170,11 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         onRequestClose: detailsPresence.requestClose,
         focusReturnRef: props.detailsOverlayFocusReturnRef,
         discardPendingFocusReturn: Boolean(detailsPane) && layout.details !== 'overlay',
-        escapeEnabled: props.detailsClosable !== false && (detailsModalActive || (layout.details === 'docked' && detailsPresence.present)),
-        escapePriority: detailsModalActive
+        escapeEnabled: props.detailsClosable !== false && (detailsOverlayActive || (layout.details === 'docked' && detailsPresence.present)),
+        escapePriority: detailsOverlayActive
             ? ESCAPE_LAYER_PRIORITIES.overlay
             : DOCKED_DETAILS_ESCAPE_PRIORITY,
-        allowEditableEscape: detailsModalActive,
+        allowEditableEscape: detailsOverlayActive,
     });
     const rightModalBoundary = useModalPaneBoundary({
         active: rightModalActive,
@@ -215,7 +218,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const mainRegionVisible = mainFocusEligible && mainPresented;
     const mainColumnNodeRef = React.useRef<View | null>(null);
     const mainRegionFocus = usePaneRegionFocusBoundary('main', mainRegionVisible, mainColumnNodeRef);
-    const detailsOverlayFocusEligible = detailsModalActive && !detailsPresence.closing;
+    const detailsOverlayFocusEligible = detailsOverlayActive && !detailsPresence.closing;
     const rightOverlayFocusEligible = rightModalActive && !rightPresence.closing;
 
     const detailsDocked = layout.details === 'docked' && detailsPresence.present;

@@ -1,14 +1,19 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, buildWorkBoardArtifactHeaderV1,
-    buildWorkBoardItemKeyV1, createWorkBoardV1, encodePlainArtifactStoredContent, normalizeActionsSettingsV1,
-    type WorkBoardV1, type WorkBoardIntentV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { buildWorkBoardArtifactHeaderV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import {
+    buildWorkBoardItemKeyV1, createWorkBoardV1,
+    type WorkBoardV1, type WorkBoardIntentV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { renderScreen } from '@/dev/testkit';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { BoardScreen } from '../BoardScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -187,7 +192,7 @@ describe('mounted WorkBoard Action settlement', () => {
     it('keeps the unknown outcome through the rendered Board add handler when read-back is unavailable', async () => {
         const board = createWorkBoardV1({ id: 'board-add-unknown-message', name: 'Pending add' });
         const b = await mountAccount('add-unknown-message', [board]);
-        const screen = await renderScreen(<BoardScreen boardId={board.id} />, { wrapper: b.wrapper });
+        const screen = await renderScreen(<AppPaneProvider><BoardScreen boardId={board.id} /></AppPaneProvider>, { wrapper: b.wrapper });
         await vi.waitFor(() => expect(screen.findByTestId('board-header.add')).not.toBeNull());
         // Consume the real BoardScreen handler exposed to its Add surface; only
         // HTTP loses the acknowledgement and rejects the subsequent read-back.
@@ -229,6 +234,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const commandRef = { current: null as (() => void) | null };
         const receipt: { current: WidgetSetupSubmitResult | null } = { current: null };
         function AddStep() {
+            const [chosen, setChosen] = React.useState(0);
             const dispatch = useDispatchWorkBoardIntent();
             const current = useWorkBoard(board.id);
             const sections = buildAccountWidgetAddSections({ candidates: [candidate], instances: current?.widgets?.map(item => item.instance) ?? [],
@@ -239,19 +245,25 @@ describe('mounted WorkBoard Action settlement', () => {
                     return { ok: true };
                 } });
             const setup = sections.flatMap(section => section.entries)[0]!.setup!();
-            return <WidgetSetupStep setup={setup} phone={false} presentation="pane" commandRef={commandRef}
+            return <WidgetSetupStep key={chosen} setup={setup} phone={false} presentation="pane" commandRef={commandRef}
+                onAddAnother={() => setChosen(count => count + 1)}
                 onDone={result => { receipt.current = result; }} testID="board-add-step" />;
         }
         const screen = await renderScreen(<AddStep />, { wrapper: b.wrapper });
         await screen.pressByTestIdAsync('board-add-step.submit');
-        await vi.waitFor(() => expect(receipt.current).toEqual({ ok: true }));
+        // The button starts an async Action without returning its promise. Wait
+        // inside act so the receipt's completion state commits before reading UI.
+        await act(async () => { await vi.waitFor(() => expect(receipt.current).toEqual({ ok: true })); });
         expect(screen.findAllByType(RoundButton).find(node => node.props.testID === 'board-add-step.submit')!.props.title).toBe('widgetAdd.addAnother');
         const committed = b.rows.get(board.id);
         expect(committed?.bodyVersion).toBe(2);
+        // The real Add surface returns to the picker before a deliberate new copy.
+        await screen.pressByTestIdAsync('board-add-step.submit');
+        expect(b.rows.get(board.id)).toBe(committed);
         await act(async () => { storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
             actions: { 'boards.apply': { approvalRequiredSurfaces: ['ui'] } } }) } }); });
         await screen.pressByTestIdAsync('board-add-step.submit');
-        await vi.waitFor(() => expect(receipt.current).toEqual({ ok: true, approvalPending: true }));
+        await act(async () => { await vi.waitFor(() => expect(receipt.current).toEqual({ ok: true, approvalPending: true })); });
         expect(screen.findByTestId('board-add-step.submit')!.props.disabled).toBe(true);
         expect(b.rows.get(board.id)).toBe(committed);
         const approvals = [...b.rows.values()].filter(row => row.id !== board.id);
@@ -306,7 +318,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'retained', name: 'Retained' }), mode: 'by_status',
             widgets: [{ kind: 'widget', ref, instance, size: 'medium' }] };
         const b = await mountAccount('retained', [board]);
-        const screen = await renderScreen(<BoardScreen boardId={board.id} />, { wrapper: b.wrapper });
+        const screen = await renderScreen(<AppPaneProvider><BoardScreen boardId={board.id} /></AppPaneProvider>, { wrapper: b.wrapper });
         await vi.waitFor(() => expect({ ids: screen.tree.findAll(node => typeof node.props.testID === 'string').map(node => node.props.testID), text: screen.getTextContent() }).toMatchObject({
             ids: expect.arrayContaining(['board-widget:from-cli.widget-inputs-repair']),
         }));
@@ -350,17 +362,17 @@ describe('mounted WorkBoard Action settlement', () => {
     });
     it('creates through the shared ingress and refuses an invalid widget configuration before persistence', async () => {
         const b = await mountAccount('create-widget', []);
-        const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard('new-board'), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
-        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'create', board: { id: 'new-board', name: 'Created' } })).toMatchObject({ status: 'applied' }); });
+        const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard('22222222-2222-4222-8222-222222222224'), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'create', board: { id: '22222222-2222-4222-8222-222222222224', name: 'Created' } })).toMatchObject({ status: 'applied' }); });
         expect(hook.getCurrent().board?.name).toBe('Created');
-        const before = b.rows.get('new-board');
-        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_add', boardId: 'new-board',
-            ref: { surface: { serverId: b.home.id, accountId: 'board-account', owner: { kind: 'workBoard', boardId: 'new-board' } }, instanceId: 'invalid' },
+        const before = b.rows.get('22222222-2222-4222-8222-222222222224');
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_add', boardId: '22222222-2222-4222-8222-222222222224',
+            ref: { surface: { serverId: b.home.id, accountId: 'board-account', owner: { kind: 'workBoard', boardId: '22222222-2222-4222-8222-222222222224' } }, instanceId: 'invalid' },
             instance: { v: 1, id: 'invalid', definition: { kind: 'builtin', id: 'changes' }, bindings: { session: { kind: 'value', value: 'invalid-session-address' } } },
         })).toMatchObject({ status: 'refused', code: 'widget_inputs_invalid',
             // The Home's own reason rides along, so the Add can say what is wrong instead of a general sentence.
             details: { fields: [expect.objectContaining({ path: 'session', status: 'invalid' })] } }); });
-        expect(b.rows.get('new-board')).toBe(before);
+        expect(b.rows.get('22222222-2222-4222-8222-222222222224')).toBe(before);
         expect(hook.getCurrent().board?.widgets ?? []).toEqual([]);
         expect(hook.getCurrent().save.failure).toMatchObject({ reason: 'invalidValue', intent: { kind: 'widget_add' } });
     });
@@ -373,7 +385,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const before = b.rows.get(board.id);
         const widgetRef = { surface: { serverId: b.home.id, accountId: 'board-account', owner: { kind: 'workBoard', boardId: board.id } }, instanceId: 'copy' } as const;
         for (const intent of [
-            { kind: 'create', board: { id: 'new-board', name: 'New' } },
+            { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222224', name: 'New' } },
             { kind: 'update', boardId: board.id, patch: { name: 'Changed' } },
             { kind: 'delete', boardId: board.id },
             { kind: 'widget_add', boardId: board.id, ref: widgetRef, instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } },

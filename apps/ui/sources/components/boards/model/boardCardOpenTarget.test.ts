@@ -69,6 +69,14 @@ describe('resolveBoardCardOpenTarget', () => {
             .toEqual({ kind: 'item', ref: { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'x' } } });
     });
 
+    it('opens a task card\'s linked Session as that Session, even when the task has no page of its own', () => {
+        const task = { ...card('session', 'idle'), ref: { kind: 'task', pluginId: 'p', qualifiedId: { serverId: 'home-a', id: 't' } },
+            body: { kind: 'task', item: { page: null } } } as unknown as BoardCard;
+        const action = { session: { serverId: 'home-b', sessionId: 's-1' } };
+        expect(resolveBoardCardOpenTarget(task, { inboxAvailable: true, action }))
+            .toEqual({ kind: 'item', ref: { kind: 'session', qualifiedId: { serverId: 'home-b', id: 's-1' } } });
+        expect(resolveBoardCardOpenTarget({ ...task, availability: 'home_unavailable' }, { inboxAvailable: true, action })).toBeNull();
+    });
     it('opens nothing for an item whose Home is not connected', () => {
         expect(resolveBoardCardOpenTarget(card('session', 'offline', 'home_unavailable'), { inboxAvailable: true })).toBeNull();
     });

@@ -174,7 +174,7 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
 });
 
 /** An item opened beside its list reads in the larger share until the person drags it (lab c7: 750 px at 1440). */
-const ITEM_DETAILS_PREFERRED_WIDTH_PX = 750;
+export const ITEM_DETAILS_PREFERRED_WIDTH_PX = 750;
 
 /**
  * A page whose content may open an item beside it. The same slot feeds the default App details host or a

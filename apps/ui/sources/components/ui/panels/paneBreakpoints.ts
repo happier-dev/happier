@@ -36,6 +36,8 @@ export type ResolvePaneLayoutInput = Readonly<{
      * Same as `rightPreferOverlayWhenPreferredDoesNotFit`, but for the details pane.
      */
     detailsPreferOverlayWhenPreferredDoesNotFit?: boolean;
+    /** An item opened over its page: it never docks, so the page keeps its width and scroll at every size. */
+    detailsOverPage?: boolean;
     /** Where Details was opened from, when both side columns are open and cannot all dock. */
     detailsOpenedFrom?: DetailsOpenerRegion | null;
     mainMinPx?: number;
@@ -101,6 +103,11 @@ function resolveSessionPaneLayout(input: ResolvePaneLayoutInput): Omit<ResolvedP
     const detailsOpen = input.detailsOpen;
 
     const fitsMainPlusRight = width >= mainMinPx + rightMinPx;
+    if (detailsOpen && input.detailsOverPage === true) {
+        return rightOpen && fitsMainPlusRight
+            ? { kind: 'twoPane', right: 'docked', details: 'overlay' }
+            : { kind: 'overlayStack', right: 'hidden', details: 'overlay' };
+    }
     const fitsMainPlusDetails = width >= mainMinPx + detailsMinPx;
     const fitsThreeDocked = width >= mainMinPxThreePane + rightMinPx + detailsMinPx;
 

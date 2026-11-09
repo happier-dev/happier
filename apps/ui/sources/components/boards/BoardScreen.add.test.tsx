@@ -9,17 +9,20 @@ import { buildWorkBoardItemKeyV1, createWorkBoardV1, type WorkBoardV1 } from '@h
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { BoardScreen } from './BoardScreen';
 
+const viewport = vi.hoisted(() => ({ width: 390, height: 844, scale: 1, fontScale: 1 }));
 vi.mock('react-native', async () => ({
     ...await vi.importActual<typeof import('react-native-web')>('react-native-web'),
-    useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+    useWindowDimensions: () => viewport,
+    Dimensions: { get: () => viewport, addEventListener: () => ({ remove() {} }) },
 }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/boards/qa43-board' }).module);
 
@@ -32,16 +35,17 @@ let restoreBrowserLocks: ReturnType<typeof installBrowserStorageLockBoundary>;
 beforeEach(() => { restoreBrowserLocks = installBrowserStorageLockBoundary(); });
 afterEach(async () => {
     try { await standardCleanup(); await home?.dispose(); }
-    finally { home = undefined; restoreBrowserLocks(); }
+    finally { home = undefined; viewport.width = 390; viewport.height = 844; restoreBrowserLocks(); }
 });
 
 async function mountBoard(source?: WorkBoardV1['source'], prepare?: (serverId: string) => void,
-    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>) {
+    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>, desktop = false) {
+    if (desktop) { viewport.width = 1440; viewport.height = 900; }
     // This fixture admits an Account directly instead of starting unrelated cold Sync
     // acquisitions. All Board reads, codecs, navigation and overlay owners remain real.
     home = await createPlainArtifactHomeFixture('https://board-phone.test', { accountId: 'owner', ...(handleRequest ? { handleRequest } : {}) });
     prepare?.(home.home.id);
-    const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'qa43-board', name: 'QA43 Board' }), ...(source ? { source } : {}) };
+    const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'qa43-board', name: 'QA43 Board' }), ...(desktop ? { mode: 'by_status' as const } : {}), ...(source ? { source } : {}) };
     home.boundary.replaceStoredRow({
         id: board.id, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
         body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }),
@@ -61,14 +65,85 @@ async function mountBoard(source?: WorkBoardV1['source'], prepare?: (serverId: s
     const press = async (testID: string) => { await act(async () => { find(testID)!.click(); }); };
     const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn() };
     await act(async () => root.render(<InjectedAuthProvider credentials={credentials}>
-        <DestinationInstanceHost tabId="board" ref={{ kind: 'boards', params: { id: board.id } }}
-            pathname={`/boards/${board.id}`} focused visible phone
+        <AppPaneProvider><DestinationInstanceHost tabId="board" ref={{ kind: 'boards', params: { id: board.id } }}
+            pathname={`/boards/${board.id}`} focused visible phone={!desktop}
             navigation={navigation}>
             <BoardScreen boardId={board.id} />
-        </DestinationInstanceHost>
+        </DestinationInstanceHost></AppPaneProvider>
     </InjectedAuthProvider>));
-    return { serverId: home.home.id, find, expectReady, press, navigation, dispose: async () => { await act(async () => root.unmount()); container.remove(); } };
+    // jsdom has no layout engine: deliver the measured widths RNW would, so the real pane policy decides.
+    const measure = async () => { for (const node of Array.from(container.querySelectorAll<HTMLElement>('*'))) {
+        const handler = (node as HTMLElement & { __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void }).__reactLayoutHandler;
+        if (handler) await act(async () => handler({ nativeEvent: { layout: { x: 0, y: 0, width: viewport.width, height: viewport.height } } }));
+    } };
+    return { serverId: home.home.id, find, expectReady, press, measure, navigation, dispose: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
+
+describe('Opening a Board card', () => {
+    const sessionRef = (id: string) => ({ kind: 'session' as const, qualifiedId: { serverId: 'https://board-phone.test', id } });
+    const cardID = (ref: ReturnType<typeof sessionRef>) => `board-status-card:${buildWorkBoardItemKeyV1(ref)}`;
+    // A Session card shows for a Session the Account's list knows: its row is the fixture, its reader stays real.
+    const adopt = (...refs: ReturnType<typeof sessionRef>[]) => (serverId: string) => {
+        for (const ref of refs) ref.qualifiedId.serverId = serverId;
+        storage.setState({ sessionListRowsByServerId: { [serverId]: Object.fromEntries(refs.map(ref => [ref.qualifiedId.id,
+            createSessionFixture({ id: ref.qualifiedId.id, serverId, active: true, metadata: { ...createSessionFixture().metadata!, name: `Session ${ref.qualifiedId.id}` } })])) } });
+    };
+
+    it('opens over the board on a desktop: no route change, the board stays, another card swaps it, Escape dismisses', async () => {
+        const first = sessionRef('session-first');
+        const second = sessionRef('session-second');
+        const { find, expectReady, press, measure, navigation, dispose } = await mountBoard({ picked: [first, second], sections: [] }, adopt(first, second), undefined, true);
+        try {
+            await expectReady(cardID(first));
+            await measure();
+            const board = find('board-header');
+            await press(cardID(first));
+            await expectReady('board-card-details');
+            await measure();
+            await expectReady('multi-pane-details-overlay');
+            expect(navigation.push).not.toHaveBeenCalled();
+            expect(find('board-header')).toBe(board);
+            // The board stays live under it: there is no scrim between the person and the next card.
+            expect(find('multi-pane-details-scrim')).toBeNull();
+            await press('inbox.detail.open');
+            expect(JSON.stringify(navigation.push.mock.lastCall)).toContain(first.qualifiedId.id);
+            navigation.push.mockClear();
+
+            await press(cardID(second));
+            await expectReady('multi-pane-details-overlay');
+            expect(navigation.push).not.toHaveBeenCalled();
+            await press('inbox.detail.open');
+            expect(JSON.stringify(navigation.push.mock.lastCall)).toContain(second.qualifiedId.id);
+
+            await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
+            await expectReady('board-card-details', false);
+            expect(find('board-header')).toBe(board);
+        } finally { await dispose(); }
+    });
+    it('closes when the board itself is pressed', async () => {
+        const ref = sessionRef('session-only');
+        const { find, expectReady, press, measure, dispose } = await mountBoard({ picked: [ref], sections: [] }, adopt(ref), undefined, true);
+        try {
+            await expectReady(cardID(ref));
+            await measure();
+            await press(cardID(ref));
+            await expectReady('board-card-details');
+            expect(find('board-open-dismiss')).not.toBeNull();
+            await press('board-open-dismiss');
+            await expectReady('board-card-details', false);
+        } finally { await dispose(); }
+    });
+    it('pushes the Session on a phone, with no overlay', async () => {
+        const ref = sessionRef('session-phone');
+        const { find, expectReady, press, navigation, dispose } = await mountBoard({ picked: [ref], sections: [] }, adopt(ref));
+        try {
+            await expectReady(cardID(ref));
+            await press(cardID(ref));
+            expect(navigation.push).toHaveBeenCalledTimes(1);
+            expect(find('multi-pane-details-overlay')).toBeNull();
+        } finally { await dispose(); }
+    });
+});
 
 describe('Board phone Add entry points', () => {
     it('shows the board page with its header while the board itself is still being read, never a blank page', async () => {

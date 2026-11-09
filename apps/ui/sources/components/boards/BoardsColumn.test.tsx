@@ -11,6 +11,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { BoardsColumn } from './BoardsColumn';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { BoardScreen } from './BoardScreen';
 import { BoardsIndex } from './BoardsIndex';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
@@ -183,7 +184,7 @@ describe('BoardsColumn collection search', () => {
         try {
             const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
                 <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
-                    <BoardsColumn /><BoardScreen boardId="alpha" />
+                    <BoardsColumn /><AppPaneProvider><BoardScreen boardId="alpha" /></AppPaneProvider>
                 </AppShellColumnContext.Provider>
             </InjectedAuthProvider>);
             await flushHookEffects({ runOnlyPendingTimers: true });
@@ -215,7 +216,7 @@ describe('BoardsColumn collection search', () => {
         try {
             const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
                 <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
-                    <BoardsColumn /><BoardScreen boardId="alpha" /><Retry />
+                    <BoardsColumn /><AppPaneProvider><BoardScreen boardId="alpha" /></AppPaneProvider><Retry />
                 </AppShellColumnContext.Provider>
             </InjectedAuthProvider>);
             const loading = () => screen.findAllByType(SurfaceStateCard).filter(state => state.props.kind === 'loading').map(state => state.props.testID);
@@ -301,7 +302,7 @@ describe('BoardsColumn collection search', () => {
     it.each(['malformed_json', 'content_unavailable'] as const)('opens a named unreadable Board state for %s and keeps the neighboring Board reachable', async failure => {
         unreadableAlpha = failure;
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-            <BoardsColumn /><BoardScreen boardId="alpha" />
+            <BoardsColumn /><AppPaneProvider><BoardScreen boardId="alpha" /></AppPaneProvider>
         </InjectedAuthProvider>);
         await flushHookEffects({ runOnlyPendingTimers: true });
         await flushHookEffects({ runOnlyPendingTimers: true });
