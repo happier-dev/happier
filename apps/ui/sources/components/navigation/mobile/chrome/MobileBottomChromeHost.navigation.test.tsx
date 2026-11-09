@@ -120,9 +120,12 @@ it.each([
     function TerminalSelection() {
         const register = useSessionCockpitChromeRegister();
         const [surface, switchSurface] = React.useState<'chat' | 'terminal'>(explicitChat ? 'chat' : 'terminal');
+        // The mounted Session owns one surface switch: its registration and its column owner reach the same one,
+        // as SessionCockpitSurfaceScreen wires them. A bar press runs `shell.column.set` against the column.
+        const choose = (next: string) => { selections.push(next); switchSurface(next === 'terminal' ? 'terminal' : 'chat'); };
         React.useEffect(() => register({ sessionId: 'resize-session', serverId: runtime.serverId,
-            activeSurface: surface, catalog: mountedCatalog, readColumn: columnReader(next => switchSurface(next === 'terminal' ? 'terminal' : 'chat')), terminalTabAvailable: true, openDetailsTabCount: 0,
-            switchSurface: next => { selections.push(next); switchSurface(next === 'terminal' ? 'terminal' : 'chat'); },
+            activeSurface: surface, catalog: mountedCatalog, readColumn: columnReader(choose), terminalTabAvailable: true, openDetailsTabCount: 0,
+            switchSurface: choose,
         }), [register, surface]);
         return null;
     }

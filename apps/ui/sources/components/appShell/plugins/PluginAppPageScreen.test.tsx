@@ -705,7 +705,7 @@ function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
 async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
     const { PluginAppPageScreen } = await import('./PluginAppPageScreen');
     const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
-    const { PhoneDestinationsMenu } = await import('@/components/appShell/destinations/PhoneDestinationsMenu');
+    const { PhoneMainAppTabBar } = await import('@/components/appShell/destinations/PhoneDestinationsMenu');
     const { buildCommandPaletteCommands } = await import('@/components/appShell/commandPalette/buildCommandPaletteCommands');
     const { usePluginPageCatalogActivationHandler } = await import('@/components/plugins/pages/pluginPageNavigation');
 
@@ -770,7 +770,7 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
                             subPath={props.location?.subPath ?? ''}
                         />
                     )}
-                    {props.showCompactSidebar ? <PhoneDestinationsMenu /> : null}
+                    {props.showCompactSidebar ? <PhoneMainAppTabBar activeTab="sessions" onTabPress={() => {}} /> : null}
                     {props.showCompactCommandPaletteActivation ? <CompactCommandPaletteActivation /> : null}
                 </AppTargetNavigationScope>
             </AppShellPluginUiProjectionValueProvider>
