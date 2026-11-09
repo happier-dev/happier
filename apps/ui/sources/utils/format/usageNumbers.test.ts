@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 
 import {
     formatPercent,
@@ -8,11 +9,23 @@ import {
 } from './usageNumbers';
 
 describe('usage number formatting', () => {
+    it('uses the selected app language for money and compact counts', async () => {
+        const previous = getPreferredLanguage();
+        try {
+            setPreferredLanguageFromSettings('fr');
+            await preloadTranslations();
+            expect(getPreferredLanguage()).toBe('fr');
+            expect(formatUsageCost(21.76, 'USD')).toBe('21,76\u00a0$US');
+            expect(formatUsageCost(0.0012, 'USD')).toBe('0,0012\u00a0$US');
+            expect(formatTokenCount(321_900_000)).toBe('321,9\u00a0M');
+            expect(formatTokenCountLong(321_900_000)).toBe('321\u202f900\u202f000');
+        } finally { setPreferredLanguageFromSettings(previous); await preloadTranslations(); }
+    });
     it('formats compact token counts consistently across every magnitude', () => {
         expect(formatTokenCount(0)).toBe('0');
         expect(formatTokenCount(999)).toBe('999');
-        expect(formatTokenCount(1_000)).toBe('1k');
-        expect(formatTokenCount(1_500)).toBe('1.5k');
+        expect(formatTokenCount(1_000)).toBe('1K');
+        expect(formatTokenCount(1_500)).toBe('1.5K');
         expect(formatTokenCount(1_200_000)).toBe('1.2M');
         expect(formatTokenCount(1_499_999)).toBe('1.5M');
         expect(formatTokenCount(1_100_000_000)).toBe('1.1B');

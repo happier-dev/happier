@@ -48,7 +48,7 @@ async function deleteNativeFileSafe(): Promise<void> {
 
 async function writeNativeFileSafe(payload: string): Promise<void> {
   const file = getNativeFile();
-  if (!file) return;
+  if (!file) throw new Error('Crash report routing storage is unavailable');
   file.write(payload);
 }
 
@@ -67,19 +67,11 @@ function getNativeFile(): File | null {
 export async function persistRestartBugReportIntent(intent: RestartBugReportIntentV1): Promise<void> {
   const payload = JSON.stringify(intent);
   if (Platform.OS === 'web') {
-    try {
-      globalThis.localStorage?.setItem(INTENT_KEY, payload);
-    } catch {
-      // ignore
-    }
+    if (!globalThis.localStorage) throw new Error('Crash report routing storage is unavailable');
+    globalThis.localStorage.setItem(INTENT_KEY, payload);
     return;
   }
-
-  try {
-    await writeNativeFileSafe(payload);
-  } catch {
-    // ignore
-  }
+  await writeNativeFileSafe(payload);
 }
 
 export async function consumeRestartBugReportIntent(): Promise<boolean> {

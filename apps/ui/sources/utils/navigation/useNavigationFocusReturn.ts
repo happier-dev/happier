@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
 
 import {
     type FocusReturnTarget,
@@ -74,6 +75,7 @@ function resolveVisibleFocusReturnTarget(stableTestId: string): DomFocusReturnTa
 
 export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> = {}) {
     const ready = options.ready ?? true;
+    const sourceId = useDestinationInstanceKey();
     const targetRef = React.useRef<FocusReturnTarget>(null);
     const nativeTargetsByTestIdRef = React.useRef(new Map<string, Exclude<FocusReturnTarget, number | null | undefined>>());
     const nativeTargetCallbacksByTestIdRef = React.useRef(new Map<
@@ -102,6 +104,8 @@ export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> 
         if (!ready) return;
         const intent = navigationIntentRef.current;
         if (!intent) return;
+        // Mounting/focusing a different retained page must not discard its source's return.
+        if (intent.sourceId !== undefined && intent.sourceId !== sourceId) return;
         // React Native has no document-wide active-element or testID query API. The currently
         // focused screen supplies its mounted host ref for the same stable identity instead.
         const target = typeof document === 'undefined'
@@ -109,7 +113,7 @@ export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> 
             : resolveVisibleFocusReturnTarget(intent.testId);
         if (!target) {
             if (navigationIntentRef.current === intent) {
-                navigationIntentRef.current = null;
+                navigationIntentRef.current = intent.previous ?? null;
             }
             return;
         }
@@ -118,9 +122,9 @@ export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> 
         const restored = restoreFocus();
         targetRef.current = null;
         if (restored && navigationIntentRef.current === intent) {
-            navigationIntentRef.current = null;
+            navigationIntentRef.current = intent.previous ?? null;
         }
-    }, [navigationIntentRef, ready, restoreFocus]));
+    }, [navigationIntentRef, ready, restoreFocus, sourceId]));
 
     const capture = React.useCallback((stableTestId?: string): NavigationFocusReturnCapture => {
         const testId = readActiveFocusReturnTestId()
@@ -136,11 +140,14 @@ export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> 
             });
         }
 
-        const intent: NavigationFocusReturnIntent = { testId };
+        const current = navigationIntentRef.current;
+        const intent: NavigationFocusReturnIntent = { testId, ...(sourceId === null ? {} : {
+            sourceId, previous: current?.sourceId === sourceId ? current.previous : current,
+        }) };
         navigationIntentRef.current = intent;
         const clearIntent = () => {
             if (navigationIntentRef.current === intent) {
-                navigationIntentRef.current = null;
+                navigationIntentRef.current = intent.previous ?? null;
             }
         };
         return Object.freeze({
@@ -154,7 +161,7 @@ export function useNavigationFocusReturn(options: Readonly<{ ready?: boolean }> 
             },
             cancel: clearIntent,
         });
-    }, [navigationIntentRef]);
+    }, [navigationIntentRef, sourceId]);
 
     return React.useMemo<NavigateWithFocusReturn>(() => Object.assign(
         (navigate: () => void) => capture().navigate(navigate),

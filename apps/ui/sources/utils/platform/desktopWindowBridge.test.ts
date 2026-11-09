@@ -75,6 +75,19 @@ describe('desktopWindowBridge', () => {
         expect(invokeDesktopHostMock).toHaveBeenCalledWith(DESKTOP_WINDOW_START_DRAGGING_COMMAND, undefined);
     });
 
+    it('accepts native Windows policy and keeps actions available while a saved Electron change awaits restart', async () => {
+        isDesktopHostMock.mockReturnValue(true);
+        invokeDesktopHostMock.mockImplementation(async (command: string) => command === 'desktop_get_window_chrome_policy'
+            ? { strategy: 'native-windows-frame', canSetNativeTitleBar: true, useNativeTitleBar: false, nativeTitleBarRestartRequired: true }
+            : true);
+        const bridge = await import('./desktopWindowBridge');
+        await expect(bridge.getDesktopWindowChromePolicy()).resolves.toEqual({
+            strategy: 'native-windows-frame', canSetNativeTitleBar: true, useNativeTitleBar: false, nativeTitleBarRestartRequired: true,
+        });
+        await bridge.closeDesktopWindow();
+        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_close_window', undefined);
+    });
+
     it('no-ops actions when the current window policy is disabled', async () => {
         isDesktopHostMock.mockReturnValue(true);
 

@@ -152,6 +152,27 @@ html:not([data-happier-input-modality="keyboard"]) :focus {
     }
 }
 
+/* Needs-you highlight sweeps (`CollectionRowNeedsYouLeading`, owner ruling 2026-11-01): transform only, so the
+   compositor runs them. Glint crosses once; Shimmer crosses, then rests before the next pass. */
+@keyframes happierNeedsYouGlint {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(260%);
+    }
+}
+
+@keyframes happierNeedsYouShimmer {
+    0% {
+        transform: translateX(-100%);
+    }
+    60%,
+    100% {
+        transform: translateX(260%);
+    }
+}
+
 /* Loading skeleton pulse: `HappierSkeletonBlock` (@happier-dev/plugin-ui/presentation). */
 @keyframes happierSkeletonPulse {
     from {

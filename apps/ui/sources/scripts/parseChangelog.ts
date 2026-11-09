@@ -3,56 +3,27 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-interface ChangelogEntry {
-    id: string;
-    versionLabel: string;
-    date: string;
-    markdown: string;
-}
-
-interface ChangelogData {
-    entries: ChangelogEntry[];
-    latestReleaseId: string | null;
-}
+import type { ChangelogData } from '../changelog/types';
+import { parseChangelogSections, stripChangelogComments } from '../../../../scripts/pipeline/release/release-notes/changelog-sections.mjs';
 
 function parseChangelogContent(content: string): ChangelogData {
-    const entries: ChangelogEntry[] = [];
-
-    // Split by release headers while preserving everything under each release as markdown.
-    const versionSections = content.split(/^## Version (.+?) - (\d{4}-\d{2}-\d{2})$/gm);
-
-    // Skip the first element (content before first version)
-    for (let i = 1; i < versionSections.length; i += 3) {
-        const versionLabel = versionSections[i]?.trim();
-        const dateStr = versionSections[i + 1];
-        const changesContent = versionSections[i + 2];
-
-        if (!versionLabel || !dateStr || changesContent === undefined) {
-            continue;
-        }
-
-        const markdown = changesContent.trim();
-        entries.push({
-            id: versionLabel,
-            versionLabel,
-            date: dateStr.trim(),
-            markdown,
-        });
+    const entries = parseChangelogSections(stripChangelogComments(content)).map((section) => ({
+        id: section.id,
+        versionLabel: section.id,
+        title: section.title,
+        date: section.date,
+        markdown: section.markdown.trim(),
+    }));
+    const ids = new Set<string>();
+    for (const entry of entries) {
+        if (ids.has(entry.id)) throw new Error(`Duplicate changelog release id: ${entry.id}`);
+        ids.add(entry.id);
     }
-
-    return {
-        entries,
-        latestReleaseId: entries[0]?.id ?? null,
-    };
+    return { entries, latestReleaseId: entries[0]?.id ?? null };
 }
 
 function parseChangelog(): ChangelogData {
     const changelogPath = path.join(__dirname, '../../CHANGELOG.md');
-
-    if (!fs.existsSync(changelogPath)) {
-        console.warn('CHANGELOG.md not found, creating empty changelog data');
-        return { entries: [], latestReleaseId: null };
-    }
 
     const content = fs.readFileSync(changelogPath, 'utf-8');
     return parseChangelogContent(content);
@@ -70,12 +41,18 @@ function main() {
         fs.mkdirSync(dir, { recursive: true });
     }
     
-    // Write the parsed data
-    fs.writeFileSync(outputPath, JSON.stringify(changelogData, null, 2));
+    const rendered = JSON.stringify(changelogData, null, 2);
+    if (process.argv.includes('--check')) {
+        if (fs.readFileSync(outputPath, 'utf-8') !== rendered) {
+            throw new Error('Bundled changelog is stale. Run tsx sources/scripts/parseChangelog.ts.');
+        }
+    } else {
+        fs.writeFileSync(outputPath, rendered);
+    }
     
     console.log(`✅ Parsed ${changelogData.entries.length} changelog entries`);
     console.log(`📝 Latest release: ${changelogData.latestReleaseId ?? 'none'}`);
-    console.log(`💾 Output written to: ${outputPath}`);
+    console.log(`${process.argv.includes('--check') ? 'Verified' : 'Wrote'} ${outputPath}`);
 }
 
 if (require.main === module) {

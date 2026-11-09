@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ApprovalRequestV1 } from '@happier-dev/protocol';
+import type { ApprovalRequestV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { ToolCallMessage } from "@happier-dev/session-core/messages";
 import { buildMessageRouteId } from "@happier-dev/session-core/messages";

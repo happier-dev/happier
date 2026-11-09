@@ -3,6 +3,7 @@ import {
     isAbsoluteLocalPath,
     normalizeLocalPathForComparison,
     normalizeRelativeLocalPath,
+    normalizeAbsoluteLocalPath,
     resolvePathRelativeToRoot,
 } from '@/utils/path/resolvePathRelativeToRoot';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -162,31 +163,43 @@ export function buildWorkspaceFileReferenceAnchorKey(params: Readonly<{
     return `${anchor.filePath || filePath}:${source}:range:${anchor.startLine}:${anchor.endLine}:${anchor.side ?? ''}:${anchor.startLineHash ?? ''}:${anchor.endLineHash ?? ''}`;
 }
 
+/** Raw file identities retain filename bytes; URL interpretation belongs to the reference boundary below. */
+export function resolveWorkspaceFilePath(params: Readonly<{
+    path: string;
+    workspacePath: string | null | undefined;
+    allowOutsideWorkspace?: boolean;
+}>): string | null {
+    const path = params.path.replace(/\\/g, '/').replace(/^\/+([A-Za-z]:\/)/, '$1');
+    const candidate = isAbsoluteLocalPath(path) ? path : normalizeRelativeLocalPath(path);
+    if (!candidate || candidate.includes('\0') || candidate === '~' || candidate.startsWith('~/')) return null;
+    if (!isAbsoluteLocalPath(candidate)) {
+        if (isSafeWorkspaceRelativePath(candidate)) return candidate;
+        const root = params.workspacePath?.replace(/\\/g, '/');
+        // Keep dot segments until the session's agent root has been mapped onto its machine root.
+        return params.allowOutsideWorkspace && root && isAbsoluteLocalPath(root)
+            ? `${root.endsWith('/') ? root : `${root}/`}${candidate}` : null;
+    }
+    const relative = params.workspacePath
+        ? resolvePathRelativeToRoot({ path: candidate, root: params.workspacePath, preservePathSpelling: true }) : null;
+    if (relative !== null && isSafeWorkspaceRelativePath(relative)) return relative;
+    return params.allowOutsideWorkspace ? candidate : null;
+}
+
 export function resolveWorkspaceFileReference(params: Readonly<{
     url: string;
     workspacePath: string | null | undefined;
+    /** Transcript references may address another readable machine path; rendered documents stay contained. */
+    allowOutsideWorkspace?: boolean;
 }>): ResolvedWorkspaceFileReference | null {
     const rawPath = readUrlPath(params.url);
     if (!rawPath) return null;
-
     const location = splitLineSuffix(rawPath);
+    if (params.allowOutsideWorkspace && /^[a-z][a-z\d+.-]*:/i.test(location.path)
+        && !/^[a-z]:[\\/]/i.test(location.path)) return null;
     const parsed = { ...location, path: location.path.replace(/#.*$/, '') };
-    const normalizedCandidate = normalizeLocalPathForComparison(parsed.path);
-    if (!normalizedCandidate) return null;
-
-    if (!isAbsoluteLocalPath(normalizedCandidate)) {
-        const relative = normalizeRelativePath(normalizedCandidate);
-        if (!relative || !isSafeWorkspaceRelativePath(relative)) return null;
-        return withOptionalAnchor(relative, parsed);
-    }
-
-    const workspacePath = typeof params.workspacePath === 'string' ? normalizeLocalPathForComparison(params.workspacePath) : null;
-    if (!workspacePath) return null;
-
-    const relative = resolvePathRelativeToRoot({ path: parsed.path, root: workspacePath, preservePathSpelling: true });
-    if (relative === null) return null;
-    if (!isSafeWorkspaceRelativePath(relative)) return null;
-    return withOptionalAnchor(relative, parsed);
+    const filePath = resolveWorkspaceFilePath({ path: parsed.path, workspacePath: params.workspacePath,
+        allowOutsideWorkspace: params.allowOutsideWorkspace });
+    return filePath === null ? null : withOptionalAnchor(filePath, parsed);
 }
 
 type WorkspaceMarkdownReferenceInput = Readonly<{
@@ -200,14 +213,6 @@ export function hasMarkdownPathCharacterReference(value: string): boolean {
     return /&(?:#(?:x[\da-f]+|\d+)|[a-z][a-z\d]*;)/i.test(value);
 }
 
-/** URL's standard dot-segment resolution is platform-independent; containment stays path-owner controlled. */
-function normalizeJoinedLocalPath(path: string): string {
-    const unc = path.startsWith('//');
-    const windowsDrive = /^\/?[A-Za-z]:\//.test(path);
-    const encoded = path.replace(/^\/(?=[A-Za-z]:\/)/, '').split('/').map(encodeURIComponent).join('/');
-    const normalized = decodeURIComponent(new URL(`/${encoded.replace(/^\/+/, '')}`, 'https://workspace.invalid/').pathname);
-    return unc ? `/${normalized}` : windowsDrive ? normalized.slice(1) : normalized;
-}
 
 function resolveMarkdownLocalReference(input: WorkspaceMarkdownReferenceInput): ResolvedWorkspaceFileReference | null {
     const raw = input.destination.trim();
@@ -237,7 +242,7 @@ function resolveMarkdownLocalReference(input: WorkspaceMarkdownReferenceInput): 
         const directory = source.filePath.includes('/') ? source.filePath.slice(0, source.filePath.lastIndexOf('/')) : '';
         joined = `${rootPrefix}${directory ? `${directory}/` : ''}${candidate}`;
     }
-    const normalized = normalizeJoinedLocalPath(joined);
+    const normalized = normalizeAbsoluteLocalPath(joined);
     const relative = resolvePathRelativeToRoot({ path: normalized, root, preservePathSpelling: true });
     if (!relative || !isSafeWorkspaceRelativePath(relative)) return null;
     return withOptionalAnchor(relative, parsed);

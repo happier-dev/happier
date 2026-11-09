@@ -1,4 +1,5 @@
 import nacl from 'tweetnacl';
+import { fetchWithCredentialRedirectRefusal as fetch } from '@happier-dev/cli-common/homeTarget';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:53288';

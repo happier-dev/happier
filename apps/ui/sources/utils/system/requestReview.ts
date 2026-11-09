@@ -4,7 +4,7 @@ import { AsyncLock } from './lock';
 import {
     trackReviewStoreShown,
 } from '@/track';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 
 const STORE_REVIEW_PROMPTS_FEATURE_ID = 'app.ui.storeReviewPrompts' as const satisfies FeatureId;

@@ -10,10 +10,10 @@ function msg(id: string, createdAt: number, seq?: number): NormalizedMessage {
         seq,
         localId: null,
         createdAt,
-        // Minimal raw message record shape needed by NormalizedMessage consumers.
+        isSidechain: false,
         role: 'agent',
         content: [],
-    } as any;
+    };
 }
 
 describe('sortNormalizedMessagesOldestFirst', () => {
@@ -27,6 +27,14 @@ describe('sortNormalizedMessagesOldestFirst', () => {
         sortNormalizedMessagesOldestFirst(input);
 
         expect(input.map((m) => `${m.createdAt}:${m.id}`)).toEqual(['5:c', '10:a', '10:b']);
+    });
+
+    it('keeps committed sequence order when an unsequenced row has an intermediate timestamp', () => {
+        const input = [msg('reply', 0, 2), msg('unsequenced', 50), msg('submitted', 100, 1)];
+
+        sortNormalizedMessagesOldestFirst(input);
+
+        expect(input.map((message) => message.id)).toEqual(['submitted', 'reply', 'unsequenced']);
     });
 
     it('prefers seq ordering when both messages have seq', () => {

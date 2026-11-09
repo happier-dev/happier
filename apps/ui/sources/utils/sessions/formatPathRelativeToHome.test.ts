@@ -77,6 +77,17 @@ describe('member workspace display', () => {
         expect(formatSessionPath(`/srv/happier/members/${MEMBER_DIGEST}x`, MEMBER_HOME)).toBe(`/srv/happier/members/${MEMBER_DIGEST}x`);
     });
 
+    it('reads a separated member\'s own home as home, never by its digest', () => {
+        const hostHome = '/home/happier.guest';
+        expect(formatSessionPath(MEMBER_HOME, hostHome)).toBe('~');
+        expect(formatSessionPath(`${MEMBER_HOME}/`, hostHome)).toBe('~');
+        expect(formatSessionPath(`${MEMBER_HOME}/api/src`, undefined)).toBe('~/api/src');
+        expect(formatPathRelativeToHome(MEMBER_HOME, undefined, { homeLabel: 'Home folder' })).toBe('Home folder');
+        expect(readSessionPathName(MEMBER_HOME)).toBe('Home folder');
+        expect(readSessionPathName(`${MEMBER_HOME}/api`)).toBe('api');
+        expect(formatSessionPath(`/var/lib/happier/members/${MEMBER_DIGEST}x`, hostHome)).toBe(`/var/lib/happier/members/${MEMBER_DIGEST}x`);
+    });
+
     it('names a Session at the member workspace root by the workspace, never by its digest', () => {
         expect(readSessionPathName(MEMBER_WORKSPACE)).toBe('Your workspace');
         expect(readSessionPathName(`${MEMBER_WORKSPACE}/api`)).toBe('api');

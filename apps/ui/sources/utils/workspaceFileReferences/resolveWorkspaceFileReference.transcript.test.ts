@@ -134,3 +134,35 @@ describe('transcript workspace file references', () => {
         })).toBeNull();
     });
 });
+
+describe('transcript machine file references opt-in', () => {
+    it.each([
+        ['README.md:4', { filePath: 'README.md', line: 4, anchor: { kind: 'line', filePath: 'README.md', line: 4 } }],
+        ['README.md:4:2', { filePath: 'README.md', line: 4, column: 2, anchor: { kind: 'line', filePath: 'README.md', line: 4 } }],
+    ])('retains root-file line suffixes for %s', (url, expected) => {
+        expect(resolveWorkspaceFileReference({ url, workspacePath: '/work/repo', allowOutsideWorkspace: true })).toEqual(expected);
+    });
+
+    it.each([
+        ['/work/repo-task/.scratch/report.md', '/work/repo', '/work/repo-task/.scratch/report.md'],
+        ['../artifacts/report.md', '/work/repo', '/work/repo/../artifacts/report.md'],
+        ['file:///work/artifacts/report.md', '/work/repo', '/work/artifacts/report.md'],
+        ['http://localhost:18829/work/artifacts/report.md', '/work/repo', '/work/artifacts/report.md'],
+        ['C:\\Artifacts\\Report.md', 'C:\\Repo', 'C:/Artifacts/Report.md'],
+        ['file:///D:/Artifacts/Report.md', 'C:\\Repo', 'D:/Artifacts/Report.md'],
+        ['file://Server/Share/Artifacts/Report.md', '\\\\Server\\Share\\Repo', '//server/Share/Artifacts/Report.md'],
+        ['/report.md', '/', 'report.md'],
+    ])('resolves %s without widening rendered-document containment', (url, workspacePath, filePath) => {
+        expect(resolveWorkspaceFileReference({ url, workspacePath, allowOutsideWorkspace: true })).toEqual({ filePath });
+    });
+    it('retains the absolute target in an outside line range until the opener selects its base', () => {
+        const filePath = '/work/artifacts/report.md';
+        expect(resolveWorkspaceFileReference({ url: filePath + '#L5-L8', workspacePath: '/work/repo', allowOutsideWorkspace: true }))
+            .toEqual({ filePath, line: 5, endLine: 8, anchor: { kind: 'range', filePath, startLine: 5, endLine: 8 } });
+    });
+    it.each(['https://example.com/report.md', 'javascript:alert(1)', 'data:text/plain,report', 'mailto:user@example.com', '#L5', 'bad%00file.md'])(
+        'does not reinterpret %s as a machine file', url => {
+            expect(resolveWorkspaceFileReference({ url, workspacePath: '/work/repo', allowOutsideWorkspace: true })).toBeNull();
+        },
+    );
+});

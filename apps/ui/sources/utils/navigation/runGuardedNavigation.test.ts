@@ -7,6 +7,18 @@ async function loadRunGuardedNavigationModule() {
 }
 
 describe('runGuardedNavigation', () => {
+    it('waits for asynchronous unguarded navigation before reporting admission', async () => {
+        const { runGuardedNavigation } = await loadRunGuardedNavigationModule();
+        let finish!: () => void;
+        const pending = new Promise<void>(resolve => { finish = resolve; });
+        let location = 'previous';
+        const result = runGuardedNavigation(async () => { await pending; location = 'next'; });
+        expect(result).not.toBe(true);
+        expect(location).toBe('previous');
+        finish();
+        expect(await result).toBe(true);
+        expect(location).toBe('next');
+    });
     it('flushes full-window retained editors once and honors an active non-tab form', async () => {
         const { registerMountedTabUnsavedChangesGuard, setActiveUnsavedChangesGuard, clearActiveUnsavedChangesGuard,
             prepareMountedWindowPresentationTransfer } = await loadRunGuardedNavigationModule();

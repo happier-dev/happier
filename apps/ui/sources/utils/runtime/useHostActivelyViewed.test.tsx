@@ -135,9 +135,7 @@ describe('useHostActivelyViewed', () => {
     it('reports a hidden Tauri window as inactive', async () => {
         const fake = installHost({ tauri: true, visibility: 'hidden', focused: false });
         try {
-            // `isRuntimeActive()` returns true for every Tauri host so background
-            // probes keep polling in a desktop webview. Motion must not: a 60 Hz
-            // loop behind a hidden window is cost nobody can see.
+            // Motion consumes native desktop presence as well as document visibility.
             const { readHostActivelyViewed } = await import('./useHostActivelyViewed');
             expect(readHostActivelyViewed()).toBe(false);
         } finally {

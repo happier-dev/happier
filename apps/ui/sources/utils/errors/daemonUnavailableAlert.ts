@@ -7,6 +7,7 @@ import { t, type TranslationKey } from '@/text';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readMachineActivity, type MachineActivityFacts } from '@/sync/domains/machines/machineActivity';
 import {
     INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
     SESSION_MACHINE_TARGET_UNAVAILABLE_ERROR,
@@ -30,16 +31,21 @@ function resolveMachineName(machine: MachineStatusLineInput): string | null {
     return host || null;
 }
 
+function hasActivity(machine: MachineStatusLineInput): machine is NonNullable<MachineStatusLineInput> & MachineActivityFacts {
+    return typeof machine?.active === 'boolean';
+}
+
 export function buildMachineStatusLine(machine: MachineStatusLineInput): string {
+    const activity = hasActivity(machine) ? readMachineActivity(machine) : machine;
     const machineStatus = (() => {
-        const activeAt = typeof machine?.activeAt === 'number' && Number.isFinite(machine.activeAt) && machine.activeAt > 0 ? machine.activeAt : null;
+        const activeAt = typeof activity?.activeAt === 'number' && Number.isFinite(activity.activeAt) && activity.activeAt > 0 ? activity.activeAt : null;
         if (activeAt !== null) {
             const statusMachine: Machine = {
                 id: 'status-line-machine',
                 seq: 0,
                 createdAt: 0,
                 updatedAt: 0,
-                active: machine?.active === true,
+                active: activity?.active === true,
                 activeAt,
                 revokedAt: null,
                 metadata: null,
@@ -50,7 +56,7 @@ export function buildMachineStatusLine(machine: MachineStatusLineInput): string 
             if (isMachineOnline(statusMachine)) return t('status.online');
             return t('status.lastSeen', { time: formatLastSeen(activeAt, false) });
         }
-        if (machine?.active === true) return t('status.online');
+        if (activity?.active === true) return t('status.online');
         return t('status.unknown');
     })();
 

@@ -2,19 +2,29 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type {
-    AcpConfigOptionOverridesV1,
-    AgentExecutionTargetV1,
-    BackendTargetRefV2,
-    RuntimeDescriptorV1,
-    SessionCapabilitySelectionV1,
-    SessionModelSelectionV1,
-    SessionSpawnSourceContextV1,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+    AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
+import type {
+    BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
+    RuntimeDescriptorV1} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type {
+    SessionCapabilitySelectionV1} from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type {
+    SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import type {
+    SessionSpawnSourceContextV1} from '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1';
+import type {
     SessionAuthoringExecutionTargetV2,
-    TemporaryComputerActivationRefV1,
-    SessionOrganizationPlacementV1,
-    SessionInitialAccessDraftV1,
+    TemporaryComputerActivationRefV1} from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
+import type {
+    SessionOrganizationPlacementV1} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type {
+    SessionInitialAccessDraftV1} from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import type {
     SessionInitialTriggerV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -48,6 +58,8 @@ export interface NewSessionData {
     executionTarget?: SessionAuthoringExecutionTargetV2 | null;
     /** Reviewed local intent returned by the ordinary Machine picker; never an allocation. */
     managedMachineSelection?: ManagedMachineSelectionDraft | null;
+    /** One-shot picker continuation, never persisted with the authoring draft. */
+    managedMachineUseOptions?: import('@/components/sessions/new/components/machineSelection/managedMachineSelection').ManagedMachineUseOptions;
     temporaryComputerActivationRef?: TemporaryComputerActivationRefV1 | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
     access?: SessionInitialAccessDraftV1 | null;

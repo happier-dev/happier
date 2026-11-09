@@ -6,7 +6,7 @@ import { NavigationContext } from '@react-navigation/native';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 
 const removal = vi.hoisted(() => ({
@@ -49,12 +49,12 @@ describe('RouteRemovalStepConsumer', () => {
             },
         };
         const { RouteRemovalStepConsumer } = await import('./RouteRemovalStepConsumer');
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace}>
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
             <DestinationInstanceHost tabId="plugin-tab" ref={{ kind: 'plugin:notes', params: {} }}
                 pathname="/plugins/notes/page" focused visible>
                 <RouteRemovalStepConsumer active consume={consume} />
             </DestinationInstanceHost>
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationProvider>);
         expect(removal.callback).toBeNull();
         expect(participants.get('plugin-tab')?.()).toBe(true);
         consume.mockReturnValue(false);

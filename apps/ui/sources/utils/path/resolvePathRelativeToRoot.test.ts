@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { resolvePathRelativeToRoot } from './resolvePathRelativeToRoot';
+import { normalizeAbsoluteLocalPath, resolvePathRelativeToRoot } from './resolvePathRelativeToRoot';
 
 it('projects contained relative spelling without replacing canonical Windows containment', () => {
     expect(resolvePathRelativeToRoot({ root: 'C:\\Repo', path: 'c:/REPO/Sub Dir /Nested', preservePathSpelling: true }))
@@ -18,4 +18,14 @@ it('preserves a whitespace-only filename in absolute raw paths without changing 
     expect(resolvePathRelativeToRoot({ root: '/repo', path: '/repo/\n', preservePathSpelling: true })).toBe('\n');
     expect(resolvePathRelativeToRoot({ root: ' /repo ', path: '/repo/ ', preservePathSpelling: true })).toBe(' ');
     expect(resolvePathRelativeToRoot({ root: '/repo', path: ' /repo/src/a.ts ' })).toBe('src/a.ts');
+});
+
+it.each([
+    ['C:/../report.md', 'C:/report.md'],
+    ['C://report.md', 'C:/report.md'],
+    ['//server/share//report.md', '//server/share/report.md'],
+    ['//server/share/../report.md', '//server/share/report.md'],
+    ['//server/share/folder/../../report.md', '//server/share/report.md'],
+])('keeps the filesystem root indivisible for %s', (path, expected) => {
+    expect(normalizeAbsoluteLocalPath(path)).toBe(expected);
 });

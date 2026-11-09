@@ -1,6 +1,7 @@
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 export const DESKTOP_WINDOW_CHROME_POLICY_COMMAND = 'desktop_get_window_chrome_policy';
+export const DESKTOP_WINDOW_SET_NATIVE_TITLE_BAR_COMMAND = 'desktop_set_native_title_bar';
 export const DESKTOP_WINDOW_STATE_COMMAND = 'desktop_get_window_state';
 export const DESKTOP_WINDOW_SET_TITLE_COMMAND = 'desktop_set_window_title';
 export const DESKTOP_WINDOW_MINIMIZE_COMMAND = 'desktop_minimize_window';
@@ -15,10 +16,16 @@ export const DESKTOP_WINDOW_EVENTS = {
 export type DesktopWindowChromeStrategy =
     | 'none'
     | 'native-macos-traffic-lights'
+    | 'native-windows-frame'
     | 'custom-controls';
 
 export interface DesktopWindowChromePolicy {
     strategy: DesktopWindowChromeStrategy;
+    canSetNativeTitleBar?: boolean;
+    nativeTitleBarPersistenceError?: boolean;
+    /** Saved choice when a host can apply the frame only on next window creation. */
+    useNativeTitleBar?: boolean;
+    nativeTitleBarRestartRequired?: boolean;
 }
 
 export interface DesktopWindowState {
@@ -35,9 +42,7 @@ const DEFAULT_DESKTOP_WINDOW_STATE: DesktopWindowState = {
     isFullscreen: false,
 };
 
-function normalizeDesktopWindowChromePolicy(
-    value: unknown,
-): DesktopWindowChromePolicy {
+function normalizeDesktopWindowChromePolicy(value: unknown): DesktopWindowChromePolicy {
     const strategy = typeof (value as DesktopWindowChromePolicy | null)?.strategy === 'string'
         ? (value as DesktopWindowChromePolicy).strategy
         : 'none';
@@ -45,14 +50,44 @@ function normalizeDesktopWindowChromePolicy(
     if (
         strategy !== 'none'
         && strategy !== 'native-macos-traffic-lights'
+        && strategy !== 'native-windows-frame'
         && strategy !== 'custom-controls'
     ) {
         return DISABLED_DESKTOP_WINDOW_CHROME_POLICY;
     }
 
+    const payload = value as Partial<DesktopWindowChromePolicy>;
     return {
         strategy,
+        ...(payload.canSetNativeTitleBar === true ? { canSetNativeTitleBar: true } : {}),
+        ...(payload.nativeTitleBarPersistenceError === true ? { nativeTitleBarPersistenceError: true } : {}),
+        ...(typeof payload.useNativeTitleBar === 'boolean' ? { useNativeTitleBar: payload.useNativeTitleBar } : {}),
+        ...(payload.nativeTitleBarRestartRequired === true ? { nativeTitleBarRestartRequired: true } : {}),
     };
+}
+
+const chromePolicyListeners = new Set<(policy: DesktopWindowChromePolicy) => void>();
+
+export function subscribeDesktopWindowChromePolicy(listener: (policy: DesktopWindowChromePolicy) => void): () => void {
+    chromePolicyListeners.add(listener);
+    return () => { chromePolicyListeners.delete(listener); };
+}
+
+export function desktopWindowChromeUsesAppDragRegions(policy: DesktopWindowChromePolicy): boolean {
+    return policy.strategy === 'custom-controls' || policy.strategy === 'native-macos-traffic-lights';
+}
+
+export async function setDesktopNativeTitleBar(useNativeTitleBar: boolean): Promise<DesktopWindowChromePolicy> {
+    const policy = normalizeDesktopWindowChromePolicy(await invokeDesktopHost<unknown>(
+        DESKTOP_WINDOW_SET_NATIVE_TITLE_BAR_COMMAND, { useNativeTitleBar },
+    ));
+    if (policy.canSetNativeTitleBar !== true) {
+        throw new Error('Native title bar preference is unavailable');
+    }
+    // The main webview is the only writer. Publish the native owner's effective policy,
+    // including a failed save, so settings, controls and drag regions agree immediately.
+    for (const listener of chromePolicyListeners) listener(policy);
+    return policy;
 }
 
 function normalizeDesktopWindowState(value: unknown): DesktopWindowState {
@@ -131,8 +166,8 @@ export async function toggleDesktopWindowMaximize(): Promise<void> {
     await invokeDesktopWindowCommand(DESKTOP_WINDOW_TOGGLE_MAXIMIZE_COMMAND);
 }
 
-export async function closeDesktopWindow(): Promise<void> {
-    await invokeDesktopWindowCommand(DESKTOP_WINDOW_CLOSE_COMMAND);
+export async function closeDesktopWindow(): Promise<boolean> {
+    return invokeDesktopWindowCommand(DESKTOP_WINDOW_CLOSE_COMMAND);
 }
 
 export async function startDesktopWindowDragging(): Promise<void> {

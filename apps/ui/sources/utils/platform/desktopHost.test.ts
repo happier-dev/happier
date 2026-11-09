@@ -147,4 +147,61 @@ describe('utils/platform/desktopHost', () => {
             expect(unlisten).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe('role availability', () => {
+        it.each(['browser', 'electron'])('settles %s without native acquisition or overlay subscriptions', async (kind) => {
+            vi.resetModules();
+            const invoke = vi.fn();
+            if (kind === 'electron') {
+                writeGlobal('navigator', { userAgent: ELECTRON_USER_AGENT });
+                writeGlobal(TAURI_INTERNALS_KEY, { invoke });
+            }
+            const host = await import('./desktopHost');
+            const availability = await host.getDesktopHostAvailability();
+            for (const role of ['activity', 'pet', 'windows'] as const) {
+                expect(availability[role].kind).toBe('unavailable');
+                await expect(host.requireDesktopHostRole(role)).rejects.toMatchObject({ code: 'desktop_host_unavailable', role });
+            }
+            expect(invoke).not.toHaveBeenCalled();
+            expect(coreInvokeSpy).not.toHaveBeenCalled();
+            expect(listenSpy).not.toHaveBeenCalled();
+        });
+
+        it('shares one pending acquisition and updates only a failed role from pushed window state', async () => {
+            vi.resetModules();
+            const available = { kind: 'available' } as const;
+            let settle: (value: unknown) => void = () => {};
+            const invoke = vi.fn(() => new Promise(resolve => { settle = resolve; }));
+            writeGlobal(TAURI_INTERNALS_KEY, { invoke });
+            const handlers = new Map<string, (event: { payload: unknown }) => void>();
+            listenSpy.mockImplementation(async (event, handler) => {
+                handlers.set(event, handler);
+                return () => { handlers.delete(event); };
+            });
+            const host = await import('./desktopHost');
+            const first = host.getDesktopHostAvailability();
+            const second = host.getDesktopHostAvailability();
+            expect(host.getDesktopHostAvailabilitySnapshot()).toBeNull();
+            await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+            settle({ activity: available, pet: available, windows: available });
+            const initial = await first;
+            expect(await second).toBe(initial);
+            expect(invoke).toHaveBeenCalledTimes(1);
+            expect(invoke).toHaveBeenCalledWith('desktop_host_get_availability', undefined);
+            const failure = { kind: 'unavailable', reason: 'panel_host_apply_failed' } as const;
+            handlers.get('activityOverlay://state')?.({ payload: { availability: { activity: failure } } });
+            const next = host.getDesktopHostAvailabilitySnapshot();
+            expect(next?.activity).toEqual(failure);
+            expect(next?.pet).toBe(initial.pet);
+            expect(next?.windows).toBe(initial.windows);
+            await expect(host.requireDesktopHostRole('activity')).rejects.toMatchObject({ reason: failure.reason });
+            await expect(host.requireDesktopHostRole('pet')).resolves.toBeUndefined();
+            const petFailure = { kind: 'unavailable', reason: 'pointer_unavailable' } as const;
+            handlers.get('desktop_pet_overlay_window_state_changed')?.({ payload: { availability: { pet: petFailure } } });
+            expect(host.getDesktopHostAvailabilitySnapshot()?.pet).toEqual(petFailure);
+            expect(host.getDesktopHostAvailabilitySnapshot()?.windows).toBe(initial.windows);
+            await expect(host.requireDesktopHostRole('pet')).rejects.toMatchObject({ reason: petFailure.reason });
+            expect(invoke).toHaveBeenCalledTimes(1);
+        });
+    });
 });

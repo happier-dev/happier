@@ -58,3 +58,14 @@ export function rebasePathRelativeToRoot(params: Readonly<{
     if (relative === null || targetRoot === null || !isAbsoluteLocalPath(targetRoot)) return null;
     return relative === '.' ? targetRoot : `${targetRoot.endsWith('/') ? targetRoot : `${targetRoot}/`}${relative}`;
 }
+
+/** URL's standard dot-segment resolution is platform-independent; containment stays path-owner controlled. */
+export function normalizeAbsoluteLocalPath(path: string): string {
+    // A drive or UNC share is one filesystem root: URL dot resolution must only see its suffix.
+    const root = /^(?:\/?[A-Za-z]:\/|\/\/[^/]+\/[^/]+(?:\/|$))/.exec(path)?.[0] ?? '/';
+    const prefix = root.endsWith('/') ? root : `${root}/`;
+    const suffix = root === '/' ? path.replace(/^\/+/, '') : path.slice(root.length);
+    const encoded = suffix.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+    const normalized = decodeURIComponent(new URL(`/${encoded}`, 'https://workspace.invalid/').pathname);
+    return `${prefix.replace(/^\/(?=[A-Za-z]:\/)/, '')}${normalized.slice(1)}`;
+}

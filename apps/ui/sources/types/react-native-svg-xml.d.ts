@@ -1,4 +1,4 @@
-// react-native-svg 15.15.3 keeps this runtime parser beside its separately published XML types.
-declare module 'react-native-svg/lib/commonjs/xml' {
-    export { parse } from 'react-native-svg/lib/typescript/xml';
+// The test boundary uses the SDK's ESM parser with native drawing tags substituted.
+declare module 'react-native-svg/lib/module/xml.js' {
+    export { parse } from 'react-native-svg';
 }

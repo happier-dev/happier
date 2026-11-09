@@ -1,6 +1,6 @@
 import { Dimensions, Platform } from 'react-native';
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef } from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight } from './deviceCalculations';
 import { isRunningOnMac } from './platform';
 import { isWebMobileHost } from './webMobileHeuristics';
@@ -8,26 +8,41 @@ import { isWebMobileHost } from './webMobileHeuristics';
 // Re-export calculation functions for use in other components
 export { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight };
 
-/** Window geometry is presentation work; retained background workflows stay connected separately. */
+/**
+ * Window geometry is presentation work; retained background workflows stay connected separately. A hidden
+ * retained pane holds no Dimensions listener, and hiding or showing it renders none of its readers: the
+ * presentation fact arrives as a subscription, and showing re-reads the window once, rendering only when
+ * the geometry changed while it was hidden.
+ */
 export function usePresentationWindowDimensions() {
-    const presented = useLayoutPresentationActive();
+    const presentation = useLayoutPresentationSignal();
     const [, invalidate] = useReducer((revision: number) => revision + 1, 0);
     // Dimensions remains the authority, including the first render after a retained pane is revealed.
     const dimensions = Dimensions.get('window');
     const { width, height, scale, fontScale } = dimensions;
     useLayoutEffect(() => {
-        if (!presented) return;
         const onChange = () => {
             const next = Dimensions.get('window');
             if (next.width !== width || next.height !== height || next.scale !== scale || next.fontScale !== fontScale) {
                 invalidate();
             }
         };
-        const subscription = Dimensions.addEventListener('change', onChange);
-        // Close the render-to-subscription window using the same platform authority.
-        onChange();
-        return () => subscription.remove();
-    }, [presented, width, height, scale, fontScale]);
+        let subscription: ReturnType<typeof Dimensions.addEventListener> | null = null;
+        const follow = () => {
+            if (!presentation.get()) {
+                subscription?.remove();
+                subscription = null;
+                return;
+            }
+            if (subscription) return;
+            subscription = Dimensions.addEventListener('change', onChange);
+            // Close the render-to-subscription (or hidden-to-shown) window using the same platform authority.
+            onChange();
+        };
+        follow();
+        const stopFollowing = presentation.subscribe(follow);
+        return () => { stopFollowing(); subscription?.remove(); };
+    }, [presentation, width, height, scale, fontScale]);
     return dimensions;
 }
 

@@ -51,17 +51,35 @@ describe('isRuntimeActive', () => {
         }
     });
 
-    it('treats a Tauri webview as active even when AppState reports background', async () => {
-        const { isRuntimeActive } = await import('./isRuntimeActive');
+    it('pauses hidden desktop work while ignoring misleading native AppState for a visible webview', async () => {
+        vi.useFakeTimers();
+        const { isRuntimeActive, startRuntimeActiveGatedInterval } = await import('./isRuntimeActive');
         appState.currentState = 'background';
-        const prevDocument = (globalThis as any).document;
-        (globalThis as any).document = { visibilityState: 'hidden' };
-        (globalThis as any).__TAURI_INTERNALS__ = { invoke: () => undefined };
+        const listeners = new Set<() => void>();
+        const doc = { visibilityState: 'hidden',
+            addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+            removeEventListener: (_event: string, listener: () => void) => listeners.delete(listener),
+        };
+        vi.stubGlobal('document', doc);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => undefined });
+        const tick = vi.fn();
+        const stop = startRuntimeActiveGatedInterval(tick, 100);
         try {
+            expect(isRuntimeActive()).toBe(false);
+            await vi.advanceTimersByTimeAsync(500);
+            expect(tick).toHaveBeenCalledTimes(0);
+            expect(vi.getTimerCount()).toBe(0);
+            doc.visibilityState = 'visible';
+            listeners.forEach(listener => listener());
             expect(isRuntimeActive()).toBe(true);
+            expect(tick).toHaveBeenCalledTimes(1);
+            listeners.forEach(listener => listener());
+            expect(tick).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(100);
+            expect(tick).toHaveBeenCalledTimes(2);
         } finally {
-            delete (globalThis as any).__TAURI_INTERNALS__;
-            (globalThis as any).document = prevDocument;
+            stop();
+            vi.unstubAllGlobals();
         }
     });
 

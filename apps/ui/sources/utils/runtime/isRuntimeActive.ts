@@ -4,13 +4,10 @@ import { isWebMobileHost } from '@/utils/platform/webMobileHeuristics';
 import { readHostWindowFocus } from './readHostWindowFocus';
 
 export function isRuntimeActive(): boolean {
-    if (isDesktopHost()) {
-        return true;
-    }
-
     try {
         const appState = String(AppState.currentState ?? '').trim();
-        if (appState && appState !== 'active' && appState !== 'unknown') {
+        // Desktop webviews can report a native background state while their document is visible.
+        if (!isDesktopHost() && appState && appState !== 'active' && appState !== 'unknown') {
             return false;
         }
     } catch {

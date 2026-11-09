@@ -248,8 +248,8 @@ export function runUnsavedChangesGuard(
 export function runGuardedNavigation(navigate: () => void | Promise<void>, intent?: 'history'): true | Promise<boolean> {
     const guard = activeUnsavedChangesGuard;
     if (!guard) {
-        navigate();
-        return true;
+        const navigation = navigate();
+        return navigation ? navigation.then(() => true) : true;
     }
 
     return runUnsavedChangesGuard(guard, navigate, intent);

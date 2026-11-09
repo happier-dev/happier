@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary as installBrowserClipboard } from '@/dev/testkit';
 
 beforeEach(() => {
     vi.doMock('react-native', async () => {
@@ -12,20 +13,6 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-// Browser APIs are the external boundary; the clipboard owner and its UI result stay real.
-function installBrowserClipboard(writeText: ((value: string) => Promise<void>) | undefined, legacyCopied = false) {
-    const textField = { value: '', select: vi.fn() };
-    const execCommand = vi.fn(() => legacyCopied);
-    const removeChild = vi.fn();
-    vi.stubGlobal('navigator', { clipboard: writeText ? { writeText } : undefined });
-    vi.stubGlobal('document', {
-        createElement: vi.fn(() => textField),
-        body: { appendChild: vi.fn(), removeChild },
-        execCommand,
-    });
-    return { textField, execCommand, removeChild };
-}
-
 describe('writeClipboardStringFromUi web gesture', () => {
     it.each([true, false])('starts the platform write synchronously and reports copied=%s', async copied => {
         vi.resetModules();
@@ -35,7 +22,7 @@ describe('writeClipboardStringFromUi web gesture', () => {
         const writeText = vi.fn(async (_text: string) => {
             if (!copied) throw new DOMException('', 'NotAllowedError');
         });
-        const browser = installBrowserClipboard(writeText);
+        const browser = installBrowserClipboard(writeText, false);
         vi.doMock('expo-clipboard', () => ({ setStringAsync }));
         vi.doMock('react-native', async () => {
             const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -66,7 +53,7 @@ describe('web clipboard platform outcomes', () => {
     });
 
     it('refuses an optimistic Expo boolean when both platform writes fail', async () => {
-        const browser = installBrowserClipboard(vi.fn().mockRejectedValue(new DOMException('', 'NotAllowedError')));
+        const browser = installBrowserClipboard(vi.fn().mockRejectedValue(new DOMException('', 'NotAllowedError')), false);
         const { setClipboardStringSafe } = await import('./clipboard');
         await expect(setClipboardStringSafe('sentinel')).resolves.toBe(false);
         expect(browser.textField.value).toBe('sentinel');
@@ -92,7 +79,7 @@ describe('web clipboard platform outcomes', () => {
     });
 
     it('removes the fallback field and reports unavailable when the legacy API throws', async () => {
-        const browser = installBrowserClipboard(undefined);
+        const browser = installBrowserClipboard(undefined, false);
         browser.execCommand.mockImplementation(() => { throw new DOMException('', 'NotAllowedError'); });
         const { writeClipboardStringFromUi } = await import('./clipboard');
         await expect(writeClipboardStringFromUi('sentinel', vi.fn())).resolves.toMatchObject({

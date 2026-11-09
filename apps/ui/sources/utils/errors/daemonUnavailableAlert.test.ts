@@ -29,6 +29,17 @@ installErrorUtilityCommonModuleMocks({
 });
 
 describe('daemonUnavailableAlert', () => {
+    it('reads current activity without mutating the retained status-line Machine', async () => {
+        vi.resetModules();
+        const { buildMachineStatusLine } = await import('./daemonUnavailableAlert');
+        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        const oldTimestamp = Date.now() - 5 * 60_000;
+        const machine = { active: true, activeAt: oldTimestamp, metadata: { host: 'devbox' } };
+        publishMachineActivity(machine, { active: true, activeAt: Date.now() }, []);
+        expect(buildMachineStatusLine(machine)).toBe('devbox — status.online');
+        expect(machine.activeAt).toBe(oldTimestamp);
+    });
+
     it('shows a translated alert with machine status and Retry/Cancel buttons', async () => {
         modalAlertSpy.mockClear();
         vi.resetModules();

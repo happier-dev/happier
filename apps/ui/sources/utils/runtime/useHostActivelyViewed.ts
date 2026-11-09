@@ -21,12 +21,9 @@ type ViewLike = Readonly<{
  * Whether the app is genuinely being looked at right now.
  *
  * This is a stricter question than `isRuntimeActive()`, which asks "may a
- * background probe run?" and answers `true` for every desktop host so polling
- * survives a webview that never reports visibility. Motion and disclosure
- * cannot use that answer: a 60 Hz loop behind a hidden window is pure cost, and
- * context described for a window nobody can see is disclosure nobody asked for.
- * The desktop branch therefore composes the canonical window-presence fact
- * instead of restating it.
+ * background probe run?" from document visibility and native AppState. The
+ * desktop branch here additionally consumes the canonical window-presence fact
+ * for motion and disclosure, rather than restating native window visibility.
  *
  * Visibility remains the ordinary gate, not focus. A visible unfocused window
  * still supplies current UI context — that is the hands-free posture, and the

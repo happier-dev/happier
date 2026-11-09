@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol';
+import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
 
 import {
     buildTerminalConnectDeepLink,

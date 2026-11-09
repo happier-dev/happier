@@ -2,7 +2,7 @@ import { t } from '@/text';
 import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { resolveMachineReachability, type MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -27,7 +27,7 @@ export type MachineManagedPresence = Readonly<{
 /** Retain native status words, rather than the protected managed inventory row, in rendered rows. */
 export function projectMachineManagedPresence(
     machine: Pick<MachinePresenceV1, 'revokedAt'> & Readonly<{ id?: string }>
-        & Partial<Pick<Machine, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
+        & Partial<Pick<MachineDisplayRenderable, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
     managedMachine?: ManagedMachineV1 | null,
 ): MachineManagedPresence | null {
     if (!managedMachine && !machine.managedInputRuntime?.state) return null;
@@ -80,7 +80,7 @@ export function describeMachinePresenceSummary(summary: MachinePresenceSummary):
 
 export function describeMachineRuntimePresence(
     machine: MachinePresenceV1 & Readonly<{ id?: string; presence?: null }>
-        & Partial<Pick<Machine, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
+        & Partial<Pick<MachineDisplayRenderable, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
     nowMs?: number,
     managedPresence?: MachineManagedPresence | null,
     scope?: MachineReachabilityScope | null,

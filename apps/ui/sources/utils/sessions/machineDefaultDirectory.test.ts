@@ -30,7 +30,7 @@ const machines = [machine('machine-1', '/home/dev'), machine('machine-2', null)]
 
 describe('default directory for a Machine', () => {
     it('uses requester home intent for a launch-preparable member without exposing custodian paths', () => {
-        const owned = { ...machine('owned', '/home/daemon'), isShared: false,
+        const owned: Machine = { ...machine('owned', '/home/daemon'), isShared: false,
             metadata: { ...machine('owned', '/home/daemon').metadata!,
                 agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } };
         const ownStatus = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'unavailable',
@@ -40,7 +40,7 @@ describe('default directory for a Machine', () => {
         expect(resolveMachineHomeDirectory({ machine: owned, ownStatus })).toBe('');
     });
     it('never defaults an owned separated Machine to daemon history before its member projection arrives', () => {
-        const owned = { ...machine('owned', '/home/daemon'), isShared: false,
+        const owned: Machine = { ...machine('owned', '/home/daemon'), isShared: false,
             metadata: { ...machine('owned', '/home/daemon').metadata!,
                 agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } };
         const staleAdmin = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'trusted_administrator',
@@ -52,7 +52,7 @@ describe('default directory for a Machine', () => {
         }
     });
     it.each(['darwin', 'linux', 'win32'])('resolves a non-isolated shared %s Machine without waiting for isolation readiness', (platform) => {
-        const shared = { ...machine('shared', '/shared/home'), isShared: true,
+        const shared: Machine = { ...machine('shared', '/shared/home'), isShared: true,
             metadata: { ...machine('shared', '/shared/home').metadata!, platform, agentIsolation: { enabled: false } } };
         const statuses = [undefined,
             MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'setup_pending', status: { kind: 'disabled' } }),
@@ -69,8 +69,9 @@ describe('default directory for a Machine', () => {
 
     it('does not substitute custodian history while member placement or its policy is unresolved', () => {
         const shared = { ...machine('shared', '/custodian/home'), isShared: true };
-        for (const agentIsolation of [{ enabled: true, memberProvisioning: 'linuxUsersV1' }, { enabled: 'invalid' }]) {
-            const target = { ...shared, metadata: { ...shared.metadata!, agentIsolation } };
+        for (const agentIsolation of [{ enabled: true, memberProvisioning: 'linuxUsersV1' }, { enabled: 'invalid' }] as const) {
+            // Deliberately corrupt stored metadata exercises the policy reader's refusal.
+            const target = { ...shared, metadata: { ...shared.metadata!, agentIsolation } as Machine['metadata'] };
             expect(resolveDefaultDirectoryForMachine({ machineId: target.id, machines: [target], recentPaths: ['/custodian/repo'] }))
                 .toBe('');
             expect(resolveMachineHomeDirectory({ machine: target })).toBe('');
