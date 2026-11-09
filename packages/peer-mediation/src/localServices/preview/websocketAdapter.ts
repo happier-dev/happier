@@ -8,18 +8,16 @@ import type {
     LocalServicePreviewTunnelStream,
     OpenLocalServicePreviewTunnel,
 } from "./httpAdapter.js";
-import { isPreviewMethodAllowed } from "./httpAdapter.js";
+import { createLocalServicePreviewPortPolicyRefusal, isPreviewMethodAllowed } from "./httpAdapter.js";
 import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "./limits.js";
-import { buildPreviewRequestHeaders, readPreviewHeader } from "./headers.js";
-import { createPreviewUpstreamSocket, readPreviewUpstreamResponseFailure } from "./upstreamSocket.js";
+import { buildPreviewRequestHeaders, readPreviewHeader, DEFAULT_PREVIEW_MAX_PROXY_HOPS, parseProxyHopCount } from "./headers.js";
+import { createPreviewUpstreamSocket, isPreviewOccurrenceEnded, isPreviewPortNotAllowed, readPreviewUpstreamResponseFailure } from "./upstreamSocket.js";
 import { rewritePreviewResponseHeaders } from "./rewrites.js";
 import {
     isSafeLocalServiceRequestTarget,
 } from "./requestTarget.js";
 import type { PreviewAdapterObservability } from "./observability.js";
 
-const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
-const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const textEncoder = new TextEncoder();
 let nextSocketSequence = 0;
@@ -55,7 +53,9 @@ export type ProxyLocalServicePreviewWebSocketUpgradeResult =
               | "response_body_too_large"
               | "invalid_upgrade_request"
               | "upstream_response_invalid"
-              | "upstream_stream_failed";
+              | "upstream_stream_failed"
+              | "preview_not_found"
+              | "destination_port_not_allowed";
       }>;
 
 export type ProxyLocalServicePreviewWebSocketUpgradeInput = Readonly<{
@@ -72,11 +72,6 @@ function readHeader(headers: LocalServicePreviewHttpHeaders, name: string): stri
     return readPreviewHeader(headers, name);
 }
 
-function parseProxyHopCount(headers: LocalServicePreviewHttpHeaders): number {
-    const value = Number.parseInt(readHeader(headers, PREVIEW_HOP_HEADER) ?? "0", 10);
-    return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 function requestTargetPath(request: LocalServicePreviewWebSocketUpgradeRequest): string {
     return `${request.path.startsWith("/") ? request.path : `/${request.path}`}${request.search.startsWith("?") ? request.search : ""}`;
 }
@@ -91,8 +86,10 @@ function headersForObservability(request: LocalServicePreviewWebSocketUpgradeReq
     return headers;
 }
 
-async function writeClientError(client: LocalServicePreviewWebSocketClient, statusCode: number, statusMessage: string): Promise<void> {
-    await client.write(textEncoder.encode(`HTTP/1.1 ${statusCode} ${statusMessage}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`));
+async function writeClientError(client: LocalServicePreviewWebSocketClient, statusCode: number, statusMessage: string, reasonCode?: 'preview_not_found' | 'destination_port_not_allowed', port?: number): Promise<void> {
+    const body = reasonCode ? JSON.stringify(reasonCode === 'destination_port_not_allowed'
+        ? createLocalServicePreviewPortPolicyRefusal(port!) : { error: reasonCode, reasonCode }) : '';
+    await client.write(textEncoder.encode(`HTTP/1.1 ${statusCode} ${statusMessage}\r\nConnection: close\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ${textEncoder.encode(body).byteLength}\r\n\r\n${body}`));
     client.destroy();
 }
 
@@ -200,7 +197,17 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
     const startedAtMs = nowMs();
     const socketId = nextSocketId(input.preview.previewId);
     const observabilityAccountId = input.observabilityAccountId ?? "unknown";
-    const tunnel = await input.openTunnel({ preview: input.preview });
+    let tunnel: LocalServicePreviewTunnelStream;
+    try { tunnel = await input.openTunnel({ preview: input.preview }); }
+    catch (error) {
+        if (isPreviewPortNotAllowed(error)) {
+            await writeClientError(input.request.client, 403, 'Forbidden', 'destination_port_not_allowed', input.preview.target.port);
+            return { ok: false, reasonCode: 'destination_port_not_allowed' };
+        }
+        if (!isPreviewOccurrenceEnded(error)) throw error;
+        await writeClientError(input.request.client, 404, 'Not Found', 'preview_not_found');
+        return { ok: false, reasonCode: 'preview_not_found' };
+    }
     function emitWebSocketLifecycle(inputEvent: Readonly<{
         kind: "websocket.opened" | "websocket.closed" | "websocket.aborted" | "websocket.errored";
         reasonCode?: string;
@@ -222,8 +229,10 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
         });
     }
     emitWebSocketLifecycle({ kind: "websocket.opened" });
+    let upgraded = false;
     try {
         const upstream = await openUpstreamUpgrade(input, tunnel);
+        upgraded = true;
         const abortUpstream = () => upstream.socket.destroy(new Error("client_aborted"));
         input.request.signal?.addEventListener("abort", abortUpstream, { once: true });
         try {
@@ -243,6 +252,18 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
         });
         return { ok: true };
     } catch (error) {
+        if (!upgraded && isPreviewPortNotAllowed(error)) {
+            await writeClientError(input.request.client, 403, 'Forbidden', 'destination_port_not_allowed', input.preview.target.port);
+            await tunnel.abort('destination_port_not_allowed');
+            emitWebSocketLifecycle({ kind: 'websocket.aborted', reasonCode: 'destination_port_not_allowed' });
+            return { ok: false, reasonCode: 'destination_port_not_allowed' };
+        }
+        if (!upgraded && isPreviewOccurrenceEnded(error)) {
+            await writeClientError(input.request.client, 404, 'Not Found', 'preview_not_found');
+            await tunnel.abort('preview_not_found');
+            emitWebSocketLifecycle({ kind: 'websocket.aborted', reasonCode: 'preview_not_found' });
+            return { ok: false, reasonCode: 'preview_not_found' };
+        }
         input.request.client.destroy(error);
         const code = readPreviewUpstreamResponseFailure(error) ?? (error instanceof Error ? error.message : "");
         const aborted = code === "upstream_response_invalid" || code === "request_body_too_large" || code === "response_body_too_large" || code === "response_header_too_large";

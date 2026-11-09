@@ -1,6 +1,6 @@
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol/local/services/preview/v1";
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
-import { isPreviewAuthorityCookie, previewTargetUrl } from "./headers.js";
+import { isPreviewAuthorityCookie, previewTargetUrl, PREVIEW_TRANSPORT_UNAVAILABLE_HEADER } from "./headers.js";
 
 type ResponseHeaderValue = string | readonly string[];
 type ResponseHeaders = Readonly<Record<string, ResponseHeaderValue>>;
@@ -106,7 +106,8 @@ export function rewritePreviewResponseHeaders(input: Readonly<{
 
     for (const [name, value] of Object.entries(input.headers)) {
         const normalized = headerName(name);
-        if (normalized === "connection" || normalized === "transfer-encoding") continue;
+        if (normalized === "connection" || normalized === "transfer-encoding"
+            || normalized === PREVIEW_TRANSPORT_UNAVAILABLE_HEADER) continue;
         if (normalized === "set-cookie") {
             if (cookiePolicy === "drop") continue;
             const rewritten = headerValues(value).flatMap((rawValue) => {

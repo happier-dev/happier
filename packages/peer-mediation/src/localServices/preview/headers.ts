@@ -2,6 +2,10 @@ import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 import type { LocalServicePreviewHttpHeaders } from "./httpAdapter.js";
 import { isSafeLocalServiceHeaderField } from "./requestTarget.js";
 
+export const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
+const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
+export const PREVIEW_TRANSPORT_UNAVAILABLE_HEADER = "x-happier-preview-transport-unavailable";
+
 function headerName(value: string): string {
     return value.trim().toLowerCase();
 }
@@ -17,6 +21,11 @@ export function isPreviewControlledForwardingHeader(name: string): boolean {
 export function readPreviewHeader(headers: LocalServicePreviewHttpHeaders, name: string): string | undefined {
     const value = Object.entries(headers).find(([key]) => headerName(key) === name)?.[1];
     return typeof value === "string" ? value : value?.[0];
+}
+
+export function parseProxyHopCount(headers: LocalServicePreviewHttpHeaders): number {
+    const value = Number.parseInt(readPreviewHeader(headers, PREVIEW_HOP_HEADER) ?? "0", 10);
+    return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 /** Cookies the relay owns for a preview; they never reach, or are set by, the previewed application. */
@@ -45,7 +54,7 @@ export function buildPreviewRequestHeaders(input: Readonly<{
         const normalized = headerName(name);
         if (!isSafeLocalServiceHeaderField(normalized) || isPreviewControlledForwardingHeader(normalized)
             || connectionTokens.includes(normalized)
-            || ["authorization", "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "accept-encoding", "x-happier-preview-hops"].includes(normalized)) continue;
+            || ["authorization", "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "accept-encoding", PREVIEW_HOP_HEADER].includes(normalized)) continue;
         let values = (typeof value === "string" ? [value] : value ?? []).filter(isSafeLocalServiceHeaderField);
         if (normalized === "cookie") {
             values = (input.preview.policy?.cookiePolicy ?? "rewrite") === "drop" ? [] : values.map((raw) => raw.split(";")
@@ -66,8 +75,7 @@ export function buildPreviewRequestHeaders(input: Readonly<{
     out.Connection = input.upgrade ? "Upgrade" : "close";
     if (input.upgrade) out.Upgrade = "websocket";
     else out["Accept-Encoding"] = "identity";
-    const hops = Number.parseInt(readPreviewHeader(input.headers, "x-happier-preview-hops") ?? "0", 10);
-    out["x-happier-preview-hops"] = String((Number.isFinite(hops) && hops > 0 ? hops : 0) + 1);
+    out[PREVIEW_HOP_HEADER] = String(parseProxyHopCount(input.headers) + 1);
     if (externalHost && isSafeLocalServiceHeaderField(externalHost)) out["X-Forwarded-Host"] = externalHost;
     out["X-Forwarded-Proto"] = input.externalProtocol ?? "http";
     return out;

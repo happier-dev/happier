@@ -4,6 +4,18 @@ import { isIP } from "node:net";
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 import type { LocalServicePreviewTunnelStream } from "./httpAdapter.js";
 
+/** Preserve occurrence refusal across socket/relay errors without classifying
+ * arbitrary upstream errors or unknown observations as an ended preview. */
+export function isPreviewOccurrenceEnded(error: unknown): boolean {
+    return error instanceof Error && (error.message === 'preview_not_found'
+        || 'reasonCode' in error && error.reasonCode === 'preview_not_found');
+}
+
+/** This closed policy refusal is safe to show to the admitted preview viewer. */
+export function isPreviewPortNotAllowed(error: unknown): boolean {
+    return error instanceof Error && 'reasonCode' in error && error.reasonCode === 'destination_port_not_allowed';
+}
+
 /** Native HTTP and TLS consume the same PMS byte stream; the daemon remains TCP-only. */
 export function createPreviewUpstreamSocket(preview: LocalServicePreviewResourceV1, tunnel: LocalServicePreviewTunnelStream): Duplex {
     const iterator = tunnel.read()[Symbol.asyncIterator]();

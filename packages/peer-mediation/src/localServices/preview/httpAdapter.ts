@@ -2,16 +2,14 @@ import { request as httpRequest } from "node:http";
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 
 import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "./limits.js";
-import { buildPreviewRequestHeaders, readPreviewHeader } from "./headers.js";
-import { createPreviewUpstreamSocket, readPreviewUpstreamResponseFailure } from "./upstreamSocket.js";
+import { buildPreviewRequestHeaders, readPreviewHeader, DEFAULT_PREVIEW_MAX_PROXY_HOPS, parseProxyHopCount, PREVIEW_TRANSPORT_UNAVAILABLE_HEADER } from "./headers.js";
+import { createPreviewUpstreamSocket, isPreviewOccurrenceEnded, isPreviewPortNotAllowed, readPreviewUpstreamResponseFailure } from "./upstreamSocket.js";
 import { rewritePreviewResponseHeaders } from "./rewrites.js";
 import {
     isSafeLocalServiceRequestTarget,
 } from "./requestTarget.js";
 import type { PreviewAdapterObservability } from "./observability.js";
 
-const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
-const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
 const textEncoder = new TextEncoder();
 let nextRequestSequence = 0;
 
@@ -65,6 +63,8 @@ export type ProxyLocalServicePreviewHttpRequestResult =
               | "method_not_allowed"
               | "preview_loop_detected"
               | "preview_tunnel_unavailable"
+              | "preview_not_found"
+              | "destination_port_not_allowed"
               | "request_body_too_large"
               | "response_header_too_large"
               | "response_body_too_large"
@@ -81,16 +81,13 @@ export type ProxyLocalServicePreviewHttpRequestInput = Readonly<{
     observability?: PreviewAdapterObservability;
     observabilityAccountId?: string;
     nowMs?: () => number;
+    /** Proxy-owned refusals only; an application's status/body never publishes this fact. */
+    onPreviewRefused?: (reasonCode: 'preview_not_found' | 'preview_transport_unavailable' | 'destination_port_not_allowed') => void;
     onTransportUnavailable?: (input: Readonly<{ previewId: string; machineId: string; requestId: string; method: string; url: string; reasonCode: string; module: string; level: string }>) => void;
 }>;
 
 function readHeader(headers: LocalServicePreviewHttpHeaders, name: string): string | null {
     return readPreviewHeader(headers, name) ?? null;
-}
-
-function parseProxyHopCount(headers: LocalServicePreviewHttpHeaders): number {
-    const value = Number.parseInt(readHeader(headers, PREVIEW_HOP_HEADER) ?? "0", 10);
-    return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function isPreviewMethodAllowed(preview: LocalServicePreviewResourceV1, method: string): boolean {
@@ -197,6 +194,7 @@ async function writePreviewTransportUnavailable(
 ): Promise<number> {
     const payload = textEncoder.encode(body);
     response.writeHead(503, "Service Unavailable", {
+        [PREVIEW_TRANSPORT_UNAVAILABLE_HEADER]: "1",
         "content-type": "application/json; charset=utf-8",
         "content-length": String(payload.byteLength),
         "cache-control": "no-store",
@@ -204,6 +202,23 @@ async function writePreviewTransportUnavailable(
     await response.write(payload);
     await response.end();
     return payload.byteLength;
+}
+
+async function writePreviewNotFound(input: ProxyLocalServicePreviewHttpRequestInput): Promise<void> {
+    input.onPreviewRefused?.('preview_not_found');
+    const response = input.response;
+    const payload = textEncoder.encode(JSON.stringify({ error: 'preview_not_found', reasonCode: 'preview_not_found' }));
+    response.writeHead(404, 'Not Found', { 'content-type': 'application/json; charset=utf-8', 'content-length': String(payload.byteLength), 'cache-control': 'no-store' });
+    await response.write(payload);
+    await response.end();
+}
+
+async function writePreviewPortNotAllowed(input: ProxyLocalServicePreviewHttpRequestInput): Promise<void> {
+    input.onPreviewRefused?.('destination_port_not_allowed');
+    const payload = textEncoder.encode(JSON.stringify(createLocalServicePreviewPortPolicyRefusal(input.preview.target.port)));
+    input.response.writeHead(403, 'Forbidden', { 'content-type': 'application/json; charset=utf-8', 'content-length': String(payload.byteLength), 'cache-control': 'no-store' });
+    await input.response.write(payload);
+    await input.response.end();
 }
 
 export async function proxyLocalServicePreviewHttpRequest(
@@ -214,6 +229,7 @@ export async function proxyLocalServicePreviewHttpRequest(
     const requestId = nextRequestId(input.preview.previewId);
     const observabilityAccountId = input.observabilityAccountId ?? "unknown";
     const refuseTransport = async (reasonCode: string) => {
+        input.onPreviewRefused?.('preview_transport_unavailable');
         input.onTransportUnavailable?.({
             module: "local-service-preview", level: "error", previewId: input.preview.previewId,
             machineId: input.preview.machineId, requestId, method: input.request.method,
@@ -255,6 +271,14 @@ export async function proxyLocalServicePreviewHttpRequest(
     try {
         tunnel = await input.openTunnel({ preview: input.preview });
     } catch (error) {
+        if (isPreviewPortNotAllowed(error)) {
+            await writePreviewPortNotAllowed(input);
+            return { ok: false, reasonCode: 'destination_port_not_allowed' };
+        }
+        if (isPreviewOccurrenceEnded(error)) {
+            await writePreviewNotFound(input);
+            return { ok: false, reasonCode: 'preview_not_found' };
+        }
         // Every other failure this adapter knows about is written to the sink and returned as a
         // typed result. Opening the tunnel used to be the one that escaped as an exception, which
         // Fastify's global handler turned into an untyped `500 An unexpected error occurred` with
@@ -300,6 +324,18 @@ export async function proxyLocalServicePreviewHttpRequest(
         return { ok: true };
     } catch (error) {
         const code = readPreviewUpstreamResponseFailure(error) ?? (error instanceof Error ? error.message : "");
+        if (!responseStarted && isPreviewPortNotAllowed(error)) {
+            await tunnel.abort('destination_port_not_allowed');
+            await writePreviewPortNotAllowed(input);
+            observeFinished(403, 0);
+            return { ok: false, reasonCode: 'destination_port_not_allowed' };
+        }
+        if (!responseStarted && isPreviewOccurrenceEnded(error)) {
+            await tunnel.abort('preview_not_found');
+            await writePreviewNotFound(input);
+            observeFinished(404, 0);
+            return { ok: false, reasonCode: 'preview_not_found' };
+        }
         if (code === "request_body_too_large" || code === "response_body_too_large") {
             await tunnel.abort(code);
             if (code === "request_body_too_large" && !responseStarted) {
