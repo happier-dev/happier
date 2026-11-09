@@ -238,29 +238,25 @@ describe('Project deployments page', () => {
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
-    const { createEmptyPluginAccountKvRowV1, setPluginAccountKvEntryV1, PluginAccountStorageReadResponseV1Schema } =
-      await import('@happier-dev/protocol/plugins/data/accountKvV1');
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
     const { TRIAGE_PLUGIN } = await import('../../../../../../packages/plugins/triage/src/definition');
     const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
-    const { administerTriageAction } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+    const { administerTriageAction, createTriageReadActionsActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+    const { TriageReadActionsActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
     const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+    const serverIdentityId = 'srv_environment_navigation';
+    scope.serverId = await homes.addHome({ name: 'Environment navigation', serverUrl: 'https://environment-navigation.test',
+      serverIdentityId, accountId: scope.accountId, currentAccount: true });
     const catalog = createTestkitAccountKv();
     const created = await administerTriageAction({ v: 1, kind: 'create', expectedRevision: 'absent',
       label: 'Set it up', enabled: true, appliesTo: ['deploymentEnvironment'], profileId: null,
       workspaceMode: 'repository', target: { kind: 'agent', promptInvocationId: 'environment-setup', delivery: 'compose' } },
     { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'environment.set-up' });
     expect(created.status).toBe('applied');
-    const value = catalog.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
-    if (value === undefined) throw new Error('Expected the produced action catalog');
-    const row = createEmptyPluginAccountKvRowV1();
-    setPluginAccountKvEntryV1(row, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, value, undefined);
-    // Account KV HTTP and executable bytes are the only substituted boundaries. Triage's real
-    // catalog producer, Action admission, Account investigation owner and full page stay real.
-    homes.answer(scope.serverId, `GET /v1/account/plugin-storage/${TRIAGE_PLUGIN.manifest.id}`, { body:
-      PluginAccountStorageReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: row } }),
-    });
-    const connection = await restoreServerAccountForTest({ serverUrl: 'https://environment-navigation.test',
-      accountId: scope.accountId, request: homes.request });
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://environment-navigation.test', serverIdentityId,
+      accountId: scope.accountId, credentials: { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }) }, request: homes.request });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected the Environment Account lifetime');
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: TRIAGE_PLUGIN.manifest,
@@ -271,6 +267,20 @@ describe('Project deployments page', () => {
       composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'],
     } } }) : base;
     expect(detail.targetLinks.some(row => row.targetLink.activeDeploymentId)).toBe(true);
+    await answerExternalActionAccountForHome(homes, scope.serverId, {
+      machineId: detail.environment.controllerMachineId, actionId: 'action.invoke', tokenEpoch: 0,
+      requesterInvocation: 'required', execute: async (input, request) => {
+        const invocation = getActionSpec('action.invoke').inputSchema.parse(input);
+        expect(invocation.action).toEqual({ pluginId: TRIAGE_PLUGIN.manifest.id, localId: 'actions/read-v1' });
+        // The external controller HTTP, Account KV and admitted host-contribution services are boundaries;
+        // Triage's real catalog producer/reader and the browser's admission, placement and full page stay real.
+        const context = { signal: request.signal ?? new AbortController().signal,
+          services: { storage: { account: { kv: catalog.kv } }, targetedContributions: {
+            observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose: () => {} }),
+          } } } as unknown as Parameters<ReturnType<typeof createTriageReadActionsActionHandler>>[1];
+        return createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse(invocation.input), context);
+      },
+    });
     const { controller } = controllerFor({ detail });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
