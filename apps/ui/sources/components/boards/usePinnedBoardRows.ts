@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { WorkBoardArtifactSummaryV1 } from '@happier-dev/protocol';
+import type { WorkBoardArtifactSummaryV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { ColumnLeadingRow } from '@/components/appShell/destinations/ColumnDestinationRows';

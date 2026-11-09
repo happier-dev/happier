@@ -113,7 +113,7 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
                                         close();
                                         // This exact Action was just confirmed here. Carry that fact to
                                         // canonical policy; explicit Ask-first still owns its approval.
-                                        const outcome = await props.dispatch({ kind: 'delete', boardId: props.board.id }, { actionId: 'boards.apply' });
+                                        const outcome = await props.dispatch({ kind: 'delete', boardId: props.board.id }, { confirmed: true });
                                         if (outcome.status === 'applied') props.onDeleted();
                                     }}
                                 />

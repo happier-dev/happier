@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildWorkBoardItemKeyV1, createWorkBoardV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, createWorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { BoardCard } from '../model/boardCards';
@@ -13,7 +13,8 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Modal } from '@/modal';
 import { useDispatchWorkBoardIntent, useWorkBoardSaveState } from '../model/useWorkBoards';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, buildWorkBoardArtifactHeaderV1, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { buildWorkBoardArtifactHeaderV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 afterEach(() => {
     standardCleanup();
@@ -27,6 +28,30 @@ const layout = { createNodeMock: () => ({
 }) };
 
 describe('Board settings picked items', () => {
+    it('deletes the exact reviewed Board through the shared save queue without another default question', async () => {
+        const board = createWorkBoardV1({ id: 'reviewed-board', name: 'Delete me' });
+        const home = await createPlainArtifactHomeFixture('https://board-reviewed-delete.test', { accountId: 'owner', currentAccount: true,
+            handleRequest: async path => path === '/v2/account/settings'
+                ? Response.json({ content: { t: 'plain', v: {} }, version: 0 }) : null });
+        home.boundary.replaceStoredRow({ id: board.id, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' });
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
+        const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        let dispatch: ReturnType<typeof useDispatchWorkBoardIntent> | undefined;
+        function Queue() { dispatch = useDispatchWorkBoardIntent(); return null; }
+        try {
+            await renderScreen(<InjectedAuthProvider credentials={credentials}><Queue /></InjectedAuthProvider>);
+            let outcome: Awaited<ReturnType<NonNullable<typeof dispatch>>> | undefined;
+            await act(async () => { outcome = await dispatch!({ kind: 'delete', boardId: board.id }, { confirmed: true }); });
+            expect(confirmation, JSON.stringify(outcome)).not.toHaveBeenCalled();
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: 'applied' });
+            expect(home.boundary.read(board.id)).toBeNull();
+            expect(home.requests.filter(request => request.method === 'DELETE' && request.path.startsWith(`/v1/artifacts/${board.id}`)))
+                .toHaveLength(1);
+        } finally { await standardCleanup(); await home.dispose(); confirmation.mockRestore(); }
+    });
+
     it.each(['applied', 'refused', 'canceled'] as const)('settles a confirmed delete through the Action before leaving (%s)', async disposition => {
         const board = createWorkBoardV1({ id: 'delete-board', name: 'Delete me' });
         const home = await createPlainArtifactHomeFixture('https://board-delete.test', { accountId: 'owner', currentAccount: true,

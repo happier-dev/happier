@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkBoardItemKeyV1, createWorkBoardV1, WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardArtifactV1 } from '@happier-dev/protocol';
+import { buildWorkBoardItemKeyV1, createWorkBoardV1, WorkBoardsV1Schema, type BoardItemRefV1} from '@happier-dev/protocol/boards/workBoardV1';
+import { type WorkBoardArtifactV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createDeferred } from '@/dev/testkit';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
@@ -24,6 +25,46 @@ async function readBoards(store: ReturnType<typeof createWorkBoardAccountStore>)
 }
 
 describe('WorkBoard Account Artifact save queue', () => {
+    it('forgets a removed header revision before a header-only Board id is recreated', async () => {
+        const persistence = createWorkBoardArtifactBoundary(base);
+        const original = persistence.rows.get('b1')!;
+        persistence.rows.set('b1', { ...original, revision: { headerVersion: 7, bodyVersion: 7 } });
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const release = store.retainView(() => () => {}, 'headers');
+        try {
+            await store.refresh();
+            persistence.rows.delete('b1');
+            await store.refresh();
+            expect(store.getSummaries()).toEqual([]);
+            const replacement = createWorkBoardArtifactBoundary({ v: 1, boards: [{ ...base.boards[0]!, name: 'Recreated' }] });
+            persistence.rows.set('b1', replacement.rows.get('b1')!);
+            await store.refresh();
+            expect(store.getSummaries()[0]?.name).toBe('Recreated');
+            expect(persistence.reads).toEqual([]);
+        } finally { release(); }
+    });
+    it('refreshes an invalidated demanded body without re-listing its unchanged inventory', async () => {
+        const persistence = createWorkBoardArtifactBoundary(base);
+        let lists = 0;
+        const store = createWorkBoardAccountStore({ ...persistence.transport, list: async options => {
+            lists++;
+            return persistence.transport.list(options);
+        } }, () => true);
+        const release = store.retainView(() => () => {}, 'board:b1');
+        try {
+            await store.refresh();
+            lists = 0;
+            persistence.reads.length = 0;
+            const old = persistence.rows.get('b1')!;
+            persistence.rows.set('b1', { ...old, body: JSON.stringify({ ...base.boards[0], name: 'Pushed change' }),
+                revision: { ...old.revision, bodyVersion: old.revision.bodyVersion + 1 } });
+            store.invalidateBodies(['b1']);
+            await store.refresh({ inventory: false });
+            expect(store.getBoard('b1')?.name).toBe('Pushed change');
+            expect(persistence.reads).toEqual(['b1']);
+            expect(lists).toBe(0);
+        } finally { release(); }
+    });
     it('continues only the surviving exact Board demand after a delayed inventory', async () => {
         const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [...base.boards, createWorkBoardV1({ id: 'b2', name: 'Other' })] });
         const started = createDeferred<void>();

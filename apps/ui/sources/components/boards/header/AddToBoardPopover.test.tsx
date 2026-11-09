@@ -75,11 +75,30 @@ afterEach(async () => {
 });
 
 describe('AddToBoardPopover library recovery', () => {
+    it('omits private Session choices while sharing and restores them without altering Board picks', async () => {
+        const { buildSessionOrganizationSessionKey } = await import('@/sync/domains/session/organization/keys');
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+        const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        harness.answerDefinitions(serverId, { body: [] });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
+        const row = createSessionListRenderableSessionFixture({ id: 'private-choice', metadata: { name: 'Secret invoices', path: '/private', host: 'host' } });
+        storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { [serverId]: ['secret'] } },
+            sessionOrganizationTagAssignmentsBySessionKey: { [buildSessionOrganizationSessionKey(serverId, row.id)]: { sessionId: row.id, tagIds: ['secret'] } },
+            sessionListRowsByServerId: { [serverId]: { [row.id]: row } } });
+        const screen = await renderScreen(picker());
+        try {
+            expect(options(screen).map(option => option.label)).toContain('Secret invoices');
+            await act(async () => setScreenSharingPrivacyActive(true));
+            expect(options(screen).map(option => option.label)).not.toContain('Secret invoices');
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(options(screen).map(option => option.label)).toContain('Secret invoices');
+        } finally { await screen.unmount(); setScreenSharingPrivacyActive(false); }
+    });
     it('keeps later Run rows reachable through the existing list pagination control', async () => {
         const later = createWorkflowRunSummaryFixture({ id: 'later-run', ownerAccountId: 'account-a' });
         const first = await boardRunStoragePage([run]);
         const second = await boardRunStoragePage([later]);
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { select: input => {
             const more = input !== null && typeof input === 'object' && 'request' in input
                 && input.request !== null && typeof input.request === 'object' && 'cursor' in input.request;
@@ -108,7 +127,7 @@ describe('AddToBoardPopover library recovery', () => {
         const recoveredInventory: unknown = await recovered.json();
         const pending = createDeferred<void>();
         harness.home.answer(serverId, definitionPath, { status: 403, body: { error: 'forbidden' }, respondAfter: pending.promise });
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const button = picker(false);
         const widgets: React.ComponentProps<typeof AddToBoardPopover>['widgets'] = {
@@ -152,9 +171,11 @@ describe('AddToBoardPopover library recovery', () => {
         for (const path of ['/v2/sessions', '/v2/sessions/active']) harness.home.answer(serverId, path, {
             body: { sessions: [], nextCursor: null, hasNext: false }, respondAfter: sessions.promise,
         });
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [], respondAfter: definitions.promise });
+        harness.answerDefinitions(serverId, { body: [], respondAfter: definitions.promise });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]), respondAfter: runs.promise });
-        storage.setState({ concurrentSessionListCacheByServerId: { [serverId]: {
+        // This case holds the other three readers; the Machine census has already answered.
+        storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' },
+            concurrentSessionListCacheByServerId: { [serverId]: {
             serverName: null, listObservation: { phase: 'loading', lastSuccessAt: null },
         } } });
         try {
@@ -162,13 +183,13 @@ describe('AddToBoardPopover library recovery', () => {
             // One loading line names every group still opening; it narrows as each settles.
             const loading = () => screen.findAllByType(SurfaceStateCard).filter(node => node.props.kind === 'loading')
                 .map(node => `${node.props.testID}: ${node.props.title}`);
-            expect(loading()).toEqual(['board-add.loading: Opening Sessions, Workflows, and Workflow runs']);
+            expect(loading()).toEqual(['board-add.loading: Opening Sessions, Workflows, and Runs']);
             definitions.resolve();
-            await waitForHomeGovernance(() => expect(loading()).toEqual(['board-add.loading: Opening Sessions and Workflow runs']));
+            await waitForHomeGovernance(() => expect(loading()).toEqual(['board-add.loading: Opening Sessions and Runs']));
             await act(async () => storage.setState({ concurrentSessionListCacheByServerId: { [serverId]: {
                 serverName: null, listObservation: { phase: 'ready', lastSuccessAt: 1 },
             } } }));
-            expect(loading()).toEqual(['board-add.loading: Opening Workflow runs']);
+            expect(loading()).toEqual(['board-add.loading: Opening Runs']);
             runs.resolve();
             await waitForHomeGovernance(() => expect(loading()).toEqual([]));
         } finally { definitions.resolve(); runs.resolve(); sessions.resolve(); }
@@ -179,7 +200,7 @@ describe('AddToBoardPopover library recovery', () => {
         const { describeMachinePresenceLine } = await import('@/utils/sessions/machinePresenceLine');
         const machine = createMachineFixture({ id: 'board-option-machine', active: true, activeAt: Date.now() });
         storage.setState({ machineListByServerId: { [serverId]: [machine] } });
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const screen = await renderScreen(picker());
         const id = JSON.stringify(['machine', serverId, machine.id]);
@@ -192,7 +213,7 @@ describe('AddToBoardPopover library recovery', () => {
         } finally { clearMachineRequestReachabilityForTest(); }
     });
     it('leads with a short Widgets group and reaches the built-in families through Gallery and search (lab dashboards L1)', async () => {
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'counter', target: 'app', title: 'Counter' }],
             { 'acme.widgets': widgetInstalledPackage('acme.widgets', 'Widgets') });
@@ -229,7 +250,7 @@ describe('AddToBoardPopover library recovery', () => {
         expect(found).not.toContain('widget:plugin-acme.widgets/counter');
     });
     it.each(['refused', 'pending'] as const)('opens a picked widget in the shared Add surface and shows a %s Add there without adding twice', async kind => {
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'counter', target: 'app', title: 'Counter' }],
             { 'acme.widgets': widgetInstalledPackage('acme.widgets', 'Widgets') });
@@ -264,7 +285,7 @@ describe('AddToBoardPopover library recovery', () => {
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
     });
     it.each([false, true])('adds a picked widget once its required input is filled, keeping approval pending in place (⌘↵ places it: %s)', async place => {
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [] });
+        harness.answerDefinitions(serverId, { body: [] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: await boardRunStoragePage([]) });
         const projection = widgetProjectionOf([{ pluginId: 'acme.widgets', localId: 'filtered', target: 'app', title: 'Filtered',
             inputs: { fields: [{ path: 'filter', title: 'Filter', widget: 'text', required: true }] },
@@ -301,7 +322,7 @@ describe('AddToBoardPopover library recovery', () => {
         expect(screen.findAllHostsByTestId('board-add.gallery.entry.plugin-acme.widgets/filtered.pending').length).toBeGreaterThan(0);
     });
     it('does not read while closed and offers independent Retry actions after initial failures', async () => {
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { dispatchThenFail: true });
+        harness.answerDefinitions(serverId, { dispatchThenFail: true });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { dispatchThenFail: true });
         const before = harness.home.requests.length;
         const screen = await renderScreen(picker(false));
@@ -312,7 +333,7 @@ describe('AddToBoardPopover library recovery', () => {
             expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
         });
 
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [boardDefinitionArtifact('recovered', 'Workflow recovered')] });
+        harness.answerDefinitions(serverId, { body: [boardDefinitionArtifact('recovered', 'Workflow recovered')] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: runPage });
         await screen.pressByTestIdAsync('board-add.workflows-failure.retry');
         await waitForHomeGovernance(() => expect(options(screen).some((option) => option.label === 'Workflow recovered')).toBe(true));
@@ -325,13 +346,13 @@ describe('AddToBoardPopover library recovery', () => {
     });
 
     it('keeps hydrated definition and run choices selectable when refresh and Retry are unavailable', async () => {
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [boardDefinitionArtifact('known', 'Workflow known')] });
+        harness.answerDefinitions(serverId, { body: [boardDefinitionArtifact('known', 'Workflow known')] });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { body: runPage });
         const initial = await renderScreen(picker());
         await waitForHomeGovernance(() => expect(options(initial).filter(option => option.label === 'Workflow known' || option.id.includes('run-picker'))).toHaveLength(2));
         await initial.unmount();
 
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { dispatchThenFail: true });
+        harness.answerDefinitions(serverId, { dispatchThenFail: true });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { dispatchThenFail: true });
         const screen = await renderScreen(picker());
         await waitForHomeGovernance(() => {
@@ -344,7 +365,7 @@ describe('AddToBoardPopover library recovery', () => {
 
         const pending = createDeferred<void>();
         const beforeRetry = harness.home.requests.length;
-        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
+        harness.answerDefinitions(serverId, { respondAfter: pending.promise, dispatchThenFail: true });
         harness.home.answer(serverId, RUN_STORAGE_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
         await screen.pressByTestIdAsync('board-add.workflows-failure.retry');
         await screen.pressByTestIdAsync('board-add.runs-failure.retry');

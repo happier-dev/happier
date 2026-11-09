@@ -18,6 +18,29 @@ import { readSessionWorkStalled, readSessionWorkStatusFacts, sessionWorkStatusFa
 const NOW = 1_000_000;
 
 describe('readSessionWorkStatusFacts', () => {
+    it.each(['permission', 'user_action'] as const)('carries the exact %s address from a compact list row without Session hydration', kind => {
+        const source = createSessionFixture({ id: 'list-request', serverId: 'home-a', active: true, activeAt: NOW,
+            viewer: createSessionViewerFixture({ attention: { needsAttention: true,
+                reasons: [kind === 'permission' ? 'permission_required' : 'user_action_required'],
+                primary: kind === 'permission' ? 'permission_required' : 'user_action_required', presentation: 'full' } }),
+            agentState: { requests: {
+                newer: { kind, tool: kind === 'permission' ? 'Bash' : 'AskUserQuestion', arguments: { private: 'new body' },
+                    createdAt: NOW, turnId: 'new-turn' },
+                oldest: { kind, tool: kind === 'permission' ? 'Bash' : 'AskUserQuestion', arguments: { private: 'old body' },
+                    createdAt: NOW - 1, turnId: 'current-turn' },
+            } },
+        });
+        const row = buildSessionListRenderableFromSession(source, undefined, []);
+        expect(row).not.toHaveProperty('agentState');
+        const facts = readSessionWorkStatusFacts(row, NOW);
+        expect(facts.currentRequestRef).toEqual({ kind: kind === 'permission' ? 'permission' : 'question',
+            requestId: 'oldest', turnId: 'current-turn' });
+        expect(row.currentRequestRef).toBe(facts.currentRequestRef);
+        expect(facts.currentRequest).toBeUndefined();
+        // The status slot names the request in one short word (lab `clicon:word`), not "Action required".
+        expect(facts.word).toBe(kind === 'permission' ? 'workStatus.words.permission' : 'workStatus.words.question');
+    });
+
     it('carries admitted C1 attention beside awareness while preserving the existing viewer reference', () => {
         const quietViewer = createSessionViewerFixture();
         const row = createSessionListRenderableSessionFixture({ active: true, activeAt: NOW,
@@ -81,7 +104,7 @@ describe('readSessionWorkStatusFacts', () => {
             const facts = readSessionWorkStatusFacts(session, NOW);
             expect(resolveWorkStatusTone({ kind: 'session', facts }))
                 .toMatchObject({ state: 'stopped', bucket: 'idle', tone: 'neutral', word: 'sessionWork.states.stopped' });
-            const status = getSessionStatus(session, NOW, { workingTextMode: 'static' });
+            const status = getSessionStatus(session, NOW);
             expect(status).toMatchObject({ state: 'stopped', isConnected: false, isPulsing: false,
                 statusText: 'sessionWork.states.stopped' });
             expect(sessionWorkStatusFactsFromStatus(session, status).word).toBe(facts.word);
@@ -100,7 +123,7 @@ describe('readSessionWorkStatusFacts', () => {
             metadata: { ...stopped.metadata!, lifecycleState: 'running', lifecycleStateSince: NOW } };
         const resumedRow = buildSessionListRenderableFromSession(running, row);
         expect(readSessionWorkStatusFacts(resumedRow, NOW).word).toBe('status.working');
-        expect(getSessionStatus(resumedRow, NOW, { workingTextMode: 'static' }).statusText).toBe('status.working');
+        expect(getSessionStatus(resumedRow, NOW).statusText).toBe('status.working');
         // Presence and explicit resume still win if the prior stopped marker is briefly retained.
         expect(readSessionWorkStatusFacts({ ...running, metadata: stopped.metadata }, NOW).word).toBe('status.working');
         expect(readSessionWorkStatusFacts({ ...stopped, resumingAt: NOW }, NOW).word).toBe('session.resuming');
@@ -132,12 +155,19 @@ describe('readSessionWorkStatusFacts', () => {
         expect(resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(hydrated, NOW) })).toEqual(status);
     });
 
-    it('names an unknown runtime state with a quiet localized word', () => {
+    it('keeps an unhydrated identity quiet while retaining a real unknown runtime after content settles', () => {
         const row = createSessionListRenderableSessionFixture({
             encryptionMode: 'e2ee', encryptedContentAvailability: undefined, metadata: null,
             active: true, presence: undefined,
         });
-        const status = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(row, NOW) });
+        for (const source of [row, buildSessionFromListRenderable(row),
+            { ...row, encryptionMode: 'plain' as const, encryptedContentAvailability: 'ready' as const }]) {
+            const pending = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(source, NOW) });
+            expect(pending).toMatchObject({ bucket: 'idle', tone: 'neutral', word: '' });
+        }
+        const hydrated = { ...row, encryptionMode: 'plain' as const, encryptedContentAvailability: 'ready' as const,
+            metadata: { path: '/repo', host: 'work' } };
+        const status = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(hydrated, NOW) });
         expect(status).toMatchObject({ bucket: 'idle', tone: 'neutral', word: 'status.unknownState' });
     });
 
@@ -185,7 +215,7 @@ describe('readSessionWorkStatusFacts', () => {
 
     });
 
-    it('reads Finished only from a settlement the Session states, Idle otherwise, and Offline before either', () => {
+    it('reads Finished from the Session settlement even after runtime detach, Idle otherwise', () => {
         const bucketOf = (overrides: Parameters<typeof createSessionListRenderableSessionFixture>[0]) =>
             resolveWorkStatusTone({
                 kind: 'session',
@@ -196,8 +226,8 @@ describe('readSessionWorkStatusFacts', () => {
         expect(bucketOf({ active: true, activeAt: NOW })).toBe('idle');
         // The owner's own settlement: its latest turn completed and it says Ready.
         expect(bucketOf({ active: true, activeAt: NOW, latestTurnStatus: 'completed' })).toBe('finished');
-        // Presence wins over a settlement the runtime can no longer stand behind.
-        expect(bucketOf({ presence: 1, active: false, activeAt: 1, latestTurnStatus: 'completed' })).toBe('offline');
+        // Runtime detach does not invalidate the completed turn's authoritative settlement.
+        expect(bucketOf({ presence: 1, active: false, activeAt: 1, latestTurnStatus: 'completed' })).toBe('finished');
         expect(bucketOf({ presence: 1, active: false, activeAt: 1 })).toBe('offline');
     });
 

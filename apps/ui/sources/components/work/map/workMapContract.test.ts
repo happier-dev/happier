@@ -140,4 +140,39 @@ describe('work map neutral contract', () => {
         screen.pressByTestId('map-node-review');
         expect(opened.map((node) => node.open)).toEqual([{ kind: 'workflow-step', nodeId: 'review' }]);
     });
+
+    it('keeps retained rows mounted while selection, nested facts and the open handler advance', async () => {
+        const map = leadProducer();
+        const initialOpen = vi.fn();
+        const nextOpen = vi.fn();
+        const label = (node: HappierWorkMapNode) => node.label;
+        const view = (current: HappierWorkMap, selectedNodeId: string | null, onOpen: typeof initialOpen) => (
+            React.createElement(WorkMapView, {
+                map: current, selectedNodeId, onOpen, testIDPrefix: 'map', accessibilityLabelForNode: label,
+            })
+        );
+        const screen = await renderScreen(view(map, 'worker', initialOpen));
+        const worker = screen.findByTestId('map-node-worker');
+        const solo = screen.findByTestId('map-node-solo');
+        await screen.update(view(map, 'worker', nextOpen));
+        expect(screen.findByTestId('map-node-solo')).toBe(solo);
+        await screen.pressByTestIdAsync('map-node-solo');
+        expect(initialOpen).not.toHaveBeenCalled();
+        expect(nextOpen.mock.calls.at(-1)?.[0]).toBe(map.nodesById.get('solo'));
+
+        const nextWorker = { ...map.nodesById.get('worker')!, label: 'Checkout retry finished' };
+        const updated = {
+            ...map,
+            nodes: map.nodes.map(node => node.nodeId === nextWorker.nodeId ? nextWorker : node),
+            nodesById: new Map([...map.nodesById, [nextWorker.nodeId, nextWorker]]),
+        };
+        await screen.update(view(updated, 'run-1', nextOpen));
+        expect(screen.findByTestId('map-node-worker')).toBe(worker);
+        expect(screen.findByTestId('map-node-worker')?.props.accessibilityLabel).toBe(nextWorker.label);
+        expect(screen.findByTestId('map-node-worker')?.props.accessibilityState.selected).toBe(false);
+        expect(screen.findByTestId('map-node-run-1')?.props.accessibilityState.selected).toBe(true);
+        expect(itemIdsInside(screen, 'map-group-lead')).toEqual(['worker', 'run-1']);
+        await screen.pressByTestIdAsync('map-node-worker');
+        expect(nextOpen.mock.calls.at(-1)?.[0]).toBe(nextWorker);
+    });
 });

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { buildWorkBoardItemKeyV1, type BoardItemRefV1 } from '@happier-dev/protocol/boards/workBoardV1';
@@ -16,6 +17,7 @@ import { SelectionList, type SelectionListOption, type SelectionListStep } from 
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { joinList } from '@/utils/text/joinList';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { formatWorkflowDefinitionLibraryTitle, formatWorkflowDefinitionContentUnavailableReason } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -201,11 +203,12 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { rowsByServerId, machineLists, library, runs, loading } = useBoardAddSources(props.homes);
+    const isSessionVisible = useSessionRecordingVisibility();
     // The Sessions it offers are named from encrypted content: the undecided ones are demanded like list rows.
     const undecidedSessions = React.useMemo(() => Object.entries(rowsByServerId).flatMap(([serverId, rows]) => (
-        Object.values(rows ?? {}).filter(row => typeof row.archivedAt !== 'number' && isSessionContentUnsettled(row))
+        Object.values(rows ?? {}).filter(row => typeof row.archivedAt !== 'number' && isSessionVisible({ sessionId: row.id, serverId }) && isSessionContentUnsettled(row))
             .map((row): SessionAddress => ({ serverId, sessionId: row.id }))
-    )), [rowsByServerId]);
+    )), [rowsByServerId, isSessionVisible]);
     useSessionContentDemand(undecidedSessions, { tag: 'board.hydrateAddSessions', hydrate: 'unsettled' });
     const openingGroups = (['sessions', 'workflows', 'runs', 'machines'] as const).filter(group => loading[group]);
     const reachabilityRevision = useMachineReachabilityRevision();
@@ -218,30 +221,49 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
     const { sections: widgetSections } = useAccountWidgetAddSections({ scope: props.widgets.scope, instances: props.widgets.instances,
         addInstance: props.addWidget, labels: BOARD_WIDGET_LABELS, testID: 'board-add.widgets' });
 
+    // One element per glyph and one On board mark per theme, so a rebuilt option that says the same
+    // thing is the same option (below) and the list redraws only the rows that changed.
+    const { glyph, onBoardMark } = React.useMemo(() => {
+        const glyphs = new Map<IconName, React.ReactElement>();
+        return {
+            glyph: (name: IconName) => {
+                let element = glyphs.get(name);
+                if (!element) glyphs.set(name, element = <Icon name={name} size={16} color={theme.colors.text.secondary} />);
+                return element;
+            },
+            onBoardMark: (
+                <View style={styles.onBoard}>
+                    <Icon name="check" size={14} color={theme.colors.text.tertiary} />
+                    <Text style={styles.onBoardText}>{t('boards.add.onBoard')}</Text>
+                </View>
+            ),
+        };
+    }, [theme.colors.text.secondary, theme.colors.text.tertiary]);
+    const publishedOptionsRef = React.useRef(new Map<string, SelectionListOption>());
+
     const step = React.useMemo<SelectionListStep>(() => {
         const nowMs = Date.now();
         const refsById = new Map<string, BoardItemRefV1>();
-        const onBoardMark = (
-            <View style={styles.onBoard}>
-                <Icon name="check" size={14} color={theme.colors.text.tertiary} />
-                <Text style={styles.onBoardText}>{t('boards.add.onBoard')}</Text>
-            </View>
-        );
+        const previousOptions = publishedOptionsRef.current;
+        const publishedOptions = new Map<string, SelectionListOption>();
+        // An option whose every member is unchanged keeps its identity (the list's row cells follow it).
+        const retain = (next: SelectionListOption): SelectionListOption => {
+            const retained = retainShallow(previousOptions.get(next.id), next);
+            publishedOptions.set(next.id, retained);
+            return retained;
+        };
         const option = (ref: BoardItemRefV1, label: string, subtitle: string | undefined, icon: React.ReactNode): SelectionListOption => {
             const key = buildWorkBoardItemKeyV1(ref);
             refsById.set(key, ref);
             const onBoard = props.onBoardKeys.has(key);
-            return {
+            return retain({
                 id: key,
                 label,
                 ...(subtitle ? { subtitle } : {}),
                 icon,
                 ...(onBoard ? { rightAccessory: onBoardMark, disabled: true } : {}),
-            };
+            });
         };
-        const glyph = (name: IconName) => (
-            <Icon name={name} size={16} color={theme.colors.text.secondary} />
-        );
 
         // Widgets: the Add surface's own entries (its counts and Added), then the surface itself. A short
         // group leads (lab `dashboards` L1): the built-in families with pages of their own (Machines,
@@ -251,29 +273,29 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
             widgetEntries.set(widgetOptionId(entry), entry);
             const where = entry.count ?? (entry.added ? t('boards.add.onBoard') : null);
             const subtitle = [entry.subtitle, where].filter(Boolean).join(' · ');
-            return {
+            return retain({
                 id: widgetOptionId(entry),
                 label: entry.title,
                 ...(subtitle ? { subtitle } : {}),
                 icon: glyph(entry.icon),
                 ...(entry.added ? { rightAccessory: onBoardMark, disabled: true } : {}),
-            };
+            });
         };
         const widgets = widgetSections.filter(section => !section.family).flatMap(section => section.entries).map(widgetOption);
         const familyWidgets = widgetSections.filter(section => section.family).flatMap(section => section.entries).map(widgetOption);
-        widgets.push({
+        widgets.push(retain({
             id: GALLERY_OPTION_ID,
             label: t('boards.widgets.gallery'),
             subtitle: t('boards.widgets.galleryHint'),
             icon: glyph('squares-four'),
-        });
+        }));
         widgetsRef.current = widgetEntries;
 
         const sessions: SelectionListOption[] = [];
         for (const [serverId, rows] of Object.entries(rowsByServerId)) {
             const portable = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
             for (const row of Object.values(rows ?? {})) {
-                if (typeof row.archivedAt === 'number') continue;
+                if (typeof row.archivedAt === 'number' || !isSessionVisible({ sessionId: row.id, serverId })) continue;
                 sessions.push(option(
                     { kind: 'session', qualifiedId: { serverId: portable, id: row.id } },
                     getSessionName(row, serverId),
@@ -310,6 +332,7 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
             }
         }
         refsRef.current = refsById;
+        publishedOptionsRef.current = publishedOptions;
         return {
             id: 'board-add',
             inputPlaceholder: t('boards.add.search'),
@@ -335,7 +358,7 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
                 { kind: 'static', id: 'machines', title: t('boards.add.groups.machines'), options: machines },
             ],
         };
-    }, [activeServerId, library.definitions, machineLists, machineScopeBindings, presenceNowMs, reachabilityRevision, props.onBoardKeys, rowsByServerId, runs.rows, theme.colors.text.secondary, theme.colors.text.tertiary, widgetSections]);
+    }, [activeServerId, library.definitions, machineLists, machineScopeBindings, presenceNowMs, reachabilityRevision, props.onBoardKeys, rowsByServerId, runs.rows, glyph, onBoardMark, widgetSections, isSessionVisible]);
     const { onAdd, onPickWidget, onOpenGallery } = props;
     const select = React.useCallback((id: string, place: boolean) => {
         if (id === GALLERY_OPTION_ID) { onOpenGallery(); return; }

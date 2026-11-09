@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
-import { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate } from './bootstrap/PersonalHomeBootstrapGate';
+import { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate, usePersonalHomeBootstrapActive } from './bootstrap/PersonalHomeBootstrapGate';
+import { shouldKeepDesktopPersonalHomeShell } from './bootstrap/personalHomeIndexRoutePolicy';
 import type { PersonalHomeFacts } from './bootstrap/personalHomeBootstrapTypes';
 
 const facts: PersonalHomeFacts = {
@@ -35,7 +36,40 @@ function TestShell(): React.ReactElement {
     );
 }
 
+function SignedOutHomeRoute(): React.ReactElement {
+    const keepShell = shouldKeepDesktopPersonalHomeShell({
+        isAuthenticated: false,
+        isPersonalHomeBootstrapActive: usePersonalHomeBootstrapActive(),
+    });
+    return <View testID={keepShell ? 'bootstrap-home' : 'pre-auth-home'} />;
+}
+
 describe('PersonalHomeBootstrapGate', () => {
+    it('keeps sign-in reachable when the explicit Home bypasses the bootstrap provider', async () => {
+        const screen = await renderScreen(<SignedOutHomeRoute />);
+        expect(screen.findByTestId('pre-auth-home')).not.toBeNull();
+    });
+
+    it.each([
+        { bypass: true, isDesktopHost: true, isDesktopMainWindow: true },
+        { isDesktopHost: true, isDesktopMainWindow: false },
+    ])('does not claim signed-out Home when disabled: %j', async (host) => {
+        const screen = await renderScreen(
+            <PersonalHomeBootstrapGate {...host} readFacts={async () => facts}>
+                <SignedOutHomeRoute />
+            </PersonalHomeBootstrapGate>,
+        );
+        expect(screen.findByTestId('pre-auth-home')).not.toBeNull();
+    });
+
+    it('keeps setup and recovery in Home when the real bootstrap owner is active', async () => {
+        const screen = await renderScreen(
+            <PersonalHomeBootstrapGate isDesktopHost isDesktopMainWindow readFacts={async () => facts}>
+                <SignedOutHomeRoute />
+            </PersonalHomeBootstrapGate>,
+        );
+        expect(screen.findByTestId('bootstrap-home')).not.toBeNull();
+    });
     it('keeps the shell mounted while showing one truthful post-shell pending status', async () => {
         const homeReadyFacts: PersonalHomeFacts = {
             ...facts,

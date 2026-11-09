@@ -19,18 +19,33 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 import { createWorkBoardUiActionPort, type WorkBoardEntityContext } from './workBoardEntityDrop';
-import { createWorkBoardAccountStore } from './workBoardAccountStore';
+import { createWorkBoardAccountStore, type WorkBoardRetainedSummaries } from './workBoardAccountStore';
+import { loadWorkBoardSummariesWarmCache, saveWorkBoardSummariesWarmCache } from '@/sync/domains/state/warmCachePersistence';
 import { projectDisplayedWorkBoards, type WorkBoardSaveOutcome, type WorkBoardSaveQueue, type WorkBoardSaveState } from './workBoardSaveQueue';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 export type WorkBoardUiSaveQueue = Omit<WorkBoardSaveQueue, 'dispatch'> & Readonly<{
-    dispatch(intent: WorkBoardIntentV1, confirmation?: ActionExecutorContext['presentUserConfirmation']): Promise<WorkBoardSaveOutcome>;
+    dispatch(intent: WorkBoardIntentV1, operation?: Pick<UiActionOperation, 'confirmed'>): Promise<WorkBoardSaveOutcome>;
 }>;
 
 type MountedBoards = ReturnType<typeof createWorkBoardAccountStore> & Readonly<{ retain(demand: string): () => void; isCurrent(): boolean }>;
 const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredentials, MountedBoards>>();
 const refuse = async (): Promise<never> => { throw new Error('Board Account unavailable'); };
 const unavailable = createWorkBoardAccountStore({ read: refuse, list: refuse, create: refuse, update: refuse, delete: refuse }, () => false);
+
+/** The device's last-read Board headers for this Account, through the warm-cache owner. */
+function retainedWorkBoardSummaries(serverId: string, accountId: string): WorkBoardRetainedSummaries {
+    let cached: ReturnType<typeof loadWorkBoardSummariesWarmCache> = null;
+    try { cached = loadWorkBoardSummariesWarmCache(serverId, accountId); } catch { /* Unreadable device storage: a cold read. */ }
+    return {
+        summaries: (cached?.boards ?? []).map(board => ({ id: board.id, name: board.name, pinnedInSessions: board.pinnedInSessions,
+            source: { sections: board.readsNeedsYou ? ['needs_you' as const] : [] } })),
+        remember: summaries => saveWorkBoardSummariesWarmCache(serverId, accountId, { boards: summaries.map(board => ({
+            id: board.id, name: board.name, pinnedInSessions: board.pinnedInSessions,
+            readsNeedsYou: board.source.sections.includes('needs_you'),
+        })) }),
+    };
+}
 
 /** All mounted Board surfaces share one projection/queue in the canonical active Account lifetime. */
 function useBoardStore(bodyDemand = 'headers') {
@@ -74,7 +89,7 @@ function useBoardStore(bodyDemand = 'headers') {
                 update: async input => { input.signal?.throwIfAborted(); return (await getContext()).workflowArtifacts.update(input); },
                 delete: async (id, options) => { options?.signal?.throwIfAborted(); return (await getContext()).workflowArtifacts.delete(id, options); },
             };
-            const domain = createWorkBoardAccountStore(transport, shouldContinue);
+            const domain = createWorkBoardAccountStore(transport, shouldContinue, retainedWorkBoardSummaries(scope.serverId, scope.accountId));
             lifetime.onRetire(() => {
                 domain.retire();
                 if (context) void context.then(account => account.dispose(), () => {});
@@ -82,22 +97,45 @@ function useBoardStore(bodyDemand = 'headers') {
             let refresh: (() => void) | null = null;
             mounted = { ...domain, isCurrent: shouldContinue, retain(demand) {
                 const release = domain.retainView(() => {
-                    const invalidation = new InvalidateSync(async () => { if (shouldContinue()) await domain.refresh(); });
-                    refresh = () => { if (shouldContinue()) invalidation.invalidate(); };
+                    let inventoryRequired = false;
+                    const invalidation = new InvalidateSync(async () => {
+                        const inventory = inventoryRequired;
+                        inventoryRequired = false;
+                        if (shouldContinue()) await domain.refresh({ inventory });
+                    });
+                    const invalidate = (inventory: boolean) => {
+                        if (!shouldContinue()) return;
+                        inventoryRequired ||= inventory;
+                        invalidation.invalidate();
+                    };
+                    refresh = () => invalidate(domain.getReadState().status !== 'ready');
                     // Existing Artifact socket and catch-up materialization own publication; observe their projection.
                     const unsubscribeArtifacts = storage.subscribe((state, previous) => {
                         if (!shouldContinue() || state.artifacts === previous.artifacts) return;
                         const changed = new Set([...Object.keys(state.artifacts), ...Object.keys(previous.artifacts)]);
                         const changedBoards: string[] = [];
+                        const changedHeaders: Parameters<typeof domain.applyArtifactHeaders>[0][number][] = [];
+                        const observed = new Map<string, Readonly<{ headerVersion: number; bodyVersion: number }>>();
+                        let structural = false;
                         for (const id of changed) {
                             const next = state.artifacts[id], old = previous.artifacts[id];
                             if (next !== old && (next?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1 || old?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1)) {
+                                const membershipChanged = (next?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1) !== (old?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1);
+                                structural ||= membershipChanged;
+                                if (!membershipChanged && next?.headerVersion === old?.headerVersion && next?.bodyVersion === old?.bodyVersion) continue;
                                 changedBoards.push(id);
+                                if (next && next.bodyVersion !== undefined) observed.set(id, { headerVersion: next.headerVersion, bodyVersion: next.bodyVersion });
+                                if (next?.header?.kind === WORK_BOARD_ARTIFACT_KIND_V1) changedHeaders.push({ artifactId: id,
+                                    header: next.rawHeader ?? next.header, headerVersion: next.headerVersion });
                             }
                         }
-                        if (changedBoards.length > 0) { domain.invalidateBodies(changedBoards); refresh?.(); }
-                    });
-                    const unsubscribeReconnect = apiSocket.onReconnected(() => { domain.invalidateBodies(); refresh?.(); });
+                        if (changedBoards.length > 0) {
+                            domain.applyArtifactHeaders(changedHeaders);
+                            domain.invalidateBodies(changedBoards, observed);
+                            invalidate(structural);
+                        }
+                    }, { artifacts: true });
+                    const unsubscribeReconnect = apiSocket.onReconnected(() => { domain.invalidateBodies(); invalidate(true); });
                     return () => { invalidation.stop(); refresh = null; unsubscribeArtifacts(); unsubscribeReconnect(); };
                 }, demand);
                 refresh?.();
@@ -124,20 +162,20 @@ export function useWorkBoardSaveQueue(context?: Omit<WorkBoardEntityContext, 'sc
             const current = latestContext.current;
             return isCurrent() && scope && current && current.board.id === boardId ? { ...current, scope } : null;
         }, queue, store.readBoardAccess, () => isCurrent() ? projectDisplayedWorkBoards(store.getBoards(), queue.getState().pending) : null) });
-        const dispatch: WorkBoardUiSaveQueue['dispatch'] = async (intent, confirmation) => {
+        const dispatch: WorkBoardUiSaveQueue['dispatch'] = async (intent, operation) => {
             if (!isCurrent() || !scope) return { status: 'refused', code: 'board_scope_retired' };
             const previousFailure = queue.getState().failure;
             let result: Awaited<ReturnType<typeof executor.execute>>;
             try {
+                const invoke = operation?.confirmed ? executor.executeConfirmed : executor.execute;
                 result = intent.kind === 'widget_size'
-                    ? await executor.execute('widgets.item.size.set', { ref: {
+                    ? await invoke('widgets.item.size.set', { ref: {
                         ...intent.ref, surface: { ...intent.ref.surface, serverId: scope.serverId },
                     }, size: intent.size }, {
                         serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui', authority: 'present_user',
                         actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
                     })
-                    : await executor.execute('boards.apply', { intent }, { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui',
-                        ...(confirmation ? { presentUserConfirmation: confirmation } : {}) });
+                    : await invoke('boards.apply', { intent }, { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui' });
             } catch {
                 if (isCurrent()) queue.recordFailure(intent, 'unavailable');
                 return { status: 'refused', code: isCurrent() ? 'board_action_unavailable' : 'board_scope_retired' };
@@ -184,8 +222,9 @@ export function useWorkBoardSummaries(enabled = true) {
     return React.useSyncExternalStore(store.subscribe, store.getSummaries, store.getSummaries);
 }
 
+/** Observe loaded bodies for collection previews; mounted exact-Board readers own body demand. */
 export function useWorkBoards(): WorkBoardsV1 {
-    const store = useBoardStore('all');
+    const store = useBoardStore();
     const acknowledged = React.useSyncExternalStore(store.subscribe, store.getBoards, store.getBoards);
     const { pending } = React.useSyncExternalStore(store.queue.subscribe, store.queue.getState, store.queue.getState);
     return React.useMemo(() => pending.length === 0 ? acknowledged : projectDisplayedWorkBoards(acknowledged, pending), [acknowledged, pending]);

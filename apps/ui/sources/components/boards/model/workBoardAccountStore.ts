@@ -1,23 +1,44 @@
 import { createWorkBoardArtifactPortV1, buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1, type WorkBoardArtifactTransportV1, type WorkBoardArtifactSummaryV1, type WorkBoardArtifactRevisionV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { DEFAULT_WORK_BOARDS_V1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { createWorkBoardSaveQueue, projectDisplayedWorkBoards } from './workBoardSaveQueue';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type WorkBoardReadState = Readonly<{ status: 'loading' | 'ready' | 'error'; hasSnapshot: boolean; errorCode?: string }>;
 const UNREAD_BOARD: WorkBoardReadState = Object.freeze({ status: 'loading', hasSnapshot: false });
+type BoardArtifactHeader = Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number }>;
 
 /** Scoped Artifact projection. Headers serve chrome; bodies load only for mounted Board consumers. */
-export function createWorkBoardAccountStore(transport: WorkBoardArtifactTransportV1, shouldContinue: () => boolean) {
+/**
+ * The headers this device last read for the Account: served until the inventory read settles (chrome such as
+ * boards pinned in the Sessions column paints with the first frame), and told each settled change.
+ */
+export type WorkBoardRetainedSummaries = Readonly<{
+    summaries: readonly WorkBoardArtifactSummaryV1[];
+    remember(summaries: readonly WorkBoardArtifactSummaryV1[]): void;
+}>;
+
+export function createWorkBoardAccountStore(transport: WorkBoardArtifactTransportV1, shouldContinue: () => boolean,
+    retained?: WorkBoardRetainedSummaries) {
     let boards = DEFAULT_WORK_BOARDS_V1;
-    let summaries: readonly WorkBoardArtifactSummaryV1[] = [];
+    let summaries: readonly WorkBoardArtifactSummaryV1[] = retained?.summaries ?? [];
     const revisions = new Map<string, WorkBoardArtifactRevisionV1>();
     const demand = new Map<string, number>();
     let writes = 0;
     let readState: WorkBoardReadState = shouldContinue() ? { status: 'loading', hasSnapshot: false }
         : { status: 'error', hasSnapshot: false, errorCode: 'board_scope_retired' };
     let references = 0;
-    const dirtyBodies = new Set<string>();
+    // A dirty body names the revision that made it dirty when one is known (null: unknown, always re-read).
+    // A body this domain already holds at or past that revision is current, e.g. its own acknowledged write.
+    const dirtyBodies = new Map<string, WorkBoardArtifactRevisionV1 | null>();
+    const holdsRevision = (id: string) => {
+        const observed = dirtyBodies.get(id);
+        const held = revisions.get(id);
+        return Boolean(observed && held && held.headerVersion >= observed.headerVersion && held.bodyVersion >= observed.bodyVersion);
+    };
+    /** Own writes in flight: their Artifact publication precedes their acknowledgement. */
+    const ownWrites = new Map<string, Promise<unknown>>();
     const readBodies = new Set<string>();
-    const headerVersions = new Map<string, number>();
+    const headers = new Map<string, BoardArtifactHeader>();
     const inFlightBodies = new Map<string, Promise<void>>();
     const bodyReadStates = new Map<string, WorkBoardReadState>();
     let detach: (() => void) | null = null;
@@ -32,10 +53,12 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
     const acceptBoard = (id: string, board: WorkBoardV1 | null, revision?: WorkBoardArtifactRevisionV1) => {
         const current = revisions.get(id);
         if (revision && current && (revision.bodyVersion < current.bodyVersion || revision.headerVersion < current.headerVersion)) return;
+        if (board && revision && current && revision.bodyVersion === current.bodyVersion && revision.headerVersion === current.headerVersion
+            && boards.boards.some(item => item.id === id)) return;
         if (revision) revisions.set(id, revision);
         else if (!board) revisions.delete(id);
         const old = boards.boards.find(item => item.id === id);
-        if (JSON.stringify(board) === JSON.stringify(old ?? null)) return;
+        if (sameStrictJsonValue(board, old ?? null)) return;
         const nextBoards = board
             ? old ? boards.boards.map(item => item.id === id ? board : item) : [...boards.boards, board]
             : boards.boards.filter(item => item.id !== id);
@@ -44,36 +67,46 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
         notify();
     };
     const reconcileSummaries = (next: readonly WorkBoardArtifactSummaryV1[]) => {
-        if (JSON.stringify(next) === JSON.stringify(summaries)) return;
         const previous = new Map(summaries.map(item => [item.id, item]));
-        summaries = next.map(item => {
+        const reconciled = next.map(item => {
             const old = previous.get(item.id);
-            return old && JSON.stringify(old) === JSON.stringify(item) ? old : item;
+            return old && sameStrictJsonValue(old, item) ? old : item;
         });
+        if (reconciled.length === summaries.length && reconciled.every((item, index) => item === summaries[index])) return;
+        summaries = reconciled;
+        retained?.remember(summaries);
         notify();
     };
     const inventoryTransport: WorkBoardArtifactTransportV1 = { ...transport, list: async options => {
         const page = await transport.list(options);
-        if (shouldContinue()) for (const item of page.items) {
-            if (!readWorkBoardArtifactSummaryV1(item.artifactId, item.header)) continue;
-            if (headerVersions.has(item.artifactId) && headerVersions.get(item.artifactId) !== item.headerVersion) dirtyBodies.add(item.artifactId);
-            headerVersions.set(item.artifactId, item.headerVersion);
-        }
-        return page;
+        if (!shouldContinue()) return page;
+        return { ...page, items: page.items.map(item => {
+            if (!readWorkBoardArtifactSummaryV1(item.artifactId, item.header)) return item;
+            const current = headers.get(item.artifactId);
+            // An inventory admitted before an exact push cannot replace its newer header.
+            if (current && current.headerVersion > item.headerVersion) return { ...item, ...current };
+            if (current && current.headerVersion !== item.headerVersion) dirtyBodies.set(item.artifactId, null);
+            headers.set(item.artifactId, item);
+            return item;
+        }) };
     } };
     const port = createWorkBoardArtifactPortV1(inventoryTransport, { shouldContinue, onBoard: acceptBoard });
     const queue = createWorkBoardSaveQueue({ port: { readBoard: port.readBoard, apply: async (intent, signal) => {
-        const result = await port.apply(intent, signal);
-        writes++;
         const id = intent.kind === 'create' ? intent.board.id : intent.boardId;
+        const write = port.apply(intent, signal);
+        ownWrites.set(id, write);
+        let result: Awaited<typeof write>;
+        try { result = await write; } finally { if (ownWrites.get(id) === write) ownWrites.delete(id); }
+        writes++;
         const board = result.boards[0];
-        dirtyBodies.delete(id);
+        // The write is the newest read of this body; only a strictly newer pushed revision stays dirty.
+        if (dirtyBodies.get(id) === null || holdsRevision(id)) dirtyBodies.delete(id);
         setBodyReadState(id, { status: 'ready', hasSnapshot: true });
         if (board) {
             readBodies.add(id);
             const revision = revisions.get(id);
-            if (revision) headerVersions.set(id, revision.headerVersion);
-        } else { readBodies.delete(id); headerVersions.delete(id); }
+            if (revision) headers.set(id, { artifactId: id, header: buildWorkBoardArtifactHeaderV1(board), headerVersion: revision.headerVersion });
+        } else { readBodies.delete(id); headers.delete(id); }
         const summary = board ? readWorkBoardArtifactSummaryV1(id, buildWorkBoardArtifactHeaderV1(board)) : null;
         const previous = summaries.find(item => item.id === id);
         reconcileSummaries(summary ? previous ? summaries.map(item => item.id === id ? summary : item) : [...summaries, summary]
@@ -106,26 +139,49 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
             : bodyReadStates.get(id) ?? (!summaries.some(board => board.id === id) ? readState : UNREAD_BOARD),
         subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         /** Artifact body-only changes also arrive through the canonical head invalidation. */
-        invalidateBodies(ids: readonly string[] = summaries.map(item => item.id)) {
-            for (const id of ids) dirtyBodies.add(id);
+        invalidateBodies(ids: readonly string[] = summaries.map(item => item.id),
+            observed?: ReadonlyMap<string, WorkBoardArtifactRevisionV1>) {
+            for (const id of ids) {
+                const revision = observed?.get(id) ?? null;
+                const previous = dirtyBodies.get(id);
+                // An unknown cause keeps the unconditional re-read it already requested.
+                dirtyBodies.set(id, previous === null || revision === null ? null
+                    : previous && (previous.headerVersion > revision.headerVersion || previous.bodyVersion > revision.bodyVersion) ? previous : revision);
+            }
         },
-        async refresh() {
+        applyArtifactHeaders(items: readonly BoardArtifactHeader[]) {
+            let next = summaries;
+            for (const item of items) {
+                const current = headers.get(item.artifactId);
+                if (current && current.headerVersion >= item.headerVersion) continue;
+                const summary = readWorkBoardArtifactSummaryV1(item.artifactId, item.header);
+                if (!summary) continue;
+                headers.set(item.artifactId, item);
+                next = next.some(board => board.id === item.artifactId)
+                    ? next.map(board => board.id === item.artifactId ? summary : board) : [...next, summary];
+            }
+            reconcileSummaries(next);
+        },
+        async refresh(options: Readonly<{ inventory?: boolean }> = {}) {
             if (!shouldContinue()) return;
             if (readState.status === 'error') { readState = { status: 'loading', hasSnapshot: readState.hasSnapshot }; notify(); }
             try {
-                const before = writes;
-                const next = await port.list();
-                if (!shouldContinue()) return;
-                // A delayed inventory cannot erase a newer local create/delete acknowledgement.
-                if (before === writes) {
-                    reconcileSummaries(next);
-                    const ids = new Set(next.map(item => item.id));
-                    for (const id of [...readBodies]) if (!ids.has(id)) {
-                        readBodies.delete(id); headerVersions.delete(id); dirtyBodies.delete(id);
-                        bodyReadStates.delete(id);
-                        acceptBoard(id, null);
+                if (options.inventory !== false || readState.status !== 'ready') {
+                    const before = writes;
+                    const next = await port.list();
+                    if (!shouldContinue()) return;
+                    // A delayed inventory cannot erase a newer local create/delete acknowledgement.
+                    if (before === writes) {
+                        reconcileSummaries(next);
+                        const ids = new Set(next.map(item => item.id));
+                        for (const id of headers.keys()) if (!ids.has(id)) headers.delete(id);
+                        for (const id of [...readBodies]) if (!ids.has(id)) {
+                            readBodies.delete(id); headers.delete(id); dirtyBodies.delete(id);
+                            bodyReadStates.delete(id);
+                            acceptBoard(id, null);
+                        }
+                        for (const old of boards.boards) if (!ids.has(old.id)) acceptBoard(old.id, null);
                     }
-                    for (const old of boards.boards) if (!ids.has(old.id)) acceptBoard(old.id, null);
                 }
                 // The index is readable once its headers settle. Each demanded body's own
                 // lifecycle below governs its page; it cannot delay or fail the collection.
@@ -140,13 +196,16 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
                     // Views can close while the inventory or an earlier body is pending.
                     // Keep admitted content, but do not start another read without a reader.
                     if (!shouldContinue() || !(demand.has('all') || demand.has(`board:${id}`))) return;
+                    // An own write publishes its Artifact before it acknowledges; decide after it settles.
+                    const writing = ownWrites.get(id);
+                    if (writing) { await writing.catch(() => {}); return await readBody(id); }
                     const running = inFlightBodies.get(id);
                     if (running) {
                         await running;
                         if (dirtyBodies.has(id)) await readBody(id);
                         return;
                     }
-                    if (readBodies.has(id) && !dirtyBodies.has(id)) return;
+                    if (readBodies.has(id) && (!dirtyBodies.has(id) || holdsRevision(id))) { dirtyBodies.delete(id); return; }
                     dirtyBodies.delete(id);
                     setBodyReadState(id, { status: 'loading', hasSnapshot: readBodies.has(id) });
                     const beforeRevision = revisions.get(id);
@@ -163,7 +222,7 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
                     const pending = reader.readBoard(id).then(() => {
                         if (shouldContinue()) setBodyReadState(id, { status: 'ready', hasSnapshot: true });
                     }, error => {
-                        dirtyBodies.add(id);
+                        dirtyBodies.set(id, null);
                         if (shouldContinue()) setBodyReadState(id, { status: 'error', hasSnapshot: readBodies.has(id),
                             errorCode: typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
                                 ? error.code : 'board_record_unavailable' });

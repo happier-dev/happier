@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useRouter, useSegments } from 'expo-router';
+import { useSegments } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { t } from '@/text';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 

@@ -1,4 +1,5 @@
-import type { HomeConnectionDescriptorV1, SystemTaskJsonObject, SystemTaskResult } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1} from '@happier-dev/protocol/auth/accountDirectory';
+import type { SystemTaskJsonObject, SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { describe, expect, it } from 'vitest';
 
 import {
