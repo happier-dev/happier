@@ -63,7 +63,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         const tool = await runtime.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
             cwd: configuration.happyHomeDir, signal: input.signal });
         launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args: [],
-            cwd: configuration.happyHomeDir }, { signal: input.signal });
+            cwd: configuration.happyHomeDir }, { agentIsolation: null, signal: input.signal });
         const tuple = launch;
         const run = (args: readonly string[]) => runtime.nativeIo.run({ command: tuple.command,
             args: [...tuple.args, ...args], cwd: tuple.cwd!, env: tuple.env, signal: input.signal });

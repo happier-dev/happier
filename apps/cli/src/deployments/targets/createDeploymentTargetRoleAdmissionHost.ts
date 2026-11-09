@@ -1,5 +1,9 @@
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import {
+    DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
+} from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -21,7 +25,10 @@ import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntent
 import { configuration } from '@/configuration';
 import { join } from 'node:path';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, phase = 'deployment.target.admission.host_read', failureCause?: unknown): never => {
+    const failure = normalizeActionExecutorThrownError(Object.assign(new Error(code), { code, failureCause }), phase);
+    throw new PluginError({ code, failureCause: failure.failureCause });
+};
 
 /** Exact read composition for direct Actions. Shared ingress never borrows daemon custody. */
 export async function createDeploymentTargetRoleAdmissionHost(context: ActionExecutorContext, config: Readonly<{
@@ -97,7 +104,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             const detail = await readDeploymentEnvironmentForHost(request, { open, assertCurrent,
                 async readMetadata(current) {
                     const raw = await storage('deployments.environments.get', { serverId, environmentId: current.environmentId }, current.context);
-                    if ('errorCode' in raw) return refuse(raw.errorCode);
+                    if ('errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.environment_read', raw.failureCause);
                     const result = DeploymentEnvironmentGetResultV1Schema.parse(raw);
                     if (!result.ok) return refuse(result.error);
                     return result;
@@ -115,7 +122,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             async readMetadata(current) {
                 const raw = await storage('deployments.receipts.get', { serverId, environmentId: current.environmentId,
                     deploymentId: current.deploymentId }, current.context);
-                if ('errorCode' in raw) return refuse(raw.errorCode);
+                if ('errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.receipt_read', raw.failureCause);
                 const result = DeploymentReceiptGetResultV1Schema.parse(raw);
                 if (!result.ok) return refuse(result.error);
                 return result;

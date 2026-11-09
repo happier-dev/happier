@@ -33,12 +33,19 @@ function missingDomainServingAddress(cause?: unknown): never {
     }, { cause });
 }
 
+export type SavedMachineServiceHealthResult = Readonly<{
+    serverId: string; sourceInstanceId: string; caller: PluginMachineMaterializationRefV1; occurrenceId: string;
+    subject: Readonly<{ kind: 'machineService'; machineId: string; serviceId: string }>;
+    generation: string | null; check: HealthCheckDefinitionV1; result: HealthCheckResultV1;
+}>;
+
 /** One finite admission over the existing adopted source and live service read. */
 export function createSavedHealthChecksHost(input: Readonly<{
     serverId: string;
     resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1;
     readObserver(): Readonly<{ machineId: string; installationId: string }> | null;
     openDomainArtifact(artifactId: string, signal: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
+    onServiceResult?(input: SavedMachineServiceHealthResult): Promise<void> | void;
     onDomainResult?(input: Readonly<{ sourceInstanceId: string; sourceRevision: string;
         caller: PluginMachineMaterializationRefV1; occurrenceId: string; check: HealthCheckDefinitionV1;
         checkId: string; kind: 'http' | 'certificate';
@@ -215,8 +222,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                                 ...(config.data.keyword === undefined ? {} : { keyword: config.data.keyword }),
                             } satisfies AdmittedHttpHealthCheckV1 };
                         }));
-                        const context = { signal, http: services.http, now: input.now ?? Date.now,
-                            isCurrent: async () => !signal.aborted };
+                        const context = { signal, http: services.http, now: input.now ?? Date.now };
                         const results = await Promise.all(admitted.map(async item => item.kind === 'heartbeat'
                             ? readHeartbeat(item.check.checkId, item.value)
                             : { checkId: item.check.checkId, result: await (item.check.kind.localId === 'http'
@@ -279,15 +285,20 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     });
                     // Assignment/source edits are adopted at the next finite
                     // boundary. Cancellation remains live through the body.
-                    const context = { signal, http: services.http, now: input.now ?? Date.now,
-                        isCurrent: async () => !signal.aborted };
-                    return Promise.all(admitted.map(async check => {
+                    const context = { signal, http: services.http, now: input.now ?? Date.now };
+                    const results = await Promise.all(admitted.map(async check => {
                         if (check.kind === 'tcp') return { checkId: check.checkId, result: await readTcpHealthCheckV1(check.value, context) };
                         if (check.kind === 'dns') return { checkId: check.checkId, result: await readDnsHealthCheckV1(check.value, context) };
                         if (check.kind === 'heartbeat') return readHeartbeat(check.checkId, check.value);
                         return { checkId: check.checkId,
                             result: await (check.kindId === 'http' ? readHttpHealthCheckV1 : readCertificateHealthCheckV1)(check.value, context) };
                     }));
+                    for (const observation of results) {
+                        await input.onServiceResult?.({ serverId: input.serverId, sourceInstanceId: request.sourceInstanceId,
+                            caller, occurrenceId: seed.occurrenceId, subject, generation: detail.service.generation,
+                            check: checks.find(check => check.checkId === observation.checkId)!, result: observation.result });
+                    }
+                    return results;
                 },
             });
         },

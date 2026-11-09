@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -41,13 +41,13 @@ import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDep
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
-    homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment', publishedPorts = true, noHealthcheck = false,
+    homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
     primaryService = 'app') {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
     const images = [await docker.registerImage(primaryService, 'retained')];
-    if (nativeState === 'partially-removed') images.push(await docker.registerImage('worker', 'retained'));
+    if (nativeState === 'partially-removed' || sourceCase === 'mixed-service-sources') images.push(await docker.registerImage('worker', 'retained'));
     const composeServices = images.map(image => image.service);
     vi.stubEnv('PATH', `${join(root, 'tools')}${delimiter}${process.env.PATH ?? ''}`);
     const serverUrl = `https://recovery-${home}.test`;
@@ -63,7 +63,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const target = { serverId: profile.id, machineId: 'machine-a' };
     // Reload16: serving B reused the native container created from retained A.
     const sourceDeploymentId = sourceCase ? 'cmvxhjin9002amcvu7wok7vi1' : 'deployment-a';
-    const servingDeploymentId = sourceCase === 'reused-container' ? 'cmvxhwoyw002imcvup262fnnk' : sourceDeploymentId;
+    const servingDeploymentId = sourceCase === 'reused-container' || sourceCase === 'mixed-service-sources' ? 'cmvxhwoyw002imcvup262fnnk' : sourceDeploymentId;
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
         serverId: target.serverId, environmentId: sourceCase ? 'cmvx1tgtc002fmc8mtjxkne1x' : `environment-recovery-${home}` });
     const sourceIdentity = sourceCase === 'foreign-environment'
@@ -86,6 +86,22 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     // registering any observation in the fresh runtime below.
     await promisify(execFile)(docker.executablePath, ['compose', '--project-name', identity.projectName,
         '--project-directory', source.rootPath, '--file', join(source.rootPath, 'compose.yaml'), 'up', '--detach', '--no-build', '--pull', 'never']);
+    let servingSource = retained;
+    if (sourceCase === 'mixed-service-sources') {
+        const nextAdmission = { ...admission, deploymentId: servingDeploymentId };
+        const nextSource = await createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]),
+            async admit() { return nextAdmission; } }).materialize({ environmentId: identity.environmentId, deploymentId: servingDeploymentId });
+        servingSource = await captureOwnServerDeploymentSource({ source: nextSource, admission: nextAdmission });
+        await nextSource.commit();
+        // Docker boundary: Compose retained app from A while worker was created
+        // from B. Recovery must prove each service's own retained source.
+        const statePath = join(root, 'tools', 'docker-state.json');
+        const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: { Config: { Labels: Record<string, string> } }[] };
+        const worker = state.containers.find(row => row.Config.Labels['com.docker.compose.service'] === 'worker')!;
+        worker.Config.Labels['com.docker.compose.project.working_dir'] = nextSource.rootPath;
+        await writeFile(`${statePath}.next`, JSON.stringify(state));
+        await rename(`${statePath}.next`, statePath);
+    }
     if (nativeState !== 'running') {
         const ids = await promisify(execFile)(docker.executablePath, ['ps', '--all',
             ...(nativeState === 'partially-removed' ? ['--filter', 'label=com.docker.compose.service=worker'] : []), '--format', '{{.ID}}']);
@@ -114,7 +130,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             contentArtifactId: 'artifact-serving-b' }),
         content: { ...sourceReceipt.content,
             machineResults: sourceReceipt.content.machineResults.map(result => ({ ...result, currentDeploymentId: servingDeploymentId })),
-            ownServer: { sources: [], approvedInputBasis: { ...sourceReceipt.content.ownServer!.approvedInputBasis!,
+            ownServer: { sources: sourceCase === 'mixed-service-sources' ? [servingSource] : [], approvedInputBasis: { ...sourceReceipt.content.ownServer!.approvedInputBasis!,
                 environmentId: environment.id, physicalProjectName: identity.projectName } } },
     }) : sourceReceipt;
     const readReceipt = async (deploymentId: string) => {
@@ -288,6 +304,18 @@ describe('retained Environment service recovery on first use', () => {
                 serviceId: fixture.service.serviceId, state: 'healthy' }] });
             expect(fixture.inventoryReads, 'Domain and Services share the same recovery attempt').toBe(1);
             expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(1);
+        } finally { await fixture.dispose(); }
+    });
+
+    it('recovers services retained from different sources in the same serving Compose project', async () => {
+        const fixture = await createRestartedEnvironmentFixture('running', undefined, 'mixed-service-sources');
+        try {
+            expect(await fixture.list()).toMatchObject({ kind: 'snapshot', services: expect.arrayContaining([
+                { serviceId: fixture.service.serviceId, state: 'healthy' },
+                { serviceId: fixture.serviceFor('worker').serviceId, state: 'healthy' },
+            ].map(value => expect.objectContaining(value))) });
+            expect(await fixture.reads('deployments.health.read', fixture.readInput, fixture.context))
+                .toMatchObject({ ok: true, health: 'healthy', deploymentId: 'cmvxhwoyw002imcvup262fnnk' });
         } finally { await fixture.dispose(); }
     });
 

@@ -1,0 +1,95 @@
+import { describe, expect, it } from 'vitest';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { DeploymentTargetRoleInputProtocolSchemasV1,
+    DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { listDeploymentTargetsV1, OWN_SERVER_DEPLOYMENT_TARGET_V1, readDeploymentTargetV1 } from './deploymentTargetCatalog';
+import { admitOwnServerDeploymentTargetLink } from './ownServer/ownServerTargetAdmission';
+
+const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+
+function admittedRegistry(role: 'runtime' | 'data' = 'runtime') {
+    const pluginId = 'example.deploy';
+    const manifest = normalizePluginManifestV2({
+        schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External target',
+        entrypoints: { daemon: './daemon.js' },
+        contributes: {
+            actions: (['inspect', 'link', 'deploy', 'observe', 'cancel', 'read'] as const).map(id => ({
+                id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
+                inputSchema: id === 'read' ? role === 'data'
+                    ? DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema : closed
+                    : DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
+                resultSchema: id === 'read' ? closed : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                dangerLevel: ['inspect', 'observe', 'read'].includes(id) ? 'safe' : 'writesLocal',
+                ...(id === 'read' ? { readOnly: true } : {}),
+            })),
+            resources: [{ id: 'projects/list', source: 'dynamic', kind: 'config', contentType: 'application/json', execution: { target: 'daemon' } }],
+            deploymentTargets: role === 'data' ? [{ id: 'database', targetKind: 'example', title: 'External data',
+                role: 'data', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+                dataV1: { projects: { list: 'projects/list' }, query: { readOnly: 'read' } } }] : [{ id: 'own-server', targetKind: 'example', title: 'External target',
+                role: 'runtime', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+                actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe',
+                    cancel: 'cancel', variables: { read: 'read' } } }],
+        },
+    });
+    const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
+        daemonEntryPath: '/plugins/example/daemon.js', devDaemonEntryPath: null,
+        sourceSpec: { kind: 'package', locator: pluginId, trustPolicy: 'local_trusted', installPolicy: 'copy' }, manifest };
+    const inputs = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} }, provenance: 'external' });
+    return createResolvedContributionRegistry({ ...inputs,
+        occurrenceIdsByPluginId: { [pluginId]: createPluginRuntimeOccurrenceId(pluginId) } });
+}
+
+describe('deployment target catalog at the admitted registry boundary', () => {
+    it('projects admitted data Resources and Actions through the same catalog without runtime roles', () => {
+        const declarations = admittedRegistry('data').deploymentTargets ?? [];
+        const targets = listDeploymentTargetsV1(declarations);
+        expect(targets).toHaveLength(2);
+        const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } } as const;
+        const target = readDeploymentTargetV1(source, declarations);
+        expect(target).toMatchObject({ role: 'data', source, dataV1: {
+            projects: { list: { kind: 'plugin', resourceId: 'example.deploy/projects/list' } },
+            query: { readOnly: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'read' }) } },
+        } });
+        expect(target).not.toHaveProperty('actions');
+        expect(target).not.toHaveProperty('dataV1.branches');
+        expect(readDeploymentTargetV1(source)).toBeNull();
+    });
+
+    it('lists admitted plugin roles alongside the host without conflating their identities', () => {
+        const registry = admittedRegistry();
+        const declarations = registry.deploymentTargets ?? [];
+        const listTargets: (rows: typeof declarations) => ReturnType<typeof listDeploymentTargetsV1> = listDeploymentTargetsV1;
+        const readTarget: (source: Parameters<typeof readDeploymentTargetV1>[0], rows: typeof declarations) => ReturnType<typeof readDeploymentTargetV1> = readDeploymentTargetV1;
+        const targets = listTargets(declarations);
+        expect(targets).toHaveLength(2);
+        expect(readTarget(OWN_SERVER_DEPLOYMENT_TARGET_V1.source, declarations))
+            .toEqual(OWN_SERVER_DEPLOYMENT_TARGET_V1);
+        const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'own-server' } } as const;
+        const plugin = readTarget(source, declarations);
+        if (!plugin || plugin.role !== 'runtime') throw new Error('Expected the admitted runtime target.');
+        expect(plugin.id).toBe(OWN_SERVER_DEPLOYMENT_TARGET_V1.id);
+        expect(plugin).toMatchObject({ source, targetKind: 'example', actions: {
+            cancel: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'cancel' }) },
+            variables: { read: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'read' }) } },
+        } });
+        expect(plugin.actions.rollback).toBeUndefined();
+        expect(readTarget({ kind: 'plugin', contribution: { pluginId: 'other.plugin', localId: 'own-server' } }, declarations)).toBeNull();
+    });
+
+    it('admits the real host member and coordinator while refusing a plugin with the same local id', () => {
+        const link = createDeploymentEnvironmentDetailV1().targetLinks[0].targetLink;
+        expect(() => admitOwnServerDeploymentTargetLink(link, link.members[0].machineId)).not.toThrow();
+        expect(() => admitOwnServerDeploymentTargetLink(link, 'controller', 'controller')).not.toThrow();
+        expect(() => admitOwnServerDeploymentTargetLink({ ...link,
+            source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'own-server' } },
+        }, link.members[0].machineId)).toThrowError(expect.objectContaining({ code: 'target_mismatch' }));
+        expect(() => admitOwnServerDeploymentTargetLink({ ...link, targetKind: 'other' }, link.members[0].machineId))
+            .toThrowError(expect.objectContaining({ code: 'target_mismatch' }));
+    });
+});

@@ -1,7 +1,18 @@
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, readDeploymentTargetV1 } from '../deploymentTargetCatalog';
 
 export { admitDeploymentSourceIntent as admitOwnServerDeploymentSource } from '@/deployments/deploymentSourceAdmission';
+
+/** Preparation requires the Environment's configured builder; it never selects one. */
+export function requireOwnServerDeploymentBuildMachine(buildMachineId: string | null | undefined): string {
+    if (buildMachineId) return buildMachineId;
+    const errorCode = 'required_fact_unavailable';
+    const failure: ActionExecuteFailure = { ok: false, errorCode, error: errorCode, effectAttempted: false,
+        details: projectDeploymentFailureRecoveryV1({ requiredFact: 'buildMachineId' }, errorCode) };
+    throw Object.assign(new Error(errorCode, { cause: failure }), { code: errorCode });
+}
 
 export function admitOwnServerDeploymentTargetSource(
     link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink'],

@@ -42,7 +42,6 @@ function admitted(url: string) {
 }
 function context(url: string, overrides: Partial<HealthCheckFiniteLeafContextV1> = {}): HealthCheckFiniteLeafContextV1 {
     return { signal: new AbortController().signal, now: () => 1_800_000_000_000,
-        isCurrent: async () => true,
         http: createPluginHttpService({ adapter: createGlobalFetchRuntime() }),
         ...overrides };
 }
@@ -295,19 +294,26 @@ describe('finite saved HTTP and certificate health', () => {
         expect(requests).toBe(1);
     });
 
-    it('refuses stale and cancelled checks before I/O and suppresses an observation retired during I/O', async () => {
+    it('cancels before I/O and suppresses observations cancelled during I/O', async () => {
         let requests = 0;
-        const url = await endpoint((_request, response) => { requests += 1; response.end('healthy'); });
-        await expect(readHttpHealthCheckV1(admitted(url), context(url, { isCurrent: async () => false })))
-            .rejects.toMatchObject({ code: 'admission_unavailable' });
-        const cancellation = new AbortController(); cancellation.abort();
-        await expect(readHttpHealthCheckV1(admitted(url), context(url, { signal: cancellation.signal })))
-            .rejects.toMatchObject({ name: 'AbortError' });
+        let active = new AbortController();
+        const url = await endpoint((_request, response) => {
+            requests += 1;
+            active.abort();
+            response.end('healthy');
+        });
+        for (const read of [readHttpHealthCheckV1, readCertificateHealthCheckV1]) {
+            const cancelled = new AbortController(); cancelled.abort();
+            await expect(read(admitted(url), context(url, { signal: cancelled.signal })))
+                .rejects.toMatchObject({ name: 'AbortError' });
+        }
         expect(requests).toBe(0);
-        let reads = 0;
-        await expect(readHttpHealthCheckV1(admitted(url), context(url, { isCurrent: async () => ++reads === 1 })))
-            .rejects.toMatchObject({ code: 'admission_unavailable' });
-        expect(requests).toBe(1);
+        for (const read of [readHttpHealthCheckV1, readCertificateHealthCheckV1]) {
+            active = new AbortController();
+            await expect(read(admitted(url), context(url, { signal: active.signal })))
+                .rejects.toMatchObject({ name: 'AbortError' });
+        }
+        expect(requests).toBe(2);
     });
 
     it('preserves transport policy refusals rather than converting lost authority to an outage', async () => {

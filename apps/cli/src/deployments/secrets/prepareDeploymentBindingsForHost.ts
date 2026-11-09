@@ -127,6 +127,15 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 await assertAuthority();
                 return await complete([]);
             }
+            // References can be authored before placement. The shared binding owner
+            // decides which uses need a destination; no secret is acquired without one.
+            if (!targetLinkId && !loaded.environment.buildMachineId && !request.buildMachineId
+                && current.content.bindings.every(binding => binding.purpose === 'variable')) {
+                const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
+                    bindings: candidate.content.bindings, previousBindings: current.content.bindings,
+                    runtimeInstallations: [], existingGrants: [], assertCurrent });
+                return await complete(prepared.grants);
+            }
             if (!targetLinkId || !loaded.targetLinks.some(link => link.id === targetLinkId)) return refuse('deployment_unavailable');
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('secret_missing');

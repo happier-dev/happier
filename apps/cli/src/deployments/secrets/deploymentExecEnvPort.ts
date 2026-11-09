@@ -26,7 +26,7 @@ type Attachment = Readonly<{
         env: Readonly<Record<string, string>>;
         redaction: ProviderRedactionLease;
         refs: DeploymentExecEnvironmentMaterialForHost['refs'];
-        referenceAddresses: NonNullable<DeploymentExecEnvironmentMaterialForHost['referenceAddresses']>;
+        referenceAddresses: Readonly<NonNullable<DeploymentExecEnvironmentMaterialForHost['referenceAddresses']>>;
         recheck(): Promise<void>;
         retireEnvironment(): void;
         dispose(): Promise<void>;

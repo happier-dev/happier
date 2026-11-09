@@ -1,7 +1,10 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 
 import type { DeploymentSecretBindingSourceV1 } from '@happier-dev/protocol';
-import { SAVED_SECRET_RESOURCE_MAX_CONTENT_JSON_UTF8_BYTES_V1, SavedSecretResourceContentV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import {
+    SAVED_SECRET_RESOURCE_MAX_CONTENT_JSON_UTF8_BYTES_V1,
+    SavedSecretResourceContentV1Schema,
+} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { DeploymentTemplateSecretProfileV1Schema, type DeploymentTemplateSecretProfileV1 } from '@happier-dev/protocol/registries';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { SharedSecretAudience } from '@happier-dev/plugin-sdk/secrets';

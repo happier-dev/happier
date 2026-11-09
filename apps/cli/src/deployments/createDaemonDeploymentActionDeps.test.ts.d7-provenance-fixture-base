@@ -1,0 +1,1033 @@
+import axios from 'axios';
+import { createHash } from 'node:crypto';
+import tweetnacl from 'tweetnacl';
+import { x25519 } from '@noble/curves/ed25519';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
+    DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentReceiptListResultV1Schema, DeploymentPendingDeployV1Schema } from '@happier-dev/protocol';
+import { createOwnServerDockerBoundary } from './targets/ownServer/ownServerDeployment.testkit';
+import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
+import { readEnvironmentSecretLaunchAdmissionForHost } from './secrets/readEnvironmentSecretLaunchAdmissionForHost';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import * as installationStore from '@/daemon/identity/store';
+import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
+import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions';
+import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { prepareStoredPromotionCandidate } from './storedPromotionCandidate';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { decryptWithDataKey, encryptWithDataKey } from '@/api/encryption';
+import { signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint,
+    openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import type { StoredCredentials } from '@/persistence';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+
+// Socket.IO is the network boundary; the pending observer and runner stay real.
+const pendingSocket = vi.hoisted(() => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const emit = (event: string, ...args: unknown[]) => {
+        for (const listener of [...(listeners.get(event) ?? [])]) listener(...args);
+    };
+    const socket = { connected: false, io: { timeout() {}, on() {}, off() {} },
+        on(event: string, listener: (...args: unknown[]) => void) {
+            const group = listeners.get(event) ?? new Set(); group.add(listener); listeners.set(event, group);
+        },
+        off(event: string, listener: (...args: unknown[]) => void) { listeners.get(event)?.delete(listener); },
+        connect() { socket.connected = true; emit('connect'); },
+        disconnect() { socket.connected = false; emit('disconnect', 'client disconnect'); },
+        removeAllListeners() { listeners.clear(); }, offAny() {},
+    };
+    return { socket, emit, listeners };
+});
+vi.mock('socket.io-client', () => ({ io: () => pendingSocket.socket }));
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+describe('installed deployment storage and target composition', () => {
+    it.each(['live', 'unknown', 'teardown', 'mismatched Artifact'] as const)('refreshes %s history through the canonical receipt before deriving member proof', async kind => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        if (kind === 'live') receipt.deployment.state = 'running';
+        if (kind === 'unknown') receipt.deployment.state = 'outcome_unknown';
+        if (kind === 'teardown') { receipt.deployment.operation = 'teardown'; receipt.deployment.state = 'failed'; }
+        const listed = structuredClone(receipt.deployment);
+        receipt.deployment.revision++;
+        receipt.deployment.contentHeaderVersion++;
+        receipt.deployment.contentBodyVersion++;
+        let canonicalReads = 0;
+        const documents = new Map<string, Record<string, unknown>>();
+        const put = (id: string, artifactKind: string, content: unknown, version = 1) => documents.set(id, {
+            id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: artifactKind, title: 'History' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+            headerVersion: version, bodyVersion: version, seq: 1, createdAt: 1, updatedAt: 1,
+        });
+        put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+        for (const item of environment.targetLinks) put(item.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, item.content);
+        put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receipt.content, 2);
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+            return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
+        });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(request.url!).pathname;
+            if (path.endsWith(`/receipts/${receipt.deployment.id}`)) {
+                canonicalReads++;
+                return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+            }
+            if (path.endsWith('/deployments')) return { status: 200,
+                data: DeploymentReceiptListResultV1Schema.parse({ ok: true, items: [listed], nextCursor: null }) };
+            return { status: 200, data: { ok: true, environment: environment.environment,
+                targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { throw new Error('Candidate acquisition is unavailable'); } } });
+        // The absent native candidate capability settles only after history was
+        // opened and its real version/schema checks admitted the current proof.
+        await expect(deps.prepareDeployCandidate({ environmentId: environment.environment.id, context: {} }))
+            .resolves.toMatchObject({ ok: false, errorCode: 'unsupported' });
+        expect(canonicalReads).toBe(1);
+    });
+    it.each(['review', 'member'] as const)('derives destination-owned promotion content before native child %s', async kind => {
+        const destination = createDeploymentEnvironmentDetailV1();
+        const source = createDeploymentEnvironmentDetailV1();
+        source.environment.id = 'source'; source.environment.contentArtifactId = 'source-content';
+        source.targetLinks[0].targetLink.environmentId = source.environment.id;
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.deployment.id = 'source-release'; receipt.deployment.environmentId = source.environment.id;
+        const document = JSON.stringify({ services: { app: { image: 'example/app:source' } } });
+        receipt.content.sourceIntent = { kind: 'stored', document, contentRevision: 2,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, services: ['app'], profiles: [] };
+        source.content.definition = receipt.content.sourceIntent;
+        destination.content.definition = { ...receipt.content.sourceIntent, contentRevision: 1 };
+        const link = destination.targetLinks[0].targetLink;
+        const content = { ...receipt.content, machines: link.machines, buildMachineId: destination.environment.buildMachineId!,
+            machineResults: [], steps: [], sourceIntent: prepareStoredPromotionCandidate(receipt, destination).definition };
+        const admitted = createDeploymentReceiptDetailV1();
+        admitted.deployment = { ...admitted.deployment, id: 'parent-release', operation: 'promote', state: 'running',
+            requestKey: 'promotion', contentArtifactId: 'candidate', actionOperationId: 'parent-operation' };
+        if (kind === 'member') {
+            destination.environment.revision++;
+            destination.content.definition = content.sourceIntent;
+            admitted.deployment.contentHeaderVersion = 2;
+            admitted.deployment.contentBodyVersion = 2;
+            admitted.content = { ...content, ownServer: { approvedInputBasis: { v: 1,
+                environmentId: destination.environment.id, environmentRevision: 1, targetLinkId: link.id, targetLinkRevision: link.revision,
+                sourceIntent: content.sourceIntent, manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'promotion',
+                toolVersion: '2.39.4', services: ['app'], profiles: [], members: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
+                bindings: [], images: content.images } } };
+        }
+        const documents = new Map<string, Readonly<Record<string, unknown>>>();
+        const put = (id: string, kind: string, value: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind, title: 'Promotion' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(value) }), headerVersion: 1, bodyVersion: 1,
+            seq: 1, createdAt: 1, updatedAt: 1 });
+        put(destination.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, destination.content);
+        // Promotion needs the source header and pinned receipt, not another
+        // private Environment definition or its native runtime artifacts.
+        for (const environment of [source, destination]) for (const item of environment.targetLinks) {
+            put(item.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, item.content);
+        }
+        put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receipt.content);
+        put('candidate', DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, kind === 'member' ? admitted.content : content);
+        if (kind === 'member') documents.set('candidate', { ...documents.get('candidate')!, headerVersion: 2, bodyVersion: 2 });
+        put('destination-candidate', DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+            { ...prepareStoredPromotionCandidate(receipt, destination), name: 'Controller-substituted destination' });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(request.url!).pathname;
+            if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [], resourceCatalog: [] } };
+            if (path.endsWith('/source-release')) return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+            if (path.endsWith('/parent-release')) return { status: 200, data: { ok: true, deployment: admitted.deployment } };
+            const environment = path.endsWith('/source') ? source : destination;
+            return { status: 200, data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+            return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
+        });
+        const keys = tweetnacl.sign.keyPair();
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+        const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+            machineId: 'machine-a', async acquirePluginRuntimeRegistryLease() {
+                const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+                if (!lease) throw new Error('No installed native plugin runtime');
+                return lease;
+            } });
+        const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', runtime });
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind, actionId: 'deployments.promote',
+            machineId: 'machine-a', installationId: 'installation-a', input: { serverId: 'home', environmentId: destination.environment.id,
+                targetLinkId: link.id, expectedRevision: 1, expectedTargetLinkRevision: link.revision,
+                requestKey: 'promotion', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
+                sourceEnvironmentId: source.environment.id, sourceDeploymentId: receipt.deployment.id,
+                sourceExpectedRevision: source.environment.revision, sourceExpectedDeploymentRevision: receipt.deployment.revision,
+                artifact: 'image', destinationContent: { contentArtifactId: 'destination-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } },
+            ...(kind === 'member' ? { phase: 'activate', selectedDeploymentId: admitted.deployment.id, deploymentId: admitted.deployment.id,
+                actionOperationId: admitted.deployment.actionOperationId, environmentRevision: destination.environment.revision } : {}) });
+        await expect(deps.deploymentChild(job, {})).resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    });
+    it('reopens the canonical receipt before accepting a child operation reference', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        let acquisitions = 0;
+        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, deployment: receipt.deployment } });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            return { status: 200, data: { id: receipt.deployment.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Child' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(receipt.content) }),
+                headerVersion: receipt.deployment.contentHeaderVersion, bodyVersion: receipt.deployment.contentBodyVersion,
+                seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null }, serverId: 'home',
+            serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', runtime: {
+                async acquire() { acquisitions++; throw new Error('Mismatched child must not acquire native custody'); },
+            } });
+        const result = await deps.deploymentChild({ v: 1, kind: 'member', actionId: 'deployments.deploy',
+            input: { serverId: 'home', environmentId: environment.environment.id, targetLinkId: receipt.deployment.targetLinkId,
+                expectedRevision: environment.environment.revision, expectedTargetLinkRevision: environment.targetLinks[0].targetLink.revision,
+                requestKey: receipt.deployment.requestKey, contentArtifactId: receipt.deployment.contentArtifactId,
+                contentHeaderVersion: receipt.deployment.contentHeaderVersion, contentBodyVersion: receipt.deployment.contentBodyVersion },
+            machineId: 'machine-a', installationId: 'installation-a', phase: 'activate',
+            selectedDeploymentId: receipt.deployment.id, deploymentId: receipt.deployment.id,
+            actionOperationId: 'substituted-operation', environmentRevision: environment.environment.revision }, {});
+        expect(result).toMatchObject({ ok: false, errorCode: 'operation_unavailable' });
+        expect(acquisitions).toBe(0);
+    });
+    it('refuses caller-authored teardown completion before receipt allocation or native observation', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const link = environment.targetLinks[0].targetLink;
+        receipt.content.teardown = { reason: 'manual', targetLinkRevision: link.revision,
+            machines: [{ machineId: 'machine-a', installationId: 'installation-a' }], resources: [],
+            proofs: DEPLOYMENT_TEARDOWN_STEPS_V1.map(step => ({ step, machineId: 'machine-a',
+                installationId: 'installation-a', state: 'succeeded', resources: [] })) };
+        const documents = new Map<string, Record<string, unknown>>();
+        const put = (id: string, kind: string, content: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind, title: 'Teardown' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+        put(link.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {});
+        put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receipt.content);
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+            return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
+        });
+        let receiptAllocations = 0;
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment,
+                targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+            receiptAllocations++;
+            return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
+        });
+        let nativeEffects = 0;
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { nativeEffects++; throw new Error('Teardown must not acquire deployment custody'); } },
+            teardownBoundary: {
+                async observe() { nativeEffects++; return { kind: 'proved', resources: [] }; },
+                async execute() { nativeEffects++; return { kind: 'proved', resources: [] }; },
+            } });
+        const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+            targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'forged-teardown', reason: 'manual',
+            contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const result = await deps.deploymentAction('deployments.teardown', input, {
+            operationAcceptance: { operationId: 'teardown-operation', accept() {} },
+        });
+        expect(receiptAllocations).toBe(0);
+        expect(result).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
+        expect(nativeEffects).toBe(0);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('prepares %s Team promotion content with destination grants and recipient keys before any definition write', async mode => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-promotion-review-'));
+        const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        try {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+            const machineKey = new Uint8Array(32).fill(7);
+            const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+                : { type: 'dataKey', machineKey, publicKey: x25519.getPublicKey(machineKey) } };
+            const seededKey = await createResourceDataKey({ credentials, mode });
+            const encode = (value: unknown) => seededKey.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+                : Buffer.from(encryptWithDataKey(value, seededKey.dataKey)).toString('base64');
+            const teammateSeed = new Uint8Array(32).fill(8);
+            const teammatePublicKey = x25519.getPublicKey(teammateSeed);
+            const signing = tweetnacl.sign.keyPair();
+            const fingerprint = computeContentPublicKeyFingerprint(teammatePublicKey);
+            const teammateContentKey = { status: 'available' as const,
+                accountSigningPublicKey: Buffer.from(signing.publicKey).toString('hex'),
+                contentPublicKey: Buffer.from(teammatePublicKey).toString('base64'),
+                contentPublicKeySignature: Buffer.from(signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey,
+                    contentPublicKey: teammatePublicKey })).toString('base64') };
+            const docker = await createOwnServerDockerBoundary(join(root, 'tools'));
+            vi.stubEnv('PATH', `${join(root, 'tools')}${delimiter}${process.env.PATH ?? ''}`);
+            const image = await docker.registerImage('app', 'X');
+            const newerImage = await docker.registerImage('app', 'Y');
+            const stored = (imageName: string, contentRevision: number) => {
+                const document = JSON.stringify({ services: { app: { image: imageName } } });
+                return { kind: 'stored' as const, contentRevision, document,
+                    composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] };
+            };
+            const destination = createDeploymentEnvironmentDetailV1();
+            destination.environment.owner = { kind: 'team', teamId: 'destination-team' };
+            destination.content.definition = stored('example/old:A', 3);
+            // Team audience preparation uses the supported recreate runtime;
+            // start-first cutover is owned by its separate native vertical.
+            destination.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false };
+            const servingDestination = createDeploymentReceiptDetailV1();
+            servingDestination.deployment.id = 'destination-serving';
+            servingDestination.deployment.contentArtifactId = 'destination-serving-content';
+            servingDestination.content.sourceIntent = destination.content.definition;
+            destination.targetLinks[0].targetLink.activeDeploymentId = servingDestination.deployment.id;
+            const source = createDeploymentEnvironmentDetailV1();
+            source.environment.owner = { kind: 'team', teamId: 'source-team' };
+            source.environment.id = 'source-environment'; source.environment.contentArtifactId = 'source-environment-content';
+            source.environment.runtimeTargetLinkId = 'source-target';
+            source.targetLinks[0].targetLink.id = 'source-target'; source.targetLinks[0].targetLink.environmentId = source.environment.id;
+            source.targetLinks[0].targetLink.contentArtifactId = 'source-target-content';
+            source.content.definition = stored('example/mutable:Y', 20);
+            const receipt = createDeploymentReceiptDetailV1();
+            receipt.deployment.id = 'source-receipt'; receipt.deployment.environmentId = source.environment.id;
+            receipt.deployment.targetLinkId = 'source-target';
+            receipt.content.sourceIntent = stored(image.registryReference!, 19);
+            receipt.content.images = [image]; receipt.content.machineResults = [];
+            const documents = new Map<string, Record<string, unknown>>();
+            const createdIds = new Set<string>();
+            const teamGrants = new Map<string, unknown>();
+            const recipientKeys = new Map<string, string>();
+            const put = (id: string, kind: string, content: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: mode, dataEncryptionKey: seededKey.mode === 'plain'
+                    ? ARTIFACT_PLAIN_DATA_KEY_MARKER : seededKey.dataEncryptionKey,
+                header: encode({ kind, title: 'Promotion' }),
+                body: encode({ body: JSON.stringify(content) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            put(source.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, source.content);
+            put(destination.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, destination.content);
+            put(destination.targetLinks[0].targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {});
+            put(source.targetLinks[0].targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {});
+            put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, receipt.content);
+            put(servingDestination.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, servingDestination.content);
+            put('caller-candidate', DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, { ...receipt.content,
+                sourceIntent: source.content.definition, images: [newerImage] });
+            const keys = tweetnacl.sign.keyPair();
+            vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+                installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+                privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 0 } };
+                const segments = new URL(url).pathname.split('/');
+                if (url.endsWith('/access/recipients')) {
+                    const artifactId = decodeURIComponent(segments[3]!);
+                    const row = documents.get(artifactId)!;
+                    return { status: 200, data: { artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+                        dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
+                        recipients: [{ recipientAccountId: 'teammate', contentKey: teammateContentKey,
+                            contentPublicKeyFingerprint: fingerprint, encryptedDataKey: recipientKeys.get(artifactId) ?? null,
+                            recipientContentPublicKeyFingerprint: recipientKeys.has(artifactId) ? fingerprint : null }] } };
+                }
+                const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+                return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
+            });
+            vi.spyOn(axios, 'put').mockImplementation(async (url, value) => {
+                const mutation = readCarrierMutation(value);
+                const artifactId = String(mutation.artifactId);
+                expect(url).toBe(`https://home.test/v1/artifacts/${artifactId}/access/grants`);
+                teamGrants.set(artifactId, { principal: mutation.principal, accessLevel: mutation.accessLevel });
+                return { status: 200, data: { artifactId, ownerAccountId: 'owner', access: 'owner', changed: true,
+                    grants: [{ principal: mutation.principal, accessLevel: mutation.accessLevel, createdByAccountId: 'owner',
+                        createdAt: 1, display: { name: null } }] } };
+            });
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                const path = new URL(request.url!).pathname;
+                if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [], resourceCatalog: [] } };
+                const environment = path.endsWith(`/${source.environment.id}`) ? source : destination;
+                if (request.method === 'GET' && path.includes('/environments/')) return { status: 200,
+                    data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+                if (request.method === 'GET' && path.endsWith('/receipts/source-receipt')) return { status: 200,
+                    data: { ok: true, deployment: receipt.deployment } };
+                if (request.method === 'GET' && path.endsWith(`/receipts/${servingDestination.deployment.id}`)) return { status: 200,
+                    data: { ok: true, deployment: servingDestination.deployment } };
+                throw new Error(`Promotion review must not write definitions or admit effects: ${path}`);
+            });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, value, config) => {
+                if (url.endsWith('/access/key-envelopes')) {
+                    const mutation = readCarrierMutation(value);
+                    const envelope = (mutation.recipientKeyEnvelopes as { recipientAccountId: string; encryptedDataKey: string }[])[0]!;
+                    expect(envelope.recipientAccountId).toBe('teammate');
+                    recipientKeys.set(String(mutation.artifactId), envelope.encryptedDataKey);
+                    return { status: 200, data: { appliedRecipientAccountIds: ['teammate'], skippedRecipientAccountIds: [] } };
+                }
+                if (!url.endsWith('/v1/artifacts')) throw new Error(`Unexpected promotion Artifact request: ${url}`);
+                const mutation = readCarrierMutation(value); const id = String(mutation.id);
+                createdIds.add(id);
+                documents.set(id, { ...mutation, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                    encryptionMode: mode, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+            });
+            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'machine-a', async acquirePluginRuntimeRegistryLease() { return mounted.lease; },
+                readEnvironmentSecretLaunchAdmission: readEnvironmentSecretLaunchAdmissionForHost });
+            const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', runtime });
+            const prepared = await deps.prepareDeploymentAction({ actionId: 'deployments.promote', context: {}, input: {
+                serverId: 'home', environmentId: destination.environment.id, expectedRevision: destination.environment.revision,
+                targetLinkId: destination.environment.runtimeTargetLinkId!, expectedTargetLinkRevision: 1, requestKey: 'promote',
+                contentArtifactId: 'caller-candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
+                sourceEnvironmentId: source.environment.id, sourceDeploymentId: receipt.deployment.id,
+                sourceExpectedRevision: source.environment.revision, sourceExpectedDeploymentRevision: receipt.deployment.revision,
+                artifact: 'image', destinationContent: { contentArtifactId: destination.environment.contentArtifactId,
+                    contentHeaderVersion: 1, contentBodyVersion: 1 } } });
+            expect(prepared).not.toHaveProperty('errorCode');
+            if ('errorCode' in prepared || !('destinationContent' in prepared.input)) throw new Error('Expected prepared promotion');
+            expect(createdIds.size).toBe(3);
+            for (const id of createdIds) expect(teamGrants.get(id)).toEqual({
+                principal: { kind: 'team', teamId: 'destination-team' }, accessLevel: 'admin' });
+            const candidateRow = documents.get(prepared.input.destinationContent.contentArtifactId)!;
+            let candidateBody: unknown;
+            if (mode === 'plain') {
+                expect(recipientKeys.size).toBe(0);
+                candidateBody = decodePlainArtifactStoredContent(candidateRow.body);
+            } else {
+                expect(recipientKeys.size).toBe(createdIds.size);
+                for (const id of createdIds) {
+                    const key = openEncryptedDataKeyEnvelopeV1({ envelope: Buffer.from(recipientKeys.get(id)!, 'base64'), recipientSecretKeyOrSeed: teammateSeed });
+                    expect(key).not.toBeNull();
+                    const body = decryptWithDataKey(Buffer.from(String(documents.get(id)!.body), 'base64'), key!);
+                    expect(body).toMatchObject({ body: expect.any(String) });
+                    if (id === prepared.input.destinationContent.contentArtifactId) candidateBody = body;
+                }
+            }
+            if (!candidateBody || typeof candidateBody !== 'object' || !('body' in candidateBody) || typeof candidateBody.body !== 'string') {
+                throw new Error('Expected the prepared destination content envelope');
+            }
+            expect(DeploymentEnvironmentContentV1Schema.parse(JSON.parse(candidateBody.body))).toEqual({ ...destination.content,
+                definition: { ...receipt.content.sourceIntent, contentRevision: 4 } });
+            expect(destination.content.definition).toMatchObject({ contentRevision: 3 });
+            expect(prepared.preview).toMatchObject({ promotion: { artifact: 'image',
+                candidateDocument: receipt.content.sourceIntent.document } });
+            expect(prepared.preview).toMatchObject({ deployment: {
+                revision: { kind: 'stored', contentRevision: 4 },
+                replaces: { deploymentId: servingDestination.deployment.id, revision: { kind: 'stored', contentRevision: 3 } },
+            } });
+            expect((await docker.readInvocations()).some(invocation => invocation.args.includes('up') || invocation.args.includes('build'))).toBe(false);
+        } finally { await mounted.dispose(); await rm(root, { recursive: true, force: true }); }
+    });
+    it('refuses backup-plus-code rollback before admitting a receipt when the restore owner is unavailable', async () => {
+        const mutations = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200,
+            data: { ok: true, environmentId: 'staging', revision: 2,
+                deploymentId: 'queued-recovery', deploymentRevision: 1, state: 'queued' } });
+        let acquisitions = 0;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { acquisitions++; throw new Error('No recovery effect without the P45 restore owner'); } } });
+        const input = { serverId: 'home', environmentId: 'staging', expectedRevision: 1, requestKey: 'restore-and-rollback',
+            targetLinkId: 'runtime', expectedTargetLinkRevision: 1, deploymentId: 'retained-release', restoreBackupId: 'pre-migration-backup',
+            contentArtifactId: 'recovery-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
+        await expect(deps.deploymentAction('deployments.rollback', input, {
+            operationAcceptance: { operationId: 'recovery-operation', accept() {} },
+        })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(mutations).not.toHaveBeenCalled();
+        expect(acquisitions).toBe(0);
+    });
+    it('resolves only the exact admitted Environment metadata and refuses unresolved preview provenance', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const requests: string[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            requests.push(String(request.url));
+            return { status: 200, data: { ok: true, environment: detail.environment,
+                targetLinks: detail.targetLinks.map(item => item.targetLink) } };
+        });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { throw new Error('Approval scope reads cannot acquire native custody'); } } });
+        const resolve = deps.resolveEnvironmentApprovalScope!;
+        const invocation = { actionId: 'deployments.deploy' as const,
+            input: { serverId: 'home', environmentId: detail.environment.id }, context: {}, phase: 'prepare' as const };
+        expect(await resolve(invocation)).toEqual({ scope: { kind: 'environment', environmentId: detail.environment.id } });
+        expect(requests.map(url => new URL(url).pathname)).toEqual([`/v1/deployments/environments/${detail.environment.id}`]);
+        expect(new URL(requests[0]!).searchParams.get('serverId')).toBe('home');
+        detail.environment.deletedAtMs = 2_000;
+        expect(await resolve({ ...invocation, actionId: 'deployments.receipts.list', phase: 'dispatch' }))
+            .toEqual({ scope: { kind: 'environment', environmentId: detail.environment.id } });
+        delete detail.environment.deletedAtMs;
+        detail.environment.purpose = 'preview';
+        expect(await resolve({ ...invocation, phase: 'dispatch' })).toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+        expect(requests).toHaveLength(3);
+        expect(await resolve({ ...invocation, input: { ...invocation.input, serverId: 'foreign' } }))
+            .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+        expect(requests).toHaveLength(3);
+    });
+    it('resolves two preview children through the current exact template relation without native custody', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const parent = { ...detail.environment, id: 'preview-template' };
+        const children = ['preview-one', 'preview-two'].map(id => ({ ...detail.environment, id, purpose: 'preview',
+            previewTemplateEnvironmentId: parent.id, previewRepositoryId: 'opaque-repository-selector',
+            previewPullRequestId: id, previewTargetLinkId: detail.environment.runtimeTargetLinkId }));
+        const requests: string[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            requests.push(path);
+            const environment = [parent, ...children].find(item => path.endsWith(`/${item.id}`));
+            return { status: 200, data: environment ? { ok: true, environment, targetLinks: [] }
+                : { ok: false, error: 'deployment_unavailable' } };
+        });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { throw new Error('Approval scope cannot acquire native custody'); } } });
+        const resolve = deps.resolveEnvironmentApprovalScope!;
+        for (const child of children) {
+            expect(await resolve({ actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: child.id },
+                context: {}, phase: 'prepare' })).toEqual({ scope: { kind: 'environment', environmentId: child.id },
+                previewTemplateEnvironmentId: parent.id });
+        }
+        expect(requests).toEqual(children.flatMap(child => [
+            `/v1/deployments/environments/${child.id}`, `/v1/deployments/environments/${parent.id}`]));
+        parent.projectSourceId = 'foreign-source';
+        expect(await resolve({ actionId: 'deployments.environments.delete',
+            input: { serverId: 'home', environmentId: children[0]!.id }, context: {}, phase: 'dispatch' }))
+            .toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+    });
+    it('admits Prepare scope from the authenticated Home and exact Source without inventing a handoff', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const requests: string[] = [];
+        const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            expect(request.method).toBe('GET');
+            requests.push(String(request.url));
+            return { status: 200, data: { ok: true, environment: detail.environment,
+                targetLinks: detail.targetLinks.map(item => item.targetLink) } };
+        });
+        const privateReads = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Prepare scope cannot open private content'));
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { throw new Error('Prepare cannot acquire deployment native custody'); } } });
+        const input = DeploymentActionInputSchemasV1['deployments.prepare'].parse({ projectSourceId: detail.environment.projectSourceId,
+            sourceRevision: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' } });
+        const context = { serverId: 'home', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            interactivePresentation: 'unavailable', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
+        const resolve = deps.resolveEnvironmentApprovalScope!;
+        const invocation = { actionId: 'deployments.prepare' as const, input, context, phase: 'prepare' as const };
+        expect(await resolve(invocation)).toEqual({ scope: null });
+        expect(http).not.toHaveBeenCalled();
+        const scoped = { ...input, environmentId: detail.environment.id };
+        expect(await resolve({ ...invocation, input: scoped }))
+            .toEqual({ scope: { kind: 'environment', environmentId: detail.environment.id } });
+        expect(new URL(requests[0]!).searchParams.get('serverId')).toBe(context.serverId);
+        expect(await resolve({ ...invocation, input: { ...scoped, projectSourceId: 'another-source' } }))
+            .toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+        expect(requests.map(url => new URL(url).pathname))
+            .toEqual(Array(2).fill(`/v1/deployments/environments/${detail.environment.id}`));
+
+        // The real executor has no P60 producer installed: scope admission must
+        // not manufacture Session custody, dispatch storage writes or claim handoff.
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+        const beforeExecution = requests.length;
+        expect(await executor.execute('deployments.prepare', input, context))
+            .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(await executor.execute('deployments.prepare', { ...input,
+            workspace: { ...input.workspace, serverId: 'foreign' } }, context))
+            .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(requests).toHaveLength(beforeExecution);
+        expect(privateReads).not.toHaveBeenCalled();
+    });
+    it('admits stored create and edit through the native source policy before storage, without native effects', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const document = JSON.stringify({ services: { app: { image: 'example/app:1', env_file: '.env' } } });
+        environment.content.definition = { kind: 'stored', contentRevision: 1, document,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] };
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (url.includes('/v1/artifacts/')) return { status: 200, data: {
+                id: environment.environment.contentArtifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Stored' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(environment.content) }),
+                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+                seq: 1, createdAt: 1, updatedAt: 1,
+            } };
+            throw new Error(`Unexpected HTTP read: ${url}`);
+        });
+        const writes: string[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.method?.toUpperCase() === 'GET') return { status: 200, data: { ok: true,
+                environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+            writes.push(request.method ?? '');
+            return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1 } };
+        });
+        let acquisitions = 0;
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { acquisitions++; throw new Error('Definition writes must not acquire native custody'); } } });
+        const content = { contentArtifactId: environment.environment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const createInput = { ...content, serverId: 'home',
+            projectSourceId: 'source-app', requestKey: 'stored-create', protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: 'machine-a' } as const;
+        const updateInput = { ...content, serverId: 'home', environmentId: environment.environment.id, expectedRevision: 1 };
+        for (const source of [
+            { services: { app: { image: 'example/app:1', env_file: '.env' } } },
+            { services: { app: { image: 'example/app:1', volumes: ['./data:/data'] } } },
+            { services: { app: { image: 'example/app:1', volumes: [{ type: 'bind', source: './settings.json', target: '/settings' }] } } },
+            { services: { app: { build: '.' } } },
+            { services: { app: { extends: { file: './other.yaml', service: 'app' } } } },
+            { include: './other.yaml', services: { app: { image: 'example/app:1' } } },
+            { configs: { settings: { file: './settings.json' } }, services: { app: { image: 'example/app:1' } } },
+            { secrets: { password: { file: './password' } }, services: { app: { image: 'example/app:1' } } },
+        ]) {
+            const document = JSON.stringify(source);
+            environment.content.definition = { kind: 'stored', contentRevision: 1, document,
+                composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] };
+            await expect(deps.deploymentAction('deployments.environments.create', createInput, {}))
+                .resolves.toMatchObject({ ok: false, errorCode: 'needs_repository' });
+            await expect(deps.deploymentAction('deployments.environments.update', updateInput, {}))
+                .resolves.toMatchObject({ ok: false, errorCode: 'needs_repository' });
+        }
+        expect(writes, 'invalid stored content cannot reach either record writer').toHaveLength(0);
+        const inlineDocument = JSON.stringify({ configs: { greeting: { content: 'hello' } },
+            services: { app: { image: 'example/app:1', configs: ['greeting'] } } });
+        environment.content.definition = { ...environment.content.definition, document: inlineDocument,
+            composeDigest: `sha256:${createHash('sha256').update(inlineDocument).digest('hex')}` };
+        await expect(deps.deploymentAction('deployments.environments.create', { ...content, serverId: 'home',
+            projectSourceId: 'source-app', requestKey: 'inline-create', protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: 'machine-a' }, {}))
+            .resolves.toMatchObject({ ok: true, environmentId: environment.environment.id });
+        expect(writes).toHaveLength(1);
+        await expect(deps.deploymentAction('deployments.environments.update', updateInput, {}))
+            .resolves.toMatchObject({ ok: true, environmentId: environment.environment.id });
+        expect(writes).toHaveLength(2);
+        environment.content.definition = { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['app'] } };
+        await expect(deps.deploymentAction('deployments.environments.update', updateInput, {}))
+            .resolves.toMatchObject({ ok: true, environmentId: environment.environment.id });
+        expect(writes).toHaveLength(3);
+        expect(acquisitions).toBe(0);
+    });
+    it.each(['configured ref', 'stale Team grant', 'approved exact SHA', 'compact exact SHA', 'pending exact SHA', 'retained rollback'] as const)('retains native review from %s and rechecks replay without rewriting either Artifact', async selection => {
+        let pendingPhase = 'runtime-fixture';
+        const startedAt = performance.now();
+        const milestones: { phase: string; elapsedMs: number; nativeInvocations?: number }[] = [];
+        let readNativeSummary: (() => Promise<{ count: number; lastCommand: readonly string[] }>) | undefined;
+        if (selection === 'pending exact SHA') onTestFailed(async () => {
+            // Content-free phase only: native/runtime setup is not behavior RED.
+            console.error('pending_native_fixture_phase', { phase: pendingPhase,
+                elapsedMs: Math.round(performance.now() - startedAt), milestones,
+                native: await readNativeSummary?.() });
+        });
+        let previousPhaseAt = startedAt;
+        const phase = (name: string, nativeInvocations?: number) => {
+            const now = performance.now();
+            milestones.push({ phase: name, elapsedMs: Math.round(now - startedAt),
+                ...(nativeInvocations === undefined ? {} : { nativeInvocations }) });
+            if (process.env.HAPPIER_D7_PHASE_TRACE !== '1') return;
+            console.info('[D7 candidate phase]', { selection, phase: name,
+                elapsedMs: Math.round(now - startedAt), phaseMs: Math.round(now - previousPhaseAt),
+                ...(nativeInvocations === undefined ? {} : { nativeInvocations }) });
+            previousPhaseAt = now;
+        };
+        const root = await mkdtemp(join(tmpdir(), 'happier-daemon-deployment-'));
+        const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        phase('plugin-mounted');
+        try {
+            const docker = await createOwnServerDockerBoundary(join(root, 'tools'));
+            readNativeSummary = async () => {
+                const calls = await docker.readInvocations();
+                return { count: calls.length, lastCommand: calls.at(-1)?.args.slice(0, 2) ?? [] };
+            };
+            const nativePhase = async (name: string) => {
+                if (selection === 'pending exact SHA' || process.env.HAPPIER_D7_PHASE_TRACE === '1') {
+                    phase(name, (await docker.readInvocations()).length);
+                }
+            };
+            vi.stubEnv('PATH', `${join(root, 'tools')}${delimiter}${process.env.PATH ?? ''}`);
+            const image = await docker.registerImage('app', 'A');
+            const previousImage = await docker.registerImage('app', 'B');
+            phase('native-boundary-ready');
+            const repository = join(root, 'repository');
+            await mkdir(repository);
+            const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+            git('init', '--quiet'); git('config', 'user.name', 'Deployment Fixture'); git('config', 'user.email', 'deployment@example.test');
+            await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: image.registryReference } } }));
+            git('add', '.'); git('commit', '--quiet', '-m', 'A');
+            const environment = createDeploymentEnvironmentDetailV1();
+            const configuredRef = selection === 'configured ref' || selection === 'stale Team grant';
+            if (configuredRef) environment.environment.owner = { kind: 'team', teamId: 'deployment-team' };
+            const receipt = createDeploymentReceiptDetailV1();
+            const currentTargetLinkId = environment.targetLinks[0].targetLink.id;
+            // A first deployment to this configured fleet still has a retained
+            // successful receipt from another fleet. It must not become either
+            // the selected source or a fabricated active rollback baseline.
+            const retainedTarget = { ...environment.targetLinks[0], targetLink: {
+                ...environment.targetLinks[0].targetLink, id: 'retained-target-link',
+                activeDeploymentId: receipt.deployment.id, detachedAtMs: 1,
+            } };
+            receipt.deployment.targetLinkId = retainedTarget.targetLink.id;
+            environment.targetLinks.push(retainedTarget);
+            delete environment.targetLinks[0].targetLink.activeDeploymentId;
+            environment.targetLinks[0].targetLink.state = 'configured';
+            receipt.content.sourceIntent = { kind: 'repository', projectSourceId: 'source-app', sourceRevision: 1,
+                sha: git('rev-parse', 'HEAD'), compose: { path: 'compose.yaml', services: ['app'], profiles: [] } };
+            git('branch', 'selected-release');
+            environment.content.definition = { kind: 'repository', ref: 'selected-release',
+                compose: receipt.content.sourceIntent.compose };
+            await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: previousImage.registryReference } } }));
+            git('add', '.'); git('commit', '--quiet', '-m', 'Different checkout HEAD');
+            if (!configuredRef) git('branch', '--force', 'selected-release', 'HEAD');
+            await writeFile(join(repository, 'compose.yaml'), 'uncommitted bytes must not enter the candidate');
+            receipt.content.images = [image];
+            receipt.content.machineResults = [];
+            const historical = createDeploymentReceiptDetailV1();
+            historical.deployment.id = 'current-fleet-history';
+            historical.deployment.targetLinkId = currentTargetLinkId;
+            historical.deployment.contentArtifactId = 'current-fleet-history-content';
+            if (selection === 'retained rollback') historical.content = structuredClone(receipt.content);
+            historical.content.machineResults = environment.targetLinks[0].targetLink.members.map(member => ({
+                machineId: member.machineId, installationId: member.installationId,
+                steps: [], activation: 'succeeded', health: 'healthy', currentDeploymentId: historical.deployment.id,
+            }));
+            const historicalReads = { headers: 0, bodies: 0 };
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null };
+            const keys = tweetnacl.sign.keyPair();
+            vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+                installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+                privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+            mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'checkout', serverId: 'home', machineId: 'machine-a',
+                rootPath: repository, source: { sourceId: 'source-app', revision: 1 }, createdAtMs: 1 })]);
+            const documents = new Map<string, Record<string, unknown>>();
+            const put = (id: string, kind: string, content: unknown) => documents.set(id, { id, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind, title: 'Staging' }), body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+            put(environment.targetLinks[0].targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {});
+            put(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, { ...receipt.content,
+                sourceIntent: { ...receipt.content.sourceIntent, sha: git('rev-parse', 'HEAD') }, images: [previousImage] });
+            put(historical.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, historical.content);
+            const boundaryFailures: unknown[] = [];
+            let pendingEnvelope: ReturnType<typeof DeploymentPendingDeployV1Schema.parse> | undefined;
+            let busy = true;
+            const grantedCandidates = new Set<string>();
+            vi.spyOn(axios, 'put').mockImplementation(async (url, value) => {
+                const mutation = readCarrierMutation(value);
+                const artifactId = String(mutation.artifactId);
+                expect(mutation.principal).toEqual({ kind: 'team', teamId: 'deployment-team' });
+                expect(mutation.accessLevel).toBe('admin');
+                expect(url).toBe(`https://home.test/v1/artifacts/${artifactId}/access/grants`);
+                grantedCandidates.add(artifactId);
+                return { status: 200, data: { artifactId, ownerAccountId: 'owner', access: 'owner', changed: true,
+                    grants: [{ principal: mutation.principal, accessLevel: mutation.accessLevel,
+                        createdByAccountId: 'owner', createdAt: 1, display: { name: null } }] } };
+            });
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+                const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+                if (id === historical.deployment.contentArtifactId) historicalReads.bodies++;
+                const document = documents.get(id);
+                return { status: document ? 200 : 404, data: document ?? {} };
+            });
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                try {
+                const path = new URL(request.url!).pathname;
+                if (selection === 'pending exact SHA' && path.endsWith('/deploy') && request.method === 'POST') {
+                    const body = request.data as Record<string, unknown>;
+                    pendingEnvelope = DeploymentPendingDeployV1Schema.parse(body.pendingDeploy);
+                    return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                        revision: environment.environment.revision, kind: 'pending', actionOperationId: body.actionOperationId } };
+                }
+                if (path.includes('/v1/projects/sources/')) return { status: 200, data: { ok: true, canManage: true,
+                    source: { id: 'source-app', revision: 1, name: 'Source', owner: environment.environment.owner, audience: [], createdByAccountId: 'owner',
+                        repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                            repository: { nameWithOwner: 'owner/source', cloneUrl: 'https://github.com/owner/source.git' }, protocol: 'https' } } } };
+                if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [], resourceCatalog: [] } };
+                if (path === `/v1/deployments/environments/${environment.environment.id}/deployments`) return { status: 200,
+                    data: DeploymentReceiptListResultV1Schema.parse({ ok: true,
+                        items: selection === 'pending exact SHA' && pendingEnvelope && busy
+                            ? [{ ...historical.deployment, state: 'running' }] : [historical.deployment, receipt.deployment], nextCursor: null }) };
+                if (path.endsWith(`/environments/${environment.environment.id}`)) return { status: 200,
+                    data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink),
+                        ...(pendingEnvelope ? { pendingDeploy: pendingEnvelope } : {}) } };
+                if (path.endsWith(`/receipts/${receipt.deployment.id}`)) return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+                if (path.endsWith(`/receipts/${historical.deployment.id}`)) {
+                    historicalReads.headers++;
+                    return { status: 200, data: { ok: true, deployment: historical.deployment } };
+                }
+                throw new Error(`Unexpected storage request: ${path}`);
+                } catch (error) { boundaryFailures.push(error); throw error; }
+            });
+            const originalPost = vi.mocked(axios.post).getMockImplementation()!;
+            const posts = vi.spyOn(axios, 'post').mockImplementation(async (url, value, config) => {
+                const update = /^\/v1\/artifacts\/([^/]+)$/u.exec(new URL(url).pathname);
+                if (update) {
+                    const id = decodeURIComponent(update[1]!);
+                    const stored = documents.get(id);
+                    if (!stored) return { status: 404, data: { error: 'Artifact not found' } };
+                    const mutation = ArtifactJsonUpdateHttpInputV1Schema.parse(readCarrierMutation(value));
+                    if (mutation.header !== undefined && mutation.expectedHeaderVersion === undefined
+                        || mutation.body !== undefined && mutation.expectedBodyVersion === undefined) {
+                        return { status: 400, data: { error: 'Invalid parameters' } };
+                    }
+                    if (mutation.expectedHeaderVersion !== undefined && mutation.expectedHeaderVersion !== stored.headerVersion
+                        || mutation.body !== undefined && mutation.expectedBodyVersion !== stored.bodyVersion) {
+                        return { status: 200, data: { success: false, error: 'version-mismatch',
+                            ...(mutation.header !== undefined || mutation.kind !== undefined
+                                ? { currentHeaderVersion: stored.headerVersion, currentHeader: stored.header } : {}),
+                            ...(mutation.body !== undefined ? { currentBodyVersion: stored.bodyVersion, currentBody: stored.body } : {}),
+                        } };
+                    }
+                    const next = { ...stored,
+                        ...(mutation.header === undefined ? {} : { header: mutation.header }),
+                        ...(mutation.body === undefined ? {} : { body: mutation.body }),
+                        ...(mutation.provenance === undefined ? {} : { provenance: mutation.provenance }),
+                        ...(mutation.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: mutation.provenanceDataEncryptionKey }),
+                        headerVersion: Number(stored.headerVersion) + Number(mutation.header !== undefined),
+                        bodyVersion: Number(stored.bodyVersion) + Number(mutation.body !== undefined),
+                    };
+                    documents.set(id, next);
+                    return { status: 200, data: { success: true,
+                        ...(mutation.header === undefined ? {} : { headerVersion: next.headerVersion }),
+                        ...(mutation.body === undefined ? {} : { bodyVersion: next.bodyVersion }),
+                    } };
+                }
+                if (!url.endsWith('/v1/artifacts')) return originalPost(url, value, config);
+                const mutation = readCarrierMutation(value);
+                const id = String(mutation.id);
+                documents.set(id, { ...mutation, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                    encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+            });
+            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'machine-a', async acquirePluginRuntimeRegistryLease() { return mounted.lease; },
+                readEnvironmentSecretLaunchAdmission: readEnvironmentSecretLaunchAdmissionForHost });
+            let resumed = 0;
+            const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'machine-a', runtime,
+                async executePreparedPendingDeploy(input, context) {
+                    pendingPhase = 'ordinary-policy-reentry';
+                    resumed += 1;
+                    expect(input.pendingDeploy).toEqual(pendingEnvelope);
+                    expect(input.contentArtifactId).not.toBe(prepared.input.contentArtifactId);
+                    const opened = await deps.readPreparedDeploymentContent({ input, context });
+                    expect(opened).toMatchObject({ ok: true, content: { sourceIntent: receipt.content.sourceIntent } });
+                    // Re-entry consumes ordinary Action policy, not a native or
+                    // approval bypass. Current refusal leaves protected intent.
+                    return executor.execute('deployments.deploy', input, { ...context, authority: 'present_user',
+                        surface: 'ui', actionCaller: { kind: 'host' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+                            actions: { 'deployments.deploy': { enabled: false } } }) });
+                } });
+            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+            expect(deps).toHaveProperty('prepareDeployCandidate', expect.any(Function));
+            const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+                targetLinkId: currentTargetLinkId, expectedTargetLinkRevision: 1, requestKey: 'prepare',
+                contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+            expect(git('rev-parse', 'HEAD')).not.toBe(receipt.content.sourceIntent.sha);
+            expect(await readFile(join(repository, 'compose.yaml'), 'utf8')).toBe('uncommitted bytes must not enter the candidate');
+            await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input,
+                context: { approvedActionReplay: { artifactId: 'approved-action' } } }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+            const minimal = { serverId: 'home', environmentId: environment.environment.id,
+                targetLinkId: currentTargetLinkId };
+            await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: minimal,
+                context: { approvedActionReplay: { artifactId: 'approved-action' } } }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+            const candidateRequest = { environmentId: environment.environment.id, targetLinkId: currentTargetLinkId,
+                ...(selection === 'compact exact SHA' ? { sha: receipt.content.sourceIntent.sha } : { sourceIntent: receipt.content.sourceIntent }),
+                requestKey: 'approved-event', whenBusy: 'supersede' as const, context: {} };
+            phase('before-candidate');
+            const candidate = selection === 'approved exact SHA' ? await deps.prepareDeployCandidate(candidateRequest) : undefined;
+            phase('candidate-ready');
+            if (candidate) {
+                expect(candidate).not.toHaveProperty('errorCode');
+                if (!candidate.ok) throw new Error(candidate.errorCode);
+                expect(candidate.content.sourceIntent).toEqual(receipt.content.sourceIntent);
+                expect(candidate.input).toMatchObject({ requestKey: 'approved-event', whenBusy: 'supersede' });
+                expect(candidate.content.machineResults).toMatchObject([{ currentDeploymentId: historical.deployment.id }]);
+                expect(historicalReads).toEqual({ headers: 0, bodies: 1 });
+            }
+            const preparation = selection === 'retained rollback'
+                ? { actionId: 'deployments.rollback' as const,
+                    input: DeploymentActionInputSchemasV1['deployments.rollback'].parse({ ...input,
+                        deploymentId: historical.deployment.id, requestKey: 'approved-event',
+                        contentArtifactId: historical.deployment.contentArtifactId,
+                        contentHeaderVersion: historical.deployment.contentHeaderVersion,
+                        contentBodyVersion: historical.deployment.contentBodyVersion }) }
+                : { actionId: 'deployments.deploy' as const,
+                    input: selection === 'compact exact SHA' || selection === 'pending exact SHA' ? { serverId: 'home', environmentId: environment.environment.id,
+                        sha: receipt.content.sourceIntent.sha, requestKey: 'approved-event', whenBusy: 'supersede' as const } : candidate?.input ?? minimal };
+            pendingPhase = 'initial-native-preparation';
+            const prepared = await deps.prepareDeploymentAction({ ...preparation, context: {} });
+            await nativePhase('review-ready');
+            expect(prepared).not.toHaveProperty('errorCode');
+            if ('errorCode' in prepared) throw new Error(prepared.errorCode);
+            if (selection === 'retained rollback') expect(prepared.input).toMatchObject({ requestKey: 'approved-event', deploymentId: historical.deployment.id });
+            else if (!configuredRef) expect(prepared.input).toMatchObject({ requestKey: 'approved-event', whenBusy: 'supersede' });
+            expect(prepared.preview).toMatchObject({ machineId: 'machine-a',
+                environment: { id: environment.environment.id, name: environment.content.name },
+                revision: { kind: 'repository', sha: receipt.content.sourceIntent.sha }, replaces: null,
+                runtimeMachines: [{ machineId: 'machine-a', review: { revision: { kind: 'repository', sha: receipt.content.sourceIntent.sha } } }],
+            });
+            expect(prepared.input.contentArtifactId).not.toBe(input.contentArtifactId);
+            const retained = decodePlainArtifactStoredContent(String(documents.get(prepared.input.contentArtifactId)!.body));
+            expect(retained).toMatchObject({ body: expect.stringContaining('approvedInputBasis') });
+            if (!retained || typeof retained !== 'object' || !('body' in retained) || typeof retained.body !== 'string') throw new Error('Reviewed candidate is required');
+            expect(DeploymentContentV1Schema.parse(JSON.parse(retained.body)))
+                .toMatchObject({ sourceIntent: receipt.content.sourceIntent, images: [image] });
+            const reviewedContent = await deps.readPreparedDeploymentContent({ input: prepared.input, context: {} });
+            expect(reviewedContent).toMatchObject({ ok: true, content: { sourceIntent: receipt.content.sourceIntent,
+                ownServer: { approvedInputBasis: { sourceIntent: receipt.content.sourceIntent } } } });
+            const cancelled = new AbortController(); cancelled.abort();
+            await expect(deps.readPreparedDeploymentContent({ input: prepared.input, context: { signal: cancelled.signal } }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+            const creates = posts.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts')).length;
+            if (selection !== 'stale Team grant') expect(grantedCandidates.size).toBe(selection === 'configured ref' ? creates : 0);
+            if (selection === 'configured ref') expect(grantedCandidates.has(prepared.input.contentArtifactId)).toBe(true);
+            pendingPhase = 'review-replay';
+            const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: {} });
+            await nativePhase('replay-ready');
+            expect(replay).toMatchObject({ input: prepared.input });
+            expect(posts.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts'))).toHaveLength(creates);
+            await expect(docker.readInvocations()).resolves.not.toEqual(expect.arrayContaining([expect.objectContaining({ args: expect.arrayContaining(['up']) })]));
+            expect(boundaryFailures).toEqual([]);
+            if (selection === 'stale Team grant') {
+                const { ownServer: _reviewed, ...unreviewedContent } = DeploymentContentV1Schema.parse(JSON.parse(retained.body));
+                const staleCandidateId = 'candidate-before-owner-change';
+                put(staleCandidateId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, unreviewedContent);
+                const createBeforeOwnerChange = posts.getMockImplementation()!;
+                posts.mockImplementation(async (url, value, config) => {
+                    const result = await createBeforeOwnerChange(url, value, config);
+                    // The native review has completed, but the new private copy
+                    // must not disclose to the former Team after this change.
+                    if (url.endsWith('/v1/artifacts')) {
+                        environment.environment.owner = { kind: 'team', teamId: 'replacement-team' };
+                        environment.environment.revision += 1;
+                    }
+                    return result;
+                });
+                const grantsBeforeOwnerChange = grantedCandidates.size;
+                await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: {
+                    ...prepared.input, contentArtifactId: staleCandidateId, contentHeaderVersion: 1, contentBodyVersion: 1,
+                }, context: {} })).resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                await nativePhase('stale-owner-refused');
+                expect(grantedCandidates.size).toBe(grantsBeforeOwnerChange);
+            }
+            if (selection === 'pending exact SHA') {
+                const scope = { accountId: 'owner', machineId: 'machine-a' };
+                const store = createActionOperationStore();
+                const runner = createActionOperationRunner({ store, generateOperationId: () => 'pending-native',
+                    resolveAction: actionId => ({ actionId, title: 'Deploy', operation: getActionSpec('deployments.deploy').operation }) });
+                try {
+                    pendingPhase = 'pending-acceptance';
+                    const accepted = await runner.observe({ actionId: 'deployments.deploy', scope, input: prepared.input,
+                        execute: async context => {
+                            const result = await deps.deploymentAction('deployments.deploy', prepared.input, {
+                                signal: context.signal, operationAcceptance: context.operationAcceptance,
+                                operationOwnerUpdate: { update: context.publishOwnerUpdate },
+                            });
+                            return 'errorCode' in result ? result : { ok: true as const, result };
+                        } });
+                    phase('pending-accepted');
+                    expect(accepted).toMatchObject({ ok: true, result: { kind: 'pending', actionOperationId: 'pending-native' } });
+                    expect(store.get(scope, 'pending-native')).toMatchObject({ state: 'running' });
+                    expect(resumed).toBe(0);
+                    // The builder's mutable HEAD/ref/editor all differ from A;
+                    // only the retained sourceIntent may enter fresh preparation.
+                    busy = false;
+                    environment.environment.revision += 1;
+                    environment.targetLinks[0].targetLink.revision += 1;
+                    const change = buildDeploymentAccountChangeV1({ environmentId: environment.environment.id, revision: environment.environment.revision });
+                    pendingPhase = 'settlement-wake-and-fresh-preparation';
+                    pendingSocket.emit('update', { id: 'settled', seq: 1, createdAt: 1,
+                        body: { t: 'account-change', entityIds: [change.entityId], changeKinds: [change.kind] } });
+                    const terminal = await runner.waitForTerminal(scope, 'pending-native', undefined, true);
+                    pendingPhase = 'terminal-refusal-and-cleanup';
+                    await nativePhase('pending-terminal');
+                    expect(resumed).toBe(1);
+                    expect(terminal).toMatchObject({ state: 'failed' });
+                    expect(terminal?.failure?.errorCode).not.toBe('deployment_content_unavailable');
+                    expect(terminal?.failure?.errorCode).not.toBe('outcome_unknown');
+                    expect(pendingEnvelope).toBeDefined();
+                    expect([...pendingSocket.listeners.values()].reduce((sum, group) => sum + group.size, 0)).toBe(0);
+                    expect((await docker.readInvocations()).some(call => call.args.includes('up'))).toBe(false);
+                } finally {
+                    runner.cancel(scope, 'pending-native');
+                    await runner.waitForTerminal(scope, 'pending-native', undefined, true);
+                }
+            }
+            // Native settlement requires original-Account signed child admission.
+            // The ONE deploymentComposeJourney exercises that real Action boundary;
+            // this fixture owns candidate/ref/review preparation only.
+        } finally {
+            phase('cleanup-start');
+            await mounted.dispose();
+            phase('plugin-disposed');
+            await rm(root, { recursive: true, force: true });
+            phase('cleanup-complete');
+        }
+    });
+    it('refuses a substituted candidate Artifact revision before acquiring native custody or admitting a receipt', async () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (url.includes('/v1/artifacts/')) return { status: 200, data: {
+                id: receipt.deployment.contentArtifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Candidate' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(receipt.content) }),
+                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 2,
+                seq: 1, createdAt: 1, updatedAt: 1,
+            } };
+            throw new Error(`Unexpected HTTP read: ${url}`);
+        });
+        const writes = vi.spyOn(axios, 'post');
+        let acquisitions = 0;
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            runtime: { async acquire() { acquisitions++; throw new Error('A stale candidate must not reach native custody'); } } });
+        await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: {
+            serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+            targetLinkId: receipt.deployment.targetLinkId, expectedTargetLinkRevision: 1, requestKey: 'request',
+            contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
+        }, context: {} })).resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+        expect(acquisitions).toBe(0);
+        expect(writes).not.toHaveBeenCalled();
+    });
+});

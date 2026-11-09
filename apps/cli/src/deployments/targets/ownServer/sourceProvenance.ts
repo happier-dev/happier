@@ -1,12 +1,41 @@
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
-import { readDeploymentSourceManifestForHost, type DeploymentSourceAdmissionForHost } from './exactCommitRelease';
 import type { OwnServerDeploymentSourceV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, sep } from 'node:path';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
-import { resolveDeploymentSourcePathForHost, readDeploymentSourceIdentityForHost } from './paths';
+import { readDeploymentSourceManifestForHost, resolveDeploymentSourcePathForHost,
+    type DeploymentSourceAdmissionForHost } from './exactCommitRelease';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
+import { readDeploymentSourceIdentityForHost } from './paths';
+
+/** Capture only the manifest actually transferred under the real custody
+ * handle. Native root identity comes from the same existing path owner. */
+export async function captureOwnServerDeploymentSource(input: Readonly<{
+    source: DeploymentSourceMaterializationV1;
+    admission: DeploymentSourceAdmissionForHost;
+    sharedBinds?: readonly Readonly<{ relativePath: string; services: readonly string[] }>[];
+}>): Promise<OwnServerDeploymentSourceV1> {
+    await input.source.assertCurrent();
+    const expected = await realpath(resolveDeploymentSourcePathForHost(input.admission));
+    if (expected !== await realpath(input.source.rootPath)) {
+        throw Object.assign(new Error('Deployment source custody changed'), { code: 'deployment_source_unavailable' });
+    }
+    return { machineId: input.source.machineId, installationId: input.source.installationId,
+        deploymentId: input.source.deploymentId, role: input.admission.materializationRole === 'build' ? 'build' : 'runtime',
+        ...(input.admission.restorationForDeploymentId ? { restorationForDeploymentId: input.admission.restorationForDeploymentId } : {}),
+        rootFingerprint: await computeWorkspaceSyncRootFingerprint(expected),
+        manifestFingerprint: input.source.manifestFingerprint,
+        manifestEntries: [...readDeploymentSourceManifestForHost(input.source)],
+        sharedBinds: (input.sharedBinds ?? []).map(binding => ({ relativePath: binding.relativePath, services: [...binding.services] })) };
+}
+
+export function replaceOwnServerDeploymentSource(sources: readonly OwnServerDeploymentSourceV1[] | undefined,
+    source: OwnServerDeploymentSourceV1): OwnServerDeploymentSourceV1[] {
+    return [...(sources ?? []).filter(value => value.machineId !== source.machineId || value.installationId !== source.installationId
+        || value.role !== source.role || value.restorationForDeploymentId !== source.restorationForDeploymentId
+        || value.deploymentId !== source.deploymentId), source];
+}
 
 /** One invocation consumes canonical receipt history lazily and shares those
  * reads across its native bind set. A path is never a custody proof itself. */
@@ -79,29 +108,4 @@ export function createOwnServerSourceCustodyReader(input: Readonly<{
             if (!complete) index(next.value);
         }
     };
-}
-
-export async function captureOwnServerDeploymentSource(input: Readonly<{
-    source: DeploymentSourceMaterializationV1;
-    admission: DeploymentSourceAdmissionForHost;
-    sharedBinds?: readonly Readonly<{ relativePath: string; services: readonly string[] }>[];
-}>): Promise<OwnServerDeploymentSourceV1> {
-    await input.source.assertCurrent();
-    const expected = await realpath(resolveDeploymentSourcePathForHost(input.admission));
-    if (expected !== await realpath(input.source.rootPath)) {
-        throw Object.assign(new Error('Deployment source custody changed'), { code: 'deployment_source_unavailable' });
-    }
-    return { machineId: input.source.machineId, installationId: input.source.installationId,
-        deploymentId: input.source.deploymentId, role: input.admission.materializationRole === 'build' ? 'build' : 'runtime',
-        ...(input.admission.restorationForDeploymentId ? { restorationForDeploymentId: input.admission.restorationForDeploymentId } : {}),
-        rootFingerprint: await computeWorkspaceSyncRootFingerprint(expected),
-        manifestFingerprint: input.source.manifestFingerprint,
-        manifestEntries: [...readDeploymentSourceManifestForHost(input.source)],
-        sharedBinds: (input.sharedBinds ?? []).map(binding => ({ relativePath: binding.relativePath, services: [...binding.services] })) };
-}
-export function replaceOwnServerDeploymentSource(sources: readonly OwnServerDeploymentSourceV1[] | undefined,
-    source: OwnServerDeploymentSourceV1): OwnServerDeploymentSourceV1[] {
-    return [...(sources ?? []).filter(value => value.machineId !== source.machineId || value.installationId !== source.installationId
-        || value.role !== source.role || value.restorationForDeploymentId !== source.restorationForDeploymentId
-        || value.deploymentId !== source.deploymentId), source];
 }

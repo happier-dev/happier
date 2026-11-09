@@ -7,8 +7,12 @@ import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInp
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (failure: string | ActionExecuteFailure): never => {
+    const code = typeof failure === 'string' ? failure : failure.errorCode;
+    throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
+};
 export type DeploymentCreationDefaultInputsForHost = Pick<DeploymentCreationDefaultsInputV1, 'projectDefaults' | 'account'> & Readonly<{
     reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];
 }>;
@@ -53,7 +57,7 @@ export async function prepareDeploymentCreationDefaultsForHost(request: Readonly
         resolveRequestHeaders: (context, _actionId, transport) => host.headers(context, request.actionId, transport),
     });
     const source = await sources.projectSourcesRead!({ serverId: host.serverId, sourceId: request.projectSourceId }, request.context);
-    if (!source.ok) return refuse('errorCode' in source ? source.errorCode : source.error);
+    if (!source.ok) return refuse('errorCode' in source ? source : source.error);
     if (source.source.id !== request.projectSourceId || !source.canManage) return refuse('source_access_denied');
     const projectOwner = source.source.owner ?? { kind: 'account' as const, accountId: source.source.createdByAccountId };
     const inputs = await readDeploymentCreationDefaultInputsForHost({ ...request, projectOwner,

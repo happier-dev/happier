@@ -214,7 +214,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         try {
             const link = row.targetLink;
             const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
-            if (!descriptor || descriptor.role !== link.role || descriptor.targetKind !== link.targetKind)
+            if (!descriptor || descriptor.role !== 'runtime' || descriptor.role !== link.role || descriptor.targetKind !== link.targetKind)
                 return refuse('deployment_target_role_unavailable');
             if (descriptor.actions.teardown) return null;
             await host.assertCurrent(request.context);

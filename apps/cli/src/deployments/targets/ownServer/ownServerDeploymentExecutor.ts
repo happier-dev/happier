@@ -789,13 +789,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 // Forward cutover observes retained U. Reverse cutover observes
                 // the candidate B from this same receipt, never today's source.
                 // Observe-only/already-restored paths above need neither effect.
-                let incumbentReceipt: OwnServerDeploymentReceipt | undefined;
-                if (startFirst) {
-                    if (restored) incumbentReceipt = receipt;
-                    else if (snapshot.link.activeDeploymentId) incumbentReceipt = await host.readReceipt({
-                        environmentId: receipt.deployment.environmentId, deploymentId: snapshot.link.activeDeploymentId,
-                        context: request.context });
-                }
+                // The serving receipt also owns the previous private exports.
+                // Recreate needs that provenance to withdraw their permits.
+                const incumbentReceipt = restored ? receipt : snapshot.link.activeDeploymentId ? await host.readReceipt({
+                    environmentId: receipt.deployment.environmentId, deploymentId: snapshot.link.activeDeploymentId,
+                    context: request.context }) : undefined;
                 let incumbentRender: NativeComposeProjectRender | undefined;
                 const prepareIncumbent = async (current: OwnServerDeploymentReceipt) => {
                     const incumbentBasis = current.content.ownServer?.approvedInputBasis;
@@ -812,7 +810,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     if (observed.kind !== 'active') refuse(observed.kind === 'unknown' ? 'outcome_unknown' : 'deployment_generation_required');
                     incumbent = observed.activation;
                 };
-                if (incumbentReceipt) await prepareIncumbent(incumbentReceipt);
+                if (startFirst && incumbentReceipt) await prepareIncumbent(incumbentReceipt);
                 {
                     const source = await captureOwnServerDeploymentSource({ source: prepared.source,
                         admission: prepared.runtime.source, sharedBinds: rendered.sharedData?.bindings });
@@ -828,8 +826,15 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         deployment: { ...receipt.deployment, revision: written.deploymentRevision } };
                 }
                 await prepared.assertCurrent();
+                const hasPrivatePublications = selectedSnapshot.environment.content.ownServer?.serviceExports
+                    ?.some(exported => exported.exposure === 'privateNetwork') === true;
+                const hadPrivatePublications = incumbentReceipt?.content.ownServer?.approvedInputBasis.ownServer?.serviceExports
+                    ?.some(exported => exported.exposure === 'privateNetwork') === true;
+                const settlePrivatePublications = hasPrivatePublications || hadPrivatePublications;
                 return await machineNativeEffectAdmission.run({ operation: { operationId: receipt.deployment.actionOperationId,
-                    kind: request.actionId, signal: snapshot.signal }, keys: activationRender.keys, settleNative: prepared.project.settleNative }, async context => {
+                    kind: request.actionId, signal: snapshot.signal },
+                    keys: settlePrivatePublications ? [...activationRender.keys, { kind: 'machineSetup' }] : activationRender.keys,
+                    settleNative: prepared.project.settleNative }, async context => {
                     if (!restored) await prepared.project.assertReviewedGeneration(rendered, snapshot.signal);
                     const restoreBackupId = !restored && request.actionId === 'deployments.rollback'
                         && 'restoreBackupId' in request.input ? request.input.restoreBackupId : undefined;
@@ -929,6 +934,15 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     });
                     const activate = async () => {
                         await prepared.stageOutput?.beginStep({ stepId: input.phase });
+                        if (settlePrivatePublications) {
+                            if (!host.settlePrivateWorkloadFirewall) return refuse('private_scope_unenforceable');
+                            const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
+                            try {
+                                await host.settlePrivateWorkloadFirewall(request, { environment: selectedSnapshot.environment,
+                                    render: activationRender, docker, installationId: input.installationId,
+                                    context, signal: snapshot.signal });
+                            } finally { await docker.dispose(); }
+                        }
                         if (startFirst && incumbent) {
                             if (!host.readStartFirstRoutes) return refuse('native_route_unavailable');
                             const composeService = incumbent.services[0];

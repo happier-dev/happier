@@ -1,6 +1,6 @@
 import type { DeploymentDomainContentV1, HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/deployment-protocol/v1';
 import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { isNativeTlsErrorCode } from '@/plugins/runtime/fetch/tlsError';
 import { finiteHealthCheckResult } from './finiteHealthCheckResult';
 
@@ -24,7 +24,6 @@ export type AdmittedHttpHealthCheckV1 = Readonly<{
 export type HealthCheckFiniteLeafContextV1 = Readonly<{
     signal: AbortSignal;
     now(): number;
-    isCurrent(): Promise<boolean>;
     /** The existing HTTP owner bound by P50 to this exact saved endpoint,
      * observer and network policy, including destination/redirect admission. */
     http: Pick<HttpService, 'request' | 'requestStream'>;
@@ -64,13 +63,6 @@ function nativeFailure(error: unknown, url: string): 'tls' | 'dns' | 'connection
     return undefined;
 }
 
-async function assertCurrent(context: HealthCheckFiniteLeafContextV1): Promise<void> {
-    context.signal.throwIfAborted();
-    if (!await context.isCurrent()) throw new PluginError({ code: 'admission_unavailable',
-        message: 'The saved health check or its observer is no longer current' });
-    context.signal.throwIfAborted();
-}
-
 function result(check: AdmittedHttpHealthCheckV1, kind: 'http' | 'certificate',
     context: HealthCheckFiniteLeafContextV1, startedAt: number, status: HealthCheckResultV1['status'],
     facts: Readonly<Record<string, string | number | boolean>>): HealthCheckResultV1 {
@@ -80,7 +72,7 @@ function result(check: AdmittedHttpHealthCheckV1, kind: 'http' | 'certificate',
 
 async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFiniteLeafContextV1,
     kind: 'http' | 'certificate'): Promise<HealthCheckResultV1> {
-    await assertCurrent(context);
+    context.signal.throwIfAborted();
     const startedAt = context.now();
     const target = endpoint(check);
     if (!target) return result(check, kind, context, startedAt, 'unknown', {
@@ -116,7 +108,7 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
             if (kind === 'http') errorPrefix = new TextDecoder().decode(response.body.subarray(0, 'error code: 1010'.length + 1));
         }
     } catch (error) {
-        await assertCurrent(context);
+        context.signal.throwIfAborted();
         // Authority/policy failures retain the transport's typed reason. A body
         // exceeding its existing budget is incomplete keyword evidence.
         if (isPluginError(error) && error.code !== 'plugin_fetch_response_too_large') throw error;
@@ -133,7 +125,7 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         }
         return result(check, kind, context, startedAt, 'unknown', { reason: 'transport_incomplete' });
     }
-    await assertCurrent(context);
+    context.signal.throwIfAborted();
     if (kind === 'http') {
         // Cloudflare's 521–526 family reports failure between its edge and the
         // origin (including origin TLS), rather than an application response.

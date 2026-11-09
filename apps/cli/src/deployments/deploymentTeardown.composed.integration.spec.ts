@@ -183,7 +183,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const api = await ApiClient.create(credentials);
                 const machine = await api.getMachine(home.machineId);
                 if (!machine) throw new Error('The reviewed native Machine must exist');
-                const client = api.machineSyncClient(machine);
+                const client = await api.machineSyncClient(machine);
                 const cancellation = createDaemonShutdownCancellationDomains();
                 const currentOrigin = async () => ({ machineId: home.machineId, serverIdentityId: home.serverId });
                 try {

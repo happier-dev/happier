@@ -1,3 +1,4 @@
+import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '@happier-dev/protocol';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -50,9 +51,10 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             || !sameStrictJsonValue(packet.externalActionExecution.authorization.binding, authority.binding)) {
             return failure('deployment_child_binding_mismatch');
         }
-        if (!readDeploymentChildRpcV1({ rootActionId: authority.binding.actionId,
+        if (!readDeploymentChildRpcV1({ deploymentChildRoot: authority.binding.deploymentChildRoot, rootActionId: authority.binding.actionId,
             rootPreparationAdmission: authority.binding.deploymentPreparationAdmission,
-            effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job })) return failure();
+            reviewedChild: packet.externalActionExecution.reviewedChild,
+            effectActionId: packet.externalActionExecution.effectActionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job })) return deploymentAuthorizationFailure('child_root_derivation_refused');
         let admissionRefusal = 'action_forbidden';
         // The admitted requester owner performs the one Home verification.
         // Preserve its refusal instead of re-running that same request here.
@@ -67,15 +69,19 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             }
         } });
         if (ingress.signal.aborted) return failure('cancelled');
-        if (!requesterRuntime || requesterRuntime.accountId !== authority.binding.accountId) return failure(admissionRefusal);
+        if (!requesterRuntime) return admissionRefusal === 'action_forbidden'
+            ? deploymentAuthorizationFailure('requester_runtime_unavailable') : failure(admissionRefusal);
+        if (requesterRuntime.accountId !== authority.binding.accountId) return deploymentAuthorizationFailure('requester_account_mismatch');
         const requester = readRequesterAccountActionContext(requesterRuntime.accountAuthorization);
-        if (!requester) return failure();
+        if (!requester) return deploymentAuthorizationFailure('requester_context_unavailable');
         const installed = await host.resolveInstalledRuntime(ingress.signal, admission.custodianAccountId);
-        if (!installed || installed.machineId !== host.machineId || !await installed.isCurrent()) return failure();
+        if (!installed) return deploymentAuthorizationFailure('installed_target_unavailable');
+        if (installed.machineId !== host.machineId) return deploymentAuthorizationFailure('installed_target_machine_mismatch');
+        if (!await installed.isCurrent()) return deploymentAuthorizationFailure('installed_target_not_current');
         const assertInstalledCurrent = async () => {
             if (ingress.signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
             if (!await installed.isCurrent()) {
-                throw Object.assign(new Error('Deployment custody is no longer current'), { code: 'action_forbidden' });
+                refuseDeploymentAuthorization('installed_target_not_current');
             }
         };
         const context = buildActionExecutorContextForRpc({ ...ingress, actionId: job.actionId,
@@ -95,13 +101,14 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
                 serverId: job.input.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl, machineId: host.machineId,
                 acquirePluginRuntimeRegistryLease: host.acquirePluginRuntimeRegistryLease, assertInstalledCurrent,
                 ...(host.signal ? { signal: host.signal } : {}) }) });
-        if (authority.binding.actionId === 'deployments.publish') {
+        if (authority.binding.actionId === 'deployments.environments.create' && job.actionId === 'deployments.deploy') {
             const parent = await readReviewedDeploymentChildRoot({ authorization: requesterRuntime.accountAuthorization,
                 envelope: ingress.originalActionEnvelope, actionId: job.actionId, machineId: host.machineId,
-                params: job, signal: ingress.signal });
-            if (!parent) return failure(ingress.signal.aborted ? 'cancelled' : 'action_forbidden');
+                params: job, signal: ingress.signal, reviewedChild: packet.externalActionExecution.reviewedChild });
+            if (!parent) return ingress.signal.aborted ? failure('cancelled') : deploymentAuthorizationFailure('child_root_not_reviewed');
             return invokeHostReviewedChildV1({ parent, context, receivingAdmission: admission,
-                child: { action: job.actionId, role: 'publish.deploy', input: projectNativeJsonValueForTransport(job.input) },
+                child: { action: job.actionId, role: 'template.deploy',
+                    input: projectNativeJsonValueForTransport(job.input) },
                 execute: (_input, childContext) => deps.deploymentChild(job, childContext) });
         }
         return deps.deploymentChild(job, context);

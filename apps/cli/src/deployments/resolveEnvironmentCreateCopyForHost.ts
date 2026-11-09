@@ -88,6 +88,7 @@ export async function resolveEnvironmentCreateCopyForHost(
         const authoredDefinition: NonNullable<DeploymentEnvironmentCreateIntentInputV1['definition']> = definition.kind === 'repository'
             ? { from: 'repository', ref: definition.ref, compose: definition.compose }
             : { from: 'compose', document: definition.document, profiles: definition.profiles, services: definition.services,
+                ...(definition.publicFiles === undefined ? {} : { publicFiles: definition.publicFiles }),
                 ...(definition.primaryService === undefined ? {} : { primaryService: definition.primaryService }) };
         const retention = input.retainPreviousDeployments ?? (copyFrom.choices.retainPreviousDeployments === 'copy'
             ? source.content.retainPreviousDeployments : undefined);

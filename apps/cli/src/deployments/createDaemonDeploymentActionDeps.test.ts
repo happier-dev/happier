@@ -978,7 +978,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['explicit failure policy', 'build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const rootSource = scenario.startsWith('root source ');
@@ -1090,11 +1090,12 @@ describe('installed deployment storage and target composition', () => {
                 })), ...(scenario === 'upload source' ? [{ id: 'source-check', title: 'Check retired source', scopes: ['global'],
                     surfaces: ['cli'], placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe',
                     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-                    resultSchema: { type: 'object', properties: { checked: { type: 'boolean' } }, required: ['checked'], additionalProperties: false } }] : [])], deploymentTargets: [{ id: 'runtime', title: 'Platform', icon: 'server-outline', role: 'runtime', targetKind: 'platform',
+                    resultSchema: { type: 'object', properties: { checked: { type: 'boolean' } }, required: ['checked'], additionalProperties: false } }] : [])], deploymentTargets: [{ id: 'runtime', title: 'Platform', icon: 'server-outline', targetKind: 'platform',
                     targetSchema: { type: 'object', properties: {}, additionalProperties: false },
                     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
-                    actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
-                        ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}) } }] } },
+                    ...(scenario === 'teardown with data target' ? { role: 'data' } : { role: 'runtime',
+                        actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
+                            ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : {}) } }) }] } },
             files: { 'daemon.mjs': `import { PluginError } from '@happier-dev/plugin-sdk/errors';
                 import { readFile } from 'node:fs/promises';
                 import { join } from 'node:path';
@@ -1172,6 +1173,7 @@ describe('installed deployment storage and target composition', () => {
             delete environment.environment.buildMachineId;
             const row = environment.targetLinks[0];
             row.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } };
+            if (scenario === 'teardown with data target') row.targetLink.role = 'data';
             row.targetLink.targetKind = 'platform'; row.targetLink.machines = []; row.targetLink.members = [];
             row.targetLink.createdByAccountId = 'owner';
             // Unlike upload, a daemon-hosted observer uses the target's admitted installation.
@@ -1266,7 +1268,7 @@ describe('installed deployment storage and target composition', () => {
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
             if (scenario === 'teardown without role' || scenario === 'teardown without role, descriptor unavailable'
-                || scenario === 'teardown without role, remove Environment') {
+                || scenario === 'teardown without role, remove Environment' || scenario === 'teardown with data target') {
                 if (scenario === 'teardown without role, descriptor unavailable') row.targetLink.source = { kind: 'plugin',
                     contribution: { pluginId, localId: 'missing-runtime' } };
                 const prepared = await deps.prepareDeploymentTeardown!({ input: { serverId: 'home',
@@ -1281,7 +1283,7 @@ describe('installed deployment storage and target composition', () => {
                     expect(nativeReads).toBe(0);
                     return;
                 }
-                if (scenario === 'teardown without role, descriptor unavailable') {
+                if (scenario === 'teardown without role, descriptor unavailable' || scenario === 'teardown with data target') {
                     expect(prepared).toMatchObject({ ok: false, errorCode: 'deployment_target_role_unavailable' });
                     expect(candidatesCreated).toBe(0);
                     return;
@@ -1777,7 +1779,10 @@ describe('installed deployment storage and target composition', () => {
                 row.content = ownServer.content;
                 put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
                 expect(await executor.execute('deployments.receipts.observe', input, observationContext))
-                    .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+                    .toMatchObject({ ok: false, errorCode: 'unsupported_action', details: {
+                        reason: 'target_not_supported', targetKind: 'ownServer', requiredFact: 'providerDeploymentObservation',
+                        supportedAction: 'deployments.receipts.get', remedy: expect.stringMatching(/\S/),
+                    } });
                 expect(transitionWrites).toBe(1);
                 return;
             }
@@ -2809,7 +2814,7 @@ describe('installed deployment storage and target composition', () => {
         expect(writes).toHaveLength(3);
         expect(acquisitions).toBe(0);
     });
-    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent'] as const)('retains native review from %s and rechecks replay without rewriting either Artifact', async selection => {
+    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'missing native builder'] as const)('retains native review from %s and rechecks replay without rewriting either Artifact', async selection => {
         const storedPreparation = selection.startsWith('stored preparation');
         const teamReceiptHistory = selection === 'machine Use Team receipt history';
         const mode = selection === 'retained rollback intent e2ee' ? 'e2ee' : 'plain';
@@ -3885,6 +3890,13 @@ describe('installed deployment storage and target composition', () => {
                 return;
             }
             expect(deps).toHaveProperty('prepareDeployCandidate', expect.any(Function));
+            if (selection === 'missing native builder') {
+                delete environment.environment.buildMachineId;
+                expect(await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
+                    targetLinkId: currentTargetLinkId, context: ownerContext })).toMatchObject({
+                    ok: false, errorCode: 'required_fact_unavailable', details: { requiredFact: 'buildMachineId' } });
+                return;
+            }
             const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
                 targetLinkId: currentTargetLinkId, expectedTargetLinkRevision: 1, requestKey: 'prepare',
                 contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };

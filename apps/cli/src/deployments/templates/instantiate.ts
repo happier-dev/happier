@@ -7,6 +7,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInsta
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1,
@@ -62,10 +63,19 @@ function errorCode(error: unknown): string {
 }
 type SavedSecrets = Extract<DeploymentTemplateInstantiateResultV1, { kind: 'applied' }>['savedSecrets'];
 type TemplateCreateEnvironment = Extract<DeploymentTemplateInstantiateInputV1['environment'], { kind: 'create' }>;
-type TemplatePreparationInput = Omit<DeploymentTemplateInstantiateInputV1, 'environment'> & Readonly<{
+type TemplatePreparationInput = Omit<DeploymentTemplateInstantiateInputV1, 'environment' | 'target'> & Readonly<{
+    target?: DeploymentTemplateInstantiateInputV1['target'];
     environment: Exclude<DeploymentTemplateInstantiateInputV1['environment'], { kind: 'create' }>
         | Omit<TemplateCreateEnvironment, 'controllerMachineId'> & { controllerMachineId?: string };
 }>;
+type TemplateAppliedResult = Extract<DeploymentTemplateInstantiateResultV1, { kind: 'applied' }>;
+type TemplatePreparationResult = Exclude<DeploymentTemplateInstantiateResultV1, TemplateAppliedResult>
+    | Omit<TemplateAppliedResult, 'targetLinkId'> & { targetLinkId?: string }
+    | ActionExecuteFailure;
+function projectTemplateResult(result: TemplatePreparationResult): DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure {
+    return 'kind' in result && result.kind === 'applied'
+        ? { ...result, targetLinkId: result.targetLinkId ?? refuse('target_mismatch') } : result;
+}
 type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; machineId: string; serverHttpBaseUrl: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
@@ -125,6 +135,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (input.serverId !== host.serverId || input.environment.kind === 'create'
             && input.environment.controllerMachineId !== undefined
             && input.environment.controllerMachineId !== host.machineId) return refuse('target_mismatch');
+        if (!input.target && (input.domainBindings?.length || readDeploymentTemplateDeployIntentV1(input))) {
+            return refuse(actionInputIssueFailure({ code: 'custom', path: ['firstTargetLink'] }));
+        }
         await host.assertCurrent(context);
         const source = input.projectSourceId ? await readProjectSource(input.projectSourceId, context) : undefined;
         const current = input.environment.kind === 'existing'
@@ -132,21 +145,22 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         // Catalog preview may still be resolving creation defaults. An authored
         // controller or persisted Environment always owns the original root.
         if (current && current.environment.controllerMachineId !== host.machineId
-            || await host.readInstallation(input.machineId, context) !== input.target.installationId) return refuse('target_mismatch');
+            || input.target && await host.readInstallation(input.machineId, context) !== input.target.installationId) return refuse('target_mismatch');
         if (current) {
+            const target = input.target ?? refuse('target_mismatch');
             if (input.environment.kind !== 'existing' || current.environment.id !== input.environment.environmentId
                 || current.environment.projectSourceId !== input.projectSourceId || !current.environment.capabilities.manage
                 || !current.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
             if (current.environment.revision !== input.environment.expectedRevision || current.content.definition.kind !== 'stored'
                 || !('contentRevision' in input.destination) || current.content.definition.contentRevision !== input.destination.contentRevision
                 || current.content.definition.composeDigest !== input.destination.composeDigest) return refuse('deployment_conflict');
-            if (input.target.kind === 'existing') {
-                const selectedTarget = input.target;
+            if (target.kind === 'existing') {
+                const selectedTarget = target;
                 const link = current.targetLinks.find(item => item.targetLink.id === selectedTarget.targetLinkId)?.targetLink;
                 if (!link || link.role !== 'runtime' || link.targetKind !== 'ownServer' || link.deletedAtMs !== undefined
-                    || link.detachedAtMs !== undefined || link.revision !== input.target.expectedRevision
+                    || link.detachedAtMs !== undefined || link.revision !== target.expectedRevision
                     || current.environment.runtimeTargetLinkId !== link.id
-                    || !link.members.some(member => member.machineId === input.machineId && member.installationId === input.target.installationId)) return refuse('target_mismatch');
+                    || !link.members.some(member => member.machineId === input.machineId && member.installationId === target.installationId)) return refuse('target_mismatch');
             } else if (current.environment.runtimeTargetLinkId || !current.environment.capabilities.manageTargets
                 || !context.actionRequestId) return refuse('target_mismatch');
         }
@@ -164,7 +178,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             source: await parseNativeComposeSource(baselineTemplate.compose.document), publicFiles: baselineTemplate.compose.publicFiles } : undefined;
         // Snapshot the existing sampler once, only when declared memory needs it.
         // No new collection, timer, freshness budget or Docker-filesystem guess.
-        const sample = template.minimumResources?.memoryBytes !== undefined && input.machineId === host.machineId
+        const sample = template.minimumResources?.memoryBytes !== undefined && input.target && input.machineId === host.machineId
             ? host.readMachineVitals?.() : undefined;
         const prepareInput = { template, templateRef: input.templateRef, source: sourceDocument, intent: input.intent,
             ...(sample ? { targetResources: { sampledAt: sample.sampledAt,
@@ -193,7 +207,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             sourceRevision: source?.source.revision, projectOwner, context, actionId }) : {};
         const defaults = creationReview?.creationDefaults ?? resolveDeploymentCreationDefaultsV1({ projectSourceId: input.projectSourceId,
             projectOwner, ...defaultInputs,
-            target: { kind: 'ownServer', machines: [input.machineId] },
+            target: { kind: 'ownServer', machines: input.target ? [input.machineId] : [] },
             explicit: input.environment.kind === 'create' ? { controllerMachineId: input.environment.controllerMachineId,
                 ...(input.environment.buildMachineId ? { buildMachineId: input.environment.buildMachineId } : {}),
                 ...(input.environment.retainPreviousDeployments === undefined ? {} : { retainPreviousDeployments: input.environment.retainPreviousDeployments }) } : undefined });
@@ -230,15 +244,15 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
     function fromCreate(input: DeploymentEnvironmentCreateIntentInputV1): TemplatePreparationInput {
         const target = input.firstTargetLink?.machines[0];
         if (input.definition?.from !== 'catalogApp' || input.purpose !== 'standard'
-            || !target || input.firstTargetLink?.machines.length !== 1 || input.copyFrom) return refuse('unsupported_action');
-        return { mode: input.mode ?? 'apply', serverId: input.serverId, machineId: target.machineId,
+            || input.firstTargetLink && input.firstTargetLink.machines.length !== 1 || input.copyFrom) return refuse('unsupported_action');
+        return { mode: input.mode ?? 'apply', serverId: input.serverId, machineId: target?.machineId ?? host.machineId,
             managedRetention: input.managedRetention,
             projectSourceId: input.projectSourceId, newProject: input.newProject, templateRef: input.definition.templateRef,
             environment: { kind: 'create', name: input.name, requestKey: input.requestKey,
                 protection: input.protection, purpose: 'standard', deployerMode: input.deployerMode,
                 deployerPrincipals: input.deployerPrincipals, controllerMachineId: input.controllerMachineId,
                 buildMachineId: input.buildMachineId, retainPreviousDeployments: input.retainPreviousDeployments },
-            target: { kind: 'new', installationId: target.installationId }, destination: { kind: 'stored' },
+            ...(target ? { target: { kind: 'new' as const, installationId: target.installationId } } : {}), destination: { kind: 'stored' },
             bindings: input.bindings ?? [], generatedSecretAudience: input.generatedSecretAudience, domainBindings: input.domainBindings };
     }
     async function instantiate(raw: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
@@ -247,10 +261,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         try {
             const plan = await prepare(raw, context, creationReview);
             if (reviewed && !areDeploymentTemplateReviewFactsEqualV1(reviewed, plan.review)) return failure('deployment_conflict');
-            return await instantiatePrepared(plan, context);
+            return projectTemplateResult(await instantiatePrepared(plan, context));
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
-    async function instantiatePrepared(plan: Awaited<ReturnType<typeof prepareInput>>, context: ActionExecutorContext): Promise<DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure> {
+    async function instantiatePrepared(plan: Awaited<ReturnType<typeof prepareInput>>, context: ActionExecutorContext): Promise<TemplatePreparationResult> {
         const savedSecrets: SavedSecrets = [];
         let phase: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['phase'] = 'generation';
         let environmentId: string | undefined; let revision: number | undefined; let targetLinkId: string | undefined;
@@ -302,18 +316,21 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 await commit('deployments.environments.update', { serverId: input.serverId, environmentId: input.environment.environmentId,
                     expectedRevision: input.environment.expectedRevision, ...artifact });
             } else {
-                const linkArtifact = await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1);
+                const firstTargetLink = input.target ? {
+                    ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1),
+                    machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
+                } : undefined;
                 await commit('deployments.environments.create', { serverId: input.serverId, projectSourceId: input.projectSourceId, newProject: input.newProject,
                     requestKey: input.environment.requestKey, protection: input.environment.protection, purpose: input.environment.purpose,
                     deployerMode: input.environment.deployerMode,
                     ...(input.environment.deployerPrincipals === undefined ? {} : { deployerPrincipals: input.environment.deployerPrincipals }),
                     controllerMachineId: defaults.values.controllerMachineId ?? refuse('target_mismatch'),
                     buildMachineId: defaults.values.buildMachineId, ...artifact,
-                    firstTargetLink: { ...linkArtifact, machines: [{ machineId: input.machineId, installationId: input.target.installationId }] } });
+                    ...(firstTargetLink ? { firstTargetLink } : {}) });
             }
             appliedDefinition = { kind: 'stored', contentRevision: plan.definition.contentRevision, composeDigest: plan.definition.composeDigest };
             phase = 'target';
-            if (input.target.kind === 'new' && input.environment.kind === 'existing') {
+            if (input.target?.kind === 'new' && input.environment.kind === 'existing') {
                 const linked = await host.storage('deployments.targets.link', { serverId: input.serverId,
                     environmentId: environmentId!, expectedRevision: revision!, requestKey: context.actionRequestId!,
                     targetId: 'own-server', role: 'runtime', machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
@@ -325,8 +342,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             const created = await host.readEnvironment({ environmentId: environmentId ?? refuse('deployment_unavailable'), context });
             targetLinkId = created.environment.runtimeTargetLinkId;
-            if (!targetLinkId || !created.targetLinks.some(item => item.targetLink.id === targetLinkId
-                && item.targetLink.members.some(member => member.machineId === input.machineId && member.installationId === input.target.installationId))) return refuse('target_mismatch');
+            const selectedTarget = input.target;
+            if (selectedTarget && (!targetLinkId || !created.targetLinks.some(item => item.targetLink.id === targetLinkId
+                && item.targetLink.members.some(member => member.machineId === input.machineId && member.installationId === selectedTarget.installationId)))) return refuse('target_mismatch');
             phase = 'bindings';
             const merged = new Map(content.bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
             for (const binding of finalPrepared.bindings) merged.set(environmentSecretBindingIdentityV1(binding), binding);
@@ -361,7 +379,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     if (!loaded.ok) return refuse('errorCode' in loaded ? loaded : loaded.error);
                     source = { id: loaded.source.id, revision: loaded.source.revision };
                 }
-                const result = await host.deploy({ serverId: input.serverId, environmentId: environmentId!, targetLinkId,
+                const result = await host.deploy({ serverId: input.serverId, environmentId: environmentId!, targetLinkId: targetLinkId ?? refuse('target_mismatch'),
                     requestKey: input.deploy.requestKey, sourceIntent: plan.definition }, context, source);
                 if ('errorCode' in result) {
                     const retained = DeploymentReceiptSettlementFailureDetailsV1Schema.safeParse(result.details);
@@ -429,7 +447,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ? { ...diagnostic, details: partial, effectAttempted: true } : partial;
         }
     }
-    function projectCreateResult(result: DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure) {
+    function projectCreateResult(result: TemplatePreparationResult) {
         if ('kind' in result && result.kind === 'partial') return { ok: false as const, effectAttempted: true,
             errorCode: result.errorCode, error: result.errorCode, details: result };
         return 'errorCode' in result ? result : result.kind === 'applied'
@@ -445,7 +463,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             if ('kind' in result && result.kind === 'partial') return { ok: false, effectAttempted: true, errorCode: result.errorCode, error: result.errorCode, details: result };
             if ('errorCode' in result) return result;
-            return { ok: true, result };
+            return { ok: true, result: projectTemplateResult(result) };
         } };
     }
     return { instantiate, preparePublishEntry,

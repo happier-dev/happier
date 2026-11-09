@@ -30,7 +30,7 @@ export async function resolveDeploymentDefinitionRoleForHost(context: ActionExec
             && admission.actorAccountId === binding.accountId && admission.role === 'manage'
             && ingress.verifyMachineAdmissionCurrent) return 'manage';
         // The native child receiver lends only its independently admitted target
-        // grant through the existing private issuer; the Publish root stays bound
+        // grant through the existing private issuer; the routing root stays bound
         // to its original routing host.
         const receiving = readHostReviewedChildReceivingAdmissionV1(context);
         if (receiving?.machineId === host.machineId) return receiving.role;

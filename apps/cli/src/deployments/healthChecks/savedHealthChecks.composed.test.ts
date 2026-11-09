@@ -14,6 +14,7 @@ import { MachineServicesDetailResultV1Schema, sealAutomationTriggerDefinitionSto
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 import { createSavedHealthChecksHost } from './savedHealthChecks';
+import { readAdoptedHealthCheckBatch } from './readAdoptedHealthCheckBatch';
 import { createCurrentDomainEdgeObservation } from './currentDomainEdgeObservation';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
@@ -29,10 +30,13 @@ import { inTx } from '../../../../server/sources/storage/inTx';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { createProjectSourceInTx } from '../../../../server/sources/app/projects/sources/projectSourceService';
 import { makeShareEligibleForTest } from '../../../../server/sources/testkit/shareEligibility.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 async function adopted(sourceConfig: HealthCheckSourceConfigV1, observerMachineId = 'subject') {
     const caller = { pluginId: 'happier.machine.services', machineId: observerMachineId, materializationId: 'installed' };
     const abort = new AbortController();
+    const invocationAbort = new AbortController();
     const eventRef = { pluginId: caller.pluginId, localId: 'health-status' };
     const binding = { v: 1 as const, automationId: 'automation', triggerId: 'trigger', triggerRevision: 1,
         triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: '11111111-1111-4111-8111-111111111111' };
@@ -59,9 +63,10 @@ async function adopted(sourceConfig: HealthCheckSourceConfigV1, observerMachineI
     expect(await owner.refresh()).toEqual({ kind: 'adopted', revision: '1' });
     const seed: PluginInvocationServicesSeed = { plugin: { id: caller.pluginId, version: '0.0.0' },
         contribution: { id: 'health-observer', qualifiedId: `${caller.pluginId}/backgroundServices/health-observer` },
-        occurrenceId: 'occurrence', sourceCustody, correlationId: 'correlation', surface: 'background', signal: abort.signal,
+        occurrenceId: 'occurrence', sourceCustody, correlationId: 'correlation', surface: 'background', signal: invocationAbort.signal,
+        retirementSignal: abort.signal,
         resolveCurrentPluginMaterializationRef: () => caller, isOccurrenceCurrent: () => true };
-    return { seed, owner, readStoredDefinitions, observer: { machineId: observerMachineId, installationId: 'installation' } };
+    return { seed, owner, abort, invocationAbort, readStoredDefinitions, observer: { machineId: observerMachineId, installationId: 'installation' } };
 }
 
 const definition = (kind: string, config: HealthCheckSourceConfigV1['checks'][number]['config']) => ({
@@ -70,6 +75,108 @@ const definition = (kind: string, config: HealthCheckSourceConfigV1['checks'][nu
 });
 
 describe('saved source finite native producer binding', () => {
+    it('withdraws retained service health when its observer occurrence retires', async () => {
+        const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
+            subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
+            checks: [definition('http', { endpoint: 'http://127.0.0.1:40797', expectStatus: 200 })] };
+        const f = await adopted(sourceConfig);
+        const owner = runtime.registry.projectManagedServices;
+        let nativeAvailable = true;
+        let phase: 'running' | 'stopped' = 'running';
+        const handle = await owner.superviseMachine({ serverId: 'server', machineId: 'subject',
+            watch: { v: 1, watchId: 'service', name: 'Retained service',
+                adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
+                nativeResourceId: 'user/retained.service', lifecyclePurpose: 'development' },
+            isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+                async inspect() {
+                    return { phase: nativeAvailable ? phase : 'unknown', readiness: 'not_reported', endpoint: null };
+                },
+                async stop() { return { status: 'stopped' }; },
+            } });
+        const serviceFor = (adoption: typeof f) => createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => adoption.owner,
+            readObserver: () => adoption.observer, now: () => 1000, openDomainArtifact: async () => null,
+            onServiceResult: value => owner.machineServiceRows.publishHealthResult(handle, value),
+        }).bind(adoption.seed, { actions: {
+            execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }),
+        } as unknown as ActionsService, http: { requestStream: async () => ({ status: 200,
+            finalUrl: 'http://127.0.0.1:40797', headers: {}, chunks: (async function* () {})(), dispose: async () => {} }),
+        } as unknown as HttpService });
+        try {
+            await serviceFor(f)!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+            nativeAvailable = false;
+            await handle.inspectCurrentOccurrence();
+            expect(handle.readNativeRuntimeFacts().freshness).toBe('unavailable');
+            expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current' });
+            nativeAvailable = true; phase = 'stopped';
+            await handle.inspectCurrentOccurrence();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
+            phase = 'running'; await handle.inspectCurrentOccurrence();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+            f.invocationAbort.abort();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+            const replacement = await adopted(sourceConfig);
+            await serviceFor(replacement)!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
+            f.abort.abort();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+            replacement.abort.abort();
+            expect(handle.isCurrent()).toBe(true);
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
+        } finally { await handle.dispose(); await runtime.dispose(); }
+    });
+
+    it('publishes recorded saved HTTP results into adopted service health without clock-only pushes', async () => {
+        const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
+        const serviceId = 'b0193e23-7277-4d70-a16e-18c094edc6c4';
+        const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId, serviceId },
+            checks: [{ checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' },
+                binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:40797', expectStatus: 200 },
+                periodMs: 60000, consecutiveFailuresBeforeAlerting: 2 }] };
+        const f = await adopted(sourceConfig, machineId);
+        const owner = runtime.registry.projectManagedServices;
+        const handle = await owner.superviseMachine({ serverId: 'server', machineId,
+            watch: { v: 1, watchId: serviceId, name: 'QA-HEALTH-PUBLISH-1109-http.service',
+                adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
+                nativeResourceId: 'user/QA-HEALTH-PUBLISH-1109-http.service', lifecyclePurpose: 'development' },
+            isCurrent: () => true, releaseObservation: async () => {}, lifecycle: {
+                async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                async stop() { return { status: 'stopped' }; },
+            } });
+        let status = 200;
+        let now = 1000;
+        const changes: unknown[] = [];
+        const subscription = owner.machineServiceRows.subscribe(machineId, [handle], change => changes.push(change.row?.health));
+        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+            readObserver: () => f.observer, now: () => now, openDomainArtifact: async () => null,
+            onServiceResult: value => owner.machineServiceRows.publishHealthResult(handle, value),
+        }).bind(f.seed, { actions: { execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }) } as unknown as ActionsService,
+            http: { requestStream: async () => ({ status, finalUrl: 'http://127.0.0.1:40797', headers: {},
+                chunks: (async function* () {})(), dispose: async () => {} }) } as unknown as HttpService });
+        try {
+            const read = () => service!.read({ sourceInstanceId: 'health:subject', checkIds: ['http'] });
+            await read();
+            expect(owner.machineServiceRows.read(handle).health).toMatchObject({ status: 'up', freshness: 'current', observedAtMs: 1000 });
+            expect(changes).toHaveLength(1);
+            now += 60000; await read(); await handle.inspectCurrentOccurrence();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('up');
+            expect(changes).toHaveLength(1);
+            status = 503; now += 60000; await read();
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('down');
+            expect(changes).toHaveLength(2);
+            const page = await f.readStoredDefinitions.mock.results[0]!.value;
+            f.readStoredDefinitions.mockResolvedValueOnce({ ...page, revision: '2', definitions: [] });
+            expect(await f.owner.refresh()).toEqual({ kind: 'adopted', revision: '2' });
+            owner.machineServiceRows.reconcileHealthResults(entry => readAdoptedHealthCheckBatch({
+                resolveAdoptedDefinitionSet: () => f.owner, caller: entry.caller, occurrenceId: entry.occurrenceId,
+                sourceInstanceId: entry.sourceInstanceId, signal: f.seed.signal,
+            }).kind === 'available');
+            expect(owner.machineServiceRows.read(handle).health?.status).toBe('unknown');
+            expect(changes).toHaveLength(3);
+        } finally { subscription.dispose(); await handle.dispose(); await runtime.dispose(); }
+    });
+
     it('reads an Environment heartbeat at its controller through the same saved source and exact receipt owner', async () => {
         const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'observer' });
         const sourceConfig: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'environment', environmentId: environment.id },

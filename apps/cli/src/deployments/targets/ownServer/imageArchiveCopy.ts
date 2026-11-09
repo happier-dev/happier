@@ -6,7 +6,7 @@ import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarg
 import { getServerProfile } from '@/server/serverProfiles';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { readStoredCredentialsForServerId, sameStoredCredentials, type StoredCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import { assertDeploymentArchiveChildCurrentForHost, assertReviewedDeploymentArchiveSourceForHost } from '@/api/deploymentChildExecutionAuthorization';
 import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, verifyOwnServerImageArchiveForHost } from './releaseProvenance';
@@ -31,8 +31,7 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
         request.signal.throwIfAborted();
         await request.assertCurrent();
         const identity = readInstallationIdentityIfExistsSync();
-        if (identity?.installationId !== host.installationId
-            || !sameStoredCredentials(host.credentials, await readStoredCredentialsForServerId(host.credentialProfileId))) return refuse('filesystem_transfer_custody_required');
+        if (identity?.installationId !== host.installationId) return refuse('filesystem_transfer_custody_required');
         const admitted = await assertDeploymentArchiveChildCurrentForHost({ context: request.context, machineId: host.machineId, installationId: host.installationId });
         const assertCurrent = async () => { request.signal.throwIfAborted(); };
         await assertCurrent();

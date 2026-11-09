@@ -3,12 +3,23 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import { resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
+import { admitUseDeploymentDefinition, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import * as persistence from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol';
 
 describe('deployment definition authority provenance', () => {
     afterEach(() => vi.restoreAllMocks());
+    it('retains a rollback receipt without ingress after Manage adds Environment ingress', () => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.content.ingress = { kind: 'edgeCaddy', edgeMachineId: 'edge' };
+        const content = createDeploymentReceiptDetailV1().content;
+        const link = environment.targetLinks[0]!.targetLink;
+        content.machines = link.machines;
+        content.buildMachineId = environment.environment.buildMachineId ?? environment.environment.controllerMachineId;
+        delete content.ingress;
+        expect(() => admitUseDeploymentDefinition(environment, content, link.id, structuredClone(content))).not.toThrow();
+    });
     it('consumes signed grants, never a synthesized role on an older foreign root', async () => {
         const identity = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
             resolveHostIdentity: async () => ({ machineId: 'machine-a', installationId: 'installation-a', custodianAccountId: 'owner' }) });

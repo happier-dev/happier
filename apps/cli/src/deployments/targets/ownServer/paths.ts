@@ -1,6 +1,7 @@
 import { isAbsolute, join, relative, resolve, sep, posix, win32 } from 'node:path';
 import { createHash } from 'node:crypto';
 import { resolveCliHomeStoragePaths } from '@/configuration/homeStoragePaths';
+import { createCanonicalAbsolutePathComparator, resolveCanonicalAbsolutePath } from '@happier-dev/cli-common/path';
 
 function assertDeploymentIdentitySegment(id: string): void {
     if (!id || /[/\\\0]/u.test(id) || id === '.' || id === '..') {
@@ -16,6 +17,28 @@ export async function resolveOwnServerDeploymentRootForHost(happierHomeDir: stri
 
 function deploymentRootForServerDir(serverDir: string, platform: NodeJS.Platform = process.platform): string {
     return (platform === 'win32' ? win32 : posix).join(serverDir, 'deployments');
+}
+
+export type OwnServerDeploymentStoragePaths = Readonly<{ serversDir: string; activeServerDir: string }>;
+
+/** Placement survives removing a saved profile: its retained release/shared bytes
+ * still belong to deployment retention, never generic Storage removal. */
+export function readOwnServerDeploymentStorageRootForPathForHost(path: string, paths: OwnServerDeploymentStoragePaths,
+    platform: NodeJS.Platform = process.platform): string | null {
+    const api = platform === 'win32' ? win32 : posix;
+    const comparison = createCanonicalAbsolutePathComparator({ platform });
+    const related = (root: string) => comparison.equal(path, root) || comparison.contains(root, path) || comparison.contains(path, root);
+    const activeRoot = deploymentRootForServerDir(paths.activeServerDir, platform);
+    if (related(activeRoot)) return activeRoot;
+    const serversDir = paths.serversDir;
+    const canonicalServers = resolveCanonicalAbsolutePath(serversDir, { platform });
+    const canonicalPath = resolveCanonicalAbsolutePath(path, { platform });
+    if (!canonicalServers || !canonicalPath) return null;
+    const withinServers = api.relative(canonicalServers.comparisonKey, canonicalPath.comparisonKey);
+    const [profileId, kind] = withinServers.split(api.sep);
+    if (!profileId || profileId === '..' || api.isAbsolute(withinServers) || kind !== undefined && kind !== 'deployments') return null;
+    const root = deploymentRootForServerDir(api.join(serversDir, profileId), platform);
+    return related(root) ? root : null;
 }
 
 /** The caller supplies the exact Home identity, never a saved profile alias. */

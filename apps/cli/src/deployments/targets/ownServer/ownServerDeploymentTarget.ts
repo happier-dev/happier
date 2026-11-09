@@ -183,6 +183,12 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
         docker: ProjectNativeDockerPort; installationId: string; affectedServices: readonly string[];
         context: MachineNativeEffectContext; signal: AbortSignal;
     }>): Promise<NativeComposeStartFirstRoutes>;
+    settlePrivateWorkloadFirewall?(request: OwnServerDeploymentRequest, input: Readonly<{
+        environment: DeploymentEnvironmentDetailV1;
+        render: import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeProjectRender;
+        docker: ProjectNativeDockerPort; installationId: string;
+        context: MachineNativeEffectContext; signal: AbortSignal;
+    }>): Promise<void>;
     runtime: OwnServerDeploymentRuntime;
     signal?: AbortSignal;
 }>;

@@ -45,11 +45,19 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
             if (input.copyFrom !== undefined && copy?.copyPlan === undefined || input.definition === undefined
                 || input.controllerMachineId === undefined || input.retainPreviousDeployments === undefined
                 || input.firstTargetLink !== undefined && input.buildMachineId === undefined) {
-                return { ok: false, errorCode: 'client_required', error: 'client_required' };
+                const { actionInputIssueFailure } = await import('@happier-dev/protocol/actions/executor/actionInputValidation');
+                const missing = [
+                    ...(input.copyFrom !== undefined && copy?.copyPlan === undefined ? ['copyFrom'] : []),
+                    ...(input.definition === undefined ? ['definition'] : []),
+                    ...(input.controllerMachineId === undefined ? ['controllerMachineId'] : []),
+                    ...(input.retainPreviousDeployments === undefined ? ['retainPreviousDeployments'] : []),
+                    ...(input.firstTargetLink !== undefined && input.buildMachineId === undefined ? ['buildMachineId'] : []),
+                ];
+                return actionInputIssueFailure(...missing.map(field => ({ code: 'custom', path: [field] })));
             }
             const targetLinkContent = DeploymentOwnServerTargetLinkContentV1Schema.parse(nativeOrigin === undefined ? {} : { nativeOrigin });
             // Catalog materialization stays with the template composition at the creating Action owner.
-            if (input.definition.from === 'catalogApp') return { ok: false, errorCode: 'client_required', error: 'client_required' };
+            if (input.definition.from === 'catalogApp') return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
             const definition = input.definition.from === 'repository'
                 ? { kind: 'repository' as const, ref: input.definition.ref, compose: input.definition.compose }
                 : await normalizeStoredComposeDefinitionInput(input.definition);
@@ -90,6 +98,7 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
             const prepared = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
                 projectSourceId: input.projectSourceId, newProject: input.newProject, requestKey: input.requestKey, protection: input.protection,
                 purpose: input.purpose, deployerMode: input.deployerMode,
+                ...(input.managedRetention === undefined ? {} : { managedRetention: input.managedRetention }),
                 ...(input.deployerPrincipals === undefined ? {} : { deployerPrincipals: input.deployerPrincipals }),
                 controllerMachineId: input.controllerMachineId,
                 ...(input.buildMachineId === undefined ? {} : { buildMachineId: input.buildMachineId }),

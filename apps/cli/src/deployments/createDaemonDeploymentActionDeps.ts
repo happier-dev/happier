@@ -64,6 +64,7 @@ import type { StoredCredentials } from '@/persistence';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { isDeploymentNativeReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createOwnServerDeploymentReads } from './targets/ownServer/ownServerDeploymentReads';
+import { createPrivateServicePublicationSettlementForHost } from './targets/ownServer/privateServicePublicationHost';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createDataTeardownForHost } from './actions/dataTeardown';
 import { createDeploymentRestoreActionForHost } from './actions/restore';
@@ -81,6 +82,7 @@ import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRuntime
     type OwnServerDeploymentTransition, type OwnServerDeploymentTargetHostInput,
     type OwnServerDeploymentReview, type OwnServerDeploymentReviewRequest } from './targets/ownServer/ownServerDeploymentTarget';
 import { DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, prepareOwnServerDeploymentCandidate } from './targets/ownServer/prepareCandidate';
+import { requireOwnServerDeploymentBuildMachine } from './targets/ownServer/ownServerTargetAdmission';
 import { assertReviewedDeploymentSource } from './reviewedSource';
 import { createDaemonDeploymentChildExecutor, readDeploymentChildResult as readChildResult } from './deploymentChild';
 import { projectDeploymentTransitionOutcomeUnknownForHost, projectDeploymentTransitionResultForHost } from './deploymentTransitionResult';
@@ -415,6 +417,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         writeTransition(request: Omit<OwnServerDeploymentTransition, 'content'> & Readonly<{ content?: DeploymentContentV1 }>):
             ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
     }> = { ...host, ...targetHostReaders,
+        settlePrivateWorkloadFirewall: createPrivateServicePublicationSettlementForHost(host),
         async readStartFirstRoutes(request, input) {
             return createOwnServerStartFirstRoutesForHost({ ...host, open,
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
@@ -918,8 +921,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (selectedLink.source.kind === 'plugin') return await contributedTarget.prepareCandidate(request, environment);
             if (request.sourceMethod !== undefined) return failure('unsupported_action');
             const machineResults = await readMemberVersions(request, environment);
-            const builder = environment.environment.buildMachineId;
-            if (!builder) return failure('target_mismatch');
+            const builder = requireOwnServerDeploymentBuildMachine(environment.environment.buildMachineId);
             const link = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId)?.targetLink;
             if (!link) return failure('target_mismatch');
             const assertCandidateCurrent = () => assertCurrent(request.context);
@@ -1286,7 +1288,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     });
                     if ('contentArtifactId' in prepared) {
                         const linked = await storage(actionId, prepared, context);
-                        if (linked.ok === false && ('errorCode' in linked ? linked.errorCode : linked.error) === 'deployment_content_unavailable') {
+                        if ('ok' in linked && linked.ok === false && ('errorCode' in linked ? linked.errorCode : linked.error) === 'deployment_content_unavailable') {
                             return { ...failure('deployment_content_unavailable'),
                                 error: 'deployment_content_unavailable (target_link.content_associate: storage_refused)' };
                         }

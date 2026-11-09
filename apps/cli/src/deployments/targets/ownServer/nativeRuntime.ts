@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
-import { createProjectNativeEnvironmentIoForHost as createProjectNativeToolchainIoForHost, createStablePluginExecService,
+import { createProjectNativeToolchainIoForHost, createStablePluginExecService,
     type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 
 /** The installed Docker launch policy is shared by deployment and terminal

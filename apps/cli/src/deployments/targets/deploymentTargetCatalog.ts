@@ -47,9 +47,6 @@ function normalizeTarget(entry: ResolvedDeploymentTargetContribution): Deploymen
         : entry.definition.dataV1 === undefined ? {} : { dataV1: roles };
     return DeploymentTargetV1Schema.parse({ ...entry.definition, v: 1,
         source: { kind: 'plugin', contribution: entry.identity }, ...normalizedRoles,
-        ...(entry.definition.role === 'runtime' && entry.definition.failureTransitionEvent
-            ? { failureTransitionEvent: buildQualifiedPluginContributionKey({ pluginId: entry.pluginId,
-                localId: entry.definition.failureTransitionEvent }) } : {}),
     });
 }
 
