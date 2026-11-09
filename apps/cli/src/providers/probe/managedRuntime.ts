@@ -192,10 +192,6 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
         return Object.freeze({ ok: false as const, error });
       };
 
-      if (!await revalidateAuthorization()) {
-        return await fail(authorizationError());
-      }
-
       let registryLease: PluginRuntimeRegistryLease;
       try {
         registryLease = await acquireRegistryLease();
@@ -227,10 +223,6 @@ export function createProviderManagedCatalogRuntimePort(input: Readonly<{
           { connectionId: ticket.connectionId, machineId: ticket.machineId },
         ));
       }
-      if (!await revalidateAuthorization()) {
-        return await fail(authorizationError());
-      }
-
       let invocationServices: Awaited<ReturnType<typeof createInvocationServices>>;
       try {
         const resolveSharedGateway = accountAuthority?.resolveSharedGateway ?? input.resolveSharedGateway;

@@ -465,6 +465,8 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
   if (!acquired || !readsCurrent(acquired.isCurrent)) {
     return await fail('managed_provider_runtime_unavailable');
   }
+  // Admit this finite start once, before the effect. Runtime identity and local
+  // cancellation remain current; later operations receive their own admission.
   const initialAuthorization = await revalidate(input);
   if (initialAuthorization !== 'current') {
     return await fail(revalidationFailureCode(initialAuthorization));
@@ -553,11 +555,6 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
   if (!sameRuntime(acquired, settledRuntime)) {
     return await fail('managed_provider_authorization_changed');
   }
-  const settledAuthorization = await revalidate(input);
-  if (settledAuthorization !== 'current') {
-    return await fail(revalidationFailureCode(settledAuthorization));
-  }
-
   const isRuntimeCurrent = (): boolean => (
     !invocationAbort.signal.aborted
     && readsCurrent(input.isAuthorizationCurrent)
@@ -593,18 +590,6 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
         : 'managed_provider_authorization_changed',
     );
   }
-  const projectedAuthorization = await revalidate(input);
-  if (projectedAuthorization !== 'current') {
-    return await fail(revalidationFailureCode(projectedAuthorization));
-  }
-  if (!isCurrent()) {
-    return await fail(
-      input.signal.aborted
-        ? 'managed_provider_start_aborted'
-        : 'managed_provider_authorization_changed',
-    );
-  }
-
   if (request.reason === 'sessionDemand' && input.custody.lifetime !== 'sharedConsumer') {
     const adoptService = input.custody.adoptService;
     if (!adoptService) {

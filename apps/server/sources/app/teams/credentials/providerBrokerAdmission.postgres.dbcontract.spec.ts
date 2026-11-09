@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -7,10 +7,12 @@ import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1 } from '@happier-dev/protocol/provide
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
-import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { signProviderBrokerRouteGrantV1, verifyProviderBrokerRouteGrantSignatureV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { authorizeTeamCredentialProviderModelCatalog, openTeamCredentialProviderBroker } from './providerBrokerAdmission';
 import { writeSessionTeamCredentialBindingsInTx } from './sessionBinding';
+import { createPlannedSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
 import { resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
 import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBroker } from '@/app/providers/providerBrokerAdmission';
 import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
@@ -28,6 +30,37 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
         await db.$connect();
     });
     afterAll(async () => { await shutdownDbClient(); });
+
+    it('replaces only the cutover Session witness set and validates before deleting on PostgreSQL', async () => {
+        vi.stubEnv('HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED', '1');
+        const fixture = await createPlannedSessionTeamCredentialFixture('personal_allowed');
+        const session = await db.session.create({ data: { accountId: fixture.creator.id, tag: randomUUID(), metadata: '{}' } });
+        const other = await db.session.create({ data: { accountId: fixture.creator.id, tag: randomUUID(), metadata: '{}' } });
+        const intent = { v: 1, slot: { kind: 'provider_model' }, resourceId: fixture.resource.id,
+            expectedResourceRevision: fixture.resource.revision, deliveryMode: 'brokered' } as const;
+        try {
+            for (const sessionId of [session.id, other.id]) {
+                await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+                    sessionId, accountId: fixture.creator.id, authentication: TEST_AUTHENTICATION, intents: [intent],
+                }))).resolves.toEqual({ ok: true });
+            }
+            const replace = (intents: unknown) => inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+                sessionId: session.id, accountId: fixture.creator.id, authentication: TEST_AUTHENTICATION,
+                replaceExisting: true, intents,
+            }));
+            expect(await replace([{ ...intent, expectedResourceRevision: fixture.resource.revision + 1 }])).toMatchObject({ ok: false });
+            await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(1);
+            await expect(replace([])).resolves.toEqual({ ok: true });
+            await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+            await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: other.id } })).resolves.toBe(1);
+        } finally {
+            await db.session.deleteMany({ where: { id: { in: [session.id, other.id] } } });
+            await db.team.delete({ where: { id: fixture.team.id } });
+            await db.machine.delete({ where: { id: fixture.broker.id } });
+            await db.account.deleteMany({ where: { id: { in: [fixture.creator.id, fixture.custodian.id] } } });
+            vi.unstubAllEnvs();
+        }
+    });
 
     it('authorizes the foreign endpoint through current Use admission, then refuses its retained grant after revocation', async () => {
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -212,8 +245,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                 accountId: requester.id, machineId: ownWorker.id, sessionId: session.id, data: '{}',
             }))).resolves.toMatchObject({ ok: true });
             // One Account cohort statement, two rows for foreign custody and
-            // one for same-Account custody. Final admission must reuse the
-            // preparation's read set rather than add a custody discovery read.
+            // one for same-Account custody. Identity preparation must not run
+            // the complete authorization traversal before final admission.
             for (const initiator of [worker, ownWorker]) {
                 let transactions = 0;
                 const readCounts = [0, 0];
@@ -229,7 +262,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                             if (property === '$queryRawUnsafe') return async (...queryArgs: unknown[]) => {
                                 const [query, ...values] = queryArgs;
                                 if (typeof query === 'string' && query.includes('FROM "Account"') && query.includes(' FOR ')) {
-                                    if (phase === 1) {
+                                    if (phase === 0) {
                                         expect(query).toContain('FOR NO KEY UPDATE');
                                         if (initiator === worker) expect(query).toContain('ORDER BY "id"');
                                         cohorts.push(values);
@@ -267,9 +300,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                                 expectedConnectionSecurityFingerprint: 'connection-security:v1:pg-personal',
                                 expectedManagedRuntimeBindingFingerprint: 'managed-runtime-binding:v1:pg-personal' } },
                     })).toMatchObject({ ok: true });
-                    expect(transactions).toBe(2);
+                    expect(transactions).toBe(1);
                     expect(readCounts[0]).toBeGreaterThan(0);
-                    expect(readCounts[1]).toBe(readCounts[0]);
+                    expect(readCounts[1]).toBe(0);
                     expect(cohorts).toEqual(initiator === worker
                         ? [[[requester.id, custodian.id].sort()]] : [[requester.id]]);
                 } finally {
@@ -334,7 +367,6 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                     }));
                 }
             }
-            let successfulAdmissions = 0;
             let fencedFinalAdmissions = 0;
             // Observe the real callback/commit boundary. The contender probes
             // the same Account publication lock required to complete withdrawal;
@@ -346,8 +378,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                     const result: unknown = await Reflect.apply(fn, context, callbackArgs);
                     if (result && typeof result === 'object' && 'result' in result) {
                         const admission = result.result;
-                        if (admission && typeof admission === 'object' && 'ok' in admission && admission.ok === true
-                            && ++successfulAdmissions % 2 === 0) {
+                        if (admission && typeof admission === 'object' && 'ok' in admission && admission.ok === true) {
                             await expect(db.$queryRawUnsafe(
                                 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', requester.id,
                             )).rejects.toMatchObject({ code: 'P2010', meta: { code: '55P03' } });
@@ -496,7 +527,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                 actorAccountId: custodian.id, machineId: worker.id,
                 principal: { kind: 'account', accountId: requester.id },
             }));
-            expect(await read()).toEqual({ ok: false, reasonCode: 'operation_not_current' });
+            expect(await read()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
             const readsBeforeRevocation = presenceReads;
             for (const personalAuthority of personalAuthorities) {
                 expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,

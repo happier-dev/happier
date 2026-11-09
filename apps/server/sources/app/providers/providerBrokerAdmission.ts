@@ -12,6 +12,7 @@ import { auth } from '@/app/auth/auth';
 import { readEligibleBrokerMachineInTx } from '@/app/teams/credentials/brokerMachineEligibility';
 import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import { inTx, type Tx } from '@/storage/inTx';
+import { db } from '@/storage/db';
 import { signRouteGrantPayload } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
 import { acquireProviderBrokerConsumerAdmissionInTx, admitProviderBrokerConsumerInTx, admitProviderBrokerTopology, readProviderBrokerInitiatorEndpointInTx, type ProviderBrokerConsumerCurrentness } from './brokerConsumerAdmission';
 
@@ -75,10 +76,10 @@ async function authorizeMachinesInTx(tx: Tx, input: MachineAdmissionInput, execu
     return { ok: true, initiator, target, executionRunOccurrenceId: admitted.executionRunOccurrenceId } as const;
 }
 
-/** Admit before transport discovery, then recheck after that asynchronous boundary.
- * Presence belongs to the actual Machine custodian; the signed requester and
- * private catalog hub remain the requesting Account. The terminal result is
- * produced while the authorizing transaction still holds its admission fence. */
+/** Prepare transport identities without admitting work. Presence belongs to the
+ * actual Machine custodian; the signed requester and private catalog hub remain
+ * the requesting Account. Admit once after discovery, and produce the terminal
+ * result while that transaction still holds its admission fence. */
 async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
     input: MachineAdmissionInput,
     finalize: (current: Extract<Awaited<ReturnType<typeof authorizeMachinesInTx>>, { ok: true }>) => T,
@@ -87,20 +88,33 @@ async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
         ? await input.resolveExecutionRunCurrentness({ executionRunId: input.consumer.executionRunId,
             requestingAccountId: input.actorAccountId, workerMachineId: input.initiatorMachineId, expectedOccurrenceId })
         : null;
-    const run = await resolveRun(input.expectedOccurrenceId);
-    if (run && !run.ok) return run;
-    const prepared = await inTx(tx => authorizeMachinesInTx(tx, input, run));
-    if (!prepared.ok) return prepared;
+    const [initiator, target] = await Promise.all([
+        db.machine.findUnique({ where: { id: input.initiatorMachineId }, select: {
+            accountId: true, operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
+        } }),
+        db.machine.findFirst({ where: { id: input.targetMachineId, accountId: input.actorAccountId }, select: {
+            operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
+        } }),
+    ]);
+    const initiatorEndpoint = initiator && readMachineIrohEndpointAuthorityV1({
+        capabilities: initiator.operationProtocolCapabilities, revision: initiator.operationProtocolCapabilitiesRevision,
+    });
+    const targetEndpoint = target && readMachineIrohEndpointAuthorityV1({
+        capabilities: target.operationProtocolCapabilities, revision: target.operationProtocolCapabilitiesRevision,
+    });
+    if (!initiator || !initiatorEndpoint || !targetEndpoint) {
+        return { ok: false, reasonCode: 'broker_unavailable' } as const;
+    }
     let presence: Awaited<ReturnType<Common['readCurrentPresence']>>;
     try {
         presence = await input.readCurrentPresence({
-            initiatorAccountId: prepared.initiator.custodianAccountId, initiatorMachineId: input.initiatorMachineId,
+            initiatorAccountId: initiator.accountId, initiatorMachineId: input.initiatorMachineId,
             targetAccountId: input.actorAccountId, targetMachineId: input.targetMachineId,
         });
     } catch {
         return { ok: false, reasonCode: 'broker_unavailable' } as const;
     }
-    const currentRun = await resolveRun(prepared.executionRunOccurrenceId);
+    const currentRun = await resolveRun(input.expectedOccurrenceId);
     if (currentRun && !currentRun.ok) return currentRun;
     return await inTx(async tx => {
         // The prepared custodian is a cohort hint, never current authority.
@@ -108,16 +122,13 @@ async function withCurrentMachines<T extends Readonly<{ ok: boolean }>>(
         // cohort through signing/terminal admission, including foreign custody.
         await acquireProviderBrokerConsumerAdmissionInTx(tx, {
             accountIds: [input.actorAccountId],
-            custodianAccountIds: [prepared.initiator.custodianAccountId],
+            custodianAccountIds: [initiator.accountId],
         });
         const current = await authorizeMachinesInTx(tx, input, currentRun);
         if (!current.ok) return current;
-        if (current.executionRunOccurrenceId !== prepared.executionRunOccurrenceId) {
-            return { ok: false, reasonCode: 'operation_not_current' } as const;
-        }
-        if (current.initiator.custodianAccountId !== prepared.initiator.custodianAccountId
-            || current.initiator.endpointId !== prepared.initiator.endpointId
-            || current.target.endpoint.endpointId !== prepared.target.endpoint.endpointId
+        if (current.initiator.custodianAccountId !== initiator.accountId
+            || current.initiator.endpointId !== initiatorEndpoint.endpointId
+            || current.target.endpoint.endpointId !== targetEndpoint.endpointId
             || classifyMachineDaemonPresence(presence.initiatorPresence, input.initiatorMachineId) !== 'connected'
             || classifyMachineDaemonPresence(presence.targetPresence, input.targetMachineId) !== 'connected') {
             return { ok: false, reasonCode: 'broker_unavailable' } as const;

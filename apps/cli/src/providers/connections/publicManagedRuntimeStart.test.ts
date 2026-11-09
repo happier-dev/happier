@@ -1,4 +1,3 @@
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -24,10 +23,11 @@ import {
   createPluginReloadController,
   type PluginReloadController,
 } from '@/plugins/runtime/reload/controller';
-import type {
-  ManagedProviderExplicitStartJoinInput,
-  ManagedProviderExplicitStartJoinResult,
-  ResolvedExecutablePluginRuntimeRegistry,
+import {
+  resolveExecutablePluginRuntimeRegistry,
+  type ManagedProviderExplicitStartJoinInput,
+  type ManagedProviderExplicitStartJoinResult,
+  type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
@@ -71,6 +71,37 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
         startupFailure: { phase: 'runtime_start', errorClass: 'Error' },
       });
       expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('Worker must not start');
+    } finally { await fixture.cleanup(); }
+  });
+});
+
+it('finishes an admitted physical gateway Start across policy drift and refuses the next Start', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'managed-start-admission-' }, async ({ homeDir }) => {
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller, physicalGateway: true });
+    const gateway = fixture.gateway!;
+    // The real OS gateway writes this marker during runtime.start. Policy
+    // admission succeeds before that effect and refuses subsequent admissions.
+    const admit = vi.fn(async () => {
+      try {
+        await readFile(join(gateway.directory, 'gateway-started'), 'utf8');
+        return false;
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return true;
+        throw error;
+      }
+    });
+    const start = createPublicManagedProviderRuntimeStartOperation({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
+    const request = { contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`, identity: gateway.identity,
+      request: { reason: 'explicitStartLocal' as const, endpointTemplateIds: ['api'] },
+      purposeBindings: gateway.purposeBindings, isAuthorizationCurrent: () => true, revalidateAuthorization: admit };
+    try {
+      await expect(start(request)).resolves.toEqual({ status: 'running' });
+      expect(admit).toHaveBeenCalledOnce();
+      const pid = Number(await readFile(join(gateway.directory, 'gateway-started'), 'utf8'));
+      expect(process.kill(pid, 0)).toBe(true);
+      await expect(start(request)).rejects.toMatchObject({ code: 'provider_authorization_changed' });
     } finally { await fixture.cleanup(); }
   });
 });
@@ -529,7 +560,6 @@ async function runtimeRegistry(input: Readonly<{
       resolveScope: () => null,
     }),
     contributes: {
-      backupDestinations: [],
       agents: Object.freeze([]),
       voiceProviders: Object.freeze([]),
       connectedAccountDescriptorsById: new Map(),
@@ -610,11 +640,13 @@ describe('public managed Provider explicit-start production operation', () => {
     };
     const serviceDispose = vi.fn(async () => undefined);
     const service = managedServiceHandle(serviceDispose);
+    let policyAllowsStart = true;
     const start = vi.fn<ManagedProviderRuntime['start']>(async (request) => {
       expect(request).toEqual({
         reason: 'explicitStartLocal',
         endpointTemplateIds: ['chat'],
       });
+      policyAllowsStart = false;
       return Object.freeze({
         service,
         endpoints: Object.freeze([Object.freeze({
@@ -691,6 +723,8 @@ describe('public managed Provider explicit-start production operation', () => {
       controller,
     });
 
+    const admitStart = vi.fn(async (signal?: AbortSignal) => policyAllowsStart
+      && (operationSignal === undefined || (signal === operationSignal && !signal.aborted)));
     await expect(startExplicit({
       contributionKey: `${pluginId}/${localId}`,
       identity: Object.freeze({ pluginId, localId }),
@@ -700,10 +734,10 @@ describe('public managed Provider explicit-start production operation', () => {
       }),
       purposeBindings,
       isAuthorizationCurrent: () => true,
-      revalidateAuthorization: async (signal) => operationSignal === undefined
-        || (signal === operationSignal && !signal.aborted),
+      revalidateAuthorization: admitStart,
     })).resolves.toEqual({ status: 'running' });
 
+    expect(admitStart).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
     expect(acquireRuntime).toHaveBeenCalledTimes(2);
     expect(createInvocationServices).toHaveBeenCalledWith(expect.objectContaining({

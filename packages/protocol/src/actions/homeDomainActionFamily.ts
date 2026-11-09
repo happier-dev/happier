@@ -32,11 +32,12 @@ import { ManagedIdentityProviderErrorV1Schema } from '../identity/providers.js';
 import { ManagedGitHubAppErrorV1Schema } from '../identity/githubApps.js';
 import { AccountDirectoryRouteErrorResponseV1Schema } from '../auth/accountDirectory.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
+import { DeploymentActionFailureV1Schema } from '../deployments/deploymentActionsV1.js';
+import { ProjectDeploymentDefaultsFailureV1Schema } from '../projects/projectDeploymentDefaultsV1.js';
 import {
-  SHARED_SAVED_SECRET_ACTION_IDS_V1,
   SavedSecretResourceActionErrorV1Schema,
-  type SharedSavedSecretActionIdV1,
 } from '../account/settings/savedSecretResourceActionsV1.js';
+import { SHARED_SAVED_SECRET_ACTION_IDS_V1, isSharedSavedSecretHomeActionIdV1, type SharedSavedSecretHomeActionIdV1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 
 /**
  * Home governance and Teams are two domains but one transport family: both are
@@ -58,11 +59,12 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...TEAM_HOME_ACTION_IDS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1,
   ...MANAGED_GITHUB_APP_ACTION_IDS_V1,
-  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id): id is Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'> => id !== 'secrets.shared.reveal'),
+  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter(isSharedSavedSecretHomeActionIdV1),
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
   'session.delete',
   'session.section.set',
   'session.tags.set',
+  'projects.deploymentDefaults.set',
 ] as const;
 
 export type HomeDomainActionIdV1 =
@@ -73,9 +75,10 @@ export type HomeDomainActionIdV1 =
   | typeof TEAM_HOME_ACTION_IDS_V1[number]
   | ManagedIdentityProviderActionIdV1
   | ManagedGitHubAppActionIdV1
-  | Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'>
+  | SharedSavedSecretHomeActionIdV1
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
-  | 'session.delete' | 'session.section.set' | 'session.tags.set';
+  | 'session.delete' | 'session.section.set' | 'session.tags.set'
+  | 'projects.deploymentDefaults.set';
 
 export const HomeDomainActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_DOMAIN_ACTION_IDS_V1));
 
@@ -98,6 +101,8 @@ const HOME_DOMAIN_ERROR_SCHEMAS_V1 = [
   ManagedGitHubAppErrorV1Schema,
   AccountDirectoryRouteErrorResponseV1Schema,
   SavedSecretResourceActionErrorV1Schema,
+  DeploymentActionFailureV1Schema,
+  ProjectDeploymentDefaultsFailureV1Schema,
 ] as const;
 
 type HomeDomainActionObjectErrorV1 = z.infer<

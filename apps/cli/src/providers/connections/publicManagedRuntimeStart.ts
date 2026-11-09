@@ -40,6 +40,7 @@ export type ManagedProviderExplicitStartCustodyRequest =
     >;
     revalidateRetainedCurrentness?(signal?: AbortSignal, invalidation?: ProviderBrokerRetainedCurrentnessInvalidation): Promise<boolean>;
     signal: AbortSignal;
+    modelCatalogs?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ManagedProviderRuntimeInvocationBinding['modelCatalogs'];
   }>;
 
 export type ManagedProviderExplicitStartCustody = Readonly<{
@@ -98,6 +99,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
   happyHomeDir: string;
   controller?: PluginReloadController;
   operationClaim?: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
+  modelCatalogs?: ManagedProviderExplicitStartCustodyRequest['modelCatalogs'];
   retirementGroup?: ManagedProviderExplicitStartCustodyRequest['retirementGroup'];
   revalidateRetainedCurrentness?: ManagedProviderExplicitStartCustodyRequest['revalidateRetainedCurrentness'];
   resolveSharedGateway?: ResolveSharedManagedProviderGatewayBinding;
@@ -160,11 +162,6 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
         });
       }
 
-      if (!await requestAuthorizationIsCurrent()) {
-        throw authorizationFailure ?? createProviderErrorV1('provider_authorization_changed', {
-          machineId: input.machineId,
-        });
-      }
       const sharedGateway = request.sharedGateway ?? (request.connectionId && input.resolveSharedGateway
         ? await input.resolveSharedGateway({
             connectionId: request.connectionId,
@@ -202,6 +199,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
               ...(sharedGateway ? { sharedGateway } : {}),
               identity: request.identity,
               purposeBindings: request.purposeBindings,
+              ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
               operationClaim: input.operationClaim ?? {
                 kind: 'explicitStart',
                 machineId: input.machineId,
@@ -370,6 +368,7 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
       const start = createManagedProviderExplicitStartOperation({
         ...input,
         operationClaim: request.operationClaim,
+        ...(request.modelCatalogs ? { modelCatalogs: request.modelCatalogs } : {}),
         ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
         ...(request.revalidateRetainedCurrentness
           ? {

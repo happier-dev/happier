@@ -6,7 +6,12 @@ export const SHARED_SAVED_SECRET_ACTION_IDS_V1 = [
   'secrets.shared.update',
   'secrets.shared.delete',
   'secrets.shared.reveal',
+  'secrets.shared.repair',
 ] as const;
 
 export type SharedSavedSecretActionIdV1 = typeof SHARED_SAVED_SECRET_ACTION_IDS_V1[number];
-export type SharedSavedSecretHomeActionIdV1 = Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'>;
+export type SharedSavedSecretHomeActionIdV1 = Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal' | 'secrets.shared.repair'>;
+
+export function isSharedSavedSecretHomeActionIdV1(id: SharedSavedSecretActionIdV1): id is SharedSavedSecretHomeActionIdV1 {
+  return id !== 'secrets.shared.reveal' && id !== 'secrets.shared.repair';
+}

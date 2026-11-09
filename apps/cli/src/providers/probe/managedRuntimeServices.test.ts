@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -297,6 +298,7 @@ describe('managed Provider catalog runtime composition', () => {
       throw new Error('not used by catalog test');
     };
     const managedServices = Object.freeze({
+        ...createUnavailableManagedServices(),
       dependencies: Object.freeze({
         status: unavailable,
         ensure: unavailable,
@@ -381,7 +383,7 @@ describe('managed Provider catalog runtime composition', () => {
       createManagedProviderRuntimeInvocationServices,
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const releaseRegistryLease = vi.fn(async () => undefined);
-    const managedCatalogRuntime = createProviderManagedCatalogRuntimePort({
+    const managedCatalogRuntimePort = createProviderManagedCatalogRuntimePort({
       acquireRegistryLease: async () => Object.freeze({
         registry: returnSuccessorRegistry ? successorRegistry : runtimeRegistry,
         source: 'active' as const,
@@ -389,6 +391,19 @@ describe('managed Provider catalog runtime composition', () => {
         release: releaseRegistryLease,
       }),
     });
+    const startupAdmissions: { reads: number }[] = [];
+    const managedCatalogRuntime: typeof managedCatalogRuntimePort = {
+      launch: async input => {
+        const admission = { reads: 0 };
+        startupAdmissions.push(admission);
+        return await managedCatalogRuntimePort.launch({ ...input,
+          revalidateBeforeEffect: async () => {
+            admission.reads += 1;
+            return await input.revalidateBeforeEffect();
+          },
+        });
+      },
+    };
     const transport = vi.fn(async () => {
       throw new Error('managed catalog must use opaque endpoint access');
     });
@@ -439,6 +454,7 @@ describe('managed Provider catalog runtime composition', () => {
       expect.objectContaining({ status: 'success' }),
     ]);
     expect(start).toHaveBeenCalledTimes(1);
+    expect(startupAdmissions).toEqual([{ reads: 1 }]);
     expect(acquireManagedProviderRuntime).toHaveBeenCalledTimes(2);
     expect(createManagedProviderRuntimeInvocationServices).toHaveBeenCalledTimes(1);
     expect(transport).not.toHaveBeenCalled();

@@ -557,7 +557,7 @@ describe('public managed Provider runtime start coordinator', () => {
       }),
     );
     expect(acquireRuntime).toHaveBeenCalledTimes(2);
-    expect(revalidateAuthorization).toHaveBeenCalledTimes(3);
+    expect(revalidateAuthorization).toHaveBeenCalledOnce();
     expect(projectEndpointAccess).toHaveBeenCalledWith(expect.objectContaining({
       service,
       endpoints: [{ endpointTemplateId: 'responses', servicePath: '/v1' }],
@@ -566,6 +566,43 @@ describe('public managed Provider runtime start coordinator', () => {
 
     await launchResourceScope.release();
     expect(projectionCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['runtime', 'projection'] as const)('finishes admitted startup when policy changes during %s, then refuses the next start', async changeAt => {
+    let allowed = true;
+    const dispose = vi.fn(async () => undefined);
+    const service = managedServiceHandle(dispose);
+    const runtime = resolvedRuntime({ start: async () => {
+      if (changeAt === 'runtime') allowed = false;
+      return { service, endpoints: [{ endpointTemplateId: 'responses', endpoint: { kind: 'servicePath', path: '/v1' } }] };
+    } });
+    const scope = createProviderLaunchResourceScope();
+    const revalidateAuthorization = vi.fn(async () => allowed);
+    const input = {
+      identity: { pluginId: 'cliproxyapi', localId: 'cliproxyapi' },
+      request: { reason: 'explicitStartLocal' as const, endpointTemplateIds: ['responses'] },
+      acquireRuntime: async () => runtime,
+      connectedAccounts: connectedAccounts(),
+      custody: {
+        managedServices: managedServices(),
+        projectEndpointAccess: async () => {
+          if (changeAt === 'projection') allowed = false;
+          return { access: 'admitted-access', isCurrent: () => true };
+        },
+      },
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization,
+      signal: new AbortController().signal,
+      launchResourceScope: scope,
+    };
+    const result = await startPublicManagedProviderRuntime(input);
+    expect(result).toMatchObject({ ok: true, access: 'admitted-access' });
+    expect(dispose).not.toHaveBeenCalled();
+    expect(revalidateAuthorization).toHaveBeenCalledOnce();
+    await expect(startPublicManagedProviderRuntime({ ...input, launchResourceScope: createProviderLaunchResourceScope() }))
+      .resolves.toMatchObject({ ok: false, code: 'managed_provider_authorization_changed' });
+    await scope.release();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('accepts an additive trusted managed endpoint result and retains lifecycle custody', async () => {
