@@ -1502,6 +1502,9 @@ export async function toggleLocalVoiceTurn(
   const startLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
     const { config } = params;
     if (config?.conversationMode !== 'agent') return;
+    const admission = readCaptureAdmission(controlSessionId);
+    if (!admission) return;
+    const captureAttempt = admission.captureAttempt;
 
     const welcome = voiceSettingsParse(params.settings?.voice).welcome;
     const shouldWelcome = welcome.enabled && welcome.mode === 'immediate' && config?.tts?.autoSpeakReplies !== false;
@@ -1513,7 +1516,8 @@ export async function toggleLocalVoiceTurn(
           playbackController.registerStopper.captureAttempt?.() ?? playbackController.registerStopper;
         const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
         if (shouldWelcome) {
-          const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId).catch(() => null);
+          const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(controlSessionId);
+          if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
           beginAutomaticCurrentUiContextUpdates(controlSessionId);
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text && !await activeNativePermissionInput?.waitForPendingReadout()) {
@@ -1535,10 +1539,11 @@ export async function toggleLocalVoiceTurn(
         }
 
         await voiceAgentSessions.ensureRunning(controlSessionId);
+        if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
         beginAutomaticCurrentUiContextUpdates(controlSessionId);
-      })().catch((error) => {
+      })().catch(async error => {
         if (isUnsupportedVoiceAgentPrewarmError(error)) return;
-        throw error;
+        await surfaceLocalVoiceTurnFailure(controlSessionId, error, admission, captureAttempt);
       }),
       { tag: 'localVoiceEngine.startLocalVoiceAgentOnConnect' },
     );
@@ -1611,7 +1616,6 @@ export async function toggleLocalVoiceTurn(
     if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
       return;
     }
-    startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     const operation = startLocalVoiceCapture({
       sessionId: resolveLocalConversationControlSessionId(settings, bargeInDecision.sessionId),
@@ -1622,6 +1626,7 @@ export async function toggleLocalVoiceTurn(
     });
     inFlight = operation;
     await operation;
+    startLocalVoiceAgentOnConnect({ settings, config });
     return;
   }
 
@@ -1633,7 +1638,6 @@ export async function toggleLocalVoiceTurn(
     if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
       return;
     }
-    startLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     const operation = startLocalVoiceCapture({
       sessionId: controlSessionId,
@@ -1643,6 +1647,7 @@ export async function toggleLocalVoiceTurn(
     });
     if (!precedingTurn) inFlight = operation;
     await operation;
+    startLocalVoiceAgentOnConnect({ settings, config });
     return;
   }
 

@@ -822,6 +822,45 @@ describe('local voice engine agent behavior', () => {
         }
     });
 
+    it.each([false, true])('retains an explicit Start runtime refusal and releases capture (welcome=%s)', async welcome => {
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const config = readLocalConversationVoiceSettings(voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation',
+            welcome: { ...voice.welcome, enabled: welcome, mode: 'immediate' },
+            providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: {
+                ...config, conversationMode: 'agent',
+                agent: { ...config.agent, prewarmOnConnect: false },
+                tts: { ...config.tts, provider: 'device', autoSpeakReplies: true },
+            } } },
+        } } });
+        const startup = holdNextAgentStartAtDaemon();
+        try {
+            await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+            await startup.reached;
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+            startup.reply.resolve(ExecutionRunEnsureOrStartResponseSchema.parse({
+                ok: false, errorCode: 'SOURCE_RUNTIME_RELOAD_REQUIRED', error: 'PRIVATE_SOURCE_PATH closure_changed',
+            }));
+            const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+            await vi.waitFor(() => expect(voiceConversationRuntimeMachine.getSnapshot().error).toMatchObject({
+                kind: 'provider_error', reason: 'SOURCE_RUNTIME_RELOAD_REQUIRED',
+            }));
+            const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+            expect(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot()))
+                .toMatchObject({ errorCode: 'provider_error', errorMessage: 'SOURCE_RUNTIME_RELOAD_REQUIRED', errorRecoveryAction: 'retry' });
+            const { voiceCaptureAdmissionController } = await import('@/voice/runtime/input/VoiceCaptureAdmissionController');
+            const dictation = voiceCaptureAdmissionController.acquire('dictation');
+            if (dictation.status === 'acquired') dictation.lease.release();
+            expect(dictation.status).toBe('acquired');
+            expect(startTurnRpc).not.toHaveBeenCalled();
+            expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        } finally {
+            startup.reply.resolve(undefined);
+        }
+    });
+
     it('prewarmOnConnect warms daemon inference when voice home becomes active', async () => {
         const storage = await getStorage();
         storage.__setState({
