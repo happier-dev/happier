@@ -1,15 +1,9 @@
+import { loadAdmittedPluginProcessRegistrations as loadAdmittedPlugins } from '../activation/admittedProcessPlugins';
 import type { BackgroundServiceContext, BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/protocol';
 
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
-import { resolvePluginAuthorStagingModule } from '@/plugins/authoring/sourceModule';
-import type { PluginActivationSource } from '../../activationSources';
-import { createPluginTypeScriptGenerationScope, loadVerifiedPluginModule } from '../../loadPluginModule';
-import type { PluginDaemonModuleNamespace } from '../../types';
 import type { AdmittedBackgroundServicePlugin } from './backgroundServiceProcessSource';
-import { activatePluginRuntimeRegistry } from '../manager';
 import { createBackgroundServiceProcessServices, type PreparedBackgroundServiceProcessOperationServices } from './backgroundServiceProcessServices';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
 
@@ -55,58 +49,6 @@ export type BackgroundServiceProcessAgentInvocationRequest = Pick<
     'pluginId' | 'pluginVersion' | 'agentId' | 'occurrenceId' | 'correlationId' | 'cwd' | 'providerBindingActive' | 'signal'
 >;
 
-
-async function loadAdmittedPlugins(
-    plugins: readonly AdmittedBackgroundServicePlugin[],
-    generation: number,
-    createAgentInvocationServices: CreateAgentInvocationServices,
-) {
-    const sources = new Map(plugins.map((plugin) => {
-        const generationScope = createPluginTypeScriptGenerationScope();
-        const loadModule = (entryPath: string) => loadVerifiedPluginModule({
-            entryPath, loadMode: plugin.processEntry.loadMode, generationScope,
-            cacheKey: plugin.committedAuthorization?.immutableGenerationId ?? plugin.occurrenceId,
-            nativeFileUrlMode: 'canonical',
-        });
-        const source: PluginActivationSource<PluginDaemonModuleNamespace> = {
-            kind: 'bundled',
-            moduleId: plugin.moduleId ?? plugin.processEntry.entryPath,
-            sourceAuthority: plugin.sourceAuthority,
-            load: () => loadModule(plugin.processEntry.entryPath),
-            resolveRelativeModule: (module) => resolvePluginAuthorStagingModule({
-                graph: { ...plugin.processEntry, loadModule }, module,
-            }),
-        };
-        return [plugin.target.pluginId, source] as const;
-    }));
-    const contributes = createResolvedContributionRegistry({
-        activationTargets: plugins.map(({ target }) => target),
-        agents: plugins.flatMap(({ target }) => target.manifest.contributes.agents.map((definition) => (
-            projectManifestAgentContribution({
-                definition, pluginId: target.pluginId, provenance: target.provenance,
-                source: target.source, sourceSpec: target.sourceSpec,
-                hostAccess: target.manifest.hostAccess,
-                systemTools: target.manifest.contributes.systemTools,
-                manifestPath: target.manifestPath, daemonEntryPath: target.daemonEntryPath,
-                devDaemonEntryPath: target.devDaemonEntryPath,
-            })
-        ))),
-    });
-    const registry = await activatePluginRuntimeRegistry({
-        contributes, generation, serviceHost: true,
-        serviceHostCreateAgentInvocationServices: createAgentInvocationServices,
-        pluginIds: plugins.map(({ target }) => target.pluginId),
-        occurrenceIdsByPluginId: new Map(plugins.map(({ target, occurrenceId }) => [target.pluginId, occurrenceId])),
-        admittedPluginSourceCustodiesByPluginId: new Map(plugins.map(({ target, sourceCustody }) => [target.pluginId, sourceCustody])),
-        resolveActivationSource: (target) => sources.get(target.pluginId) ?? null,
-    });
-    const failed = [...registry.failedActivationPluginIds].flatMap((pluginId) => registry.pluginDiagnosticsByPluginId[pluginId] ?? []);
-    if (failed.length > 0) {
-        await registry.dispose();
-        throw new Error(`background_service_process_activation_failed: ${failed.map(({ code, message }) => `${code}: ${message}`).join('; ')}`);
-    }
-    return registry;
-}
 
 /** Child-side execution consumes inherited admission and performs no store/publication lifecycle. */
 export async function resolveBackgroundServiceProcessBootstrap(

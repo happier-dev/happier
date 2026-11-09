@@ -76,7 +76,10 @@ export function projectPluginCatalogEntrySnapshot(
         diagnostics: [{
           code: 'plugin_runtime_capability_missing',
           message: 'Plugin unavailable',
-          details: { reason: entry.unavailableCode },
+          details: { reason: entry.unavailableCode,
+            ...(entry.unavailableCause ? { failureCause: entry.unavailableCause } : {}),
+            ...(entry.unavailableRequestId ? { requestId: entry.unavailableRequestId } : {}),
+          },
         }],
         plugin: { id: entry.pluginId, version: entry.version, source: mapPluginSourceToDiagnosticSource(entry.source) },
         defaultStage: 'normalization', host: 'daemon', platform: process.platform, occurredAtMs: 0,
@@ -115,6 +118,14 @@ export function projectPluginCatalogEntrySnapshot(
   });
 }
 
+export type PluginCatalogEntrySummarySnapshot = Omit<PluginCatalogEntryIntrospectionSnapshot, 'contributions'>;
+
+/** The listing projection: the same entry without per-contribution introspection, which a plugin list never shows. */
+export function projectPluginCatalogEntrySummary(entry: PluginCatalogEntry): PluginCatalogEntrySummarySnapshot {
+  const { contributions: _contributions, ...summary } = projectPluginCatalogEntrySnapshot(entry);
+  return Object.freeze(summary);
+}
+
 function projectAttributedCatalogDiagnostics(params: Readonly<{
   entries: readonly PluginCatalogEntry[];
   diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
@@ -125,6 +136,7 @@ function projectAttributedCatalogDiagnostics(params: Readonly<{
   for (const pluginId of Object.keys(params.diagnosticsByPluginId).sort()) {
     const diagnostics = (params.diagnosticsByPluginId[pluginId] ?? []).filter((diagnostic) => (
       diagnostic.contribution !== undefined
+      || isPluginAdmissionExclusion(diagnostic)
     ));
     if (diagnostics.length === 0) continue;
     const entry = entriesByPluginId.get(pluginId);
@@ -229,6 +241,13 @@ export function joinInstalledCatalogRuntimeIntrospection(
   // join consume the same fresh observation instead of rebuilding it per row.
   const currentRuntimes = runtimeRegistry?.pluginFinalPolicyCurrentRuntimesById;
   const currentEntries = entries.map((entry) => {
+    const admissionDiagnostics = (runtimeRegistry?.pluginDiagnosticsByPluginId?.[entry.pluginId] ?? [])
+      .filter(isPluginAdmissionExclusion);
+    if (admissionDiagnostics.length > 0) {
+      return { ...entry, enabled: false, appliedGeneration: null,
+        compatibility: { status: 'load_error', diagnostics: admissionDiagnostics } as const,
+        diagnostics: [...entry.diagnostics, ...admissionDiagnostics] };
+    }
     const current = currentRuntimes?.get(entry.pluginId);
     const currentCatalogGeneration = current
       ? current.sourceCustody.kind === 'managed'

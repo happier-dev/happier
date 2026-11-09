@@ -80,11 +80,12 @@ describe('stable scoped plugin secrets service', () => {
         expect(raw).not.toContain('must-not-win');
     });
 
-    it('fails closed for an undeclared secret identifier', async () => {
+    it('routes an undeclared secret to Account custody without falling back to daemon storage', async () => {
         const { service } = await createFixture();
 
-        await expect(service.status('not-declared')).rejects.toMatchObject({
-            code: 'plugin_secret_undeclared',
+        await expect(service.status('not-declared')).resolves.toMatchObject({ state: 'unavailable' });
+        await expect(service.set('not-declared', 'not-a-daemon-secret')).rejects.toMatchObject({
+            code: 'plugin_secret_custody_unavailable',
         });
     });
 

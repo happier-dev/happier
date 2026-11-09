@@ -32,6 +32,13 @@ const ArchiveSha256IntegritySchema = z.string().check(z.trim(), z.regex(/^sha256
 
 const PluginChangeRequestSchema = z.union([
   z.strictObject({
+    kind: z.literal('installMarketplace'),
+    sourceId: NonEmptyStringSchema,
+    pluginId: PluginIdSchema,
+    packageName: z.optional(NonEmptyStringSchema),
+    version: z.optional(NonEmptyStringSchema),
+  }),
+  z.strictObject({
     kind: z.literal('installPath'),
     locator: NonEmptyStringSchema,
     development: z.optional(z.literal(false)),

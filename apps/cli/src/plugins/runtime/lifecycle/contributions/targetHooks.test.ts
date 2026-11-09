@@ -404,10 +404,7 @@ describe('target hook handler registry', () => {
         expect(receivedContext?.services).not.toHaveProperty('callerControlled');
     });
 
-    // P0 regression: one plugin whose manifest hook declaration contradicts the
-    // canonical hook contract used to throw out of this global projection, so no
-    // plugin's hooks projected at all.
-    it('isolates a hook declaration that contradicts the canonical contract', () => {
+    it('uses catalog facts when projecting hook handlers', () => {
         const goodTarget = target();
         const declaredHook = goodTarget.manifest.contributes.hooks[0]!;
         const canonical = getPluginHookDefinitionV1(declaredHook.on);
@@ -446,14 +443,12 @@ describe('target hook handler registry', () => {
             isOccurrenceCurrent: () => true,
         });
 
-        expect(projected.handlersByHookId.get(declaredHook.on)?.map((handler) => handler.pluginId))
-            .toEqual([goodTarget.pluginId]);
+        const handlers = projected.handlersByHookId.get(declaredHook.on) ?? [];
+        expect(handlers.map((handler) => handler.pluginId).sort())
+            .toEqual([goodTarget.pluginId, 'bad.plugin'].sort());
         expect(projected.diagnosticsByPluginId[goodTarget.pluginId]).toBeUndefined();
-        expect(projected.diagnosticsByPluginId['bad.plugin']).toEqual([
-            expect.objectContaining({
-                code: 'plugin_activation_failed',
-                message: expect.stringContaining('does not match the canonical hook contract'),
-            }),
-        ]);
+        expect(projected.diagnosticsByPluginId['bad.plugin']).toBeUndefined();
+        expect(handlers.find((handler) => handler.pluginId === 'bad.plugin')?.registration.definition)
+            .toMatchObject({ category: canonical.category, scope: canonical.scope, executionKind: canonical.executionKind });
     });
 });

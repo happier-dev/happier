@@ -21,6 +21,7 @@ export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   /** Local/development source roots are always external. */
   manifestAuthority: 'external';
   manifest: CanonicalPluginManifest;
+  diagnostics?: readonly PluginCompatibilityDiagnostic[];
   sourceSpec: PluginSourceSpecV1;
 }>;
 
@@ -136,6 +137,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
     manifestPath: manifestRead.manifestPath,
     manifestAuthority,
     manifest: manifestRead.manifest,
+    ...(manifestRead.diagnostics?.length ? { diagnostics: manifestRead.diagnostics } : {}),
     sourceSpec: {
       kind: 'path',
       locator: sourceLocator ?? pluginRootPath,

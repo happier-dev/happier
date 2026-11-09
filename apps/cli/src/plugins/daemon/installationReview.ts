@@ -1,6 +1,7 @@
-import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { resolvePluginLocalizedStringV2Text as localizedText } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
-import type { PluginHostAccessRequestV2, PluginUpdatePolicyV1, MarketplaceIndexSourceKindV1 } from '@happier-dev/protocol';
+import type { PluginHostAccessRequestV2, PluginUpdatePolicyV1, MarketplaceIndexSourceKindV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import type { PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';
 
 import type { NpmArtifactCompatibilitySelection } from '@/plugins/distribution/npm/types';
@@ -72,10 +73,6 @@ const hostAccessAuthorizationClassByCapability = new Map(
 
 const accessScopeRegistry = createDefaultPluginAccessScopeRegistry();
 
-function localizedText(value: string | Readonly<{ fallback: string }>): string {
-  return typeof value === 'string' ? value : value.fallback;
-}
-
 /**
  * One normalized, review-safe projection for every surface that presents
  * manifest HostAccess to a human before installation or selection.
@@ -129,13 +126,8 @@ export function projectPluginInstallationReviewExecutableRealms(
 ): PluginInstallationReview['executableRealms'] {
   const realms: Array<'daemon' | 'reactNative' | 'hostedWeb'> = [];
   if (manifest.entrypoints?.daemon || manifest.entrypoints?.development) realms.push('daemon');
-  const hasPortableExecutable = PLUGIN_CONTRIBUTION_CATALOG_V2.some((entry) => (
-    entry.readEntries(manifest.contributes).some((value) => {
-      if (!value || typeof value !== 'object') return false;
-      const target = entry.runtimeRegistrationTarget(value as Readonly<Record<string, unknown>>);
-      return target?.realm === 'client' || target?.realm === 'account';
-    })
-  ));
+  const hasPortableExecutable = derivePluginContributionRegistrationRights(manifest.contributes)
+    .some(({ target }) => target.realm === 'client' || target.realm === 'account');
   if (hasPortableExecutable || manifest.contributes.ui.renderers.some((renderer) => renderer.kind === 'reactNative')) {
     realms.push('reactNative');
   }
@@ -306,6 +298,7 @@ export function projectPluginInstallationReviewRawCredentialAccess(
 }
 
 export function projectPluginInstallationReview(params: Readonly<{
+  daemonRights?: MachineDaemonRightsV1;
   manifest: CanonicalPluginManifest;
   source: PluginInstallationReviewSourceFacts;
   uiArtifacts: Readonly<{
@@ -333,6 +326,7 @@ export function projectPluginInstallationReview(params: Readonly<{
   const happierEngine = params.manifest.engines?.happier;
   const rawCredentialAccess = projectPluginInstallationReviewRawCredentialAccess(params.manifest);
   return Object.freeze({
+    daemonRights: params.daemonRights ?? Object.freeze({ observation: null, freshness: 'stale' }),
     pluginId: params.manifest.id,
     displayName: localizedText(params.manifest.displayName),
     version: params.manifest.version,

@@ -24,6 +24,7 @@ import {
     PluginError,
     type PluginServices,
 } from '@happier-dev/plugin-sdk';
+import { assertAgentSessionRealtimeRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentInvocationTurnAdmissionWitness } from './invocation/services/types';
 
 import {
@@ -76,7 +77,9 @@ import {
 import {
     readCurrentCommittedPluginGenerations,
 } from '@/plugins/store/registry/generationStore';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    resolveMergedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
     createManagedPluginSourceCustody,
 } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
@@ -2454,7 +2457,10 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 const retainedConversation =
                     retainedVoiceAuthority?.resolveConversation({
                         provider: voiceProvider,
-                        runtime: retainedSession,
+                        runtime: {
+                            readAgentSessionRealtimeConversation: () =>
+                                assertAgentSessionRealtimeRuntime(retainedSession).realtimeConversation,
+                        },
                     });
                 expect(retainedConversation).not.toBeNull();
                 await expect(
@@ -2924,6 +2930,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 rm(pluginRoot, { recursive: true, force: true }),
                 rm(toolRoot, { recursive: true, force: true }),
             ]);
+            vi.unstubAllGlobals();
         }
     }, 60_000);
 });

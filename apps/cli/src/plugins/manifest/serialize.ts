@@ -1,6 +1,6 @@
 import type { CanonicalPluginManifest } from './types';
 
-function canonicalizeJsonValue(value: unknown): unknown {
+export function canonicalizeJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalizeJsonValue);
   }

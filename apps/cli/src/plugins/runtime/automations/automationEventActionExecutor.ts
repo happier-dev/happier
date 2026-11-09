@@ -1,6 +1,6 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { AutomationEventActionHttpPathsV1, AutomationEventActionHttpRequestSchemasV1, AutomationEventAdmitHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
 import { AutomationEventActionOutputSchemasV1, AutomationEventAdmitHttpResultV1Schema, AutomationEventAdmitInputV1Schema, AutomationEventAdmitResultV1Schema, AutomationEventSourceStatusReportV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
@@ -8,7 +8,7 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { AutomationEventAdmitInputV1, AutomationEventSourceDefinitionV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
-import type { ActionExecutorDeps, AutomationEventActionHttpCallerV1, AutomationEventActionHttpRequestByIdV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitItemResultV1, AutomationEventAdmitResultV1, AutomationAccountCurrentnessWitnessV1, AutomationEventActionIdV1, AutomationEventSourceStatusReportV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, AutomationEventActionHttpCallerV1, AutomationEventActionHttpRequestByIdV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitItemResultV1, AutomationEventAdmitResultV1, AutomationEventActionIdV1, AutomationEventSourceStatusReportV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 import { fetchChangesAccountId } from '@/api/changes';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -266,10 +266,11 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       sourceListInput = parsed.data;
       if (sourceListInput.transport.kind === 'durablePush') {
         sourceListWebhookInvocationReference = readCurrentPluginWebhookInvocationReferenceV1();
-        // A durable Event producer has no Action-controlled endpoint identity.
-        // It can list sources only inside the generic worker's current claimed
-        // delivery context, which the host keeps private through this call.
-        if (!sourceListWebhookInvocationReference) {
+        // Background monitoring uses the endpoint's existing exact target.
+        // A delivery invocation still carries its private claim and may never
+        // fall back to background disclosure after that claim becomes stale.
+        if (readCurrentPluginWebhookInvocationSignalV1() !== null
+          && sourceListWebhookInvocationReference === null) {
           return failure('automation_event_adopted_definitions_unavailable');
         }
       }
@@ -470,7 +471,6 @@ export function createAutomationEventActionExecutor(params: Readonly<{
         if (prepared === null) {
           return admissionFailure('automation_event_host_evidence_unavailable');
         }
-
         // Preparation owns first-use adoption. Read its public projection only
         // after that owner has acquired the source snapshot.
         const projection = params.onCommittedObservation ? adoptedDefinitionSet.readPublicProjection() : null;
@@ -478,7 +478,6 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           return admissionFailure('automation_event_adopted_definitions_unavailable');
         }
 
-        let successorAccountCurrentness: AutomationAccountCurrentnessWitnessV1 | undefined;
         while (mergedResults.length < preparedInput.definitions.length) {
           if (signal.aborted) {
             appendUnavailableTail();
@@ -486,7 +485,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           }
           let next;
           try {
-            next = await prepared.next(successorAccountCurrentness);
+            next = await prepared.next();
           } catch {
             appendUnavailableTail();
             break;
@@ -550,7 +549,6 @@ export function createAutomationEventActionExecutor(params: Readonly<{
             appendUnavailableTail();
             break;
           }
-          successorAccountCurrentness = callResult.data.continuation.accountCurrentness;
         }
         const orderedResults = preparedGroupByPosition.map((group) => {
           const result = mergedResults[group];

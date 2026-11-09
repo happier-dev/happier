@@ -23,6 +23,7 @@ import { createTriageListEntriesActionHandler } from '../../../../../../../packa
 import type { TriageDataActionContext } from '../../../../../../../packages/plugins/triage/src/actions/dataContext';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
 import { createTestkitCorpusCollections } from '../../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../../../../../../packages/plugins/triage/src/internalTasks/configuration';
 import {
     defineContributionProtocol,
 } from '@happier-dev/plugin-sdk/contributions';
@@ -499,7 +500,10 @@ describe('targeted contribution observation service', () => {
                     v: 1, sources: { kind: 'allConfigured' }, order: 'newest', limit: 10,
                 }, context));
                 expect(result.configuredSourcesStatus).toBe('complete');
-                expect(result.configuredSources).toEqual([]);
+                expect(result.configuredSources).toEqual([expect.objectContaining({
+                    source: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source,
+                    sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
+                })]);
                 expect(result.window.rows).toEqual([]);
             } finally {
                 storageGate.resolve();

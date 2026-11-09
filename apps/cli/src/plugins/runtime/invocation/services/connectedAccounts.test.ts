@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
@@ -19,10 +19,36 @@ import {
     type StablePluginConnectedAccountsOwner,
 } from './connectedAccounts';
 import type { HostCurrentSessionInteractionsService } from '@/agent/runtime/state/currentSessionUiTypes';
+import {
+    createConnectedAccountPurposeBindingOwner,
+    type ConnectedAccountPurposeBindingStore,
+} from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import type {
     PluginConnectedAccountBindingScope,
     PluginInvocationServicesSeed,
 } from './types';
+import { createStablePluginUiResourceWatchOwner } from './uiResourceWatch';
+import { createPluginInvocationLogger, createPluginInvocationSecretRedactor, type PluginInvocationLogRecord } from './logger';
+import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
+import { createConnectedAccountPurposeMaterializer } from '@happier-dev/cli-common/connectedAccounts';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
+import { createPluginInvocationServiceBinding } from './factory';
+import { redactPluginInvocationResultData } from '../resultRedaction';
+import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
+import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { prepareOpenCodeQualifiedConnectedAccounts } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/qualifiedPurposeLaunch';
+import { OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
+import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/server/spawnSpec';
+import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/requestAuth/env';
+import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../../../../../packages/plugins/opencode/src/agent/systemTool';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 const scope: PluginConnectedAccountBindingScope = Object.freeze({
     purpose: 'realtime_upstream',
@@ -42,6 +68,7 @@ function createSeed(options: Readonly<{
     session?: PluginInvocationServicesSeed['session'];
 }> = {}) {
     const controller = new AbortController();
+    const retirement = new AbortController();
     let current = true;
     const seed: PluginInvocationServicesSeed = Object.freeze({
         plugin: Object.freeze({ id: 'acme.consumer', version: '1.0.0' }),
@@ -55,13 +82,14 @@ function createSeed(options: Readonly<{
         ...(options.session ? { session: options.session } : {}),
         ...(options.currentSession ? { currentSession: options.currentSession } : {}),
         signal: controller.signal,
+        retirementSignal: retirement.signal,
         isOccurrenceCurrent: () => current,
     });
     return {
         seed,
         retire() {
             current = false;
-            controller.abort();
+            retirement.abort();
         },
     };
 }
@@ -151,11 +179,283 @@ describe('Crabbox coordinator check through declared host capabilities', () => {
         expect(network).not.toHaveBeenCalled();
         expect(await handlers.get('options')!({ backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
             nativeImageId: 'ami-reviewed', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, context))
-            .toMatchObject({ choices: [{ available: true, launch: { backendId: 'aws', transport: 'coordinator' } }] });
+            .toMatchObject({ base: { available: true, launch: { backendId: 'aws', transport: 'coordinator' } } });
     });
 });
 
 describe('stable plugin Connected Accounts host', () => {
+    it('connects the detached OpenCode server through its exact Run profile instead of ambient defaults', async () => {
+        const consumer = { pluginId: 'happier.agent.opencode', localId: 'opencode' };
+        const actionConsumer = { ...consumer, localId: 'nested-action' };
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const purposes = OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS.map(purpose => ({ consumer, purpose }));
+        const selectedPurpose = purposes.find(entry => entry.purpose === 'openai-codex-model-request')!;
+        const binding = (accountId: string) => ({ purpose: selectedPurpose,
+            target: { kind: 'account' as const, account: { service, accountId } } });
+        const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{
+            id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],
+        }] });
+        // Account metadata is the boundary. The purpose owner, SDK binding,
+        // OpenCode auth projection and managed child launch remain real.
+        const resolver = createPurposeTargetResolver({ available: true,
+            resolveService: async () => ({ service, authentication }),
+            listAccounts: async () => ['ambient-profile', 'judge-profile'].map(accountId => QualifiedConnectedAccountProfileV4Schema.parse({
+                ref: { service, accountId }, authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned',
+                credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
+                configurationRevision: null, scopes: [], displayName: accountId,
+            })),
+        });
+        const unused = async () => { throw new Error('Request-auth launch must not acquire native credentials'); };
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [binding('ambient-profile'), {
+                ...binding('ambient-profile'), purpose: { ...selectedPurpose, consumer: actionConsumer },
+            }] }), update: unused, subscribe: () => ({ dispose() {} }) },
+            resolveTarget: resolver, selectTarget: unused, materializeAccount: unused,
+            projectTargetAccounts: unused, assertTargetAccountMaterializable: unused,
+        });
+        const runId = 'detached-opencode-judge';
+        const lease = owner.activatePurposeBindings({ subject: { kind: 'execution_run', runId,
+            runnerPid: process.pid, agentId: 'opencode', isCurrent: () => true }, purposes, bindings: [binding('judge-profile')] });
+        onTestFinished(() => lease.dispose());
+        const { seed } = createSeed();
+        const runtime = await createAdmittedPluginRuntimeFixture({
+            runtimeOptions: { pluginIds: [consumer.pluginId], connectedAccounts: owner },
+        });
+        onTestFinished(() => runtime.dispose());
+        const entry = runtime.registry.agentRuntimesByAgentId.get('opencode');
+        if (!entry) throw new Error('Expected admitted OpenCode Agent runtime');
+        const { connectedAccounts } = await runtime.registry.createAgentInvocationServices({
+            pluginId: entry.pluginId, pluginVersion: entry.pluginVersion,
+            agentId: entry.agentId, occurrenceId: entry.occurrenceId,
+            processOwner: { kind: 'run', runId }, correlationId: runId,
+            cwd: runtime.happyHomeDir, signal: seed.signal, isOccurrenceCurrent: entry.isCurrent,
+        });
+        expect(await connectedAccounts.getBinding(selectedPurpose.purpose)).toMatchObject({ account: { service, accountId: 'judge-profile' } });
+        // A nested Action shares process custody, but keeps its own purpose authority.
+        const actionHost = createStablePluginConnectedAccountsHost(owner);
+        onTestFinished(() => actionHost.retire());
+        const actionAccounts = actionHost.bind({ ...seed, plugin: { id: consumer.pluginId, version: '1.0.0' },
+            contribution: { id: actionConsumer.localId, qualifiedId: `${consumer.pluginId}/actions/${actionConsumer.localId}` },
+            processOwner: { kind: 'run', runId },
+        }, [{ purpose: selectedPurpose.purpose, serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] }]);
+        expect(await actionAccounts.getBinding(selectedPurpose.purpose)).toMatchObject({ account: { accountId: 'ambient-profile' } });
+        const capabilityPath = '/synthetic/run/request-auth/capability.json';
+        const prepared = await prepareOpenCodeQualifiedConnectedAccounts({
+            launchEnvironment: { values: { [OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV]: capabilityPath }, unset: [] },
+        }, { signal: seed.signal, services: { connectedAccounts } });
+        onTestFinished(() => prepared.dispose());
+        const spawn = buildOpenCodeManagedServerSpawnSpec({ id: runId, dialect: 'v1', systemToolId: OPEN_CODE_SYSTEM_TOOL_ID,
+            env: prepared.request.launchEnvironment.values });
+        if (spawn.mode.kind !== 'spawn') throw new Error('Expected managed OpenCode server child');
+        expect(JSON.parse(spawn.mode.launch.env!.OPENCODE_AUTH_CONTENT!)).toHaveProperty('openai');
+        expect(spawn.mode.launch.env).toMatchObject({ [OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV]: capabilityPath });
+        expect(spawn.mode.launch.env?.OPENCODE_CONFIG_CONTENT).toContain('plugin');
+        lease.dispose();
+        expect(await connectedAccounts.getBinding(selectedPurpose.purpose)).toBeNull();
+    });
+
+    it.each([false, true, 'configuration'] as const)('preserves public resource scope without disclosing credentials (public value equals credential=%s)', async collidingValue => {
+        const { seed } = createSeed();
+        const account = { service: scope.serviceRefs[0]!, accountId: 'selected' };
+        const publicValues = { teamId: 'team_selected_scope', projectId: 'project_selected_scope', organization: 'selected-organization' };
+        const token = collidingValue === true ? publicValues.teamId : 'selected-private-bearer-token';
+        const configuredSecret = collidingValue === 'configuration' ? publicValues.projectId : 'selected-private-configuration-secret';
+        const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+            id: account.service.localId, title: 'Resource provider', authentication: { defaultModeId: 'token', modes: [{
+                id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+                fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+                configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+                    ...Object.keys(publicValues).map(id => ({ id, title: id, schema: { type: 'string' }, secret: false })),
+                    { id: 'private', title: 'Private', schema: { type: 'string' }, secret: true },
+                ] },
+            }] },
+        });
+        const runtime = {
+            authentication: { modes: {} },
+            refresh: async () => ({ status: 'connected' as const }),
+            revoke: async () => ({ status: 'remoteUnsupported' as const }),
+            status: async () => ({ status: 'connected' as const }),
+            async materialize(_request: ConnectedAccountMaterializationRequest, context: Parameters<import('@happier-dev/plugin-sdk/connected-accounts').ConnectedAccountRuntime['materialize']>[1]) {
+                return { kind: 'environment' as const, env: {
+                    TEAM: String(context.configuration.values.teamId), PROJECT: String(context.configuration.values.projectId),
+                    ORGANIZATION: String(context.configuration.values.organization),
+                    TOKEN: (await context.credentials.get('token'))!, PRIVATE: (await context.configuration.getSecret('private'))!,
+                } };
+            },
+        };
+        const lease = { ref: account.service, descriptor, runtime, occurrenceId: createPluginRuntimeOccurrenceId(account.service.pluginId),
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'provider-artifact', installSource: 'npm' as const }, isCurrent: () => true };
+        const invoker = createConnectedAccountHostRuntimeInvoker({
+            resolveRuntime: async () => lease, resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
+            resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createPluginInvocationServiceBinding('provider-generation', 'provider') }),
+            // The loaded provider invokes no platform service; its configuration and credential readers remain real.
+            createServices: () => ({}) as PluginInvocationContext['services'],
+            registerRawForRedaction() {},
+        });
+        const registry = { resolveConnectedAccountRuntime: async () => lease, connectedAccountRuntimeInvoker: invoker };
+        const content = (kind: 'credential' | 'configuration', payload: unknown) => sealQualifiedConnectedAccountContentEnvelope({
+            kind, accountMode: 'plain', payload, randomBytes: length => new Uint8Array(length),
+        });
+        const revisions = { authenticationModeId: 'token', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'selected-configuration' };
+        const credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...revisions, ref: account,
+            content: content('credential', { v: 1, values: { token } }), metadata: { scopes: [] } });
+        const configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ ...revisions,
+            target: { kind: 'account', ref: account }, configurationContent: content('configuration', {
+                values: publicValues, secretRefs: {}, secretValues: { private: configuredSecret },
+            }) });
+        const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+            // Runtime loading and persisted snapshots are the only substituted system boundaries.
+            reloadController: { acquireRuntimeRegistry: async () => ({ registry, source: 'active', release: async () => {} }),
+                isRuntimeRegistryCurrent: () => true } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
+            credentials: { token: 'home-token', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+            readCredential: async () => credential, readConfiguration: async () => configuration,
+            configuration: { read: async () => null, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
+        });
+        const fixture = createForegroundPurposeOwnerFixture({ consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id },
+            service: account.service, accountId: account.accountId, purpose: scope.purpose,
+            materializeAccount: createConnectedAccountPurposeMaterializer(established) });
+        const redactor = createPluginInvocationSecretRedactor();
+        const redactionScope = { pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
+        redactor.beginInvocation(redactionScope, seed.signal);
+        const host = createStablePluginConnectedAccountsHost(fixture.owner, {
+            registerRawForRedaction: (_seed, value) => redactor.registerRaw(redactionScope, value),
+            registerExactForRedaction: (_seed, value) => redactor.registerExact(redactionScope, value),
+        });
+        try {
+            const material = await host.bind(seed, [scope]).materialize(scope.purpose, { kind: 'environment',
+                keys: ['TEAM', 'PROJECT', 'ORGANIZATION', 'TOKEN', 'PRIVATE'] });
+            expect(material).toEqual({ kind: 'environment', env: {
+                TEAM: publicValues.teamId, PROJECT: publicValues.projectId, ORGANIZATION: publicValues.organization,
+                TOKEN: token, PRIVATE: configuredSecret,
+            } });
+            const result = { resource: { scope: { teamId: publicValues.teamId, projectId: publicValues.projectId } },
+                options: { base: { launch: { app: { organizationSlug: publicValues.organization } } } },
+                pending: { nativeOperationRef: { value: { launch: { app: { organizationSlug: publicValues.organization } } } } },
+                leakedCredential: token, leakedConfigurationSecret: configuredSecret };
+            expect(redactPluginInvocationResultData(result, value => redactor.redact(redactionScope, value))).toEqual({
+                ...result,
+                resource: { scope: { ...result.resource.scope, teamId: collidingValue === true ? '[REDACTED]' : publicValues.teamId,
+                    projectId: collidingValue === 'configuration' ? '[REDACTED]' : publicValues.projectId } },
+                leakedCredential: '[REDACTED]', leakedConfigurationSecret: '[REDACTED]',
+            });
+        } finally {
+            host.retire();
+            redactor.completeInvocation(redactionScope);
+        }
+    });
+
+    it('keeps selected Account authority through the real purpose owner without plugin operation or kind fences', async () => {
+        const { seed } = createSeed();
+        const selected = { service: scope.serviceRefs[0]!, accountId: 'selected-owner-account' };
+        const fixture = createForegroundPurposeOwnerFixture({
+            consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id },
+            service: selected.service, purpose: scope.purpose, accountId: selected.accountId,
+            // This boundary represents the authenticated Account's credential store.
+            async materializeAccount({ account }) {
+                expect(account).toEqual(selected);
+                return { kind: 'environment', env: { TOKEN: 'owner-private-material' } };
+            },
+        });
+        const host = createStablePluginConnectedAccountsHost(fixture.owner);
+        const service = host.bind(seed, [{ ...scope, operations: ['select'], materializationKinds: [] }]);
+        const request = { kind: 'environment' as const, keys: ['TOKEN'] };
+        await expect(service.materialize(scope.purpose, request, {
+            expectedAccount: { ...selected, accountId: 'another-accounts-selection' },
+        })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+        await expect(service.materialize(scope.purpose, request, { expectedAccount: selected }))
+            .resolves.toEqual({ kind: 'environment', env: { TOKEN: 'owner-private-material' } });
+        await fixture.store.update(() => ({ v: 1, bindings: [], teamResourceSelections: [{
+            purpose: fixture.purpose, teamId: 'another-team',
+            selection: { source: 'team_resource', resourceId: 'team-private-material', deliveryMode: 'brokered' },
+        }] }));
+        await expect(service.materialize(scope.purpose, request)).rejects.toMatchObject({
+            code: 'plugin_connected_account_team_resource_unavailable', details: { reason: 'session_required' },
+        });
+        host.retire();
+    });
+
+    it.each(['preserved', 'dropped'] as const)('carries real owner authority retirement only when its discriminator is %s', async forwarding => {
+        const { seed, retire } = createSeed();
+        const purpose = { consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id }, purpose: scope.purpose };
+        const service = scope.serviceRefs[0]!;
+        let displayName = 'Selected account';
+        let current: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [{ purpose,
+            target: { kind: 'account', account: { service, accountId: 'first' } } }] };
+        const subscribers = new Set<() => void>();
+        // Substitute only the durable-store boundary. Admission, exact-purpose
+        // comparison and SDK observation delivery remain the real owners.
+        const store: ConnectedAccountPurposeBindingStore = {
+            async read() { return current; },
+            async update(mutate) { current = mutate(current); for (const listener of subscribers) listener(); return current; },
+            subscribe(listener) { subscribers.add(listener); return { dispose() { subscribers.delete(listener); } }; },
+        };
+        const owner = createConnectedAccountPurposeBindingOwner({ store,
+            async selectTarget() { return { kind: 'account', account: { service, accountId: 'second' } }; },
+            async resolveTarget(target) {
+                if (target.kind !== 'account') throw new Error('Only exact account selections are used');
+                return { account: target.account, displayName };
+            },
+            async resolveCredentialRevision() { return 'csr_abcdefghijklmnopqrstuv'; },
+            async materializeAccount() { throw new Error('Authority observation must not materialize credentials'); },
+            async projectTargetAccounts() { throw new Error('Authority observation must not enumerate accounts'); },
+            async assertTargetAccountMaterializable() { throw new Error('Authority observation must not materialize credentials'); },
+        });
+        const host = createStablePluginConnectedAccountsHost(forwarding === 'preserved' ? owner : {
+            ...owner,
+            // Deliberately reproduce the daemon wrapper's lost argument. This
+            // is a wiring-sensitivity case, not an alternative authority owner.
+            watch(input) { return owner.watch({ ...input, listener: () => input.listener() }); },
+        });
+        let retirements = 0;
+        const connectedAccounts = host.bind({ ...seed, retireReadObservation() { retirements++; } }, [scope]);
+        const subscription = connectedAccounts.watch(scope.purpose, () => {});
+        const watches = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => !seed.signal.aborted,
+            readPluginOccurrenceId: () => seed.occurrenceId,
+            observeReadAuthority(input) {
+                const service = host.bind({ ...seed, signal: input.signal,
+                    retireReadObservation: input.retire }, [scope]);
+                return service.watch(input.authority.purpose, () => {});
+            },
+        });
+        const settled = () => new Promise<void>(resolve => setImmediate(resolve));
+        try {
+            await expect(watches.open({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority',
+                readAuthority: { consumer: purpose.consumer, purpose: scope.purpose, input: {} } })).resolves.toEqual({ subscriptionId: 'exact-authority' });
+            await settled();
+            for (let index = 0; index < 100; index++) {
+                await store.update(value => ({ ...value, bindings: [...value.bindings.filter(binding => binding.purpose.purpose !== 'unrelated'), {
+                    purpose: { ...purpose, purpose: 'unrelated' },
+                    target: { kind: 'account', account: { service, accountId: `unrelated-${index}` } },
+                }] }));
+            }
+            await settled();
+            expect(retirements).toBe(0);
+            await store.update(value => value);
+            await settled();
+            expect(retirements).toBe(0);
+            displayName = 'Renamed account';
+            await store.update(value => value);
+            await settled();
+            expect(retirements).toBe(0);
+            await owner.requestSelection({ purpose, serviceRefs: [service], assertGenerationCurrent() {},
+                reason: 'Replace the exact observed authority', signal: seed.signal });
+            await settled();
+            expect(retirements).toBe(forwarding === 'preserved' ? 1 : 0);
+            if (forwarding === 'preserved') {
+                await expect(watches.next({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority' }))
+                    .resolves.toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource',
+                        subscriptionId: 'exact-authority' } });
+            }
+        } finally {
+            watches.retire();
+            await subscription.dispose(); host.retire(); retire();
+        }
+        expect(subscribers.size).toBe(0);
+    });
+
     it('rejects undeclared native services before disclosing credential material', async () => {
         const owner = createOwner();
         const { seed } = createSeed();
@@ -357,7 +657,7 @@ describe('stable plugin Connected Accounts host', () => {
         }));
     });
 
-    it('denies undeclared purposes and enforces select/use per method', async () => {
+    it('routes known purposes without enforcing plugin select/use permissions', async () => {
         const owner = createOwner();
         const { seed } = createSeed();
         const selectOnly = Object.freeze({ ...scope, operations: Object.freeze(['select' as const]) });
@@ -367,18 +667,12 @@ describe('stable plugin Connected Accounts host', () => {
             purpose: scope.purpose,
             reason: 'Choose an upstream',
         })).resolves.toEqual(bindingSummary());
-        await expect(service.getBinding(scope.purpose)).rejects.toMatchObject({
-            code: 'plugin_host_access_operation_denied',
-        });
+        await expect(service.getBinding(scope.purpose)).resolves.toEqual(bindingSummary());
         await expect(service.materialize(scope.purpose, {
-            kind: 'environment',
-            keys: ['TOKEN'],
-        })).rejects.toMatchObject({
-            code: 'plugin_host_access_operation_denied',
-        });
-        expect(() => service.watch(scope.purpose, () => undefined)).toThrow(expect.objectContaining({
-            code: 'plugin_host_access_operation_denied',
-        }));
+            kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+        })).resolves.toEqual(materialization());
+        const subscription = service.watch(scope.purpose, () => undefined);
+        subscription.dispose();
         await expect(service.requestSelection({
             purpose: 'undeclared',
             reason: 'Choose an upstream',
@@ -387,7 +681,7 @@ describe('stable plugin Connected Accounts host', () => {
         });
     });
 
-    it('requires prior exact materialization-kind authority before calling the owner', async () => {
+    it('lets the actual Account adapter decide supported materialization kinds', async () => {
         const cases: readonly Readonly<{
             kind: PluginConnectedAccountMaterializationKind;
             request: ConnectedAccountMaterializationRequest;
@@ -440,8 +734,7 @@ describe('stable plugin Connected Accounts host', () => {
                 operations: scope.operations,
             }]);
             await expect(inspectionOnly.materialize(scope.purpose, entry.request))
-                .rejects.toMatchObject({ code: 'plugin_host_access_operation_denied' });
-            expect(deniedOwner.materialize).not.toHaveBeenCalled();
+                .resolves.toEqual(entry.result);
         }
     });
 
@@ -601,29 +894,31 @@ describe('stable plugin Connected Accounts host', () => {
         }
     });
 
-    it('keeps use-authorized non-disclosure inspection available without raw materialization authority', async () => {
-        const owner = createOwner();
+    it('redacts decoded large Basic credentials without suppressing ordinary diagnostics', async () => {
         const { seed } = createSeed();
-        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [{
-            purpose: scope.purpose,
-            serviceRefs: scope.serviceRefs,
-            operations: Object.freeze(['use' as const]),
-        }]);
-
-        await expect(service.getBinding(scope.purpose)).resolves.toEqual(bindingSummary());
-        const subscription = service.watch(scope.purpose, () => undefined);
-        await Promise.resolve();
-        subscription.dispose();
-        await expect(service.materialize(scope.purpose, {
-            kind: 'files',
-            fileIds: ['credentials'],
-        })).rejects.toMatchObject({ code: 'plugin_host_access_operation_denied' });
-        expect(owner.getBinding).toHaveBeenCalledOnce();
-        expect(owner.watch).toHaveBeenCalledOnce();
-        expect(owner.materialize).not.toHaveBeenCalled();
+        const redactionScope = { pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
+        const redactor = createPluginInvocationSecretRedactor();
+        redactor.beginInvocation(redactionScope, seed.signal);
+        const password = `opaque-${'x'.repeat(13 * 1024)}`;
+        const authorization = `Basic ${Buffer.from(`user:${password}`).toString('base64')}`;
+        // The credential vault is the external boundary; materialization-to-log redaction stays real.
+        const service = createStablePluginConnectedAccountsHost(createOwner({
+            materialize: async () => ({ kind: 'httpHeaders', headers: { authorization } }),
+        }), {
+            registerRawForRedaction: (_seed, value) => redactor.registerRaw(redactionScope, value),
+            registerExactForRedaction: (_seed, value) => redactor.registerExact(redactionScope, value),
+        }).bind(seed, [scope]);
+        try {
+            await service.materialize(scope.purpose, { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] });
+            const records: PluginInvocationLogRecord[] = [];
+            const logger = createPluginInvocationLogger({ seed, secretRedactor: redactor, sink: { write: record => { records.push(record); } } });
+            logger.info('credential materialized');
+            logger.info(`native echoed ${password}`);
+            expect(records.map(record => record.message)).toEqual(['credential materialized', 'native echoed [REDACTED]']);
+        } finally { redactor.completeInvocation(redactionScope); }
     });
 
-    it('registers bounded reversible variants for every materialized credential form', async () => {
+    it('registers reversible variants for every materialized credential form', async () => {
         const registerForRedaction = vi.fn();
         const owner = createOwner({
             materialize: vi.fn(async (input) => {
@@ -1089,6 +1384,9 @@ describe('stable plugin Connected Accounts host', () => {
         invocation.retire();
 
         expect(dispose).toHaveBeenCalledOnce();
+        expect(() => service.watch(scope.purpose, () => undefined)).toThrow(expect.objectContaining({
+            code: 'plugin_final_generation_retired',
+        }));
         await expect(service.getBinding(scope.purpose)).rejects.toMatchObject({
             code: 'plugin_final_generation_retired',
         });
@@ -1168,7 +1466,7 @@ describe('stable plugin Connected Accounts host', () => {
         });
     });
 
-    it('denies a listing for an undeclared purpose and for a select-only scope', async () => {
+    it('routes a known listing purpose without enforcing plugin select/use permissions', async () => {
         const owner = createOwner();
         const { seed } = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [
@@ -1178,10 +1476,8 @@ describe('stable plugin Connected Accounts host', () => {
         await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
             code: 'plugin_connected_account_purpose_undeclared',
         });
-        await expect(service.listAccounts({ purpose: 'select_only' })).rejects.toMatchObject({
-            code: 'plugin_host_access_operation_denied',
-        });
-        expect(owner.listAccounts).not.toHaveBeenCalled();
+        await expect(service.listAccounts({ purpose: 'select_only' })).resolves.toMatchObject({ accounts: expect.any(Array) });
+        expect(owner.listAccounts).toHaveBeenCalledOnce();
     });
 
     it('rejects an owner listing that escapes the authorized service scope', async () => {
@@ -1239,6 +1535,31 @@ describe('stable plugin Connected Accounts host', () => {
                     connectedAccountBases: ['https://dev.azure.test/acme'],
                 }],
             });
+    });
+
+    it.each([undefined, 300])('preserves every declared origin and configured base in a metadata listing (limit %s)', async (limit) => {
+        const origins = Array.from({ length: 40 }, (_, index) => `https://endpoint-${index}.example.test`);
+        const bases = origins.flatMap(origin => [origin, `${origin}/deployment`]);
+        const account = listedAccount({
+            displayName: 'a'.repeat(513),
+            connectedAccountOrigins: origins,
+            connectedAccountBases: bases,
+        });
+        const accounts = Array.from({ length: 300 }, (_, index) => listedAccount({
+            ...(index === 0 ? account : {}),
+            account: { service: scope.serviceRefs[0]!, accountId: `account-${index}` },
+        }));
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({ accounts })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose, ...(limit === undefined ? {} : { limit }) })).resolves.toEqual({
+            status: 'complete',
+            accounts,
+        });
+        expect(owner.listAccounts).toHaveBeenCalledOnce();
     });
 
     it.each([
@@ -1304,7 +1625,7 @@ describe('stable plugin Connected Accounts host', () => {
         expect(owner.materializeListedAccount).not.toHaveBeenCalled();
     });
 
-    it('requires prior materialization-kind authority for an exact-listed materialization', async () => {
+    it('delegates exact-listed materialization support to the Account adapter', async () => {
         const owner = createOwner();
         const { seed } = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [
@@ -1319,10 +1640,7 @@ describe('stable plugin Connected Accounts host', () => {
                 origin: 'https://eu.example.test',
                 headerNames: ['authorization'],
             },
-        })).rejects.toMatchObject({
-            code: 'plugin_host_access_operation_denied',
-        });
-        expect(owner.materializeListedAccount).not.toHaveBeenCalled();
+        })).resolves.toEqual(materialization());
     });
 
     it('registers redaction for an exact-listed materialization result', async () => {
@@ -1348,18 +1666,39 @@ describe('stable plugin Connected Accounts host', () => {
         expect(registerRawForRedaction).toHaveBeenCalledWith(seed, 'Bearer secret');
     });
 
-    it('fails a listing whose invocation retires while the owner is pending', async () => {
+    it.each(['binding', 'listing'] as const)('finishes an admitted %s metadata read after retirement and refuses its successor', async operation => {
         const invocation = createSeed();
-        const owner = createOwner({
-            listAccounts: vi.fn(async () => {
-                invocation.retire();
-                return metadataList();
-            }),
+        let entered!: () => void;
+        const reading = new Promise<void>(resolve => { entered = resolve; });
+        let release!: () => void;
+        const released = new Promise<void>(resolve => { release = resolve; });
+        const unexpected = async (): Promise<never> => { throw new Error('Metadata reads do not select or materialize credentials'); };
+        const stored: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [{
+            purpose: { consumer: { pluginId: invocation.seed.plugin.id, localId: invocation.seed.contribution.id }, purpose: scope.purpose },
+            target: { kind: 'account', account: listedAccount().account },
+        }] };
+        const owner = createConnectedAccountPurposeBindingOwner({
+            // Defer the genuine binding-store boundary, not the purpose owner.
+            store: { read: async () => { entered(); await released; return stored; },
+                update: unexpected, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unexpected,
+            resolveTarget: async target => target.kind === 'account'
+                ? { displayName: 'Primary account', account: target.account } : null,
+            materializeAccount: unexpected,
+            projectTargetAccounts: async () => metadataList(),
+            assertTargetAccountMaterializable: unexpected,
         });
         const service = createStablePluginConnectedAccountsHost(owner).bind(invocation.seed, [scope]);
-
-        await expect(service.listAccounts({ purpose: scope.purpose })).rejects.toMatchObject({
-            code: 'plugin_final_generation_retired',
-        });
+        const read = () => operation === 'binding'
+            ? service.getBinding(scope.purpose) : service.listAccounts({ purpose: scope.purpose });
+        const pending = read();
+        try {
+            await reading;
+            invocation.retire();
+            release();
+            await expect(pending).resolves.toMatchObject(operation === 'binding'
+                ? { account: listedAccount().account } : metadataList());
+            await expect(read()).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+        } finally { release(); await pending.catch(() => undefined); }
     });
 });

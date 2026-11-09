@@ -1,14 +1,12 @@
 import { listDeclaredPluginContributionFamilies } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginRuntimeCapabilityFamilyV1Schema } from '@happier-dev/protocol/plugins/runtime/api';
 import type {
-    ParsedPluginEventContributionV1,
     PluginRuntimeCapabilityFamilyV1,
     PluginSystemToolContributionV1,
 } from '@happier-dev/protocol';
 
 import {
     readDeclaredSystemToolContributions,
-    readDeclaredEventContributions,
 } from '../contributions/readDeclared';
 import type { CanonicalPluginManifest } from '../../../manifest/types';
 
@@ -19,7 +17,6 @@ import type { CanonicalPluginManifest } from '../../../manifest/types';
 
 export type ActivationPolicy = Readonly<{
     runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
-    declaredEventDeclarations: readonly ParsedPluginEventContributionV1[];
     systemTools: readonly PluginSystemToolContributionV1[];
 }>;
 
@@ -44,7 +41,6 @@ function deriveRuntimeCapabilities(manifest: CanonicalPluginManifest): readonly 
 export function buildActivationPolicy(manifest: CanonicalPluginManifest): ActivationPolicy {
     return Object.freeze({
         runtimeCapabilities: deriveRuntimeCapabilities(manifest),
-        declaredEventDeclarations: readDeclaredEventContributions(manifest.contributes),
         systemTools: readDeclaredSystemToolContributions(manifest.contributes),
     });
 }

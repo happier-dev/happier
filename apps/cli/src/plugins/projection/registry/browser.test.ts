@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizePluginBrowserProjection } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -43,6 +44,11 @@ describe('plugin browser projection family', () => {
         try {
             const projection = buildPluginProjectionV2({ registry: fixture.registry.contributes, generation: fixture.controller.getState().generation });
             const entries = projection.familiesById.pluginBrowser?.entriesById ?? {};
+            const browser = normalizePluginBrowserProjection(projection);
+            expect(Object.keys(browser.targetsById)).toEqual(['browserTarget:acme.preview:preview-target']);
+            expect(browser.actionsById['browserAction:acme.preview:preview-control']?.actionIdentity)
+                .toEqual({ pluginId: 'acme.preview', localId: 'open-preview' });
+            expect(browser.unknownEntriesById).toEqual({});
 
             expect(entries['browserTarget:acme.preview:preview-target']).toMatchObject({
                 id: 'browserTarget:acme.preview:preview-target',

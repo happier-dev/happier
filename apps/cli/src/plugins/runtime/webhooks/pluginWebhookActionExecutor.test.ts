@@ -8,7 +8,7 @@ const transportMocks = vi.hoisted(() => ({
   createPublisherHeader: vi.fn(),
 }));
 
-vi.mock('axios', () => ({ default: { request: transportMocks.request } }));
+vi.mock('axios', () => ({ default: { defaults: {}, request: transportMocks.request } }));
 vi.mock('@/plugins/installations/publisherProof', () => ({
   createDefaultPluginInstallationPublisherHeader: transportMocks.createPublisherHeader,
 }));
@@ -35,6 +35,7 @@ describe('createPluginWebhookActionExecutor', () => {
         kind: 'ready',
         webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
         revision: 1,
+        readiness: 'providerConfirmationRequired',
       },
     });
     const executor = createPluginWebhookActionExecutor({
@@ -61,6 +62,7 @@ describe('createPluginWebhookActionExecutor', () => {
       kind: 'ready',
       webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
       revision: 1,
+      readiness: 'providerConfirmationRequired',
     });
 
     const body = {

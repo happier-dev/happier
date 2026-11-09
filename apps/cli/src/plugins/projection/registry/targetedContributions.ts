@@ -1,8 +1,8 @@
-import { resolveAdmittedTargetedContributions as resolvePortableAdmittedTargetedContributions } from '@happier-dev/plugin-sdk/host/registration';
+import { resolveAdmittedTargetedContributions as resolvePortableAdmittedTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
 import type { ResolvedPluginContributionPointDeclaration, ResolvedTargetedPluginContributionDeclaration, ResolvedActionContribution, ResolvedUiRendererV2Contribution, AdmittedTargetedContributionSnapshot } from './types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
-export { dropTargetedContributionAdmissionDiagnostics } from '@happier-dev/plugin-sdk/host/registration';
+export { dropTargetedContributionAdmissionDiagnostics } from '@happier-dev/cli-common/plugins/registration';
 
 /** Preserve the CLI's branded occurrence type over the shared admission owner. */
 export function resolveAdmittedTargetedContributions(params: Readonly<{

@@ -605,8 +605,8 @@ export async function stageNpmCompatiblePluginArchive(
     assertStagingNotAborted(params.signal);
     if (!manifestResult.ok) {
       // General ingestion messages can echo unverified manifest keys/values.
-      // Only the Settings owner's identity/code projection is value-free.
-      const diagnostics = manifestResult.diagnostics.map(diagnostic => diagnostic.contribution
+      // Settings attribution and the host-authored engine reason are value-free.
+      const diagnostics = manifestResult.diagnostics.map(diagnostic => diagnostic.contribution || diagnostic.code === 'plugin_manifest_engine_incompatible'
         ? diagnostic
         : { code: diagnostic.code, message: 'Plugin manifest failed strict ingestion and semantic validation' });
       throw new CandidateRejected('manifest_invalid', diagnostics.map(diagnostic => diagnostic.message).join('\n'), diagnostics);

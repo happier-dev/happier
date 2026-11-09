@@ -1156,6 +1156,10 @@ describe('immutable plugin generation store', () => {
 
     await rm(join(paths.generationsDir, 'generation-current', 'plugin-generation.v1.json'));
     await expect(readCurrentCommittedPluginGenerations(paths)).rejects.toThrow();
+    const missing = await readCurrentCommittedPluginGenerations(paths, { isolateInvalidInstalledGenerations: true });
+    expect(missing?.rejectedGenerations.get('acme.plugin')).toMatchObject({
+      cause: { phase: 'resolve', code: 'ENOENT', retryable: true },
+    });
   });
 
   it('rejects a cold-start installed generation whose root was replaced by a symbolic link', async () => {

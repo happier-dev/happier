@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { readPluginManifest } from '@/plugins/manifest/read';
+import type { PluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import type { PluginStorePaths } from '../paths';
 import {
   ContainedGenerationFileError,
@@ -29,6 +30,7 @@ export type InstalledPluginGenerationDiagnostic = Readonly<{
     | 'plugin_installed_generation_manifest_unloadable';
   message: string;
   relativePath?: string;
+  details?: Readonly<{ cause: PluginModuleFailureCause }>;
 }>;
 
 /**
@@ -160,6 +162,7 @@ export async function diagnoseInstalledPluginGenerations(input: Readonly<{
         diagnostics: Object.freeze([Object.freeze({
           code: 'plugin_installed_generation_unavailable' as const,
           message: rejected.message,
+          ...(rejected.cause ? { details: { cause: rejected.cause } } : {}),
         })]),
         repair: 'reinstall' as const,
       }));

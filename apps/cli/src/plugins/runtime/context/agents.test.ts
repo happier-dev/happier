@@ -240,18 +240,6 @@ describe('createPluginAgentCliReadinessService', () => {
         expect(result).toEqual({ launchable: [{ agentId: 'claude' }] });
     });
 
-    it('describes launchable agent CLI candidates without claiming auth or build-policy readiness', async () => {
-        await createIsolatedEnv();
-        const service = createPluginAgentCliReadinessService();
-
-        const result = await service.checkReadiness({
-            candidates: ['claude'],
-            requirement: 'any',
-        });
-
-        expect(result).toEqual({ launchable: [{ agentId: 'claude' }] });
-    });
-
     it('reports all-candidate agent CLI readiness as missing when one candidate is unavailable', async () => {
         await createIsolatedEnv();
         const service = createPluginAgentCliReadinessService();

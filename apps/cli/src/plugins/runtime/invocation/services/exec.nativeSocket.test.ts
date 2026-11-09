@@ -40,12 +40,12 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('binds only the held UI
     expect(directory.nativeProxy).toBe(true);
     expect(directory.nativeLaunch).not.toBe(original);
     const request = { executable: { kind: 'systemTool', id: 'codex-cli' } as const, args: ['app-server'], cwd: { root: 'workspace', relativePath: '' } as const };
-    const launch = await authorizePluginExecLaunchForHost(service, request, { nativeLaunch: directory.nativeLaunch });
+    const launch = await authorizePluginExecLaunchForHost(service, request, { agentIsolation: null, nativeLaunch: directory.nativeLaunch });
     const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
     expect(launch.command).toBe('sudo');
     expect(frame.nativeSocketDirectory).toEqual({ path: join(directory.path, 'private'), daemonUid: process.getuid!() });
     await launch.release();
-    const proxy = await authorizePluginExecLaunchForHost(service, request, { nativeLaunch: original });
+    const proxy = await authorizePluginExecLaunchForHost(service, request, { agentIsolation: null, nativeLaunch: original });
     const proxyFrame = await readAgentLaunchFrame(Readable.from([proxy.stdinPreamble!], { objectMode: false }));
     expect(proxyFrame.nativeSocketDirectory).toBeUndefined();
     await proxy.release();

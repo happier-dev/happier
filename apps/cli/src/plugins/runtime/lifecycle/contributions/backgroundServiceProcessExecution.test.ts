@@ -8,6 +8,31 @@ async function flush() {
 }
 
 describe('background service process execution transport', () => {
+    it.each(['stop', 'dispose'] as const)('keeps actual channel custody failures observable during %s', async action => {
+        const boundary = channelBoundary();
+        const failure = new Error('OS could not terminate the created child');
+        let failTermination = true;
+        const execution = createBackgroundServiceProcessExecution({
+            bootstrap: { entry: 'host', entryId: 'memory-indexer', payload: null }, serviceId: 'test',
+            spawnChannel: async () => ({ ...boundary.channel, terminate: async () => {
+                if (failTermination) throw failure;
+                await boundary.channel.terminate();
+            } }),
+        });
+        const running = execution.run({ signal: new AbortController().signal });
+        const settled = running.catch(() => undefined);
+        await flush();
+        if (action === 'dispose') { boundary.emit({ kind: 'settled', id: '1' }); await running; }
+        try {
+            await expect(execution[action]()).rejects.toBe(failure);
+            expect(execution.isReleased()).toBe(false);
+        } finally {
+            failTermination = false;
+            await execution.stop();
+            await settled;
+        }
+    });
+
     it('definitively stops a worker that ignores cooperative cancellation and joins physical cleanup', async () => {
         const boundary = channelBoundary();
         const execution = createBackgroundServiceProcessExecution({
@@ -39,11 +64,19 @@ describe('background service process execution transport', () => {
         });
         try {
             for (const [index, signal] of [firstSignal, new AbortController().signal].entries()) {
-                const running = execution.run({ signal });
+                const context = { signal, materialization: {
+                    pluginId: 'acme.indexer', machineId: 'machine-observer', materializationId: `installation-${index}`,
+                }, caller: { kind: 'plugin', pluginId: 'acme.caller', materialization: {
+                    pluginId: 'acme.caller', machineId: 'machine-caller', materializationId: 'caller-installation',
+                } } };
+                const running = execution.run(context);
+                // Assertion failure still retires the active physical run below.
+                void running.catch(() => undefined);
                 await flush();
                 const sent = boundary.messages.at(-1);
                 expect(sent?.kind).toBe('run');
                 if (sent?.kind !== 'run') throw new Error('Missing run');
+                expect(sent.context).toMatchObject({ materialization: context.materialization, caller: context.caller });
                 const child = createBackgroundServiceProcessServiceClient<Readonly<{ probe: Readonly<{ admission: string }> }>>({
                     description: sent.services as BackgroundServiceProcessBridgeValue, send() {},
                 });

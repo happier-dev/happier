@@ -20,7 +20,9 @@ export function projectSelectedLoadedPluginContributes(
     providerContributionKeys: params.providerContributionKeys,
     agentIdentity: params.agentIdentity,
     ...(params.provenance === 'external' ? { referenceGraph: params.referenceGraph ?? loadCurrentBundledPluginLocatorResult().admittedGraph } : {}),
-    canonicalize: (entry, value, pluginId) => entry.canonicalize(value, { pluginId }),
+    // LoadedPlugin carries the canonical ingress result; projection must not
+    // structurally parse and copy an already-admitted declaration again.
+    canonicalize: (_entry, value) => value,
   });
   return projectLoadedPluginRegistry({ ...params, pluginRegistry });
 }

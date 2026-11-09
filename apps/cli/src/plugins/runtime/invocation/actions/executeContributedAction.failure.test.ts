@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
 import { executeContributedAction } from './executeContributedAction';
@@ -184,6 +185,9 @@ describe('executeContributedAction lazy activation failures', () => {
             definition: {
                 id: 'commit',
                 surfaces: { cli: true },
+                title: 'Commit',
+                execution: { target: 'daemon' },
+                operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
             },
         } as unknown as ResolvedActionContribution;
         const run = vi.fn(async () => ({
@@ -203,16 +207,17 @@ describe('executeContributedAction lazy activation failures', () => {
                 invoke,
             },
         } as unknown as ResolvedExecutablePluginRuntimeRegistry;
-        let captured: Readonly<{
-            run(operationProgress?: Readonly<{ update(progress: unknown): void }>): Promise<unknown>;
-        }> | undefined;
+        let captured: Parameters<HostActionOperationRuntime['observePluginExecution']>[0]['execute'] | undefined;
 
         await expect(executeContributedAction({
             runtimeRegistry: registry,
             actionId: 'acme.target/commit',
             context: {
                 surface: 'cli',
-                capturePreparedInvocation: (invocation) => { captured = invocation; },
+                observePluginExecution: async ({ execute }) => {
+                    captured = execute;
+                    return { ok: true, result: null };
+                },
             },
         })).resolves.toEqual({
             matched: true,
@@ -221,7 +226,8 @@ describe('executeContributedAction lazy activation failures', () => {
         expect(prepare).toHaveBeenCalledTimes(1);
         expect(invoke).not.toHaveBeenCalled();
         expect(run).not.toHaveBeenCalled();
-        await expect(captured?.run()).resolves.toEqual({ ok: true, result: { committed: true } });
+        await expect(captured?.({ signal: new AbortController().signal, operationProgress: { update() {} } }))
+            .resolves.toEqual({ ok: true, result: { committed: true } });
         expect(run).toHaveBeenCalledTimes(1);
     });
 

@@ -700,6 +700,10 @@ describe('createSessionHooksService', () => {
       expect(followError).toBeNull();
       expect(hookProviderSessionIds).toEqual([paddedProviderSessionId]);
       expect(followedLines).toEqual(['{"kind":"ready"}']);
+      await Promise.all(Array.from({ length: 3 }, () => service.observeSessionHook({
+        providerId: 'claude', sessionId: 'happy-session-grant', providerSessionId: paddedProviderSessionId,
+        payload: { hook_event_name: 'SessionStart', session_id: paddedProviderSessionId, transcript_path: transcriptPath },
+      })));
       expect(grantRequests).toEqual([
         expect.objectContaining({
           providerId: 'claude',

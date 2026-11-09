@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,8 @@ import { createActiveAccountSettingsConnectedAccountPurposeBindingStore, createC
 import { deriveRegistryConnectedAccountPurposeReconciliationScopes } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import type { DaemonState } from '@/api/types';
+import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -25,7 +27,8 @@ import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 function createRuntime(happyHomeDir: string, pluginId: string,
-  reconcileConnectedAccountPurposePublication?: Parameters<typeof createDaemonPluginRuntimeOwner>[0]['reconcileConnectedAccountPurposePublication']) {
+  reconcileConnectedAccountPurposePublication?: Parameters<typeof createDaemonPluginRuntimeOwner>[0]['reconcileConnectedAccountPurposePublication'],
+  invalidateProjection?: () => void) {
   const reloadController = createPluginReloadController({
     happyHomeDir,
     resolveRuntimeRegistry: async () => resolveExecutablePluginRuntimeRegistry({
@@ -38,12 +41,106 @@ function createRuntime(happyHomeDir: string, pluginId: string,
     reloadController,
     connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
     ...(reconcileConnectedAccountPurposePublication ? { reconcileConnectedAccountPurposePublication } : {}),
+    ...(invalidateProjection ? {
+      onDurableRegistryApplied: invalidateProjection,
+      onRuntimeProjectionInvalidated: invalidateProjection,
+    } : {}),
   });
   return { owner, reloadController, async dispose() {
     await owner.changeService.shutdown();
     await reloadController.shutdown();
   } };
 }
+
+it('publishes a daemon projection revision for a process-local development replacement, not retained observations', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-projection-')));
+  const entryPath = join(root, 'plugin.ts');
+  const pluginId = 'acme.development-projection';
+  let daemonState: DaemonState = { status: 'running', pid: 17, contributionRegistryProjectionRevision: 40 };
+  const publications: DaemonState[] = [];
+  // Only the machine-state network publication is substituted. The runtime,
+  // source observation, registry adoption and projection revision owner are real.
+  const projection = createDaemonPluginRegistryProjectionInvalidation({
+    getApiMachine: () => ({
+      getContributionRegistryProjectionRevision: () => daemonState.contributionRegistryProjectionRevision ?? 0,
+      updateDaemonState: async update => {
+        daemonState = update(daemonState);
+        publications.push(daemonState);
+      },
+    }),
+    isDaemonQuiescing: () => false,
+    onPublicationFailure: error => { throw error; },
+  });
+  const runtime = createRuntime(root, pluginId, undefined, projection.invalidateProjection);
+  const manifest = createPluginManifestV2Fixture({ id: pluginId, entrypoints: undefined,
+    contributes: { actions: [{ id: 'identity', title: 'Identity', scopes: ['global'], surfaces: ['cli'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
+  });
+  const writeVersion = async (revision: number, crash = false) => writeFile(entryPath, [
+    `export const manifest = ${JSON.stringify(manifest)};`,
+    `export function activate(api) { api.actions.register('identity', () => ({ revision: ${revision} }));`,
+    ...(crash ? ["throw new Error('candidate activation failed');"] : []),
+    '}',
+  ].join('\n'));
+  const invoke = () => runtime.reloadController.getState().activeRegistry!.targetActionInvocations.invoke({
+    pluginId, localId: 'identity', input: {}, surface: 'cli',
+  });
+  try {
+    await writeVersion(1);
+    const initial = await runtime.reloadController.acquireRuntimeRegistry();
+    await initial.release();
+    await runtime.owner.initialize();
+    const publicationsBeforeInstall = publications.length;
+    const revisionBeforeInstall = projection.readRevision();
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: entryPath });
+    const pending = (await runtime.owner.changeService.listPendingPluginChanges()).changes[0]!;
+    await expect(runtime.owner.changeService.decidePluginChange({
+      pendingChangeId: pending.pendingChangeId, decision: 'installAndTrust',
+    })).resolves.toMatchObject({ kind: 'committed', pluginId });
+    expect(projection.readRevision()).toBe(revisionBeforeInstall + 1);
+    expect(publications).toHaveLength(publicationsBeforeInstall + 1);
+    await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 1 } });
+    const revisionBeforeDurableUpdate = projection.readRevision();
+    const publicationsBeforeDurableUpdate = publications.length;
+    await expect(runtime.owner.changeService.requestPluginChange({
+      kind: 'setUpdatePolicy', pluginId, policy: 'pinned',
+    })).resolves.toMatchObject({ kind: 'committed', pluginId });
+    expect(projection.readRevision()).toBe(revisionBeforeDurableUpdate + 1);
+    expect(publications).toHaveLength(publicationsBeforeDurableUpdate + 1);
+    await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 1 } });
+    const incumbentOccurrence = runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId);
+    const revisionBeforeReload = projection.readRevision();
+    const publicationsBeforeReload = publications.length;
+
+    await writeVersion(2);
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'reload', rootPath: entryPath });
+    await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 2 } });
+    const replacementOccurrence = runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId);
+    expect(replacementOccurrence).toBeTruthy();
+    expect(replacementOccurrence).not.toBe(incumbentOccurrence);
+    expect(projection.readRevision()).toBe(revisionBeforeReload + 1);
+    expect(publications.slice(publicationsBeforeReload)).toEqual([
+      { status: 'running', pid: 17, contributionRegistryProjectionRevision: revisionBeforeReload + 1 },
+    ]);
+
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'status' });
+    const current = await runtime.reloadController.acquireRuntimeRegistry();
+    await current.release();
+    runtime.owner.reportCurrentAvailability();
+    await writeVersion(3, true);
+    const rejected = await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'reload', rootPath: entryPath });
+    expect(rejected.status.plugins).toEqual(expect.arrayContaining([expect.objectContaining({
+      pluginId, phase: 'retained_incumbent',
+    })]));
+    expect(runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBe(replacementOccurrence);
+    await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 2 } });
+    expect(projection.readRevision()).toBe(revisionBeforeReload + 1);
+    expect(publications).toHaveLength(publicationsBeforeReload + 1);
+  } finally {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
 
 it('re-enables a reviewed source in place, changes policy, and re-enables after process custody is restored', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-lifecycle-')));
@@ -341,6 +438,13 @@ it('registers a direct development install and rejoins its exact review before p
     await expect(runtime.reloadController.getState().activeRegistry!.targetActionInvocations.invoke({
       pluginId, localId: 'identity', input: {}, surface: 'cli',
     })).resolves.toMatchObject({ status: 'executed', value: { installed: true } });
+    // Re-adopting a corrected retained source uses the same public install path.
+    await writeFile(entryPath, (await readFile(entryPath, 'utf8')).replace('installed: true', 'installed: "corrected"'));
+    const corrected = await runtime.owner.changeService.requestPluginChange(request);
+    expect(corrected, JSON.stringify(corrected)).toMatchObject({ kind: 'committed', pluginId });
+    await expect(runtime.reloadController.getState().activeRegistry!.targetActionInvocations.invoke({
+      pluginId, localId: 'identity', input: {}, surface: 'cli',
+    })).resolves.toMatchObject({ status: 'executed', value: { installed: 'corrected' } });
   } finally {
     await runtime.dispose();
     await rm(root, { recursive: true, force: true });

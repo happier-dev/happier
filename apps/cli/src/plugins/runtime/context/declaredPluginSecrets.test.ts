@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { collectDeclaredPluginSecrets } from './declaredPluginSecrets';
 
 const manifest = (
-  secrets: readonly Readonly<{ id: string; custody?: 'account' | 'daemon' }>[],
+  secrets: readonly Readonly<{ id: string; custody?: 'account' | 'daemon'; saveShared?: true }>[],
   settingFields: readonly Readonly<{ id: string; secret?: unknown }>[] = [],
 ) => ({
   secrets,
@@ -11,6 +11,19 @@ const manifest = (
 }) as never;
 
 describe('declared plugin secret collection', () => {
+  it('preserves shared-save metadata without treating it as a custody conflict', () => {
+    expect(collectDeclaredPluginSecrets([{ pluginId: 'a.plugin', manifest: manifest([{ id: 'database', saveShared: true }]) }]))
+      .toEqual([{ pluginId: 'a.plugin', declaration: { id: 'database', custody: 'account', saveShared: true } }]);
+    for (const reversed of [false, true]) {
+      const entries = reversed ? [{ id: 'database' }, { id: 'database', saveShared: true as const }]
+        : [{ id: 'database', saveShared: true as const }, { id: 'database' }];
+      expect(collectDeclaredPluginSecrets([{ pluginId: 'a.plugin', manifest: manifest(entries) }]))
+        .toMatchObject([{ pluginId: 'a.plugin', declaration: { id: 'database', custody: 'account' } }]);
+    }
+    expect(collectDeclaredPluginSecrets([{ pluginId: 'a.plugin', manifest: manifest(
+      [{ id: 'database', saveShared: true }], [{ id: 'database', secret: true }],
+    ) }])).toMatchObject([{ pluginId: 'a.plugin', declaration: { id: 'database', custody: 'account' } }]);
+  });
   it('collects every plugin declaration when each plugin is coherent', () => {
     const collected = collectDeclaredPluginSecrets([
       { pluginId: 'a.plugin', manifest: manifest([{ id: 'token', custody: 'account' }]) },

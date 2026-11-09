@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { createPluginActionPresentUserGate, projectPluginActionFailureCode, projectPluginActionUnavailableOutcomeCode, type PluginActionInputParserIssue, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionPresentUserGate, projectPluginActionUnavailableOutcomeCode, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ApprovalExecutionOriginV1, ApprovalRequesterConfirmationV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
-import { isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 
@@ -17,26 +18,10 @@ import type {
   ResolveTargetActionHostPolicy,
   TargetActionHostAccessRequest,
 } from '../hostAccess/resolve';
-import { projectPluginFailureText } from '../lifecycle/utils';
 import type { PluginInvocationServiceBinding } from './services/types';
-import { projectTargetActionDiagnosticIssue, readTargetActionDiagnosticConfidentiality } from './diagnostics';
-
-export type TargetActionExecutionResult = Readonly<
-  | { status: 'executed'; value: JsonValue | null }
-  | { status: 'deferred'; artifactId: string }
-  | {
-    status: 'unavailable' | 'invalid' | 'failed';
-    code: string;
-    message: string;
-    issues?: readonly PluginActionInputParserIssue[];
-    /** Failures only, and only for a proven canonical PluginError. */
-    retryable?: boolean;
-    /** Failures only: the target's own published PluginError contract payload. */
-    data?: JsonValue;
-    /** Present only when the generic Action owner proves the target handler never began. */
-    actionHandlerInvocation?: PluginActionHandlerInvocation;
-  }
->;
+import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
+import { projectTargetActionFailure, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
+export { projectTargetActionFailure, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
 
 export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   pluginId: string;
@@ -47,6 +32,8 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   /** Executable declaration captured by the invocation owner, absent on catalog-only facts. */
   pluginVersion?: string;
   inputSchema?: object;
+  /** Canonical admitted Action declaration; excludes implementation/build identity. */
+  declaration?: object;
   accountId?: string;
   resourceId?: string;
   /** Durable source authority for replay; live admission remains occurrence-fenced. */
@@ -157,6 +144,7 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
   secretInputLabels?: Readonly<Record<string, string>>;
   pluginVersion?: string;
   inputSchema?: object;
+  declaration?: object;
 }>): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
@@ -170,10 +158,9 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
     approvalRequiredByActionSettings: action.approvalRequiredByActionSettings,
     secretInputPaths: action.secretInputPaths ?? [],
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
-    // Occurrences can repeat after restart. Bind the executable declaration in
-    // the existing durable subject as well as its current policy and source.
-    pluginVersion: action.pluginVersion,
+    // Consent binds the executable declaration, independently of its build.
     inputSchema: action.inputSchema,
+    declaration: action.declaration,
   })).digest('hex');
 }
 
@@ -190,7 +177,7 @@ function failed(
   code: string,
   error: unknown,
   actionHandlerInvocation?: PluginActionHandlerInvocation,
-): TargetActionExecutionResult {
+) {
   const pluginError = readPluginActionError(error);
   return Object.freeze({
     status: 'failed',
@@ -199,166 +186,6 @@ function failed(
   });
 }
 
-/**
- * A target's published failure payload crosses to its caller, so it must not
- * become the one unredacted route out of an invocation whose credential
- * redaction already owns the failure code and message. The same scoped
- * redactor is applied to strings and keys; a redactor failure is
- * caught by the caller, which then withholds the payload entirely.
- *
- * The payload already passed shared Action JSON admission. That carrier has no
- * generic depth quota, so redaction must use an iterative work list rather
- * than treating the JavaScript call stack as a privacy limit.
- */
-function redactTargetActionFailureData(
-  value: JsonValue,
-  redact: (value: string) => string,
-  confidentiality?: ReturnType<typeof readTargetActionDiagnosticConfidentiality>,
-): JsonValue {
-  if (typeof value === 'string') return redact(value);
-  if (value === null || typeof value !== 'object') return value;
-
-  type PendingRedaction =
-    | Readonly<{
-      kind: 'array';
-      source: readonly JsonValue[];
-      destination: JsonValue[];
-      path: readonly string[];
-    }>
-    | Readonly<{
-      kind: 'record';
-      source: Readonly<Record<string, JsonValue>>;
-      destination: Record<string, JsonValue>;
-      path: readonly string[];
-    }>;
-  const isJsonArray = (candidate: JsonValue): candidate is readonly JsonValue[] => (
-    Array.isArray(candidate)
-  );
-  const root: PendingRedaction = isJsonArray(value)
-    ? { kind: 'array', source: value, destination: [], path: [] }
-    : { kind: 'record', source: value, destination: {}, path: [] };
-  const pending: PendingRedaction[] = [root];
-  const confidentialPaths = new Set(confidentiality?.paths);
-  const project = (candidate: JsonValue, path: readonly string[]): JsonValue => {
-    // PluginError owns the outer envelope. Only details carry plugin operands;
-    // its original paths are checked before keys or text are redacted.
-    if (path[0] === 'details' && confidentialPaths.has(path.slice(1).join('.'))) return '[REDACTED]';
-    const issue = path[0] === 'details' && confidentiality
-      ? projectTargetActionDiagnosticIssue(candidate, confidentiality) : null;
-    if (issue) candidate = { path: [...issue.path], code: issue.code, message: issue.message };
-    if (typeof candidate === 'string') return redact(candidate);
-    if (candidate === null || typeof candidate !== 'object') return candidate;
-    if (isJsonArray(candidate)) {
-      const next: PendingRedaction = {
-        kind: 'array',
-        source: candidate,
-        destination: [],
-        path,
-      };
-      pending.push(next);
-      return next.destination;
-    }
-    const next: PendingRedaction = {
-      kind: 'record',
-      source: candidate,
-      destination: {},
-      path,
-    };
-    pending.push(next);
-    return next.destination;
-  };
-
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (!current) continue;
-    if (current.kind === 'array') {
-      for (let index = 0; index < current.source.length; index += 1) {
-        current.destination[index] = project(current.source[index]!, confidentialPaths.size > 0 ? [...current.path, String(index)] : current.path);
-      }
-      continue;
-    }
-    for (const [key, candidate] of Object.entries(current.source)) {
-      current.destination[redact(key)] = project(candidate, confidentialPaths.size > 0 ? [...current.path, key] : current.path);
-    }
-  }
-
-  return root.destination;
-}
-
-/** One diagnostic projection for parser admission and execution failures. */
-export function projectTargetActionFailure(
-  result: TargetActionExecutionResult,
-  redact?: (value: string) => string,
-  confidentialInput?: Readonly<{
-    input: unknown;
-    secretInputPaths: readonly string[];
-    rawConfidentiality?: ReturnType<typeof readTargetActionDiagnosticConfidentiality>;
-  }>,
-): TargetActionExecutionResult {
-  if (result.status === 'executed' || result.status === 'deferred') return result;
-  let code = projectPluginActionFailureCode(result.code);
-  let message = result.message;
-  let data = result.data;
-  let issues = result.issues;
-  let confidentiality: ReturnType<typeof readTargetActionDiagnosticConfidentiality> | undefined;
-  if (confidentialInput) {
-    try {
-      const classified = readTargetActionDiagnosticConfidentiality(
-        confidentialInput.input, confidentialInput.secretInputPaths, confidentialInput.rawConfidentiality,
-      );
-      confidentiality = classified;
-      const { nonStringPaths } = classified;
-      issues = issues?.map(issue => projectTargetActionDiagnosticIssue(issue, classified) ?? issue);
-      const firstIssue = issues?.[0];
-      if (firstIssue && firstIssue !== result.issues?.[0]) message = firstIssue.message;
-      if (nonStringPaths.length > 0 && result.code === 'plugin_action_result_schema_invalid' && !result.issues) {
-        // The Protocol result parser retains only prose, losing issue provenance.
-        // Use its content-free schema failure rather than guessing operand text.
-        message = 'Plugin action result does not match its executable result schema';
-      }
-    } catch {
-      code = 'plugin_action_execution_failed';
-      message = code;
-      data = undefined;
-      issues = undefined;
-    }
-  }
-  if (redact || confidentiality) {
-    const redactText = redact ?? ((value: string) => value);
-    const projected = { code, message, data, issues };
-    code = 'plugin_action_execution_failed';
-    message = code;
-    data = undefined;
-    issues = undefined;
-    try {
-      const redactedCode = redactText(projected.code);
-      code = redactedCode === projected.code ? projectPluginActionFailureCode(projected.code) : code;
-      message = redactText(projected.message);
-      data = projected.data === undefined ? undefined : redactTargetActionFailureData(projected.data, redactText, confidentiality);
-      issues = projected.issues?.map(issue => Object.freeze({
-        path: Object.freeze(issue.path.map(segment => typeof segment === 'string' ? redactText(segment) : segment)),
-        code: redactText(issue.code), message: redactText(issue.message),
-        ...(issue.expected === undefined ? {} : { expected: redactText(issue.expected) }),
-        ...(issue.acceptedValues === undefined ? {} : {
-          acceptedValues: Object.freeze(issue.acceptedValues.map(value => typeof value === 'string' ? redactText(value) : value)),
-        }),
-      }));
-    } catch {
-      // A failed scoped redactor cannot disclose a partially projected diagnostic.
-      code = 'plugin_action_execution_failed';
-      message = code;
-      data = undefined;
-      issues = undefined;
-    }
-  }
-  return Object.freeze({
-    status: result.status, code, message: projectPluginFailureText(new Error(message)),
-    ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
-    ...(data === undefined ? {} : { data }),
-    ...(issues === undefined ? {} : { issues }),
-    ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
-  });
-}
 
 function isCurrentServiceBinding(
   action: ResolvedTargetAction,
@@ -411,6 +238,7 @@ export function resolvePresentUserGatePolicy(
       accountId: action.accountId ?? null,
       resourceId: action.resourceId ?? null,
       policyFingerprint: action.policyFingerprint,
+      sourceCustody: action.sourceCustody,
       hostAccess: action.hostAccess,
     }),
   });
@@ -469,7 +297,8 @@ export function createTargetActionExecutor(deps: Readonly<{
         const redactedAction = action;
         const redactFailureText = deps.redactFailureText;
         const publicResult = projectTargetActionFailure(result, redactedAction && redactFailureText
-          ? value => redactFailureText(redactedAction, value) : undefined,
+          ? value => redactFailureText(redactedAction, value)
+          : result.status === 'failed' ? projectPluginFailureMessage : undefined,
           redactedAction ? {
             input: redactedAction.input,
             secretInputPaths: redactedAction.secretInputPaths ?? [],
@@ -512,11 +341,7 @@ export function createTargetActionExecutor(deps: Readonly<{
           try {
             resolved = deps.resolve(args);
           } catch (error) {
-            return Object.freeze({
-              status: 'failed' as const,
-              code: isPluginError(error) ? error.code : 'plugin_action_selection_failed',
-              message: error instanceof Error ? error.message : 'plugin_action_selection_failed',
-            });
+            return failed('plugin_action_selection_failed', error);
           }
           if (!resolved) {
             return Object.freeze({
@@ -532,11 +357,7 @@ export function createTargetActionExecutor(deps: Readonly<{
           try {
             binding = await deps.resolveHostBinding(resolved);
           } catch (error) {
-            return Object.freeze({
-              status: 'failed' as const,
-              code: isPluginError(error) ? error.code : 'plugin_action_selection_failed',
-              message: error instanceof Error ? error.message : 'plugin_action_selection_failed',
-            });
+            return failed('plugin_action_selection_failed', error);
           }
           if (!binding) {
             return Object.freeze({
@@ -597,7 +418,7 @@ export function createTargetActionExecutor(deps: Readonly<{
         if (admission.status === 'failed') {
           return Object.freeze({
             kind: 'settled' as const,
-            result: await finish(failed(admission.code, new Error(admission.message), 'notStarted')),
+            result: await finish({ ...admission, actionHandlerInvocation: 'notStarted' }),
           });
         }
         if (admission.status === 'deferred') {

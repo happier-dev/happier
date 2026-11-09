@@ -139,10 +139,10 @@ describe('plugin contribution lifecycle introspection', () => {
         action,
         {
           ...action,
-          family: 'commands',
-          identity: { kind: 'localId', localId: 'run-command' },
+          family: 'roles',
+          identity: { kind: 'localId', localId: 'reviewer' },
           registration: 'notRequired',
-          consumer: 'cli-commands',
+          consumer: 'role-catalog',
           platforms: ['cli'],
         },
       ],
@@ -157,7 +157,7 @@ describe('plugin contribution lifecycle introspection', () => {
       projection: { state: 'projected' },
     });
     expect(projection.contributions[1]).toMatchObject({
-      contribution: { qualifiedId: 'acme.example/commands/run-command' },
+      contribution: { qualifiedId: 'acme.example/roles/reviewer' },
       registration: { requirement: 'notRequired', state: 'notRequired' },
       activation: { state: 'notRequired' },
       projection: { state: 'projected' },

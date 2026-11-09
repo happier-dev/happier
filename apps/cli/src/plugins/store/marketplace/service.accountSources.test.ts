@@ -1,9 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EventEmitter } from 'node:events';
-import type { ClientRequest, IncomingMessage } from 'node:http';
-import type { RequestOptions } from 'node:https';
-import { Readable } from 'node:stream';
-import * as https from 'node:https';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as undici from 'undici';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { StoredPromptLibraryRecordV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -15,16 +10,16 @@ import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/ma
 import { createPluginRegistrySourceDescriptorV1, listRegistrySourcesV1 } from '@happier-dev/protocol/registries';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { createMarketplaceIndexService, resolveExactMarketplaceSourceBinding } from './service';
-import { requestExactMarketplaceInstall, resolveExactMarketplaceListingForInstall, projectExpectedMarketplaceListing, marketplaceListingMatchesExpected } from './exactInstall';
+import { createMarketplaceIndexService } from './service';
+import { resolveExactMarketplaceListingForInstall, projectExpectedMarketplaceListing, marketplaceListingMatchesExpected } from './exactInstall';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createCliRegistryHostV1, readCliRegistrySourcesV1 } from '@/registries/createCliRegistryHost';
 
 // DNS and HTTP are genuine system boundaries. Account hydration/read, parsing,
 // source targeting, acquisition, strict output and install review stay real.
 vi.mock('node:dns/promises', async (original) => ({ ...await original<typeof import('node:dns/promises')>(),
   lookup: async () => [{ address: '93.184.216.34', family: 4 }] }));
 vi.mock('undici', async (original) => { const actual = await original<typeof import('undici')>(); return { ...actual, fetch: vi.fn(actual.fetch) }; });
-vi.mock('node:https', async original => ({ ...await original<typeof import('node:https')>(), request: vi.fn() }));
 // Credential-file access is an external boundary; these cases use the actual
 // already-observed Account catalog and never the developer's login material.
 vi.mock('@/persistence', async (original) => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
@@ -51,29 +46,38 @@ const catalog = () => MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { i
   }] });
 
 describe('Account marketplace sources and exact install seam', () => {
-  afterEach(async () => { vi.mocked(undici.fetch).mockReset(); vi.mocked(https.request).mockReset(); resetActiveAccountSettingsSnapshotForTests();
+  beforeEach(()=>vi.stubGlobal('fetch',undici.fetch));
+  afterEach(async () => { vi.unstubAllGlobals();vi.mocked(undici.fetch).mockReset(); resetActiveAccountSettingsSnapshotForTests();
     await Promise.all(homes.splice(0).map(removeTempDir)); });
   it('reads the Account source and refuses removed or disabled bindings before HTTP or install effects', async () => {
     const home = await createTempDir('happier-marketplace-account-u3-'); homes.push(home);
     accountSources([{ enabled: true }]);
-    expect(await resolveExactMarketplaceSourceBinding({ happyHomeDir: home, sourceId })).toMatchObject({ ok: true, source: { id: sourceId, sourceUrl } });
     vi.mocked(undici.fetch).mockImplementation(async () => new undici.Response(JSON.stringify(catalog()), { status: 200 }));
     const service = createMarketplaceIndexService({ happyHomeDir: home });
     const exact = await service.queryExactListing({ sourceId, pluginId: 'acme.plugin' });
     expect(exact).toMatchObject({ ok: true, result: { items: [{ pluginId: 'acme.plugin', admission: { install: 'full-review' } }] } });
     accountSources([]); vi.mocked(undici.fetch).mockClear();
-    const requestChange = vi.fn(async () => { throw new Error('Removed source must not install'); });
-    expect(await requestExactMarketplaceInstall({ happyHomeDir: home, sourceId, pluginId: 'acme.plugin' }, { requestChange })).toMatchObject({ ok: false, code: 'install_unavailable' });
-    expect(vi.mocked(undici.fetch)).not.toHaveBeenCalled(); expect(requestChange).not.toHaveBeenCalled();
+    expect(await resolveExactMarketplaceListingForInstall({ happyHomeDir: home, sourceId, pluginId: 'acme.plugin' })).toMatchObject({ ok: false, code: 'install_unavailable' });
+    expect(vi.mocked(undici.fetch)).not.toHaveBeenCalled();
     accountSources([{ enabled: false }]);
-    expect(await resolveExactMarketplaceSourceBinding({ happyHomeDir: home, sourceId })).toMatchObject({ ok: false, code: 'install_unavailable' });
+    expect(await service.queryExactListing({ sourceId, pluginId: 'acme.plugin' })).toMatchObject({ ok: false, code: 'install_unavailable' });
   });
-  it('rechecks Account authority after a catalog response and rejects a source removed during acquisition', async () => {
+  it('admits a source once per lookup and observes removal on the next lookup', async () => {
     const home = await createTempDir('happier-marketplace-account-race-u3-'); homes.push(home);
     accountSources([{ enabled: true }]);
-    vi.mocked(undici.fetch).mockImplementation(async () => { accountSources([]); return new undici.Response(JSON.stringify(catalog()), { status: 200 }); });
-    expect(await createMarketplaceIndexService({ happyHomeDir: home }).queryExactListing({ sourceId, pluginId: 'acme.plugin' }))
-      .toMatchObject({ ok: false, code: 'source_changed' });
+    vi.mocked(undici.fetch).mockImplementation(async () => new undici.Response(JSON.stringify(catalog()), { status: 200 }));
+    const readSources = vi.fn(() => readCliRegistrySourcesV1());
+    const host = createCliRegistryHostV1({ readSources });
+    const service = createMarketplaceIndexService({ happyHomeDir: home, registryHost: host });
+    expect(await service.queryExactListing({ sourceId, pluginId: 'acme.plugin' }))
+      .toMatchObject({ ok: true, result: { items: [{ pluginId: 'acme.plugin' }] } });
+    expect(readSources).toHaveBeenCalledTimes(1);
+    expect(undici.fetch).toHaveBeenCalledTimes(1);
+    accountSources([]);
+    expect(await service.queryExactListing({ sourceId, pluginId: 'acme.plugin' }))
+      .toMatchObject({ ok: false, code: 'install_unavailable' });
+    expect(readSources).toHaveBeenCalledTimes(2);
+    expect(undici.fetch).toHaveBeenCalledTimes(1);
   });
   it('revalidates a retained reviewed catalog version, never latest, and refuses its removal', async () => {
     const home = await createTempDir('happier-marketplace-account-pin-u3-'); homes.push(home);
@@ -139,23 +143,12 @@ describe('Account marketplace sources and exact install seam', () => {
       const compatibility = createPluginCompatibilityProjectionV1({ manifest: normalizePluginManifestV2({ schemaVersion: 2, id: 'acme.community', version,
         displayName: 'Community', runtime: { apiVersion: 1 }, entrypoints: { daemon: './index.js' }, hostAccess: { required: [], optional: [] }, contributes: {} }),
         uiArtifacts: { version: 2, entries: [] } });
-      return { name: packageName, version, dist: { integrity: catalog().entries[0]!.distribution.integrity,
+      return { name: packageName, version, _npmUser: { name: 'acme' }, dist: { integrity: catalog().entries[0]!.distribution.integrity,
         tarball: `https://registry.npmjs.org/community-${version}.tgz` }, happier: { compatibilityProjection: compatibility,
         marketplaceDiscovery: createMarketplaceNpmDiscoveryProjectionV1({ compatibility, manifestDigest: `sha256:${'a'.repeat(64)}` }) } };
     };
     const versions: Record<string, ReturnType<typeof metadata>> = { '1.0.0': metadata('1.0.0'), '2.0.0': metadata('2.0.0') };
     const searchConditions: boolean[] = [];
-    const nativeRequest = (_options: RequestOptions, callback: (response: IncomingMessage) => void) => {
-      const request = Object.assign(new EventEmitter(), { end() {
-        const stream = Object.assign(Readable.from([JSON.stringify({ name: packageName, versions, 'dist-tags': { latest: '2.0.0' } })]),
-          { statusCode: 200, headers: { 'content-type': 'application/json' } });
-        // Native HTTP boundary fixture: only consumed IncomingMessage fields.
-        queueMicrotask(() => callback(stream as unknown as IncomingMessage));
-      }, destroy(error?: Error) { if (error) request.emit('error', error); } });
-      // Native HTTP boundary fixture: only consumed ClientRequest methods.
-      return request as unknown as ClientRequest;
-    };
-    vi.mocked(https.request).mockImplementation(nativeRequest as typeof https.request);
     vi.mocked(undici.fetch).mockImplementation(async (input, options) => {
       if (String(input).includes('/-/v1/search')) {
         const conditional = new undici.Headers(options?.headers).has('if-none-match'); searchConditions.push(conditional);
@@ -169,7 +162,13 @@ describe('Account marketplace sources and exact install seam', () => {
     expect(await service.queryExactListing(target)).toMatchObject({ ok: true, result: { items: [{ distribution: { version: '2.0.0' } }] } });
     expect(await resolveExactMarketplaceListingForInstall({ happyHomeDir: home, ...target, version: '1.0.0' }, service))
       .toMatchObject({ ok: true, resolution: { listing: { distribution: { version: '1.0.0' } } } });
-    expect(searchConditions).toEqual([false, false]);
+    expect(searchConditions).toEqual([]);
+    // Retained plugin-id-only callers locate the package through Registry
+    // search, then select the reviewed version through its exact read.
+    expect(await resolveExactMarketplaceListingForInstall({ happyHomeDir: home,
+      sourceId: target.sourceId, pluginId: target.pluginId, version: '1.0.0' }, service))
+      .toMatchObject({ ok: true, resolution: { listing: { distribution: { version: '1.0.0' } } } });
+    expect(searchConditions).toEqual([false]);
     delete versions['1.0.0'];
     expect(await resolveExactMarketplaceListingForInstall({ happyHomeDir: home, ...target, version: '1.0.0' }, service))
       .toMatchObject({ ok: false, code: 'install_unavailable' });

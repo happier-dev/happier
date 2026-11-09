@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { createUnavailablePluginServices } from '../../invocation/services/unavailable';
 import { createProductionPluginInvocationServiceOwners } from '../../invocation/services/production';
 import { activatePluginRuntimeRegistry } from '../manager';
+import { createPluginRuntimeOccurrenceId } from '../../runtimeSlots';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { BackgroundServiceContributionSchema } from '@happier-dev/protocol';
 import { createBackgroundServiceRunnerHost, type HostBackgroundServiceContext, type PluginBackgroundServiceRunnerRegistration } from './backgroundServices';
+import { createBackgroundServiceProcessExecution } from './backgroundServiceProcessExecution';
+import { channelBoundary } from './backgroundServiceProcessChannel.testkit';
 
 function deferred() {
     let resolve!: () => void;
@@ -128,7 +131,7 @@ describe('background service demand lifecycle', () => {
         await host.dispose();
     });
 
-    it('lazily activates a demand-only plugin and binds demand to its daemon invocation services', async () => {
+    it.each([false, true])('lazily activates a demand-only plugin and binds demand to its daemon invocation services (adopted: %s)', async (adopted) => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: identity.pluginId, version: '1.0.0', displayName: 'Demand indexer',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
@@ -146,8 +149,18 @@ describe('background service demand lifecycle', () => {
         const services = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
         let activations = 0;
         let runs = 0;
+        const adoptedRegistries: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>[] = [];
+        const peerPluginId = 'acme.unrelated';
+        const occurrenceIdsByPluginId = new Map([
+            [identity.pluginId, createPluginRuntimeOccurrenceId(identity.pluginId)],
+            [peerPluginId, createPluginRuntimeOccurrenceId(peerPluginId)],
+        ]);
         const registry = await activatePluginRuntimeRegistry({ contributes, generation: 1, invocationServices: services,
-            resolveActivationSource: () => ({ kind: 'bundled', moduleId: '@happier-dev/plugins-demand/daemon', load: async () => ({
+            occurrenceIdsByPluginId,
+            ...(adopted ? { adoptActivationComponent: ({ registry }: { registry: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>> }) => {
+                adoptedRegistries.push(registry);
+            } } : {}),
+            resolveActivationSource: () => ({ kind: 'bundled', moduleId: `@happier-dev/plugins-demand/${adopted ? 'adopted-' : ''}daemon`, load: async () => ({
                 activate(api: { backgroundServices: { register(id: string, runner: PluginBackgroundServiceRunnerRegistration['runner']): void } }) {
                     activations += 1;
                     api.backgroundServices.register('index', async (context) => {
@@ -164,7 +177,17 @@ describe('background service demand lifecycle', () => {
             await registry.demandBackgroundService({ pluginId: identity.pluginId, localId: 'index' }).settlement;
             expect(activations).toBe(1);
             expect(runs).toBe(1);
-        } finally { await registry.dispose(); await services.dispose(); }
+            if (adopted) {
+                expect(adoptedRegistries).toHaveLength(1);
+                expect(adoptedRegistries[0]!.readPluginOccurrenceId(identity.pluginId))
+                    .toBe(occurrenceIdsByPluginId.get(identity.pluginId));
+                expect(adoptedRegistries[0]!.readPluginOccurrenceId(peerPluginId)).toBeNull();
+            }
+        } finally {
+            await registry.dispose();
+            for (const adoptedRegistry of adoptedRegistries) await adoptedRegistry.dispose();
+            await services.dispose();
+        }
     });
 
     it('registers a host service in the same owner without constructing plugin context', async () => {
@@ -229,34 +252,136 @@ describe('background service demand lifecycle', () => {
         await host.dispose();
     });
 
-    it('disposes a process execution after the coalesced batch and creates a new execution on next demand', async () => {
-        const started = deferred();
-        const release = deferred();
-        let births = 0;
-        let disposals = 0;
-        let runs = 0;
-        const host = createHost({ ...identity, placement: 'process', activation: 'demand',
-            async runner() { throw new Error('Process placement must use its admitted execution'); },
-            createExecution() {
-                births += 1;
-                return { async run() {
-                    runs += 1;
-                    if (runs === 1) { started.resolve(); await release.promise; }
-                }, async dispose() { disposals += 1; } };
-            },
+    describe.each(['plugin', 'host'] as const)('%s demand/process lifetime', kind => {
+        function setup(onRun?: (child: ReturnType<typeof channelBoundary>, id: string, run: number) => void, abortFails = false) {
+            const children: ReturnType<typeof channelBoundary>[] = [];
+            const diagnostics: unknown[] = [];
+            let runs = 0;
+            const options = { occurrenceId: identity.occurrenceId, localId: identity.localId,
+                placement: 'process' as const, activation: 'demand' as const,
+                async runner() { throw new Error('Process placement must use its admitted execution'); },
+                createExecution: () => createBackgroundServiceProcessExecution({
+                    bootstrap: { entry: 'host', entryId: 'memory-indexer', payload: null }, serviceId: identity.pluginId,
+                    spawnChannel: async () => {
+                        const child = channelBoundary();
+                        children.push(child);
+                        const send = child.channel.send;
+                        return { ...child.channel, send(frame: Buffer) {
+                            send(frame);
+                            const message = child.messages.at(-1);
+                            if (message?.kind === 'run') {
+                                runs++;
+                                if (onRun) onRun(child, message.id, runs);
+                                else child.emit({ kind: 'settled', id: message.id });
+                            } else if (message?.kind === 'abort') child.emit(abortFails
+                                ? { kind: 'failed', id: message.id, error: { code: 'background_service_run_cancelled', message: 'Fixture cancellation' } }
+                                : { kind: 'settled', id: message.id });
+                        } };
+                    },
+                }),
+            };
+            const host = createBackgroundServiceRunnerHost({
+                registrations: [kind === 'plugin' ? { ...identity, ...options }
+                    : { owner: { kind: 'host', serviceId: identity.pluginId }, ...options }],
+                createContext(input) {
+                    return { context: { plugin: { id: input.pluginId, version: input.pluginVersion },
+                        contribution: { id: input.localId, qualifiedId: input.localId }, surface: 'background',
+                        invokedAtMs: 1, signal: input.signal, services: createUnavailablePluginServices() }, complete() {} };
+                },
+                onDiagnostic: event => { diagnostics.push(event); },
+            });
+            const demand = () => host.demand(kind === 'plugin' ? target : { serviceId: identity.pluginId });
+            host.start();
+            return { host, demand, children, diagnostics, get runs() { return runs; } };
+        }
+
+        it('exits after each settled demand: 1000 demands cause 1000 births and zero resident children', async () => {
+            const state = setup();
+            try {
+                expect(state.children).toHaveLength(0);
+                for (let index = 1; index <= 1000; index++) {
+                    await state.demand().settlement;
+                    expect(state.children).toHaveLength(index);
+                    expect(state.children.filter(child => !child.terminated)).toHaveLength(0);
+                }
+                expect(state.runs).toBe(1000);
+            } finally { await state.host.dispose(); }
         });
-        host.start();
-        const first = host.demand(target);
-        await started.promise;
-        const next = host.demand(target);
-        release.resolve();
-        await Promise.all([first.settlement, next.settlement]);
-        await host.settle([identity.pluginId]);
-        expect({ births, runs, disposals }).toEqual({ births: 1, runs: 2, disposals: 1 });
-        await host.demand(target).settlement;
-        await host.settle([identity.pluginId]);
-        expect({ births, runs, disposals }).toEqual({ births: 2, runs: 3, disposals: 2 });
-        await host.dispose();
+
+        it('coalesces 1000 demands during a run into one followup in the same child, then exits', async () => {
+            const started = deferred();
+            const state = setup((child, id, run) => {
+                if (run === 1) started.resolve();
+                else child.emit({ kind: 'settled', id });
+            });
+            try {
+                const first = state.demand();
+                await started.promise;
+                const followups = Array.from({ length: 1000 }, () => state.demand());
+                state.children[0]!.emit({ kind: 'settled', id: '1' });
+                await Promise.all([first.settlement, ...followups.map(handle => handle.settlement)]);
+                expect(state.runs).toBe(2);
+                expect(state.children).toHaveLength(1);
+                expect(state.children[0]!.terminated).toBe(true);
+            } finally { await state.host.dispose(); }
+        });
+
+        it('exits when retired during a run without entering a queued followup', async () => {
+            const started = deferred();
+            const state = setup(() => { started.resolve(); });
+            const first = state.demand();
+            const rejected = expect(first.settlement).rejects.toMatchObject({ name: 'AbortError' });
+            try {
+                await started.promise;
+                const queued = state.demand();
+                const queuedRejection = expect(queued.settlement).rejects.toMatchObject({ name: 'AbortError' });
+                state.host.retire([identity.pluginId]);
+                await Promise.all([rejected, queuedRejection, state.host.settle([identity.pluginId])]);
+                expect(state.runs).toBe(1);
+                expect(state.children).toHaveLength(1);
+                expect(state.children[0]!.terminated).toBe(true);
+            } finally { await state.host.dispose(); }
+        });
+
+        it('preserves a new demand arriving while the last caller cancellation settles', async () => {
+            const started = deferred();
+            const state = setup((child, id, run) => {
+                if (run === 1) started.resolve();
+                else child.emit({ kind: 'settled', id });
+            }, true);
+            try {
+                const first = state.demand();
+                const cancelled = expect(first.settlement).rejects.toMatchObject({ name: 'AbortError' });
+                await started.promise;
+                first.cancel();
+                const next = state.demand();
+                await Promise.all([cancelled, next.settlement]);
+                expect(state.children).toHaveLength(2);
+                expect(state.children.every(child => child.terminated)).toBe(true);
+            } finally { await state.host.dispose(); }
+        });
+
+        it('reports unexpected exit visibly and creates no replacement until the next demand', async () => {
+            const started = deferred();
+            const state = setup((child, id, run) => {
+                if (run === 1) started.resolve();
+                else child.emit({ kind: 'settled', id });
+            });
+            try {
+                const failed = expect(state.demand().settlement).rejects.toMatchObject({ code: 'background_service_process_exited' });
+                await started.promise;
+                const queuedFailure = expect(state.demand().settlement).rejects.toMatchObject({ code: 'background_service_process_exited' });
+                state.children[0]!.finish({ type: 'exited', code: 23 });
+                await Promise.all([failed, queuedFailure]);
+                await state.host.settle([identity.pluginId]);
+                expect(state.diagnostics).toContainEqual(expect.objectContaining({ code: 'background_service_failed' }));
+                expect(state.children).toHaveLength(1);
+                expect(state.children[0]!.terminated).toBe(true);
+                await state.demand().settlement;
+                expect(state.children).toHaveLength(2);
+                expect(state.children.every(child => child.terminated)).toBe(true);
+            } finally { await state.host.dispose(); }
+        });
     });
 
     it('rejects a failed demand and permits a later demand without an idle retry', async () => {

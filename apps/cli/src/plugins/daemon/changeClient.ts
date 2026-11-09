@@ -10,6 +10,8 @@ import { ensureDaemonRunningForSessionCommand } from '@/daemon/ensureDaemon';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
+import { readPluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
+import { describePluginChangeBusyFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 
 import type {
   PluginChangeDecision,
@@ -64,18 +66,22 @@ export function describeUserPluginChangeFailure(result: Exclude<UserPluginChange
       return { code: 'cancelled', message: 'The plugin change was cancelled before it was applied.' };
     case 'expired':
       return { code: 'expired', message: 'The plugin review expired; run the command again to review the current candidate.' };
-    case 'busy':
-      return { code: 'busy', message: `Another plugin change is already in progress for ${result.pluginId}.`, details: { pluginId: result.pluginId } };
+    case 'busy': {
+      const failure = describePluginChangeBusyFailure(result.pluginId);
+      return { code: failure.errorCode, message: failure.error, details: { pluginId: result.pluginId } };
+    }
     case 'unavailable':
       return { code: 'unavailable', message: `The daemon plugin-change service is unavailable (${result.code}).`, details: { causeCode: result.code } };
     case 'conflict':
       return { code: 'conflict', message: `Plugin facts changed while applying ${result.pluginId}; review the candidate again.`, details: { pluginId: result.pluginId } };
-    case 'failed':
+    case 'failed': {
+      const cause = readPluginModuleFailureCause(result.details);
       return {
-        code: 'failed',
+        code: result.code,
         message: result.message ?? `The daemon rejected the plugin change (${result.code}).`,
-        details: { causeCode: result.code, ...(result.message ? { causeMessage: result.message } : {}) },
+        details: { causeCode: result.code, ...(cause ? { cause } : {}) },
       };
+    }
     case 'outcomeUnknown':
       return {
         code: 'outcome_unknown',

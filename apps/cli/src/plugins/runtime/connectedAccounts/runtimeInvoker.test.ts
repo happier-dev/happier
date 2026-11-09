@@ -22,9 +22,7 @@ import {
     createStablePluginHttpHost,
     type PluginRequestInterceptorRegistryV1,
 } from '@/plugins/runtime/fetch/service';
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-} from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import {
     createProductionPluginInvocationServiceOwners,
 } from '@/plugins/runtime/invocation/services/production';
@@ -42,6 +40,8 @@ import {
     type ConnectedAccountRuntimeLease,
 } from './contributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
+import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 import { createConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import {
     createConnectedAccountHostRuntimeInvoker,
@@ -50,20 +50,6 @@ import {
 
 type AuthenticationRuntime =
     PluginConnectedAccountRuntime['authentication']['modes'][string];
-
-// DNS is the one system boundary the configured-origin resolution reaches, and
-// the invoker forwards this resolver to it. Every fixture name below answers
-// with a public address, so admission here is decided by resolved addresses
-// rather than by the hostname's spelling.
-const RESOLVED_ADDRESSES_BY_HOSTNAME: Readonly<Record<string, readonly string[]>> = Object.freeze({
-    'api.telegram.org': ['149.154.167.220'],
-    'api.example.test': ['93.184.216.34'],
-});
-const testResolveNetworkAddresses = async (hostname: string): Promise<readonly string[]> => {
-    const addresses = RESOLVED_ADDRESSES_BY_HOSTNAME[hostname];
-    if (!addresses) throw new Error(`unexpected DNS lookup for ${hostname}`);
-    return addresses;
-};
 
 const service = Object.freeze({
     pluginId: 'acme.accounts',
@@ -153,11 +139,7 @@ function createEstablishedInvoker(
         resolveHostPolicy: () => Object.freeze({
             hostAccess: Object.freeze([]),
             serviceBinding:
-                createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                    runtimeIdentity.occurrenceId,
-                    'producer',
-                    [],
-                ),
+                createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'producer'),
         }),
         createServices: () =>
             Object.freeze({}) as PluginInvocationContext['services'],
@@ -241,7 +223,7 @@ describe('connected-account runtime invoker', () => {
 
         await expect(invokeEstablished(invoker, { kind: 'status' }, isCurrent))
             .resolves.toEqual({ status: 'connected' });
-        expect(isCurrent.mock.calls.length).toBeGreaterThan(currentnessChecksAtCallbackEntry);
+        expect(isCurrent).toHaveBeenCalledTimes(currentnessChecksAtCallbackEntry);
     });
 
     it('invokes a built-in host account without a plugin package and fences established work on disposal', async () => {
@@ -657,7 +639,7 @@ describe('connected-account runtime invoker', () => {
         await owners.retireGeneration(runtimeIdentity.occurrenceId, service.pluginId);
     });
 
-    it('redacts secret manual-auth fields before cross-plugin interception while preserving terminal HTTP bytes', async () => {
+    it('uses the real host policy without requiring network declaration approval and lets trusted interceptors inspect manual-auth requests', async () => {
         const token = '123456:telegram-secret';
         const issuedToken = 'provider-issued-secret';
         const rawUrl = `https://api.telegram.org/bot${token}/getMe`;
@@ -777,19 +759,7 @@ describe('connected-account runtime invoker', () => {
                 version: '1.0.0',
                 hostAccessRequests: Object.freeze([networkRequest]),
             }),
-            resolveHostPolicy: () => Object.freeze({
-                hostAccess: Object.freeze([{
-                    id: networkRequest.request.id,
-                    required: true,
-                    status: 'available' as const,
-                    requestFingerprint: 'test-fingerprint',
-                }]),
-                serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                    runtimeIdentity.occurrenceId,
-                    'telegram-producer',
-                    [networkRequest],
-                ),
-            }),
+            resolveHostPolicy: owners.resolveInvocationHostPolicy,
             createServices: owners.createServices,
             registerRawForRedaction: owners.registerRawForRedaction,
             redactDiagnosticText(seed, value) {
@@ -799,7 +769,6 @@ describe('connected-account runtime invoker', () => {
                     correlationId: seed.correlationId,
                 }, value);
             },
-
         });
 
         await expect(invoker.invokeAuthentication({
@@ -932,11 +901,7 @@ describe('connected-account runtime invoker', () => {
             }),
             resolveHostPolicy: () => Object.freeze({
                 hostAccess: Object.freeze([]),
-                serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                    runtimeIdentity.occurrenceId,
-                    'refresh-producer',
-                    [],
-                ),
+                serviceBinding: createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'refresh-producer'),
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
@@ -974,6 +939,8 @@ describe('connected-account runtime invoker', () => {
         expect(registerRawForRedaction.mock.calls.map(([, value]) => value))
             .toEqual([existingCredential, issuedCredential]);
         expect(stagedSet).toHaveBeenCalledWith('issued-token', issuedCredential, undefined);
+        expect(isCredentialRevisionCurrent).toHaveBeenCalledOnce();
+        expect(isConfigurationCurrent).toHaveBeenCalledOnce();
     });
 
     it('registers OAuth state and completion credentials before provider handlers run', async () => {
@@ -1031,11 +998,7 @@ describe('connected-account runtime invoker', () => {
             }),
             resolveHostPolicy: () => Object.freeze({
                 hostAccess: Object.freeze([]),
-                serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                    runtimeIdentity.occurrenceId,
-                    'oauth-producer',
-                    [],
-                ),
+                serviceBinding: createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'oauth-producer'),
             }),
             createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
             registerRawForRedaction,
@@ -1230,11 +1193,7 @@ describe('connected-account runtime invoker', () => {
             resolveHostPolicy: () => Object.freeze({
                 hostAccess: Object.freeze([]),
                 serviceBinding:
-                    createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                        runtimeIdentity.occurrenceId,
-                        'producer',
-                        [],
-                    ),
+                    createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'producer'),
             }),
             createServices: () => {
                 if (identity === runtimeIdentity && retirement === 'callback') publishSuccessor();
@@ -1243,10 +1202,17 @@ describe('connected-account runtime invoker', () => {
             registerRawForRedaction() {},
         });
         const settle = vi.fn(async () => ({ status: 'connected' as const, account: { service, accountId: 'account-a' } }));
+        const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+            credentials: { token: 'account-token', encryption: null },
+            getAccountEncryptionMode: async () => 'plain',
+            api: createConnectedAccountAttemptTransactionApiBoundary(),
+            now: () => 1_000,
+        });
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
             createAttemptId: () => 'attempt-1',
             createAccountId: () => 'account-1',
             now: () => 1_000,
+            attemptAddresses: transactions.address,
             accounts: Object.freeze({
                 readExact: async () => null,
             }),
@@ -1261,8 +1227,7 @@ describe('connected-account runtime invoker', () => {
                         occurrenceId: lease.occurrenceId,
                         sourceCustody: lease.sourceCustody,
                         runtimeCustody: {
-                            lease,
-                            invoke: async (input: ConnectedAccountAttemptProviderInvocation) => invoker.invokeAuthentication({ ...input, isConfigurationCurrent: configurationOwner.isCurrent }),
+                            invoke: async (input: ConnectedAccountAttemptProviderInvocation) => invoker.invokeAuthentication({ ...input, lease, isConfigurationCurrent: configurationOwner.isCurrent }),
                             release: async () => {},
                         },
                     });
@@ -1271,10 +1236,8 @@ describe('connected-account runtime invoker', () => {
                     && admission.occurrenceId === identity.occurrenceId,
                 invoke: async (input) => {
                     if (identity === runtimeIdentity && retirement === 'resolution') publishSuccessor();
-                    return await invoker.invokeAuthentication({
-                        ...input,
-                        isConfigurationCurrent: configurationOwner.isCurrent,
-                    });
+                    if (!input.admission.runtimeCustody) throw new Error('Runtime custody unavailable');
+                    return await input.admission.runtimeCustody.invoke(input);
                 },
             }),
             oauth: Object.freeze({
@@ -1437,11 +1400,7 @@ describe('connected-account runtime invoker', () => {
                 resolveHostPolicy: () => Object.freeze({
                     hostAccess: Object.freeze([]),
                     serviceBinding:
-                        createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                            runtimeIdentity.occurrenceId,
-                            'producer',
-                            [],
-                        ),
+                        createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'producer'),
                 }),
                 createServices: () =>
                     Object.freeze({}) as PluginInvocationContext['services'],
@@ -1556,7 +1515,7 @@ describe('connected-account runtime invoker', () => {
         },
     );
 
-    it('returns typed unavailability before provider work when exact producer network authority is denied', async () => {
+    it('propagates provider callback failures with real host services and no declaration admission', async () => {
         const networkRequest = Object.freeze({
             request: PluginHostAccessRequestV2Schema.parse({
                 id: 'connected-account-network',
@@ -1591,7 +1550,8 @@ describe('connected-account runtime invoker', () => {
                 },
             },
         } satisfies PluginConnectedAccountRuntime;
-        const createInvoker = (status: 'available' | 'denied') =>
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
+        const createInvoker = () =>
             createConnectedAccountHostRuntimeInvoker({
                 resolveRuntime: async () => Object.freeze({
                     ref: service,
@@ -1604,21 +1564,8 @@ describe('connected-account runtime invoker', () => {
                     version: '1.0.0',
                     hostAccessRequests: Object.freeze([networkRequest]),
                 }),
-                resolveHostPolicy: () => Object.freeze({
-                    hostAccess: Object.freeze([{
-                        id: networkRequest.request.id,
-                        required: true,
-                        status,
-                        requestFingerprint: 'test-fingerprint',
-                    }]),
-                    serviceBinding:
-                        createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                            runtimeIdentity.occurrenceId,
-                            'producer',
-                            [networkRequest],
-                        ),
-                }),
-                createServices: () => Object.freeze({}) as PluginInvocationContext['services'],
+                resolveHostPolicy: owners.resolveInvocationHostPolicy,
+                createServices: owners.createServices,
                 registerRawForRedaction() {},
             });
         const invocation = {
@@ -1657,21 +1604,16 @@ describe('connected-account runtime invoker', () => {
             isConfigurationCurrent: () => true,
         } as const;
 
-        await expect(createInvoker('denied').invokeAuthentication(invocation)).resolves.toEqual({
-            status: 'unavailable',
-            diagnostic: {
-                code: 'connected_account_producer_context_unavailable',
-                severity: 'error',
-            },
-        });
-        expect(complete).not.toHaveBeenCalled();
+        await expect(createInvoker().invokeAuthentication(invocation)).resolves.toMatchObject({ status: 'connected' });
+        expect(complete).toHaveBeenCalledOnce();
 
         const providerFailure = new Error('Provider exchange outcome is unknown');
         complete.mockRejectedValueOnce(providerFailure);
         await expect(
-            createInvoker('available').invokeAuthentication(invocation),
+            createInvoker().invokeAuthentication(invocation),
         ).rejects.toBe(providerFailure);
-        expect(complete).toHaveBeenCalledOnce();
+        expect(complete).toHaveBeenCalledTimes(2);
+        await owners.dispose();
     });
 
 });

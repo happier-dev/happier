@@ -10,6 +10,7 @@ import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/r
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/pypiWheelAsset';
 import { getPinnedArchiveRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/pinnedArchive';
+import { getManagedJavaScriptPackageRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/managedJavaScriptPackage';
 import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary';
 import { parseInstalledVersionFromOutput } from '@/packagedRuntime/installables/installedVersion';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -79,6 +80,19 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
     platform?: NodeJS.Platform;
     architecture?: string;
 }>): Promise<RuntimeInstallableAdapter> {
+    if (input.source.kind === 'managedJavaScriptPackage' && input.source.declaration.kind === 'managedJavaScriptPackage') {
+        const source = input.source.declaration;
+        const descriptor = input.sourceInstallable;
+        if (!descriptor || descriptor.key !== source.installId || descriptor.id !== source.installId
+            || descriptor.capabilityId !== source.installId || descriptor.binary.commands.length !== 1
+            || descriptor.binary.commands[0] !== input.dependency.definition.executable
+            || !isDeepStrictEqual(descriptor.source, { kind: 'managed_package', packageManager: 'managed_js_runtime',
+                packageName: source.packageName, version: source.version })) {
+            return fail('plugin_managed_dependency_source_invalid', 'Managed JavaScript package acquisition is unavailable');
+        }
+        return getManagedJavaScriptPackageRuntimeInstallableAdapter(descriptor)
+            ?? fail('plugin_managed_dependency_source_invalid', 'Managed JavaScript package descriptor could not be adapted');
+    }
     if (input.source.kind === 'githubReleaseBinary' && input.source.declaration.kind === 'githubReleaseBinary') {
         const { kind: _kind, installId, ...source } = input.source.declaration;
         const descriptor = input.sourceInstallable;

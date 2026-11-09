@@ -6,11 +6,36 @@ import { describe, expect, it } from 'vitest';
 
 import { loadInstalledPlugins } from './installed';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import type { PluginStateFileV1 } from '@/plugins/store/state';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { admitLocalSettingsDeclarations } from '@/plugins/settings/localSettingsContributions';
+import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 
 describe('retained Settings declarations', () => {
+  it('keeps healthy installed contributions and exposes skipped-declaration diagnostics', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-tolerant-load-'));
+    const pluginId = 'acme.tolerant-load';
+    try {
+      const pluginRoot = join(directory, 'plugin');
+      await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}');
+      await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, contributes: { actions: [
+          { id: 'healthy', title: 'Healthy', scopes: ['session'], surfaces: ['cli'],
+            execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' },
+          { id: 'future', title: 'Future', futureRestriction: true },
+        ] },
+      })));
+      const happyHomeDir = join(directory, 'home');
+      await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId, manifestVersion: '1.0.0' });
+      const loaded = await loadInstalledPlugins({ happyHomeDir });
+      expect(loaded.loadedPlugins).toMatchObject([{ pluginId, manifest: { contributes: { actions: [{ id: 'healthy' }] } } }]);
+      expect(loaded.diagnosticsByPluginId[pluginId]).toMatchObject([{ code: 'plugin_contribution_skipped' }]);
+      expect(await readInstalledPluginCatalog({ happyHomeDir })).toMatchObject([{ enabled: true,
+        diagnostics: [{ code: 'plugin_contribution_skipped' }] }]);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it.each([false, true])('keeps a physical committed installation discoverable (invalid default: %s)', async (invalidDefault) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-retained-settings-'));
     const pluginId = 'acme.retained-settings';
@@ -33,8 +58,9 @@ describe('retained Settings declarations', () => {
       expect(loaded).toBeDefined();
       const admission = admitLocalSettingsDeclarations({ settings: loaded!.manifest.contributes.settings.map(definition => ({ pluginId, definition })) });
       expect(admission.declarations.map(row => row.definition.id)).toEqual(invalidDefault ? ['healthy'] : ['preferences', 'healthy']);
-      expect(admission.errors).toMatchObject(invalidDefault ? [{ code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
-        pluginId, contributionId: 'preferences', fieldId: 'enabled' }] : []);
+      expect(admission.errors).toEqual([]);
+      expect(discovered.diagnosticsByPluginId[pluginId]).toMatchObject(invalidDefault
+        ? [{ code: 'plugin_contribution_skipped', contribution: { pluginId, localId: 'preferences' } }] : []);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 });
@@ -426,7 +452,7 @@ describe('loadInstalledPlugins', () => {
     ]);
   });
 
-  it('rejects duplicate enabled plugin owner ids deterministically before projection', async () => {
+  it.each(['healthy-first', 'shadow-first', 'shadow-only'] as const)('refuses a mismatched shadow without withdrawing its correctly keyed plugin (%s)', async (entryOrder) => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const firstPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-duplicate-first-'));
     const secondPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-duplicate-second-'));
@@ -435,10 +461,7 @@ describe('loadInstalledPlugins', () => {
     await writePluginManifest(firstPluginRoot, 'acme.duplicate');
     await writePluginManifest(secondPluginRoot, 'acme.duplicate');
 
-    await store.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
+    const plugins = {
         'acme.duplicate': {
           source: {
             kind: 'path',
@@ -483,22 +506,27 @@ describe('loadInstalledPlugins', () => {
             enabled: true,
           },
         },
-      },
+      } satisfies PluginStateFileV1['plugins'];
+    const pluginIds = entryOrder === 'shadow-only'
+      ? ['acme.duplicate-shadow'] as const
+      : entryOrder === 'healthy-first'
+        ? ['acme.duplicate', 'acme.duplicate-shadow'] as const
+        : ['acme.duplicate-shadow', 'acme.duplicate'] as const;
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: Object.fromEntries(pluginIds.map((pluginId) => [pluginId, plugins[pluginId]])),
     });
 
     const result = await loadInstalledPlugins({ happyHomeDir });
 
-    expect(result.loadedPlugins).toEqual([]);
-    expect(result.diagnosticsByPluginId['acme.duplicate']).toEqual([
-      expect.objectContaining({
-        code: 'plugin_manifest_duplicate_id',
-        message: expect.stringContaining(firstPluginRoot),
-      }),
+    expect(result.loadedPlugins).toMatchObject(entryOrder === 'shadow-only' ? [] : [
+      { pluginId: 'acme.duplicate', pluginRootPath: await realpath(firstPluginRoot) },
     ]);
+    expect(result.diagnosticsByPluginId['acme.duplicate']).toEqual(entryOrder === 'shadow-only' ? undefined : []);
     expect(result.diagnosticsByPluginId['acme.duplicate-shadow']).toEqual([
       expect.objectContaining({
-        code: 'plugin_manifest_duplicate_id',
-        message: expect.stringContaining(secondPluginRoot),
+        code: 'plugin_manifest_semantic_invalid',
       }),
     ]);
   });

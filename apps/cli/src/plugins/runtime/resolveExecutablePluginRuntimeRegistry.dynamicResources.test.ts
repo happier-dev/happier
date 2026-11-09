@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,8 +20,10 @@ import {
 
 import * as persistence from '@/persistence';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    createResolvedContributionRegistry,
+    resolveMergedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
@@ -89,7 +92,11 @@ function requirePluginOccurrenceId(
 type DynamicResourceFixtureControl = {
     value: string;
     inputTypeActionInvocations?: number;
+    readQuery?: (query: unknown) => string;
     observedAccountStorage?: boolean;
+    factoryCreations?: number;
+    producerDisposals?: number;
+    producerSignal?: AbortSignal;
     invalidate?: () => void;
     publish(next: string): void;
 };
@@ -108,6 +115,7 @@ async function seedFixture(options: Readonly<{
     admissionFailure?: string;
     activationFailure?: boolean;
     dormantAction?: boolean;
+    contextProducer?: boolean;
 }> = {}): Promise<Readonly<{ happyHomeDir: string; pluginRoot: string }>> {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-live-resources-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-live-resources-plugin-'));
@@ -160,7 +168,7 @@ async function seedFixture(options: Readonly<{
                     source: 'dynamic',
                     kind: 'config',
                     contentType: 'application/json',
-                    ...(options.sessionScoped ? { scope: 'session' } : {}),
+                    ...(options.contextProducer ? { scope: 'surface' } : options.sessionScoped ? { scope: 'session' } : {}),
                     ...(options.accountStorage ? { hostAccess: ['account-storage'] } : {}),
                 },
             ],
@@ -173,7 +181,7 @@ async function seedFixture(options: Readonly<{
             loader: 'ts',
             format: 'esm',
         })).code
-        : `${options.admissionFailure ? "import { PluginError } from '@happier-dev/plugin-sdk';" : ''}
+        : `${options.admissionFailure || options.contextProducer ? "import { PluginError } from '@happier-dev/plugin-sdk';" : ''}
         export function activate(api) {
         ${options.activationFailure ? "throw new Error('Resource fixture activation refused');" : ''}
         const usesAccountStorage = ${options.accountStorage === true ? 'true' : 'false'};
@@ -200,7 +208,9 @@ async function seedFixture(options: Readonly<{
         if (registersDynamicResource) {
             api.resources.registerDynamicResource('live-status', {
                 read: async (options) => {
+                    ${options.contextProducer ? "throw new PluginError({ code: 'fixture_context_producer_required' });" : ''}
                     ${options.admissionFailure ? `throw new PluginError({ code: ${JSON.stringify(options.admissionFailure)} });` : ''}
+                    if (control.readQuery && options.query) return control.readQuery(options.query);
                     return sessionScoped
                     ? JSON.stringify({
                         sessionId: options.context.kind === 'session' ? options.context.sessionId : null,
@@ -215,6 +225,7 @@ async function seedFixture(options: Readonly<{
                         : control.value;
                 },
                 observe: (invalidate, options) => {
+                    ${options.contextProducer ? "throw new PluginError({ code: 'fixture_context_producer_required' });" : ''}
                     control.invalidate = invalidate;
                     control.observedAccountStorage = usesAccountStorage
                         ? options.accountStorage !== undefined
@@ -222,6 +233,15 @@ async function seedFixture(options: Readonly<{
                     listeners.add(invalidate);
                     return { dispose: () => { listeners.delete(invalidate); } };
                 },
+                ${options.contextProducer ? `createProducer(options) {
+                    control.factoryCreations = (control.factoryCreations ?? 0) + 1;
+                    control.producerSignal = options.signal;
+                    return {
+                        read: () => control.value,
+                        observe(invalidate) { listeners.add(invalidate); return { dispose() { listeners.delete(invalidate); } }; },
+                        dispose() { control.producerDisposals = (control.producerDisposals ?? 0) + 1; },
+                    };
+                },` : ''}
             });
         }
     }`;
@@ -304,6 +324,36 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 describe('executable plugin dynamic resource observation (EU-4b)', () => {
+    it.each([false, true])('preserves a cold registered context factory through the daemon Resource consumer (watch first: %s)', async watchFirst => {
+        const { happyHomeDir, pluginRoot } = await seedFixture({ dormantAction: true, contextProducer: true });
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir,
+                contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir) });
+            expect(runtime.activatedPluginIds.has(PLUGIN_ID)).toBe(false);
+            expect(globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__).toBeUndefined();
+            const request = { expectedCallerOccurrenceId: requirePluginOccurrenceId(runtime, PLUGIN_ID),
+                callerPluginId: PLUGIN_ID, resourceId: 'live-status',
+                context: { kind: 'surface' as const, mountInstanceKey: 'factory-consumer', launchInput: null } };
+            if (watchFirst) await runtime.openUiResourceWatch?.({ ...request, subscriptionId: 'factory-watch' });
+            const value = await runtime.readUiResource?.(request);
+            expect(new TextDecoder().decode(value?.bytes)).toBe(JSON.stringify({ revision: 0 }));
+            expect(control().factoryCreations).toBe(1);
+            if (watchFirst) {
+                expect(control().producerSignal?.aborted).toBe(false);
+                expect(control().producerDisposals ?? 0).toBe(0);
+                expect(runtime.closeUiResourceWatch?.({ callerPluginId: PLUGIN_ID, subscriptionId: 'factory-watch' })).toBe(true);
+            }
+            expect(control().producerSignal?.aborted).toBe(true);
+            await vi.waitFor(() => expect(control().producerDisposals).toBe(1));
+        } finally {
+            await runtime?.dispose();
+            delete globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__;
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     it.each([false, true])('describes and reads a dormant external dynamic Resource from its first demanded Action (scoped replacement: %s)', async (scopedReplacement) => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ dormantAction: true });
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
@@ -444,6 +494,30 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                 expect(control().inputTypeActionInvocations).toBe(1);
             } finally { await runtime.release(); }
             await expect(deps.readInputTypeResource!({ type, resource, context })).resolves.toEqual(choices);
+            const pages: unknown[] = [];
+            control().readQuery = query => {
+                pages.push(query);
+                const cursor = query && typeof query === 'object' && 'cursor' in query ? query.cursor : undefined;
+                return JSON.stringify(cursor === 'repositories-next'
+                    ? { options: [{ value: { repositoryId: 'repository-two' }, label: 'Two' }] }
+                    : { options: choices, nextCursor: 'repositories-next' });
+            };
+            const pagedRuntime = await controller.acquireRuntimeRegistry();
+            try {
+                await expect(pagedRuntime.registry.targetActionInvocations!.invoke({ pluginId: PLUGIN_ID,
+                    localId: 'choose-repository', surface: 'cli', input: { repository: { repositoryId: 'repository-two' } } }))
+                    .resolves.toMatchObject({ status: 'executed', value: { accepted: true } });
+                expect(pages).toMatchObject([{ fieldPath: 'repository', draftInput: { repository: { repositoryId: 'repository-two' } } },
+                    { fieldPath: 'repository', cursor: 'repositories-next' }]);
+            } finally { await pagedRuntime.release(); delete control().readQuery; }
+
+            control().readQuery = () => { throw new PluginError({ code: 'deployment_access_denied', details: { phase: 'link' } }); };
+            try {
+                await expect(deps.readInputTypeResource!({ type, resource, context,
+                    query: { fieldPath: 'repository', draftInput: { account: 'denied' } } }))
+                    .resolves.toMatchObject({ ok: false, errorCode: 'deployment_access_denied', details: { phase: 'link' } });
+            } finally { delete control().readQuery; }
+
             await expect(deps.readInputTypeResource!({ type, resource: { pluginId: PLUGIN_ID, localId: 'style-guide' },
                 context })).resolves.toMatchObject({ ok: false, errorCode: 'input_type_options_unavailable' });
             control().publish('not JSON');
@@ -912,6 +986,12 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             const expectedCallerOccurrenceId = requirePluginOccurrenceId(runtime, PLUGIN_ID);
+            // Startup activation registers the producer but does not eagerly
+            // observe its bytes. Establish the real old client baseline before
+            // moving them; otherwise the first demanded value is already 9.
+            const previous = await runtime.readUiResource?.({ expectedCallerOccurrenceId,
+                callerPluginId: PLUGIN_ID, resourceId: 'live-status' });
+            expect(new TextDecoder().decode(previous?.bytes)).toBe(JSON.stringify({ revision: 0 }));
             control().publish(JSON.stringify({ revision: 9 }));
 
             const opened = await runtime.openUiResourceWatch?.({
@@ -1339,6 +1419,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                         id: 'resource-test-provider',
                         target: { pluginId: CHANNELS_PLUGIN_ID, pointId: 'providers' },
                         protocol: { id: 'happier.channels/providers', version: 1 },
+                        descriptor: { v: 1, displayName: 'Resource test provider' },
                         operations: {
                             setup: 'resource/prepare-provider',
                             connectionTest: 'resource/test-provider-connection',
@@ -1418,7 +1499,6 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
             runtimeLease = await reloadController.acquireRuntimeRegistry();
             runtime = runtimeLease.registry;
             expect(runtime.pluginDiagnosticsByPluginId[CHANNELS_PROVIDER_FIXTURE_ID] ?? []).toEqual([]);
-            expect(runtime.activatedPluginIds.has(CHANNELS_PLUGIN_ID)).toBe(true);
             const expectedCallerOccurrenceId = requirePluginOccurrenceId(runtime, CHANNELS_PLUGIN_ID);
             const readUiResource = runtime.readUiResource;
             if (!readUiResource) throw new Error('Expected the Channels Resource reader');
@@ -1427,6 +1507,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
                 callerPluginId: CHANNELS_PLUGIN_ID,
                 resourceId: 'connections-v1',
             })).rejects.toMatchObject({ code: 'collection_unavailable' });
+            expect(runtime.activatedPluginIds.has(CHANNELS_PLUGIN_ID)).toBe(true);
 
             accountDataAvailable = true;
             const initialConnections = await readUiResource({

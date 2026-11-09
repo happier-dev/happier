@@ -1127,9 +1127,7 @@ describe('PluginRegistryStateStore', () => {
       releasePublications: [],
       materializations: [{ pluginId, sourceClass: 'localPath', portableRelease: false }],
     });
-    if (!replacesArchive) {
-      expect((await store.readSnapshot()).pluginOccurrenceIds).toEqual({});
-    }
+    expect((await store.readSnapshot()).pluginOccurrenceIds).toEqual({});
 
     const restarted = createPluginRegistryStateStore({
       happyHomeDir,
@@ -1137,6 +1135,7 @@ describe('PluginRegistryStateStore', () => {
     });
     await expect(restarted.readSnapshot()).resolves.toMatchObject({
       revision: replacesArchive ? 2 : 1,
+      pluginOccurrenceIds: {},
       state: {
         plugins: {
           [pluginId]: expect.objectContaining({
@@ -1196,7 +1195,7 @@ describe('PluginRegistryStateStore', () => {
     });
   });
 
-  it('publishes install, update, rollback, and uninstall through one committed generation map while preserving plugin data', async () => {
+  it('publishes install, update, rollback, and uninstall while recovering generation retirement after authentication and response loss', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-install-lifecycle-'));
     const pluginRoot = join(happyHomeDir, 'author-plugin');
     const manifestDir = join(pluginRoot, '.happier-plugin');
@@ -1206,10 +1205,11 @@ describe('PluginRegistryStateStore', () => {
 
     const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);
     const trust = createPluginTrustRecord({ pluginId: 'acme.registry.plugin', distribution, approvedAtMs: 1 });
-    const readCredentials = vi.fn(async () => ({
+    let authenticated = true;
+    const readCredentials = vi.fn(async () => authenticated ? ({
       token: 'account-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) },
-    }));
+    }) : null);
     const retireGeneration = vi.fn(async (_retirement: Readonly<{
       token: string;
       pluginId: string;
@@ -1374,10 +1374,55 @@ describe('PluginRegistryStateStore', () => {
     const unrelatedGenerationStatePath = join(store.paths.generationsDir, '.unrelated-state', 'keep.txt');
     await mkdir(join(store.paths.generationsDir, '.unrelated-state'), { recursive: true });
     await writeFile(unrelatedGenerationStatePath, 'preserve exactly', 'utf8');
-    await store.uninstall('acme.registry.plugin');
+    authenticated = false;
+    await expect(store.uninstallWithResult('acme.registry.plugin')).resolves.toMatchObject({
+      transaction: { status: 'committed', pendingSurfaces: ['reconciliation'] },
+    });
     expect((await store.read()).plugins).toEqual({});
     expect(readCredentials).toHaveBeenCalled();
-    expect(retireGeneration.mock.calls.map(([retirement]) => retirement)
+    expect(retireGeneration).not.toHaveBeenCalled();
+    for (const immutableGenerationId of [firstGenerationId, secondGenerationId]) {
+      await expect(readFile(join(store.paths.generationsDir, immutableGenerationId, 'daemon.mjs')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(store.paths.generationsDir, `.retiring-${immutableGenerationId}`, 'daemon.mjs')))
+        .resolves.toBeInstanceOf(Buffer);
+    }
+
+    authenticated = true;
+    retireGeneration.mockRejectedValueOnce(new Error('response lost'));
+    const onReconciliationPending = vi.fn();
+    const restartedStore = createPluginRegistryStateStore({
+      happyHomeDir,
+      generationCustodyRetirement: { readCredentials, retireGeneration },
+      onReconciliationPending,
+    });
+    await expect(restartedStore.initialize()).resolves.toMatchObject({ plugins: {} });
+    expect(onReconciliationPending).toHaveBeenLastCalledWith({
+      operation: 'startup',
+      pendingSurfaces: ['reconciliation'],
+      message: expect.stringContaining('generationCleanup'),
+    });
+    const pendingGenerationId = retireGeneration.mock.calls[0]![0].immutableGenerationId;
+    await expect(readFile(join(store.paths.generationsDir, `.retiring-${pendingGenerationId}`, 'daemon.mjs')))
+      .resolves.toBeInstanceOf(Buffer);
+
+    onReconciliationPending.mockClear();
+    await expect(createPluginRegistryStateStore({
+      happyHomeDir,
+      generationCustodyRetirement: { readCredentials, retireGeneration },
+      onReconciliationPending,
+    }).initialize()).resolves.toMatchObject({ plugins: {} });
+    expect(onReconciliationPending).not.toHaveBeenCalled();
+    for (const immutableGenerationId of [firstGenerationId, secondGenerationId]) {
+      await expect(readFile(join(store.paths.generationsDir, `.retiring-${immutableGenerationId}`, 'daemon.mjs')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(store.paths.generationsDir, `.retired-${immutableGenerationId}.v1.json`), 'utf8'))
+        .resolves.toBeTruthy();
+    }
+    expect([...new Map(retireGeneration.mock.calls.map(([retirement]) => [
+      retirement.immutableGenerationId,
+      retirement,
+    ])).values()]
       .sort((left, right) => left.immutableGenerationId.localeCompare(right.immutableGenerationId))).toEqual(
       [firstGenerationId, secondGenerationId]
         .sort()

@@ -19,6 +19,7 @@ import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtim
 import { resolveSessionRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { createPluginTranscriptFileFollowService } from './fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from './fileFollowGrants';
+import { createSessionHooksService } from '../../hooks/session/service';
 
 async function createIdentityFixture() {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-sdk-proof-'));
@@ -26,8 +27,14 @@ async function createIdentityFixture() {
     const path = join(root, `${providerSessionId}.jsonl`);
     const scope = { kind: 'session' as const, sessionId: 'happier-session' };
     const grants = createTranscriptFileFollowPathGrantRegistry();
-    await grants.grant({ pluginId: 'happier.agent.claude', runtimeId: 'sdk-runtime', scope, path,
-        reason: 'providerTranscriptSource', evidence: { kind: 'sessionStartTranscriptPath', providerSessionId } });
+    const hookOwner = createSessionHooksService({ happyHomeDir: root,
+        hasCapability: capability => capability === 'sessionHooks',
+        grantTranscriptFileFollowPath: async request => {
+            await grants.grant({ pluginId: 'happier.agent.claude', runtimeId: 'sdk-runtime', scope,
+                path: request.transcriptPath, reason: 'providerTranscriptSource',
+                evidence: { kind: 'sessionStartTranscriptPath', providerSessionId: request.providerSessionId } });
+        },
+    });
     const fileFollow = createPluginTranscriptFileFollowService({
         pluginId: 'happier.agent.claude', runtimeId: 'sdk-runtime', readScope: () => scope,
         fileFollowPathGrants: grants,
@@ -39,6 +46,9 @@ async function createIdentityFixture() {
     });
     const exec = createSdkExecFixture();
     const hooks = createSessionHooksFixture();
+    hooks.service.observeSessionHook.mockImplementation(async request => {
+        await hookOwner.observeSessionHook({ ...request, providerId: 'claude', sessionId: scope.sessionId });
+    });
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
         exec: exec.service, sessionHooks: hooks.service, transcripts: { fileFollow },
     });
@@ -64,8 +74,7 @@ describe('Claude SDK native resume proof with the host file follower', () => {
         operations.subscribeProviderEvents(event => events.push(event));
         try {
             await operations.sendProviderTurnPrompt('accepted prompt');
-            const hook = fixture.hooks.service.startServer.mock.calls[0]?.[0].onSessionHook;
-            if (!hook) throw new Error('native Session hook server was not started');
+            const hook = fixture.exec.emitSessionHook;
             await hook(fixture.providerSessionId, { hook_event_name: 'SessionStart', source: 'startup',
                 session_id: fixture.providerSessionId, transcript_path: fixture.path });
             await fixture.exec.emit({ type: 'system', subtype: 'init', session_id: fixture.providerSessionId });
@@ -102,8 +111,7 @@ describe('Claude SDK native resume proof with the host file follower', () => {
         operations.subscribeProviderEvents(event => events.push(event));
         try {
             await operations.sendProviderTurnPrompt('accepted prompt');
-            const hook = fixture.hooks.service.startServer.mock.calls[0]?.[0].onSessionHook;
-            if (!hook) throw new Error('native Session hook server was not started');
+            const hook = fixture.exec.emitSessionHook;
             await hook(fixture.providerSessionId, { hook_event_name: 'SessionStart', source: 'startup',
                 session_id: fixture.providerSessionId, transcript_path: fixture.path });
             if (kind !== 'unaccepted') await hook(fixture.providerSessionId, { hook_event_name: 'UserPromptSubmit',
@@ -136,6 +144,9 @@ describe('Claude SDK native resume proof with the host file follower', () => {
         const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx: fixture.ctx, onProviderSessionId: () => undefined,
             onTranscriptPromoted: async proof => { promotions.push({ providerSessionId: proof.providerSessionId, transcriptPath: proof.transcriptPath }); } });
         try {
+            await fixture.hooks.service.observeSessionHook({ providerSessionId: fixture.providerSessionId, payload: {
+                hook_event_name: 'SessionStart', session_id: fixture.providerSessionId, transcript_path: fixture.path,
+            } });
             await owner.observeSessionHook(fixture.providerSessionId, { hook_event_name: 'SessionStart', source: 'startup',
                 session_id: fixture.providerSessionId, transcript_path: fixture.path });
             await writeFile(fixture.path, nativeRows(fixture.providerSessionId, 'historical prompt'));
@@ -153,6 +164,9 @@ describe('Claude SDK native resume proof with the host file follower', () => {
         const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx: fixture.ctx, onProviderSessionId: () => undefined,
             onTranscriptPromoted: async proof => { promotions.push({ providerSessionId: proof.providerSessionId, transcriptPath: proof.transcriptPath }); } });
         try {
+            await fixture.hooks.service.observeSessionHook({ providerSessionId: fixture.providerSessionId, payload: {
+                hook_event_name: 'SessionStart', session_id: fixture.providerSessionId, transcript_path: fixture.path,
+            } });
             const prompt = 'diagnostic '.repeat(7_000);
             owner.recordSubmittedPrompt(prompt);
             await owner.observeSessionHook(fixture.providerSessionId, { hook_event_name: 'SessionStart', source: 'startup',

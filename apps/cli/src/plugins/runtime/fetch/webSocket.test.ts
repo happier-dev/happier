@@ -15,6 +15,9 @@ import {
     createPluginWebSocketConnection,
     normalizePluginWebSocketOpenInput,
 } from './webSocket';
+import { createGlobalFetchRuntime } from './globalFetchRuntime';
+import { createStablePluginHttpHost } from './service';
+import { createPluginInvocationServiceBinding } from '../invocation/services/factory';
 
 type WireFrame = Readonly<{
     opcode: number;
@@ -372,6 +375,31 @@ async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number): Promise
 }
 
 describe('plugin WebSocket host adapter', () => {
+    it('lets trusted plugin WebSockets connect without a network capability and closes on access withdrawal', async () => {
+        const peer = await createWebSocketPeer();
+        const revocation = new AbortController();
+        const binding = createPluginInvocationServiceBinding('trusted-socket', 'trusted-socket-binding');
+        const http = createStablePluginHttpHost({ adapter: createGlobalFetchRuntime() }).bind({
+            plugin: { id: 'example.trusted-socket', version: '1.0.0' },
+            contribution: { id: 'connect', qualifiedId: 'example.trusted-socket/actions/connect' },
+            occurrenceId: 'trusted-socket', correlationId: 'trusted-socket', surface: 'cli',
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, { ...binding, networkRevocationSignal: revocation.signal });
+        let connection: Awaited<ReturnType<typeof http.openWebSocket>> | undefined;
+        try {
+            connection = await http.openWebSocket({ url: peer.url, protocols: ['fixture-v1'] });
+            peer.sendText('connected');
+            await expect(connection.receive()).resolves.toEqual({ kind: 'text', text: 'connected' });
+            revocation.abort();
+            await expect(connection.closed).resolves.toMatchObject({ kind: 'aborted' });
+            await expect(http.openWebSocket({ url: peer.url, protocols: ['fixture-v1'] }))
+                .rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+        } finally {
+            connection?.dispose();
+            await peer.close();
+        }
+    });
+
     it.each([undefined, 65_000])('keeps a held real upgrade pending beyond former deadlines with budget %s', async (connectTimeoutMs) => {
         const peer = await createHangingUpgradePeer();
         const cancellation = new AbortController();
@@ -541,31 +569,23 @@ describe('plugin WebSocket host adapter', () => {
         }
     });
 
-    it('connects only through an admitted address while retaining the original WebSocket hostname', async () => {
+    it('connects through ordinary DNS while retaining the original WebSocket hostname', async () => {
         const peer = await createWebSocketPeer();
         const peerUrl = new URL(peer.url);
         try {
             const connection = await createPluginWebSocketConnection({
-                url: `ws://pinned.invalid:${peerUrl.port}${peerUrl.pathname}`,
+                url: `ws://localhost:${peerUrl.port}${peerUrl.pathname}`,
                 protocols: ['fixture-v1'],
                 allowInsecureWs: true,
-            }, { validatedAddresses: ['127.0.0.1'] });
+            });
 
-            expect(connection.url).toBe(`ws://pinned.invalid:${peerUrl.port}${peerUrl.pathname}`);
-            expect(peer.receivedHeader('host')).toBe(`pinned.invalid:${peerUrl.port}`);
+            expect(connection.url).toBe(`ws://localhost:${peerUrl.port}${peerUrl.pathname}`);
+            expect(peer.receivedHeader('host')).toBe(`localhost:${peerUrl.port}`);
             connection.dispose();
             await connection.closed;
         } finally {
             await peer.close();
         }
-    });
-
-    it('never falls back to ordinary DNS when admission supplies an empty address set', async () => {
-        await expect(createPluginWebSocketConnection({
-            url: 'wss://unresolved.example.test/socket',
-        }, { validatedAddresses: [] })).rejects.toMatchObject({
-            code: 'plugin_websocket_connect_failed',
-        });
     });
 
     it('does not disclose an already-buffered message after lifecycle retirement', async () => {

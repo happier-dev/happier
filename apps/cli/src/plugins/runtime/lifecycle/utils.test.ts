@@ -88,6 +88,7 @@ describe('plugin lifecycle failure diagnostics', () => {
         expect(mapDaemonModuleLoadErrorToDiagnostic(error)).toEqual({
             code: 'plugin_daemon_module_load_failed',
             message: 'Plugin operation failed',
+            details: { cause: { phase: 'evaluate', code: 'UNKNOWN', retryable: 'unknown' } },
         });
     });
 

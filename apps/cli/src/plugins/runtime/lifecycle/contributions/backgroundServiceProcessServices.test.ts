@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginInvocationServiceBinding } from '../../invocation/services/unavailable';
 import { createBackgroundServiceProcessServices } from './backgroundServiceProcessServices';
@@ -9,12 +9,63 @@ import { createProductionPluginInvocationServiceOwners } from '../../invocation/
 import { createStablePluginHttpHost } from '../../fetch/service';
 import type { PluginInvocationLogRecord } from '../../invocation/services/logger';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '@happier-dev/plugins-claude';
 import { PLUGIN_MANIFEST as CODEX_PLUGIN_MANIFEST } from '@happier-dev/plugins-codex';
 import { createBackgroundServiceProcessServiceClient, createBackgroundServiceProcessServiceHost, type BackgroundServiceProcessBridgeMessage } from './backgroundServiceProcessBridge';
 
 describe('background process invocation services', () => {
+    it('retains a prepared HTTP read and child-local adapter through the existing bridge until disposal', async () => {
+        const invocation = new AbortController();
+        let requests = 0;
+        const owner = createProductionPluginInvocationServiceOwners({
+            loggerSink: { write() {} },
+            http: createStablePluginHttpHost({
+                adapter: { request: async () => { throw new Error('HTTP must stay child-local'); }, openWebSocket: async () => { throw new Error('unused'); } },
+            }),
+        });
+        const binding = createPluginInvocationServiceBinding('prepared-bridge', 'prepared-bridge-binding');
+        const prepared = await owner.prepareBackgroundServiceProcessLocalPolicy({
+            plugin: { id: 'fixture', version: '1.0.0' }, contribution: { id: 'worker', qualifiedId: 'fixture/backgroundServices/worker' },
+            occurrenceId: 'prepared-bridge', correlationId: 'prepared-bridge', surface: 'background',
+            signal: invocation.signal, isOccurrenceCurrent: () => true,
+        }, binding);
+        let client: ReturnType<typeof createBackgroundServiceProcessServiceClient<typeof prepared.services>>;
+        const copy = (message: BackgroundServiceProcessBridgeMessage) => JSON.parse(JSON.stringify(message));
+        const bridge = createBackgroundServiceProcessServiceHost({ services: prepared.services,
+            send: message => queueMicrotask(() => client.receive(copy(message))) });
+        client = createBackgroundServiceProcessServiceClient<typeof prepared.services>({ description: JSON.parse(JSON.stringify(bridge.description)),
+            send: message => queueMicrotask(() => bridge.receive(copy(message))) });
+        try {
+            const adapter = {
+                async request(input: Parameters<HttpService['request']>[0]) {
+                    requests += 1;
+                    return { status: 200, finalUrl: input.url, headers: {}, body: new Uint8Array([7]) };
+                },
+                async openWebSocket(): Promise<never> { throw new Error('unused'); },
+            };
+            const http = client.services.__backgroundServiceProcessLocal.http!;
+            const read = await http.prepareRead({ intent: 'get', url: 'https://example.test/read', redirect: 'error' }, {}, adapter);
+            const retired = await http.prepareRead({ intent: 'get', url: 'https://example.test/read', redirect: 'error' }, {}, adapter);
+            const late = await http.prepareRead({ intent: 'get', url: 'https://example.test/late', redirect: 'error' }, {}, adapter);
+            expect(requests).toBe(0);
+            invocation.abort();
+            await expect(read.request({ signal: new AbortController().signal })).resolves.toMatchObject({ body: new Uint8Array([7]) });
+            expect(requests).toBe(1);
+            await read.dispose();
+            await expect(read.request({ signal: new AbortController().signal })).rejects.toMatchObject({ code: 'background_service_process_method_unavailable' });
+            await expect(late.request({ signal: new AbortController().signal })).resolves.toMatchObject({ body: new Uint8Array([7]) });
+            await late.dispose();
+            // Admitted when prepared, so it finishes; the cancelled invocation admits nothing new.
+            await expect(retired.request({ signal: new AbortController().signal })).resolves.toMatchObject({ body: new Uint8Array([7]) });
+            await retired.dispose();
+            await expect(http.prepareRead({ intent: 'get', url: 'https://example.test/read', redirect: 'error' }, {}, adapter))
+                .rejects.toMatchObject({ name: 'AbortError' });
+            expect(requests).toBe(3);
+        } finally { await client.dispose(); await bridge.dispose(); await owner.dispose(); }
+    });
+
     it('releases completed native operation capabilities instead of retaining the indexed corpus in the daemon', async () => {
         const parent = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
         const roots = { prepare: (signal: AbortSignal) => parent.prepareBackgroundServiceProcessOperationServices({
@@ -91,7 +142,7 @@ describe('background process invocation services', () => {
         const longCredential = `opaque-native-${'abcXYZ'.repeat(1000)}`;
         parent.registerRawForRedaction(seed, longCredential);
         try {
-            const prepared = await parent.prepareBackgroundServiceProcessLocalPolicy(seed, { ...binding, availability: { ...binding.availability, logger: 'available' } });
+            const prepared = await parent.prepareBackgroundServiceProcessLocalPolicy(seed, binding);
             const child = createBackgroundServiceProcessServices({ metadata: { plugin: seed.plugin, contribution: seed.contribution }, signal: controller.signal, clientServices: prepared.services, localPolicy: prepared.localPolicy });
             try {
                 child.services.logger.info('result opaque-credential-value', { content: 'opaque-credential-value' });
@@ -142,7 +193,7 @@ describe('background process invocation services', () => {
             const prepared = await parent.prepareBackgroundServiceProcessLocalPolicy({
                 plugin: { id: 'fixture', version: '1.0.0' }, contribution: { id: 'worker', qualifiedId: 'fixture/backgroundServices/worker' },
                 occurrenceId: 'occurrence', correlationId: 'invocation', surface: 'background', signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
-            }, { ...binding, availability: { ...binding.availability, logger: 'available', exec: 'available' }, processExecutables: [executable] });
+            }, binding);
             const child = createBackgroundServiceProcessServices({
                 metadata: { plugin: { id: 'fixture', version: '1.0.0' }, contribution: { id: 'worker', qualifiedId: 'fixture/backgroundServices/worker' } },
                 signal: controller.signal, localPolicy: prepared.localPolicy, clientServices: prepared.services,
@@ -156,9 +207,8 @@ describe('background process invocation services', () => {
         } finally { controller.abort(); await parent.dispose(); }
     });
 
-    it('prepares admitted local policy through the existing production owner and preserves daemon HTTP policy', async () => {
+    it('prepares admitted local policy through the existing production owner and routes child-local HTTP', async () => {
         const controller = new AbortController();
-        let revalidated = false;
         const host = createProductionPluginInvocationServiceOwners({
             loggerSink: { write() {} },
             filesystemRoots: { pluginData: '/tmp/plugin', workspace: '/tmp/workspace', projects: new Map() },

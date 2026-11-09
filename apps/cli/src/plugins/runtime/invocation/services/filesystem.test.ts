@@ -1,11 +1,10 @@
-import { mkdtemp, mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
   createPluginFileSystemService,
-  isCanonicalPathAuthorizedByPluginFileSystemScopes,
   resolvePluginPathWithinRoots,
 } from './filesystem';
 
@@ -14,7 +13,7 @@ describe('plugin invocation filesystem service', () => {
     const roots = { pluginData: tmpdir(), projects: new Map<string, string>() };
     expect(() => resolvePluginPathWithinRoots(roots, { root: 'workspace', relativePath: 'file' }))
       .toThrow(expect.objectContaining({ code: 'plugin_fs_root_unavailable' }));
-    const service = createPluginFileSystemService({ roots, scopes: [], signal: new AbortController().signal,
+    const service = createPluginFileSystemService({ roots, signal: new AbortController().signal,
       isOccurrenceCurrent: () => true });
     await expect(service.stat({ root: 'workspace', relativePath: 'file' })).rejects.toMatchObject({ code: 'plugin_fs_root_unavailable' });
     expect(resolvePluginPathWithinRoots({ ...roots, workspace: tmpdir() }, { root: 'workspace', relativePath: 'file' }))
@@ -43,63 +42,10 @@ describe('plugin invocation filesystem service', () => {
     expect(predecessorExists).toBe(false);
   });
 
-  it('authorizes canonical media roots only inside a readable exact scope', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-media-scope-'));
-    const workspace = join(root, 'workspace');
-    const projectA = join(root, 'project-a');
-    const projectB = join(root, 'project-a-sibling');
-    const outside = join(root, 'outside');
-    await Promise.all([
-      mkdir(join(workspace, 'allowed'), { recursive: true }),
-      mkdir(join(workspace, 'allowed-sibling'), { recursive: true }),
-      mkdir(projectA, { recursive: true }),
-      mkdir(projectB, { recursive: true }),
-      mkdir(outside, { recursive: true }),
-    ]);
-    await symlink(outside, join(workspace, 'allowed', 'escape'));
-    const roots = {
-      pluginData: join(root, 'plugin-data'),
-      workspace,
-      projects: new Map([['a', projectA], ['b', projectB]]),
-    };
-
-    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
-      roots,
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
-      canonicalPath: await realpath(join(workspace, 'allowed')),
-      access: 'read',
-    })).resolves.toBe(true);
-    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
-      roots,
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
-      canonicalPath: await realpath(join(workspace, 'allowed-sibling')),
-      access: 'read',
-    })).resolves.toBe(false);
-    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
-      roots,
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['write'] }],
-      canonicalPath: await realpath(join(workspace, 'allowed')),
-      access: 'read',
-    })).resolves.toBe(false);
-    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
-      roots,
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read'] }],
-      canonicalPath: await realpath(join(workspace, 'allowed', 'escape')),
-      access: 'read',
-    })).resolves.toBe(false);
-    await expect(isCanonicalPathAuthorizedByPluginFileSystemScopes({
-      roots,
-      scopes: [{ root: 'project', projectId: 'a', access: ['read'] }],
-      canonicalPath: await realpath(projectB),
-      access: 'read',
-    })).resolves.toBe(false);
-  });
-
   it('round-trips binary bytes atomically inside an exact authorized scope', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-svc07-'));
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read', 'write', 'delete'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -109,45 +55,34 @@ describe('plugin invocation filesystem service', () => {
     expect(new Uint8Array(await readFile(join(root, 'allowed/data.bin')))).toEqual(bytes);
   });
 
-  it('diagnoses a disclosure mismatch while preserving traversal, symlink, size, and occurrenceId fences', async () => {
+  it('allows selected symlink writes while preserving relative-path, size, and occurrenceId boundaries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-svc07-root-'));
     const outside = await mkdtemp(join(tmpdir(), 'happier-svc07-outside-'));
     await mkdir(join(root, 'allowed'), { recursive: true });
     await symlink(outside, join(root, 'allowed', 'link'));
     let current = true;
-    const disclosureMismatches: unknown[] = [];
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read', 'write'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => current,
-      recordDisclosureMismatch: (mismatch) => {
-        disclosureMismatches.push(mismatch);
-        throw new Error('diagnostic sink failed');
-      },
     });
     await expect(service.readFile({ root: 'workspace', relativePath: '../outside' })).rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
     await expect(service.writeFile({ root: 'workspace', relativePath: 'other/a' }, new Uint8Array([1]))).resolves.toBeUndefined();
-    expect(disclosureMismatches).toEqual([{
-      root: 'workspace',
-      relativePath: 'other/a',
-      access: 'write',
-    }]);
-    await expect(service.writeFile({ root: 'workspace', relativePath: 'allowed/link/a' }, new Uint8Array([1]))).rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
+    await expect(service.writeFile({ root: 'workspace', relativePath: 'allowed/link/a' }, new Uint8Array([1]))).resolves.toBeUndefined();
+    await expect(readFile(join(outside, 'a'))).resolves.toEqual(Buffer.from([1]));
     await service.writeFile({ root: 'workspace', relativePath: 'allowed/large' }, new Uint8Array([1, 2]));
     await expect(service.readFile({ root: 'workspace', relativePath: 'allowed/large' }, { maxBytes: 1 })).rejects.toMatchObject({ code: 'plugin_fs_too_large' });
     current = false;
     await expect(service.stat({ root: 'workspace', relativePath: 'allowed/large' })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
   });
 
-  it('does not create directories through a symlink before rejecting the escape', async () => {
+  it('creates selected nested paths through a workspace symlink', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-svc07-root-'));
     const outside = await mkdtemp(join(tmpdir(), 'happier-svc07-outside-'));
     await mkdir(join(root, 'allowed'), { recursive: true });
     await symlink(outside, join(root, 'allowed', 'link'));
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['write'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -155,8 +90,8 @@ describe('plugin invocation filesystem service', () => {
     await expect(service.writeFile(
       { root: 'workspace', relativePath: 'allowed/link/escaped/side-effect.bin' },
       new Uint8Array([1]),
-    )).rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
-    await expect(readdir(outside)).resolves.toEqual([]);
+    )).resolves.toBeUndefined();
+    await expect(readFile(join(outside, 'escaped', 'side-effect.bin'))).resolves.toEqual(Buffer.from([1]));
   });
 
   it('rejects Windows device names, case-fold collisions, and invalid read limits', async () => {
@@ -165,7 +100,6 @@ describe('plugin invocation filesystem service', () => {
     await writeFile(join(root, 'allowed', 'Case.txt'), 'safe');
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', pathPrefix: 'allowed', access: ['read', 'write'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -195,7 +129,6 @@ describe('plugin invocation filesystem service', () => {
     await writeFile(join(root, directoryName, diskName), 'normalized');
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read', 'write', 'delete'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -219,7 +152,6 @@ describe('plugin invocation filesystem service', () => {
     await writeFile(join(root, 'second.txt'), 'two');
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -244,7 +176,6 @@ describe('plugin invocation filesystem service', () => {
     await writeFile(join(root, 'CON.txt'), 'device-name');
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -253,7 +184,6 @@ describe('plugin invocation filesystem service', () => {
 
     const unavailable = createPluginFileSystemService({
       roots: { pluginData: join(root, 'missing-root'), workspace: join(root, 'missing-root'), projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -268,7 +198,6 @@ describe('plugin invocation filesystem service', () => {
     await writeFile(join(root, 'file.txt'), 'file');
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read', 'write', 'delete'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -289,10 +218,6 @@ describe('plugin invocation filesystem service', () => {
     const abort = new AbortController();
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map([['project-a', project]]) },
-      scopes: [
-        { root: 'workspace', access: ['read', 'write'] },
-        { root: 'project', projectId: 'project-a', access: ['read', 'write'] },
-      ],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });
@@ -305,10 +230,14 @@ describe('plugin invocation filesystem service', () => {
       { root: 'project', projectId: 'project-b', relativePath: 'denied.bin' },
       new Uint8Array([1]),
     )).rejects.toMatchObject({ code: 'plugin_fs_root_unavailable' });
-    await expect(service.writeFile(
-      { root: 'workspace', relativePath: 'oversized.bin' },
-      new Uint8Array((16 * 1024 * 1024) + 1),
-    )).rejects.toMatchObject({ code: 'plugin_fs_too_large' });
+    const largeBytes = new Uint8Array((16 * 1024 * 1024) + 1);
+    largeBytes[largeBytes.length - 1] = 255;
+    const largePath = { root: 'workspace', relativePath: 'large.bin' } as const;
+    await service.writeFile(largePath, largeBytes);
+    for (const bytes of [await service.readFile(largePath), await service.readFile(largePath, { maxBytes: largeBytes.length })]) {
+      expect(bytes.byteLength).toBe(largeBytes.byteLength);
+      expect(bytes.at(-1)).toBe(255);
+    }
 
     abort.abort();
     await expect(service.stat(
@@ -320,8 +249,11 @@ describe('plugin invocation filesystem service', () => {
       await writeFile(join(root, `item-${String(index).padStart(3, '0')}.txt`), 'x');
     }
     const page = await service.list({ root: 'workspace', relativePath: '' }, { limit: 101 });
-    expect(page.items).toHaveLength(100);
+    expect(page.items).toHaveLength(101);
     expect(page.nextCursor).toMatch(/^v1\./);
+    const all = await service.list({ root: 'workspace', relativePath: '' });
+    expect(all.items).toHaveLength(102);
+    expect(all.nextCursor).toBeUndefined();
   });
 
   it('rechecks cancellation before destructive removal and preserves the target', async () => {
@@ -331,7 +263,6 @@ describe('plugin invocation filesystem service', () => {
     const abort = new AbortController();
     const service = createPluginFileSystemService({
       roots: { pluginData: root, workspace: root, projects: new Map() },
-      scopes: [{ root: 'workspace', access: ['read', 'delete'] }],
       signal: new AbortController().signal,
       isOccurrenceCurrent: () => true,
     });

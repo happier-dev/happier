@@ -15,6 +15,7 @@ export type ReadPluginManifestResult =
       manifestPath: string;
       manifestRawText: string;
       manifest: CanonicalPluginManifest;
+      diagnostics?: readonly PluginCompatibilityDiagnostic[];
     }>
   | Readonly<{
       ok: false;
@@ -51,7 +52,7 @@ export async function readPluginManifest(params: Readonly<{
   const ingestion = ingestCanonicalPluginManifest(manifestRawBytes, {
     ...(params.manifestAuthority ? { manifestAuthority: params.manifestAuthority } : {}),
     sourceProvenance: params.sourceProvenance,
-    purpose: params.purpose,
+    purpose: params.purpose ?? 'admission',
     ...(params.enforceEngineCompatibility !== undefined
       ? { enforceEngineCompatibility: params.enforceEngineCompatibility }
       : {}),
@@ -61,8 +62,7 @@ export async function readPluginManifest(params: Readonly<{
       ok: false,
       diagnostics: ingestion.diagnostics.map((diagnostic) => ({
         ...projectPluginManifestCompatibilityDiagnostic(diagnostic),
-        code: 'plugin_manifest_invalid',
-        ...(diagnostic.pluginId && diagnostic.contributionId ? {} : {
+        ...(diagnostic.code === 'plugin_manifest_engine_incompatible' || diagnostic.pluginId && diagnostic.contributionId ? {} : {
           message: `${diagnostic.code}: ${formatPluginManifestIngestionDiagnostic({ ...diagnostic, code: 'plugin_manifest_invalid' })}`,
         }),
       })),
@@ -76,5 +76,6 @@ export async function readPluginManifest(params: Readonly<{
     manifestPath: params.manifestPath,
     manifestRawText,
     manifest: ingestion.manifest,
+    ...(ingestion.diagnostics?.length ? { diagnostics: ingestion.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) } : {}),
   };
 }

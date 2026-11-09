@@ -13,6 +13,25 @@ async function readJsonFile<T>(path: string): Promise<T> {
 
 describe('scaffoldLocalPlugin',
   () => {
+  it('packages locale JSON Resources for generated UI translations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-i18n-'));
+    try {
+      const targetDir = join(root, 'plugin');
+      const result = await scaffoldLocalPlugin({ targetDir, pluginId: 'acme.copy', displayName: 'Copy', ui: 'declarative' });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const source = await readFile(result.sourceEntryPath, 'utf8');
+      expect(source).toContain("resourceId: 'i18n-en'");
+      expect(source).not.toContain('messages:');
+      const pkg = await readJsonFile<{ files: string[] }>(result.packageJsonPath);
+      expect(pkg.files).toContain('assets');
+      expect(await readJsonFile(join(targetDir, 'assets/i18n/fr.json'))).toMatchObject({
+        'scaffold.main.greeting': 'Bonjour de Copy',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('scaffolds a working tree under any syntactically valid id, including the reserved namespace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-reserved-'));
     try {
@@ -170,7 +189,7 @@ describe('scaffoldLocalPlugin',
     expect(packageJson).toMatchObject({
       happier: { manifest: '.happier-plugin/plugin.json' },
       keywords: ['happier-plugin'],
-      files: ['.agents/skills/happier-plugin-authoring', 'dist'],
+      files: ['.agents/skills/happier-plugin-authoring', 'dist', 'assets'],
       dependencies: {
         '@happier-dev/plugin-sdk': PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.dependencies['@happier-dev/plugin-sdk'],
       },

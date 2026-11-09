@@ -55,7 +55,7 @@ describe('activation metadata', () => {
         ]));
     });
 
-    it('preserves declared event and system-tool metadata for the activated registry', () => {
+    it('preserves system-tool metadata for the activated registry', () => {
         const ingestion = ingestCanonicalPluginManifest({
             schemaVersion: 2,
             id: 'com.acme.runtime-metadata',
@@ -72,9 +72,6 @@ describe('activation metadata', () => {
 
         const policy = buildActivationPolicy(ingestion.manifest);
 
-        expect(policy.declaredEventDeclarations).toEqual([
-            { id: 'review-ready-event', kind: 'event', title: 'Review ready' },
-        ]);
         expect(policy.systemTools).toEqual([
             { id: 'agent-cli', title: 'Agent CLI', executableNames: ['agent-cli'] },
         ]);

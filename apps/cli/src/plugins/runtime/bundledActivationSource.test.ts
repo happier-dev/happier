@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import * as fileSystem from 'node:fs';
+import * as fileSystemPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -99,6 +101,18 @@ afterEach(async () => {
 });
 
 describe('createBundledActivationSourceResolver', () => {
+  it('resolves packaged activation metadata when an unrelated contribution is skipped', () => {
+    const packageName = '@happier-dev/plugins-tolerant-fixture';
+    const pluginId = 'happier.tolerant-fixture';
+    const result = resolvePackagedBundledActivationPaths({ runtimeRoot: '/runtime',
+      activationTargets: [{ pluginId, daemonEntryPath: packageName,
+        sourceSpec: { kind: 'bundled' } }],
+      metadata: [{ pluginId, packageName }],
+      locators: [{ pluginId, manifest: createPluginManifestV2Fixture({ id: pluginId,
+        contributes: { actions: [{ id: 'future', futureRestriction: true }] } }) }],
+    });
+    expect(result.entryPathsByPackageName.get(packageName)).toBe(join('/runtime/node_modules', packageName, 'daemon.mjs'));
+  });
   it('keeps another bundled source usable when one declared package root is missing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-account-missing-bundle-'));
     tempDirs.push(root);
@@ -196,7 +210,7 @@ describe('createBundledActivationSourceResolver', () => {
     });
   });
 
-  it('activates directly from an authoritative CLI version root without creating a plugin generation', async () => {
+  it('activates admitted packaged bytes without rereading package metadata or creating a plugin generation', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-packaged-bundled-direct-'));
     tempDirs.push(tempDir);
     const runtimeRoot = join(tempDir, 'versions', 'cli-version-0.3.0');
@@ -209,72 +223,70 @@ describe('createBundledActivationSourceResolver', () => {
       '@happier-dev',
       'plugins-direct-fixture',
     );
-    const daemonEntryPath = join(packageRoot, '.happier-plugin', 'daemon.js');
+    const daemonEntryPath = join(packageRoot, '.happier-plugin', 'daemon.mjs');
+    const manifestRelativePath = 'assets/bundled-plugin-manifests/direct-fixture.json';
+    const manifest = createPluginManifestV2Fixture({
+      id: pluginId,
+      displayName: 'Direct fixture',
+      entrypoints: { daemon: './.happier-plugin/daemon.mjs' },
+    });
     await mkdir(dirname(daemonEntryPath), { recursive: true });
     await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
       name: packageName,
       version: '1.0.0',
     }), 'utf8');
-    await writeFile(join(packageRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
-      schemaVersion: 2,
-      id: pluginId,
-      version: '1.0.0',
-      displayName: 'Direct fixture',
-      engines: { happier: '^0.3.0' },
-      runtime: { apiVersion: 1 },
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
-      hostAccess: { required: [], optional: [] },
-      contributes: {},
-    }), 'utf8');
-    await writeFile(daemonEntryPath, 'export async function activate() {}\n', 'utf8');
+    await writeFile(join(packageRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(manifest), 'utf8');
+    await mkdir(dirname(join(runtimeRoot, manifestRelativePath)), { recursive: true });
+    await writeFile(join(runtimeRoot, manifestRelativePath), JSON.stringify(manifest), 'utf8');
+    await writeFile(daemonEntryPath, 'export async function activate() { return "activated"; }\n', 'utf8');
 
-    const packaged = resolvePackagedBundledActivationPaths({
-      runtimeRoot,
-      activationTargets: [{
-        pluginId,
-        daemonEntryPath: packageName,
-        sourceSpec: { kind: 'bundled' },
-      }],
-      metadata: [{ pluginId, packageName }],
-      locators: [{
-        pluginId,
-        manifest: {
-          schemaVersion: 2,
-          id: pluginId,
-          version: '1.0.0',
-          displayName: 'Direct fixture',
-          engines: { happier: '^0.3.0' },
-          runtime: { apiVersion: 1 },
-          entrypoints: { daemon: './.happier-plugin/daemon.js' },
-          hostAccess: { required: [], optional: [] },
-          contributes: {},
+    // Observe the real filesystem boundary; producer admission and module loading remain real.
+    const readFileSync = vi.spyOn(fileSystem, 'readFileSync');
+    const readFile = vi.spyOn(fileSystemPromises, 'readFile');
+    try {
+      const packaged = resolvePackagedBundledActivationPaths({
+        runtimeRoot,
+        activationTargets: [{
+          pluginId,
+          daemonEntryPath: packageName,
+          sourceSpec: { kind: 'bundled' },
+        }],
+        metadata: [{ pluginId, packageName }],
+        locators: [{ pluginId, manifestRelativePath }],
+      });
+      const source = createBundledActivationSourceResolver({
+        bundledPackageNames: [packageName],
+        immutableArtifactPackageNames: [packageName],
+        immutableArtifactEntryPathsByPackageName: packaged.entryPathsByPackageName,
+        immutableArtifactRootPathsByPackageName: packaged.rootPathsByPackageName,
+        canImportFirstPartyPluginSource: () => false,
+        packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-version-0.3.0' },
+        repoRoot: '/source-checkout-unavailable',
+      })({ pluginId, daemonEntryPath: packageName });
+
+      expect(source?.sourceAuthority).toEqual({
+        kind: 'bundled_first_party',
+        packagedRuntime: {
+          kind: 'cli_version_root',
+          versionRootId: 'cli-version-0.3.0',
         },
-      }],
-    });
-    const importModule = vi.fn(async () => pluginModuleFixture);
-    const source = createBundledActivationSourceResolver({
-      bundledPackageNames: [packageName],
-      immutableArtifactPackageNames: [packageName],
-      immutableArtifactEntryPathsByPackageName: packaged.entryPathsByPackageName,
-      immutableArtifactRootPathsByPackageName: packaged.rootPathsByPackageName,
-      canImportFirstPartyPluginSource: () => false,
-      importModule,
-      packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-version-0.3.0' },
-      repoRoot: '/source-checkout-unavailable',
-    })({ pluginId, daemonEntryPath: packageName });
-
-    expect(source?.sourceAuthority).toEqual({
-      kind: 'bundled_first_party',
-      packagedRuntime: {
-        kind: 'cli_version_root',
-        versionRootId: 'cli-version-0.3.0',
-      },
-      resolvedRoot: packageRoot,
-    });
-    await expect(source?.load()).resolves.toBe(pluginModuleFixture);
-    expect(importModule).toHaveBeenCalledWith(pathToFileURL(daemonEntryPath).href);
-    await expect(stat(resolvePluginStorePaths({ happyHomeDir }).generationsDir))
-      .rejects.toMatchObject({ code: 'ENOENT' });
+        resolvedRoot: packageRoot,
+      });
+      if (!source) throw new Error('Packaged activation source is unavailable');
+      const loaded = await source.load();
+      if (typeof loaded.activate !== 'function') throw new Error('Packaged activate export is unavailable');
+      await expect(loaded.activate()).resolves.toBe('activated');
+      expect(readFileSync.mock.calls.filter(([path]) => String(path) === join(runtimeRoot, manifestRelativePath))).toHaveLength(1);
+      expect(readFile.mock.calls.filter(([path]) => (
+        String(path) === join(packageRoot, 'package.json')
+        || String(path) === join(packageRoot, '.happier-plugin', 'plugin.json')
+      ))).toHaveLength(0);
+      await expect(stat(resolvePluginStorePaths({ happyHomeDir }).generationsDir))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      readFileSync.mockRestore();
+      readFile.mockRestore();
+    }
   });
 
   it('resolves the canonical checkout through a preserve-symlinks source snapshot path', async () => {
@@ -377,7 +389,7 @@ describe('createBundledActivationSourceResolver', () => {
     })).toBeNull();
   });
 
-  it('fails before importing a bundled plugin module when source-dev shared deps are stale', async () => {
+  it('fails before importing an unadmitted flat plugin copy', async () => {
     const importModule = vi.fn();
     const prepareSourceDevSharedDeps = vi.fn(async () => ({
       type: 'error' as const,
@@ -386,7 +398,7 @@ describe('createBundledActivationSourceResolver', () => {
     const resolveActivationSource = createBundledActivationSourceResolver({
       bundledPackageNames: ['@happier-dev/plugins-scm-git'],
       canImportFirstPartyPluginSource: () => true,
-      existsSync: (path) => path === '/repo/packages/plugins/scm-git/src/index.ts',
+      existsSync: () => false,
       importModule,
       packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-version-0.3.0' },
       prepareSourceDevSharedDeps,
@@ -501,7 +513,7 @@ describe('createBundledActivationSourceResolver', () => {
 
     expect(imported).toHaveLength(1);
     expect(imported[0]).toMatch(/\/packages\/plugins\/scm-git\/src\/index\.ts$/u);
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
+    expect(prepareSourceDevSharedDeps).not.toHaveBeenCalled();
   });
 
   it('selects the canonical source-development activation input', async () => {
@@ -563,10 +575,7 @@ describe('createBundledActivationSourceResolver', () => {
       canonicalRoot: join(repoRoot, 'packages', 'plugins', 'session-owner'),
       observedRevision: 3,
     });
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledWith({
-      packageName: '@happier-dev/plugins-session-owner',
-      workspaceNames: ['plugins-session-owner'],
-    });
+    expect(prepareSourceDevSharedDeps).not.toHaveBeenCalled();
     expect(importModule).toHaveBeenCalledWith(
       expect.stringMatching(/\/packages\/plugins\/session-owner\/src\/index\.ts$/u),
       { loadMode: 'source-ts' },
@@ -713,7 +722,7 @@ describe('createBundledActivationSourceResolver', () => {
       id: 'happier.agent.session-owner',
       version: '1.0.0',
       displayName: 'Session owner',
-      engines: { happier: '^0.3.0' },
+      engines: { happier: '^0.2.0' },
       runtime: { apiVersion: 1 },
       entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: [], optional: [] },
@@ -904,194 +913,4 @@ describe('createBundledActivationSourceResolver', () => {
     expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('shares one deterministic source-dev shared-deps closure preflight across distinct bundled plugin source loads', async () => {
-    const importModule = vi.fn(async () => pluginModuleFixture);
-    let releasePreflight!: () => void;
-    const prepareSourceDevSharedDeps = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releasePreflight = resolve;
-      });
-      return syncedPreflight;
-    });
-    const resolveActivationSource = createBundledActivationSourceResolver({
-      bundledPackageNames: [
-        '@happier-dev/plugins-scm-sapling',
-        '@happier-dev/plugins-scm-git',
-        '@happier-dev/plugins-scm-sapling',
-      ],
-      canImportFirstPartyPluginSource: () => true,
-      existsSync: (path) => path.endsWith('/src/index.ts'),
-      importModule,
-      prepareSourceDevSharedDeps,
-      repoRoot: '/repo',
-    });
-
-    const firstLoad = resolveActivationSource({
-      pluginId: 'happier.scm.backend.git',
-      daemonEntryPath: '@happier-dev/plugins-scm-git',
-    })?.load();
-    const secondLoad = resolveActivationSource({
-      pluginId: 'happier.scm.backend.sapling',
-      daemonEntryPath: '@happier-dev/plugins-scm-sapling',
-    })?.load();
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledWith({
-      packageName: '@happier-dev/plugins-scm-git',
-      workspaceNames: ['plugins-scm-git', 'plugins-scm-sapling'],
-    });
-    expect(importModule).not.toHaveBeenCalled();
-
-    releasePreflight();
-    await Promise.all([firstLoad, secondLoad]);
-
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
-    expect(importModule).toHaveBeenCalledTimes(2);
-  });
-
-  it('falls back to isolated package-local preflight in the same load after closure preflight failure', async () => {
-    const importModule = vi.fn(async () => pluginModuleFixture);
-    let saplingAttempts = 0;
-    const prepareSourceDevSharedDeps = vi.fn(async (params: Readonly<{
-      packageName: string;
-      workspaceNames?: readonly string[];
-    }>) => {
-      if ((params.workspaceNames?.length ?? 0) > 1) {
-        return {
-          type: 'error' as const,
-          errorMessage: 'bundled plugin workspace closure is stale',
-        };
-      }
-      if (params.packageName === '@happier-dev/plugins-scm-sapling') {
-        saplingAttempts += 1;
-        if (saplingAttempts > 1) return syncedPreflight;
-        return {
-          type: 'error' as const,
-          errorMessage: 'sapling workspace is stale',
-        };
-      }
-      return syncedPreflight;
-    });
-    const resolveActivationSource = createBundledActivationSourceResolver({
-      bundledPackageNames: [
-        '@happier-dev/plugins-scm-git',
-        '@happier-dev/plugins-scm-sapling',
-      ],
-      canImportFirstPartyPluginSource: () => true,
-      existsSync: (path) => path.endsWith('/src/index.ts'),
-      importModule,
-      prepareSourceDevSharedDeps,
-      repoRoot: '/repo',
-    });
-
-    const gitSource = resolveActivationSource({
-      pluginId: 'happier.scm.backend.git',
-      daemonEntryPath: '@happier-dev/plugins-scm-git',
-    });
-    const saplingSource = resolveActivationSource({
-      pluginId: 'happier.scm.backend.sapling',
-      daemonEntryPath: '@happier-dev/plugins-scm-sapling',
-    });
-
-    await expect(Promise.allSettled([
-      gitSource?.load(),
-      saplingSource?.load(),
-    ])).resolves.toEqual([
-      expect.objectContaining({
-        status: 'fulfilled',
-        value: pluginModuleFixture,
-      }),
-      expect.objectContaining({
-        status: 'rejected',
-        reason: expect.objectContaining({ message: 'sapling workspace is stale' }),
-      }),
-    ]);
-    await expect(saplingSource?.load()).resolves.toBe(pluginModuleFixture);
-
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(4);
-    expect(prepareSourceDevSharedDeps.mock.calls).toEqual([
-      [{
-        packageName: '@happier-dev/plugins-scm-git',
-        workspaceNames: ['plugins-scm-git', 'plugins-scm-sapling'],
-      }],
-      [{
-        packageName: '@happier-dev/plugins-scm-git',
-        workspaceNames: ['plugins-scm-git'],
-      }],
-      [{
-        packageName: '@happier-dev/plugins-scm-sapling',
-        workspaceNames: ['plugins-scm-sapling'],
-      }],
-      [{
-        packageName: '@happier-dev/plugins-scm-sapling',
-        workspaceNames: ['plugins-scm-sapling'],
-      }],
-    ]);
-    expect(importModule).toHaveBeenCalledTimes(2);
-  });
-
-  it('coalesces in-flight source-dev shared-deps preflight for the same bundled plugin target', async () => {
-    const importModule = vi.fn(async () => pluginModuleFixture);
-    let releasePreflight!: () => void;
-    const prepareSourceDevSharedDeps = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releasePreflight = resolve;
-      });
-      return syncedPreflight;
-    });
-    const resolveActivationSource = createBundledActivationSourceResolver({
-      bundledPackageNames: ['@happier-dev/plugins-scm-git'],
-      canImportFirstPartyPluginSource: () => true,
-      existsSync: (path) => path.endsWith('/src/index.ts'),
-      importModule,
-      prepareSourceDevSharedDeps,
-      repoRoot: '/repo',
-    });
-
-    const firstLoad = resolveActivationSource({
-      pluginId: 'happier.scm.backend.git',
-      daemonEntryPath: '@happier-dev/plugins-scm-git',
-    })?.load();
-    const secondLoad = resolveActivationSource({
-      pluginId: 'happier.scm.backend.git',
-      daemonEntryPath: '@happier-dev/plugins-scm-git',
-    })?.load();
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
-    releasePreflight();
-    await Promise.all([firstLoad, secondLoad]);
-
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(1);
-    expect(importModule).toHaveBeenCalledTimes(2);
-  });
-
-  it('retries source-dev shared-deps preflight after a transient bundled plugin load failure', async () => {
-    const importModule = vi.fn(async () => pluginModuleFixture);
-    const prepareSourceDevSharedDeps = vi.fn()
-      .mockResolvedValueOnce({
-        type: 'error' as const,
-        errorMessage: 'source-dev shared deps are temporarily locked',
-      })
-      .mockResolvedValueOnce(syncedPreflight);
-    const resolveActivationSource = createBundledActivationSourceResolver({
-      bundledPackageNames: ['@happier-dev/plugins-scm-git'],
-      canImportFirstPartyPluginSource: () => true,
-      existsSync: (path) => path === '/repo/packages/plugins/scm-git/src/index.ts',
-      importModule,
-      prepareSourceDevSharedDeps,
-      repoRoot: '/repo',
-    });
-    const source = resolveActivationSource({
-      pluginId: 'happier.scm.backend.git',
-      daemonEntryPath: '@happier-dev/plugins-scm-git',
-    });
-
-    await expect(source?.load()).rejects.toThrow('source-dev shared deps are temporarily locked');
-    await expect(source?.load()).resolves.toBe(pluginModuleFixture);
-
-    expect(prepareSourceDevSharedDeps).toHaveBeenCalledTimes(2);
-    expect(importModule).toHaveBeenCalledTimes(1);
-  });
 });

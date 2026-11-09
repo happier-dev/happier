@@ -244,8 +244,6 @@ function createAction(
   };
 }
 
-
-
 async function createExecutableRegistry(params: Readonly<{
   action: ResolvedActionContribution;
   targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
@@ -1180,7 +1178,7 @@ describe('executeContributedAction', () => {
     expect(target).not.toHaveBeenCalled();
   });
 
-  it.each(['materialization', 'source', 'bundled'] as const)('returns the %s target execution origin only after rereading it at settlement', async (kind) => {
+  it.each(['materialization', 'source', 'bundled'] as const)('returns the admitted %s target execution origin with one origin read per call', async (kind) => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -1251,9 +1249,8 @@ describe('executeContributedAction', () => {
       },
     });
     expect(target).toHaveBeenCalledTimes(1);
-    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
-    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenNthCalledWith(1, 'acme.target', signal);
-    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenNthCalledWith(2, 'acme.target', signal);
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledOnce();
+    expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledWith('acme.target', signal);
   });
 
   it.each([
@@ -1389,7 +1386,7 @@ describe('executeContributedAction', () => {
     expect(target).not.toHaveBeenCalled();
   });
 
-  it('refuses to publish a retired target execution origin after handler settlement', async () => {
+  it('returns the executed result with its admission-time origin when the target origin changes during the handler', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -1423,25 +1420,26 @@ describe('executeContributedAction', () => {
     const targetActionInvocations = createTargetActionInvocationRegistry({
       actions: [createTargetActionRegistration({ action, handler: target })],
     });
-
-    const attempt = await executeContributedAction({
-      runtimeRegistry: (await createExecutableRegistry({
-        action,
-        targetActionInvocations,
-        resolveCurrentPluginExecutionOrigin,
-        activateContributionsOnDemand: async () => [],
-      })),
+    const runtimeRegistry = await createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      resolveCurrentPluginExecutionOrigin,
+      activateContributionsOnDemand: async () => [],
+    });
+    const admittedOrigin = {
+      serverIdentityId: 'srv_action_origin_fixture',
+      materializationRef: {
+        pluginId: 'acme.target',
+        machineId: 'machine-target',
+        materializationId: 'materialization-target-before',
+      },
+    };
+    const invoke = () => executeContributedAction({
+      runtimeRegistry,
       actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
       input: { title: 'Ready' },
       captureExecutionOrigin: true,
-      expectedExecutionOrigin: {
-        serverIdentityId: 'srv_action_origin_fixture',
-        materializationRef: {
-          pluginId: 'acme.target',
-          machineId: 'machine-target',
-          materializationId: 'materialization-target-before',
-        },
-      },
+      expectedExecutionOrigin: admittedOrigin,
       context: {
         surface: 'plugin',
         caller: {
@@ -1458,23 +1456,28 @@ describe('executeContributedAction', () => {
       },
     });
 
-    expect(attempt).toEqual({
+    // The effect ran under the admitted origin; its honest result and that
+    // admitted origin are returned, never a post-effect failure.
+    await expect(invoke()).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: { accepted: true }, executionOrigin: admittedOrigin },
+    });
+    // The retired origin grants no later routing: the next admission refuses
+    // it before any effect.
+    await expect(invoke()).resolves.toEqual({
       matched: true,
       result: {
         ok: false,
-        errorCode: 'plugin_action_execution_origin_changed',
-        error: 'Target execution origin changed while the contributed Action was running',
+        errorCode: 'plugin_action_execution_origin_mismatch',
+        error: 'Expected target execution origin does not match the current target',
+        actionHandlerInvocation: 'notStarted',
       },
     });
-    // The refusal is post-start: it must never be mistaken for a handler that
-    // did not run, because the effect is already known to have happened.
-    expect(attempt.matched && attempt.result).not.toHaveProperty('actionHandlerInvocation');
-    expect(attempt.matched && attempt.result).not.toHaveProperty('executionOrigin');
     expect(target).toHaveBeenCalledTimes(1);
     expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
   });
 
-  it('refuses the origin-bearing result when the target origin disappears during the handler', async () => {
+  it('returns the executed result when the target origin disappears during the handler', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -1508,14 +1511,14 @@ describe('executeContributedAction', () => {
     const targetActionInvocations = createTargetActionInvocationRegistry({
       actions: [createTargetActionRegistration({ action, handler: target })],
     });
-
-    const attempt = await executeContributedAction({
-      runtimeRegistry: (await createExecutableRegistry({
-        action,
-        targetActionInvocations,
-        resolveCurrentPluginExecutionOrigin,
-        activateContributionsOnDemand: async () => [],
-      })),
+    const runtimeRegistry = await createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      resolveCurrentPluginExecutionOrigin,
+      activateContributionsOnDemand: async () => [],
+    });
+    const invoke = () => executeContributedAction({
+      runtimeRegistry,
       actionId: buildQualifiedPluginContributionKey({ pluginId: action.pluginId ?? '', localId: action.definition.id }),
       input: { title: 'Ready' },
       captureExecutionOrigin: true,
@@ -1535,15 +1538,30 @@ describe('executeContributedAction', () => {
       },
     });
 
-    expect(attempt).toEqual({
+    await expect(invoke()).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: true,
+        result: { accepted: true },
+        executionOrigin: {
+          serverIdentityId: 'srv_action_origin_fixture',
+          materializationRef: {
+            pluginId: 'acme.target',
+            machineId: 'machine-target',
+            materializationId: 'materialization-target-before',
+          },
+        },
+      },
+    });
+    await expect(invoke()).resolves.toEqual({
       matched: true,
       result: {
         ok: false,
         errorCode: 'plugin_action_execution_origin_unavailable',
         error: 'Current target execution origin is unavailable',
+        actionHandlerInvocation: 'notStarted',
       },
     });
-    expect(attempt.matched && attempt.result).not.toHaveProperty('actionHandlerInvocation');
     expect(target).toHaveBeenCalledTimes(1);
     expect(resolveCurrentPluginExecutionOrigin).toHaveBeenCalledTimes(2);
   });
@@ -2216,7 +2234,6 @@ describe('executeContributedAction', () => {
       },
     });
   });
-
 
   it('returns activation diagnostics before invoking an action handler when lazy activation fails', async () => {
     const action = createAction('/unused/daemon.mjs', 'action/fail');

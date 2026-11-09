@@ -16,6 +16,7 @@ import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import type { TranscriptFileFollowPathGrantEvidence } from '../../context/transcripts/fileFollowGrants';
 
 import {
     startSessionHookServerWithPersistedPortTakeover,
@@ -63,7 +64,13 @@ type HostSessionProviderTranscriptPublishRequest =
         sessionId: string;
     }>;
 
+type HostSessionHookObservationRequest = Parameters<AgentSessionHooksService['observeSessionHook']>[0] & (
+    | Readonly<{ providerId: string; sessionId: string; scope?: never }>
+    | Readonly<{ providerId: string; scope: Extract<PluginExecutionScopeV1, { kind: 'execution_run' }>; sessionId?: never }>
+);
+
 export type HostSessionHooksOwner = Readonly<{
+    observeSessionHook(request: HostSessionHookObservationRequest): Promise<void>;
     startServer(
         request: HostSessionHookServerStartRequest,
     ): ReturnType<AgentSessionHooksService['startServer']>;
@@ -91,6 +98,7 @@ export type SessionHookTranscriptFileFollowGrantRequest = Readonly<{
     providerSessionId: string;
     eventName: string;
     transcriptPath: string;
+    evidence: TranscriptFileFollowPathGrantEvidence;
     providerPayload: SessionHookPayload;
 }>;
 
@@ -278,27 +286,38 @@ function assertSessionHooksCapability(params: CreateSessionHooksServiceParams): 
 
 async function grantSessionHookTranscriptPath(params: Readonly<{
     service: CreateSessionHooksServiceParams;
-    request: HostSessionHookServerStartRequest;
+    request: HostSessionHookObservationRequest;
     providerSessionId: string;
     data: SessionHookPayload;
+    admissions: Map<string, Promise<void>>;
 }>): Promise<void> {
     const grant = params.service.grantTranscriptFileFollowPath;
     if (!grant) return;
-    if (!readString(params.request.sessionHookSecret)) return;
     const eventName = readSessionHookEventName(params.data);
-    if (eventName !== 'SessionStart') return;
+    if (eventName !== 'SessionStart' && eventName !== 'Statusline') return;
     const transcriptPath = readSessionHookTranscriptPath(params.data);
     if (!transcriptPath) return;
-    await grant({
+    const scope = params.request.scope !== undefined
+        ? params.request.scope
+        : Object.freeze({ kind: 'session' as const, sessionId: params.request.sessionId });
+    const key = JSON.stringify([params.request.providerId, scope, params.providerSessionId, transcriptPath]);
+    const existing = params.admissions.get(key);
+    if (existing) return await existing;
+    const admission = grant({
         providerId: params.request.providerId,
-        scope: params.request.scope !== undefined
-            ? params.request.scope
-            : Object.freeze({ kind: 'session', sessionId: params.request.sessionId }),
+        scope,
         providerSessionId: params.providerSessionId,
         eventName,
         transcriptPath,
+        evidence: {
+            kind: eventName === 'SessionStart' ? 'sessionStartTranscriptPath' : 'authenticatedStatuslineTranscriptPath',
+            providerSessionId: params.providerSessionId,
+        },
         providerPayload: params.data,
     });
+    // Admission belongs to this native binding, including a settled refusal.
+    params.admissions.set(key, admission);
+    await admission;
 }
 
 async function createHookSecretFiles(params: Readonly<{
@@ -418,8 +437,14 @@ export function createSessionHooksService(
     const activePluginDirs = new Set<string>();
     const disposedPluginDirs = new Set<string>();
     const retainedPluginDirs = new Set<string>();
+    const transcriptAdmissions = new Map<string, Promise<void>>();
     const pluginsRoot = resolveHookPluginsRoot(params.happyHomeDir);
     const sessionHooksRoot = resolveHookSessionsRoot(params.happyHomeDir);
+
+    async function observeSessionHook(request: HostSessionHookObservationRequest): Promise<void> {
+        await grantSessionHookTranscriptPath({ service: params, request,
+            providerSessionId: request.providerSessionId, data: request.payload, admissions: transcriptAdmissions });
+    }
 
     async function disposeRegisteredHookPluginDir(pluginDir: string): Promise<void> {
         const resolvedPluginDir = resolve(pluginDir);
@@ -442,6 +467,7 @@ export function createSessionHooksService(
     }
 
     return Object.freeze({
+        observeSessionHook,
         async startServer(request: HostSessionHookServerStartRequest) {
             assertSessionHooksCapability(params);
             if (request.lifecycle?.kind === 'session' && request.lifecycle.sessionId !== request.sessionId) {
@@ -474,12 +500,11 @@ export function createSessionHooksService(
                     onSessionHook: request.onSessionHook
                         ? async (providerSessionId: string, data: SessionHookPayload) => {
                             try {
-                                await grantSessionHookTranscriptPath({
-                                    service: params,
-                                    request,
-                                    providerSessionId,
-                                    data,
-                                });
+                                // Command observations reach this owner only after the existing
+                                // HTTP secret check. Owned stdio observations enter it directly.
+                                if (readString(request.sessionHookSecret)) {
+                                    await observeSessionHook({ ...request, providerSessionId, payload: data });
+                                }
                             } catch {
                                 logger.debug('[sessionHookServer] Session hook transcript grant failed');
                             }
@@ -490,7 +515,18 @@ export function createSessionHooksService(
                         ? async (data: PermissionHookPayload, options?: Readonly<{ signal?: AbortSignal }>) => await request.onPermissionHook?.(data, options)
                         : undefined,
                     onStatuslineUpdate: request.onStatuslineUpdate
-                        ? async (data: StatuslineHookPayload) => await request.onStatuslineUpdate?.(data)
+                        ? async (data: StatuslineHookPayload) => {
+                            const providerSessionId = readString(data.session_id);
+                            if (readString(request.sessionHookSecret) && providerSessionId) {
+                                try {
+                                    await observeSessionHook({ ...request, providerSessionId,
+                                        payload: { ...data, hook_event_name: 'Statusline' } });
+                                } catch {
+                                    logger.debug('[sessionHookServer] Statusline transcript grant failed');
+                                }
+                            }
+                            await request.onStatuslineUpdate?.(data);
+                        }
                         : undefined,
                     defaultPermissionHookResponse: request.defaultPermissionHookResponse
                         ? (data: PermissionHookPayload) => request.defaultPermissionHookResponse?.(data)

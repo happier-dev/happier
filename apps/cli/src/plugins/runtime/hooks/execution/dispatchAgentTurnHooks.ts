@@ -8,6 +8,7 @@ import type {
   PluginContributionIdentityV1,
   PromptBlockV1,
 } from '@happier-dev/protocol';
+import { resolvePluginLocalizedStringV2Text as readLocalizedString } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { logger } from '@/ui/logger';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
@@ -81,10 +82,6 @@ function isRecord(value: unknown): value is HookPayload {
 function readOptionalString(value: unknown): string | undefined {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.length > 0 ? normalized : undefined;
-}
-
-function readLocalizedString(value: string | Readonly<{ fallback: string }>): string {
-  return typeof value === 'string' ? value : value.fallback;
 }
 
 function readTimestampMs(payload: HookPayload): number {

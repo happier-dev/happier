@@ -28,7 +28,6 @@ function createRegistration(
     daemonEntryPath: '/plugins/acme/daemon.mjs',
     sourceSpec: { kind: 'path', locator: '/plugins/acme' },
     definition: {
-      hookApiVersion: 1,
       id: 'session.spawned',
       category: 'lifecycle',
       scope: 'session',

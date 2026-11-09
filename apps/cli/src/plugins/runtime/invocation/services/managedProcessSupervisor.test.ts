@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import * as filesystemBoundary from 'node:fs/promises';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 import type {
     ExecService,
@@ -20,6 +21,7 @@ import { normalizeManagedServiceSpec } from './managedServiceSpecNormalization';
 import type {
     ManagedServiceDiagnosticRetention,
     ManagedServiceProcessHealthCheck,
+    ManagedServiceProcessHandle,
     ManagedServiceProcessSnapshot,
     ManagedServiceProcessSpec,
 } from './managedProcessSupervisor';
@@ -34,6 +36,7 @@ import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
 import { createLocalServiceActionConfirmationNonceV1, isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { createWindowsJobCustodyName } from '@/subprocess/supervision/processCustody';
+import { createStablePluginExecService } from './exec';
 
 // The native helper's marker is an OS boundary; retain real filesystem behavior outside that marker.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -169,6 +172,118 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         vi.restoreAllMocks();
     });
 
+    it('runs authored health values beyond the former policy ranges through the real supervisor', async () => {
+        const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}'));
+        const servers = createManagedServiceProcessSupervisorHost({ fetch }).bind({
+            occurrenceId: 'authored-health', pluginId: 'fixture.plugin', contributionId: 'fixture.agent',
+            isOccurrenceCurrent: () => true, exec: createExec(),
+        });
+        const handle = await servers.supervise(managedSpec('authored-health', {
+            watchdog: { intervalMs: 100, missedIntervals: 30 },
+            healthCheck: { kind: 'http', timeoutMs: 120_000 },
+        }));
+        try {
+            expect((await handle.waitUntilHealthy()).state).toBe('healthy');
+        } finally {
+            await handle.dispose();
+        }
+    });
+
+    it('honors an authored 1 MiB output buffer and retains the daemon default when omitted', async () => {
+        const { exec, servers } = createHarness();
+        const requestedBytes = 1024 * 1024;
+        const authored = await servers.supervise(managedSpec('authored-buffer', {
+            launch: {
+                executable: { kind: 'systemTool', id: 'fixture.server' },
+                maxStdoutBytes: requestedBytes,
+                maxStderrBytes: requestedBytes,
+            },
+        }));
+        const defaults = await servers.supervise(managedSpec('default-buffer'));
+        try {
+            expect(exec.spawn.mock.calls[0]?.[0]).toMatchObject({
+                maxStdoutBytes: requestedBytes,
+                maxStderrBytes: requestedBytes,
+            });
+            expect(exec.spawn.mock.calls[1]?.[0]).toMatchObject({
+                maxStdoutBytes: 64 * 1024,
+                maxStderrBytes: 64 * 1024,
+            });
+        } finally {
+            await Promise.all([authored.dispose(), defaults.dispose()]);
+        }
+    });
+
+    it.runIf(process.platform !== 'win32')('captures real child output beyond 64 KiB under an authored 1 MiB buffer and keeps the default bounded', async () => {
+        const emittedBytes = 128 * 1024;
+        const executable = { kind: 'systemTool', id: 'fixture.node' } as const;
+        for (const authored of [true, false]) {
+            const lifetime = new AbortController();
+            const captured: PluginProcessHandle[] = [];
+            const realExec = createStablePluginExecService({
+                processOwner: { kind: 'service', serviceId: `real-buffer-${authored}` },
+                signal: lifetime.signal,
+                isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({ command: process.execPath }),
+                resolvePath: async () => process.cwd(),
+            });
+            // Observe the real public handle without replacing Exec admission,
+            // process launch, buffering, result settlement or cleanup.
+            const observedExec: ExecService = { ...realExec,
+                async spawn(request, options) {
+                    const process = await realExec.spawn(request, options);
+                    captured.push(process);
+                    return process;
+                },
+            };
+            const supervisor = createProductionManagedServiceProcessSupervisorHost({
+                custodyOwner: 'daemon', createInstanceId: () => `real-buffer-${authored}`,
+            }).bind({ occurrenceId: 'real-buffer', pluginId: 'fixture.plugin', contributionId: 'fixture.agent',
+                isOccurrenceCurrent: () => true, exec: observedExec });
+            let handle: ManagedServiceProcessHandle | undefined;
+            try {
+                handle = await supervisor.supervise(managedSpec(`real-buffer-${authored}`, {
+                    mode: { kind: 'managedSpawn', endpointNone: true },
+                    launch: { executable, args: ['-e',
+                        `process.stdin.once('data',()=>process.stdout.write(Buffer.alloc(${emittedBytes},120),()=>process.exit(0)));`,
+                    ], ...(authored ? { maxStdoutBytes: 1024 * 1024 } : {}) },
+                }));
+                const process = captured[0];
+                if (!process) throw new Error('Expected the real supervised child handle');
+                await process.write(new Uint8Array([1]));
+                const result = await process.wait();
+                expect(result.stdout.byteLength).toBe(authored ? emittedBytes : 64 * 1024);
+                expect(result.stdout.every(value => value === 120)).toBe(true);
+                expect(result.stdoutTruncated).toBe(!authored);
+            } finally {
+                await handle?.dispose();
+                for (const process of captured) await process.dispose();
+                lifetime.abort();
+            }
+        }
+    });
+
+    it('retains diagnostics by the total byte budget without independent entry or count ceilings', () => {
+        const largeDiagnostic = {
+            code: `large_detail_${'x'.repeat(256)}`,
+            severity: 'warning' as const,
+            message: 'x'.repeat(4_096),
+            details: 'x'.repeat(16_384),
+        };
+        let retained = retainManagedServiceDiagnostic({ diagnostics: [], diagnosticsTruncated: false }, largeDiagnostic);
+        for (let index = 0; index < 40; index += 1) {
+            retained = retainManagedServiceDiagnostic(retained, { code: `detail_${index}`, severity: 'info' });
+        }
+        expect(retained.diagnostics).toHaveLength(41);
+        expect(retained.diagnostics[0]).toEqual(largeDiagnostic);
+        expect(retained.diagnosticsTruncated).toBe(false);
+        retained = retainManagedServiceDiagnostic(retained, {
+            code: 'beyond_total_budget', severity: 'warning', details: 'y'.repeat(65_536),
+        });
+        expect(retained.diagnosticsTruncated).toBe(true);
+        expect(new TextEncoder().encode(JSON.stringify(retained.diagnostics)).byteLength).toBeLessThanOrEqual(65_536);
+    });
+
     it.each(['ready', 'not_reported'] as const)('publishes only changed native lifecycle facts (%s)', async (readiness) => {
         vi.useFakeTimers();
         let observation: ManagedServiceNativeObservationV1 = { phase: 'running', readiness, endpoint: null };
@@ -242,6 +357,59 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         }
     });
 
+    it.each(['managedSpawn', 'externalAttach'] as const)('publishes only changed non-native lifecycle facts (%s)', async (mode) => {
+        vi.useFakeTimers();
+        let healthy = true;
+        const fetch = vi.fn(async () => new Response('', { status: healthy ? 200 : 503 }));
+        const host = createManagedServiceProcessSupervisorHost({ fetch });
+        const servers = host.bind({
+            occurrenceId: 'occurrenceId-non-native-facts',
+            pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent',
+            isOccurrenceCurrent: () => true,
+            exec: createExec(),
+        });
+        const spec = mode === 'managedSpawn' ? managedSpec('non-native-facts') : externalSpec('non-native-facts');
+        const handle = await servers.supervise({
+            ...spec,
+            healthCheck: { kind: 'http', target: { kind: 'serverPath', path: '/health' }, timeoutMs: 5_000 },
+        });
+        const changes = vi.fn<(value: ManagedServiceProcessSnapshot) => void>();
+        const subscription = handle.observe!(changes);
+        try {
+            await handle.waitUntilHealthy();
+            changes.mockClear();
+            const before = fetch.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(fetch.mock.calls.length - before).toBe(3);
+            expect(changes).toHaveBeenCalledTimes(0);
+            expect(handle.snapshot().lastHealthyAtMs).toBe(Date.now());
+            await handle.waitUntilHealthy();
+            expect(changes).toHaveBeenCalledTimes(0);
+
+            healthy = false;
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle.snapshot().state).toBe('healthy');
+            expect(changes).toHaveBeenCalledTimes(0);
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle.snapshot().state).toBe('unhealthy');
+            expect(changes).toHaveBeenCalledTimes(1);
+            changes.mockClear();
+
+            healthy = true;
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle.snapshot().state).toBe('healthy');
+            expect(changes).toHaveBeenCalledTimes(1);
+            expect(handle.snapshot().lastHealthyAtMs).toBe(Date.now());
+            changes.mockClear();
+            await vi.advanceTimersByTimeAsync(15_000);
+            expect(changes).toHaveBeenCalledTimes(0);
+        } finally {
+            subscription.dispose();
+            await handle.dispose();
+        }
+    });
+
     it('settles a built-in native log failure without republishing the same diagnostic', async () => {
         vi.useFakeTimers();
         const terminal = deferred<PluginProcessResult>();
@@ -275,6 +443,77 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             subscription.dispose();
             await handle.dispose();
         }
+    });
+
+    it('owns bounded native log follow cancellation and suppresses bytes after retirement', async () => {
+        const { servers } = createHarness([]);
+        let reads = 0;
+        let watches = 0;
+        let disposed = 0;
+        let emit: ((result: import('@happier-dev/protocol').ManagedServiceNativeLogResultV1) => void) | undefined;
+        let nativeSignal: AbortSignal | undefined;
+        const handle = await servers.supervise(managedSpec('native-follow', {
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                async stop() { return { status: 'stopped' }; },
+                async logs(request) {
+                    if (request.kind === 'read') { reads++; return { kind: 'page', page: {
+                        sourceRevision: 'native-source', text: 'bounded output', nextCursor: null, truncated: false } }; }
+                    watches++;
+                    nativeSignal = request.signal;
+                    emit = request.emit;
+                    return { dispose() { disposed++; } };
+                },
+                redactedValues: ['native-log-secret'],
+            } },
+        }));
+        const results: import('@happier-dev/protocol').ManagedServiceNativeLogResultV1[] = [];
+        const controller = new AbortController();
+        try {
+            expect(reads).toBe(0);
+            expect(watches).toBe(0);
+            const follow = await handle.watchNativeLogs!({ signal: controller.signal, emit: value => results.push(value) });
+            expect(watches).toBe(1);
+            expect(reads).toBe(0);
+            emit!({ kind: 'page', page: { sourceRevision: 'native-source', text: 'native-log-secret ' + 'é'.repeat(8_192),
+                nextCursor: { sourceRevision: 'native-source', token: 'next' }, truncated: false } });
+            expect(results).toHaveLength(1);
+            const page = results[0];
+            expect(page?.kind).toBe('page');
+            if (page?.kind !== 'page') throw new Error('Expected bounded native page');
+            expect(Buffer.byteLength(page.page.text, 'utf8')).toBeLessThanOrEqual(8_192);
+            expect(page.page.text).not.toContain('native-log-secret');
+            expect(page.page.truncated).toBe(true);
+            controller.abort();
+            await follow.dispose();
+            expect(nativeSignal?.aborted).toBe(true);
+            expect(disposed).toBe(1);
+            emit!({ kind: 'page', page: { sourceRevision: 'native-source', text: 'late private bytes', nextCursor: null, truncated: false } });
+            expect(results).toHaveLength(1);
+            expect(await handle.readNativeLogs!({ cursor: { sourceRevision: 'retired-source', token: 'resume' } }))
+                .toEqual({ kind: 'source-changed', sourceRevision: 'native-source' });
+            const resumed = await handle.watchNativeLogs!({ cursor: page.page.nextCursor!, emit: value => results.push(value) });
+            expect(watches).toBe(2);
+            emit!({ kind: 'page', page: { sourceRevision: 'replacement', text: 'replacement bytes need fresh admission', nextCursor: null, truncated: false } });
+            expect(results[1]).toEqual({ kind: 'source-changed', sourceRevision: 'replacement' });
+            emit!({ kind: 'page', page: { sourceRevision: 'native-source', text: 'old source after replacement', nextCursor: null, truncated: false } });
+            expect(results).toHaveLength(2);
+            await resumed.dispose();
+            expect(disposed).toBe(2);
+            const cancelledBeforeInstall = new AbortController();
+            const cancelledWatch = handle.watchNativeLogs!({ signal: cancelledBeforeInstall.signal, emit: value => results.push(value) });
+            cancelledBeforeInstall.abort();
+            await expect(cancelledWatch).rejects.toMatchObject({ name: 'AbortError' });
+            expect(watches).toBe(2);
+            const final = await handle.watchNativeLogs!({ emit: value => results.push(value) });
+            expect(watches).toBe(3);
+            await handle.dispose();
+            await final.dispose();
+            expect(nativeSignal?.aborted).toBe(true);
+            expect(disposed).toBe(3);
+            emit!({ kind: 'source-changed', sourceRevision: 'replacement' });
+            expect(results).toHaveLength(2);
+        } finally { await handle.dispose(); }
     });
 
     it.each(['builtin', 'external', 'without-output'] as const)('reads bounded native output only for failure diagnostics (%s)', async (adapter) => {
@@ -539,7 +778,8 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                 const workspace = { id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
                     rootPath: directory, createdAtMs: 1 };
                 const pidsPath = join(directory, 'owned-pids');
-                const handle = await owner.superviseProject({ kind: 'workspace',
+                const handle = await owner.superviseProject({
+                    kind: 'workspace',
                     workspace, declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' } },
                     cwd: directory, requester: { serverId: workspace.serverId, accountId: 'requester-one',
                         machineId: workspace.machineId, installationId: 'installation-one' },
@@ -649,6 +889,20 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             expect(outcome).toMatchObject({ error: { code: 'plugin_managed_server_process_exited',
                 details: { spawnFailure: { reason: 'other', errno: 'ENOENT' } } } });
         }
+    });
+
+    it('retains process output without adding a synthetic exit line to the failure log', async () => {
+        const terminal = deferred<PluginProcessResult>();
+        const { servers } = createHarness([createProcess(42, terminal)]);
+        const handle = await servers.supervise(managedSpec('output-only'));
+        try {
+            terminal.resolve({ ...CLEAN_EXIT,
+                termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+                stdout: Buffer.from('Starting application\n'), stderr: Buffer.from('Configuration unavailable\n') });
+            await vi.waitFor(() => expect(handle.snapshot().state).toBe('unhealthy'));
+            expect(handle.snapshot().diagnostics.find(diagnostic => diagnostic.code === 'plugin_managed_server_process_exited')?.message)
+                .toBe('Starting application\n\nConfiguration unavailable');
+        } finally { await handle.dispose(); }
     });
 
     it('releases the Project launch capture when cancellation prevents process acquisition', async () => {
@@ -768,6 +1022,118 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         expect(handle.snapshot()).toMatchObject({ state: 'running', baseUrl: null });
         expect(await handle.stop()).toEqual({ status: 'stopped' });
         expect(handle.snapshot().state).toBe('stopped');
+    });
+
+    it('retains admitted desired stop in health facts until start changes it', async () => {
+        const { servers } = createHarness([]);
+        let phase: ManagedServiceNativeObservationV1['phase'] = 'running';
+        let refuseStart = false;
+        const stopReply = deferred<{ status: 'stopped' }>();
+        const handle = await servers.supervise(managedSpec('desired-native-stop', {
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase, readiness: 'not_reported', endpoint: null }; },
+                async stop() { phase = 'stopped'; return stopReply.promise; },
+                async start() {
+                    if (refuseStart) throw new Error('Native start refused');
+                    phase = 'running'; return { phase, readiness: 'not_reported', endpoint: null };
+                },
+                async restart() { phase = 'running'; return { phase, readiness: 'not_reported', endpoint: null }; },
+            } },
+        }));
+        const facts: import('./managedProcessSupervisor').ManagedServiceProcessHealthSnapshot[] = [];
+        const subscription = handle.observeHealth!(value => facts.push(value));
+        try {
+            // A native stop with no admitted control remains an unexpected outage.
+            phase = 'stopped';
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).toMatchObject({ state: 'stopped' });
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            phase = 'running';
+            await handle.inspectCurrentOccurrence!();
+            const stopping = handle.controlNative!('stop');
+            // Native push/read may arrive before its control reply.
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).toMatchObject({ state: 'stopped', expectedDown: 'stop' });
+            stopReply.resolve({ status: 'stopped' });
+            expect(await stopping).toEqual({ kind: 'observed', state: 'stopped' });
+            const beforeEqual = facts.length;
+            await handle.inspectCurrentOccurrence!();
+            await handle.inspectCurrentOccurrence!();
+            expect(facts).toHaveLength(beforeEqual);
+            refuseStart = true;
+            const beforeRefusedStart = facts.length;
+            await expect(handle.controlNative!('start')).rejects.toThrow('Native start refused');
+            expect(facts.at(-1)).toMatchObject({ state: 'stopped', expectedDown: 'stop' });
+            expect(facts).toHaveLength(beforeRefusedStart);
+            refuseStart = false;
+            const beforeStart = facts.length;
+            expect(await handle.controlNative!('start')).toEqual({ kind: 'observed', state: 'running' });
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            expect(facts.slice(beforeStart)).toEqual([{ state: 'running', readiness: 'not_reported', nativePhase: 'running' }]);
+            phase = 'stopped';
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            await handle.controlNative!('stop');
+            expect(facts.at(-1)).toMatchObject({ expectedDown: 'stop' });
+            expect(await handle.controlNative!('restart')).toEqual({ kind: 'observed', state: 'running' });
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+        } finally { stopReply.resolve({ status: 'stopped' }); subscription.dispose(); await handle.dispose(); }
+    });
+
+    it.each(['unsupported', 'throw'] as const)('does not retain desired stop after a refused native control (%s)', async refusal => {
+        const { servers } = createHarness([]);
+        let allowStop = false;
+        const handle = await servers.supervise(managedSpec('refused-native-stop', {
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase: 'stopped', readiness: 'not_reported', endpoint: null }; },
+                async stop() {
+                    if (allowStop) return { status: 'stopped' };
+                    if (refusal === 'throw') throw new Error('Native stop refused');
+                    return { status: 'unsupported' };
+                },
+            } },
+        }));
+        const facts: import('./managedProcessSupervisor').ManagedServiceProcessHealthSnapshot[] = [];
+        const subscription = handle.observeHealth!(value => facts.push(value));
+        try {
+            if (refusal === 'throw') await expect(handle.controlNative!('stop')).rejects.toThrow('Native stop refused');
+            else expect(await handle.controlNative!('stop')).toEqual({ kind: 'unsupported', reason: 'unsupported' });
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            await handle.inspectCurrentOccurrence!();
+            expect(facts.at(-1)).not.toHaveProperty('expectedDown');
+            allowStop = true;
+            expect(await handle.controlNative!('stop')).toEqual({ kind: 'observed', state: 'stopped' });
+            expect(facts.at(-1)).toMatchObject({ expectedDown: 'stop' });
+            allowStop = false;
+            const beforeRefusedStop = facts.length;
+            if (refusal === 'throw') await expect(handle.controlNative!('stop')).rejects.toThrow('Native stop refused');
+            else expect(await handle.controlNative!('stop')).toEqual({ kind: 'unsupported', reason: 'unsupported' });
+            expect(facts.at(-1)).toMatchObject({ expectedDown: 'stop' });
+            expect(facts).toHaveLength(beforeRefusedStop);
+        } finally { subscription.dispose(); await handle.dispose(); }
+    });
+
+    it.each([
+        ['accepted', 'running', 'termination_incomplete'],
+        ['accepted', 'stopped', 'stopped'],
+        ['unsupported', 'running', 'unsupported'],
+        ['termination_incomplete', 'running', 'termination_incomplete'],
+        ['stopped', 'stopped', 'stopped'],
+    ] as const)('preserves confirmed Stop semantics for observation-only native %s with %s evidence', async (status, phase, expected) => {
+        const { servers } = createHarness([]);
+        let stopped = false;
+        let stops = 0;
+        const handle = await servers.supervise(managedSpec('observed-native-stop', {
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+                async inspect() { return { phase: stopped ? phase : 'running', readiness: 'not_reported', endpoint: null }; },
+                async stop() { stops++; stopped = true; return { status }; },
+            } },
+        }));
+        try {
+            expect(await handle.stop()).toEqual({ status: expected });
+            expect(handle.snapshot().state === 'stopped').toBe(phase === 'stopped');
+        } finally { await handle.dispose(); }
+        expect(stops).toBe(1);
     });
 
     it.each(['accepted', 'unsupported', 'termination_incomplete'] as const)(
@@ -916,21 +1282,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         });
     });
 
-    it('evicts count and byte overflow and replaces an overlarge diagnostic', () => {
-        let countBounded: ManagedServiceDiagnosticRetention = {
-            diagnostics: Object.freeze([]),
-            diagnosticsTruncated: false,
-        };
-        for (let index = 0; index < 33; index += 1) {
-            countBounded = retainManagedServiceDiagnostic(countBounded, {
-                code: `count_${index}`,
-                severity: 'warning',
-            });
-        }
-        expect(countBounded.diagnostics).toHaveLength(32);
-        expect(countBounded.diagnostics[0]?.code).toBe('count_1');
-        expect(countBounded.diagnosticsTruncated).toBe(true);
-
+    it('evicts diagnostics only when their combined encoded size exceeds the daemon budget', () => {
         let byteBounded: ManagedServiceDiagnosticRetention = {
             diagnostics: Object.freeze([]),
             diagnosticsTruncated: false,
@@ -956,51 +1308,13 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         }, {
             code: 'private_process_output_rejected',
             severity: 'error',
-            details: { output: 'secret'.repeat(2_000) },
+            details: { output: 'secret'.repeat(12_000) },
         });
         expect(overlarge).toEqual({
-            diagnostics: [{
-                code: 'plugin_managed_service_diagnostic_rejected',
-                severity: 'warning',
-                message: 'Managed-service diagnostic exceeded the entry byte limit and was omitted',
-                details: { rejectedCode: 'private_process_output_rejected' },
-            }],
+            diagnostics: [],
             diagnosticsTruncated: true,
         });
         expect(JSON.stringify(overlarge)).not.toContain('secret');
-
-        const hugeCode = retainManagedServiceDiagnostic({
-            diagnostics: Object.freeze([]),
-            diagnosticsTruncated: false,
-        }, {
-            code: 'private'.repeat(2_000),
-            severity: 'error',
-        });
-        expect(
-            new TextEncoder().encode(JSON.stringify(hugeCode.diagnostics[0]))
-                .byteLength,
-        ).toBeLessThanOrEqual(8_192);
-        expect(hugeCode.diagnostics[0]).toEqual({
-            code: 'plugin_managed_service_diagnostic_rejected',
-            severity: 'warning',
-            message: 'Managed-service diagnostic exceeded the entry byte limit and was omitted',
-        });
-        expect(hugeCode.diagnosticsTruncated).toBe(true);
-
-        const multibyte = retainManagedServiceDiagnostic({
-            diagnostics: Object.freeze([]),
-            diagnosticsTruncated: false,
-        }, {
-            code: 'multibyte_diagnostic_rejected',
-            severity: 'error',
-            details: { output: 'é'.repeat(4_100) },
-        });
-        expect(multibyte.diagnostics[0]).toMatchObject({
-            code: 'plugin_managed_service_diagnostic_rejected',
-            details: { rejectedCode: 'multibyte_diagnostic_rejected' },
-        });
-        expect(JSON.stringify(multibyte)).not.toContain('é');
-        expect(multibyte.diagnosticsTruncated).toBe(true);
     });
 
     it('replaces non-canonical diagnostics without reading unsafe values', () => {
@@ -1068,7 +1382,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
                 diagnostics: [{
                     code: 'plugin_managed_service_diagnostic_rejected',
                     severity: 'warning',
-                    message: 'Managed-service diagnostic exceeded the entry byte limit and was omitted',
+                    message: 'Managed-service diagnostic is invalid and was omitted',
                 }],
                 diagnosticsTruncated: true,
             });
@@ -1267,7 +1581,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     });
 
     it('does not dispatch a health probe after its host-private header lease becomes stale', async () => {
-        const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+        const fetch = vi.fn(async () =>
             new Response('', { status: 200 }));
         const host = createManagedServiceProcessSupervisorHost({ fetch });
         const servers = host.bind({
@@ -1324,7 +1638,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         const paths: string[] = [];
         const authorizationValues: string[] = [];
         const isCurrent = vi.fn(async () => true);
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             paths.push(new URL(String(input)).pathname);
             authorizationValues.push(new Headers(init?.headers).get('authorization') ?? '');
             return responses.shift() ?? new Response('', { status: 500 });
@@ -1392,7 +1706,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             };
         });
         const requests: Array<{ path: string; authorization: string | null }> = [];
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             requests.push({
                 path: new URL(String(input)).pathname,
                 authorization: new Headers(init?.headers).get('authorization'),
@@ -2379,13 +2693,13 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     it.each([
         ['startup timeout', { startupTimeoutMs: 0 }, 'plugin_managed_server_timeout_invalid'],
         ['health timeout', {
-            healthCheck: { kind: 'http' as const, timeoutMs: 60_001 },
+            healthCheck: { kind: 'http' as const, timeoutMs: 0 },
         }, 'plugin_managed_server_health_timeout_invalid'],
         ['watchdog interval', {
-            watchdog: { intervalMs: 249, missedIntervals: 1 },
+            watchdog: { intervalMs: 0, missedIntervals: 1 },
         }, 'plugin_managed_server_watchdog_invalid'],
         ['watchdog failure count', {
-            watchdog: { intervalMs: 250, missedIntervals: 21 },
+            watchdog: { intervalMs: 250, missedIntervals: 0 },
         }, 'plugin_managed_server_watchdog_invalid'],
         ['durable-log keep count', {
             durableLog: { enabled: true, keepCount: 51 },
@@ -2744,7 +3058,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
 
     it('bounds an unresponsive HTTP probe by the requested startup deadline', async () => {
         const exec = createExec();
-        const fetch = vi.fn(async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => await new Promise<Response>((_resolve, reject) => {
+        const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => await new Promise<Response>((_resolve, reject) => {
             init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
         }));
         const host = createManagedServiceProcessSupervisorHost({
@@ -2918,8 +3232,9 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     });
 
 
-    it('never follows a health redirect beyond the validated loopback endpoint', async () => {
-        const fetch = vi.fn(async () => new Response('', {
+    it('follows a public health redirect through the shared redirect owner', async () => {
+        const fetch = vi.fn(async (url: string | URL | Request) => String(url) === 'https://example.com/escape'
+            ? new Response('healthy') : new Response('', {
             status: 302,
             headers: { location: 'https://example.com/escape' },
         }));
@@ -2939,14 +3254,104 @@ describe('createManagedServiceProcessSupervisorHost', () => {
             healthCheck: { kind: 'http', target: { kind: 'serverPath', path: '/health' }, timeoutMs: 5_000 },
         }));
 
-        await expect(handle.waitUntilHealthy({ timeoutMs: 1 })).rejects.toMatchObject({
-            code: 'plugin_managed_server_health_timeout',
-        });
+        await expect(handle.waitUntilHealthy({ timeoutMs: 100 })).resolves.toMatchObject({ state: 'healthy' });
         expect(fetch).toHaveBeenCalledWith(
             'http://127.0.0.1:49152/health',
             expect.objectContaining({ redirect: 'manual' }),
         );
+        expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+            'http://127.0.0.1:49152/health', 'https://example.com/escape',
+        ]);
         await handle.dispose();
+    });
+
+    it('scopes authenticated health redirects through the real default HTTP transport', async () => {
+        let redirectStatus: number | undefined;
+        let target = '';
+        const paths: string[] = [];
+        const forwardedPrivateHeader: boolean[] = [];
+        const server = createServer((request, response) => {
+            paths.push(request.url!);
+            if (request.url?.startsWith('/sink')) {
+                forwardedPrivateHeader.push(Boolean(request.headers['x-private-health-key']));
+                response.end('healthy');
+            } else if (redirectStatus === undefined) response.end('healthy');
+            else response.writeHead(redirectStatus, { location: `${target}/sink?private=redirect-secret` }).end();
+        });
+        let handle: ManagedServiceProcessHandle | undefined;
+        try {
+            await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
+            const address = server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing health fixture endpoint');
+            const origin = `http://127.0.0.1:${address.port}`;
+            const other = `http://127.0.0.2:${address.port}`;
+            const host = createManagedServiceProcessSupervisorHost();
+            const services = host.bind({ occurrenceId: 'real-credential-health-redirect', pluginId: 'fixture.plugin',
+                contributionId: 'fixture.agent', isOccurrenceCurrent: () => true, exec: createExec() });
+            handle = await services.supervise({ ...externalSpec('real-credential-health-redirect', address.port), healthCheck: {
+                kind: 'http', target: { kind: 'serverPath', path: '/health' }, timeoutMs: 5_000,
+                resolveHeaders: async () => ({ headers: { 'x-private-health-key': 'health-secret' } }),
+            } });
+            await expect(handle.waitUntilHealthy({ timeoutMs: 100 })).resolves.toMatchObject({ state: 'healthy' });
+            for (redirectStatus of [302, 307]) {
+                for (target of [origin, other]) {
+                    await expect(handle.waitUntilHealthy({ timeoutMs: 100 })).resolves.toMatchObject({ state: 'healthy' });
+                }
+            }
+            expect(forwardedPrivateHeader).toEqual([true, false, true, false]);
+            expect(paths).toEqual(['/health', ...Array.from({ length: 4 }, () => ['/health', '/sink?private=redirect-secret']).flat()]);
+        } finally {
+            await handle?.dispose();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+    });
+
+    it('settles a credential-bearing redirect loop without trying another alternative or polling again', async () => {
+        vi.useFakeTimers();
+        const fetch = vi.fn(async () => new Response('', { status: 307, headers: { location: '/next?private=redirect-secret' } }));
+        const host = createManagedServiceProcessSupervisorHost({ fetch });
+        const servers = host.bind({ occurrenceId: 'credential-health-redirect', pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent', isOccurrenceCurrent: () => true, exec: createExec() });
+        const handle = await servers.supervise({ ...externalSpec('credential-health-redirect'), healthCheck: {
+            kind: 'http', alternatives: [
+                { target: { kind: 'serverPath', path: '/health' }, response: { kind: 'jsonObject', required: { healthy: 'true' } } },
+                { target: { kind: 'serverPath', path: '/other' }, response: { kind: 'jsonObject', required: { healthy: 'true' } } },
+            ], resolveHeaders: async () => ({ headers: { 'x-private-health-key': 'health-secret' } }), timeoutMs: 5_000,
+        } });
+        try {
+            const pending = handle.waitUntilHealthy({ timeoutMs: 100 }).catch((error: unknown) => error);
+            await vi.advanceTimersByTimeAsync(100);
+            const error = await pending;
+            expect(error).toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status: 307 });
+            expect(`${String(error)} ${JSON.stringify(error)}`).not.toContain('redirect-secret');
+            expect(handle.snapshot()).toMatchObject({ state: 'unhealthy', diagnostics: [expect.objectContaining({ code: 'credential_request_redirect_refused' })] });
+            await vi.advanceTimersByTimeAsync(30_000);
+            // Fetch's20-hop budget allows21 actual requests before refusing the loop.
+            expect(fetch).toHaveBeenCalledTimes(21);
+        } finally { await handle.dispose(); }
+    });
+
+    it('stops the authenticated health watchdog after a typed redirect-loop refusal', async () => {
+        vi.useFakeTimers();
+        const statuses = [200, 302];
+        const fetch = vi.fn(async () => new Response('', { status: statuses.shift() ?? 302,
+            headers: { location: '/next' } }));
+        const host = createManagedServiceProcessSupervisorHost({ fetch });
+        const servers = host.bind({ occurrenceId: 'credential-watchdog-redirect', pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent', isOccurrenceCurrent: () => true, exec: createExec() });
+        const handle = await servers.supervise({ ...externalSpec('credential-watchdog-redirect'),
+            healthCheck: { kind: 'http', target: { kind: 'serverPath', path: '/health' },
+                headers: { authorization: 'Basic health-secret' }, timeoutMs: 5_000 },
+            watchdog: { intervalMs: 250, missedIntervals: 2 },
+        });
+        try {
+            await handle.waitUntilHealthy({ timeoutMs: 30_000 });
+            await vi.advanceTimersByTimeAsync(250);
+            expect(handle.snapshot()).toMatchObject({ state: 'unhealthy', diagnostics: [expect.objectContaining({ code: 'credential_request_redirect_refused' })] });
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(fetch).toHaveBeenCalledTimes(22);
+        } finally { await handle.dispose(); }
     });
 
     it('detaches an aborted stop caller while the shared cleanup continues', async () => {

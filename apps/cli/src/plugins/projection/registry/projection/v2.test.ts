@@ -1,10 +1,12 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
     evaluatePluginActionPolicy,
     type PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
 
-import { buildPluginProjectionV2 } from './v2';
+import { buildPluginProjectionV2, buildPluginSettingsProjectionV2 } from './v2';
 import type {
     ResolvedActionContribution,
     ResolvedContributionRegistry,
@@ -13,6 +15,7 @@ import type {
 import {
     PluginContributesV2Schema,
     PluginProjectionV2Schema,
+    DaemonContributionRegistryProjectionDescribeResponseSchema,
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
 import type { PluginTargetedContributionV1 } from '@happier-dev/protocol';
@@ -29,6 +32,7 @@ import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/int
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { parseDaemonContributionRegistryProjectionDescribeResponse } from '../../../../../../ui/sources/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { resolveNotificationChannelSettingsContributions } from '@/plugins/settings/notificationChannelSettings';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return createResolvedContributionRegistry({});
@@ -47,13 +51,100 @@ function admitPluginRuntime(
     };
 }
 
+describe('bundled first-party Settings projection', () => {
+    const bundledRoot = new URL('../../../../../assets/bundled-plugin-manifests/', import.meta.url);
+    const sourceRoot = new URL('../../../../../../../packages/plugins/', import.meta.url);
+    const bundledManifestPaths = readdirSync(bundledRoot)
+        .filter((name) => name.endsWith('.json'))
+        .sort()
+        .map((name) => new URL(name, bundledRoot));
+    const sourceManifestPaths = readdirSync(sourceRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => new URL(`${entry.name}/src/manifest.ts`, sourceRoot))
+        .filter((path) => existsSync(path))
+        .sort((left, right) => left.href.localeCompare(right.href));
+
+    for (const [kind, paths] of [['bundled', bundledManifestPaths], ['source', sourceManifestPaths]] as const) {
+        it(`admits every current ${kind} manifest Settings group through the daemon projection`, async () => {
+            expect(paths.length).toBeGreaterThan(0);
+            const loadedPlugins: LoadedPlugin[] = [];
+            for (const manifestPath of paths) {
+                const rawManifest: unknown = kind === 'bundled'
+                    ? JSON.parse(readFileSync(manifestPath, 'utf8'))
+                    : (await import(manifestPath.href)).PLUGIN_MANIFEST;
+                const manifest = normalizePluginManifestV2(rawManifest);
+                loadedPlugins.push({
+                    pluginId: manifest.id,
+                    pluginRootPath: fileURLToPath(new URL('../', manifestPath)),
+                    manifestPath: fileURLToPath(manifestPath),
+                    daemonEntryPath: null,
+                    devDaemonEntryPath: null,
+                    sourceSpec: { kind: 'path', locator: fileURLToPath(manifestPath), trustPolicy: 'local_trusted', installPolicy: 'link' },
+                    manifest,
+                });
+            }
+            // Registry admission resolves cross-plugin references across the real bundled graph.
+            const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+                loadResult: { loadedPlugins, diagnosticsByPluginId: {} },
+                provenance: 'first_party',
+            }));
+            const settings = [
+                ...(registry.settings ?? []),
+                ...resolveNotificationChannelSettingsContributions(registry.notificationChannels ?? []),
+            ];
+            expect(settings.length).toBeGreaterThan(0);
+            const projection = buildPluginSettingsProjectionV2({ registry, generation: 1 });
+            expect(projection.diagnostics).toEqual([]);
+            expect(Object.keys(projection.settingsById).sort()).toEqual(
+                settings.map((group) => `${group.pluginId}/${group.definition.id}`).sort(),
+            );
+            expect(() => PluginProjectionV2Schema.parse(projection)).not.toThrow();
+        });
+    }
+
+    it('names the plugin and invalid group while preserving a valid sibling group', () => {
+        const pluginId = 'acme.settings-isolation';
+        const loaded: LoadedPlugin = {
+            pluginId,
+            pluginRootPath: '/plugins/settings-isolation',
+            manifestPath: '/plugins/settings-isolation/.happier-plugin/plugin.json',
+            daemonEntryPath: null,
+            devDaemonEntryPath: null,
+            sourceSpec: { kind: 'path', locator: '/plugins/settings-isolation', trustPolicy: 'local_trusted', installPolicy: 'link' },
+            manifest: normalizePluginManifestV2({
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Settings isolation', runtime: { apiVersion: 1 },
+                contributes: { settings: [{
+                    id: 'invalid-group', version: 1, title: 'Invalid group', target: { kind: 'plugin' }, scope: 'daemon',
+                    fields: [{ id: 'ambiguous', title: 'Ambiguous', schema: { anyOf: [{ type: 'string' }, { type: 'number' }] } }],
+                    presentation: { sections: [], subagentSections: [] },
+                }, {
+                    id: 'valid-group', version: 1, title: 'Valid group', target: { kind: 'plugin' }, scope: 'daemon',
+                    fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: true }],
+                    presentation: { sections: [], subagentSections: [] },
+                }] },
+            }),
+        };
+        const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} }, provenance: 'first_party',
+        }));
+        const projection = PluginProjectionV2Schema.parse(buildPluginSettingsProjectionV2({ registry, generation: 1 }));
+        expect(Object.keys(projection.settingsById)).toEqual([`${pluginId}/valid-group`]);
+        expect(projection.settingsById[`${pluginId}/valid-group`]?.fields[0]).toMatchObject({ id: 'enabled', defaultValue: true });
+        expect(projection.diagnostics).toEqual([expect.objectContaining({
+            contribution: { pluginId, localId: 'invalid-group' },
+            data: expect.objectContaining({ code: 'PLUGIN_SETTINGS_PROJECTION_INVALID' }),
+        })]);
+    });
+});
+
 describe('buildPluginProjectionV2', () => {
     it('carries the authored scoped confirmation default through normalization and the strict UI projection', async () => {
         const { createCollectionDetailPlugin } = await import('../../../../../../../packages/plugin-sdk/fixtures/qa-plugin-authoring/qa-collection-detail/index');
         const { manifest: original } = createCollectionDetailPlugin();
         const manifest = { ...original, contributes: { ...original.contributes,
             actions: (original.contributes.actions ?? []).map(action => action.id === 'clear'
-                ? { ...action, confirmVerb: { key: 'actions.clear', fallback: 'Clear' }, irreversible: true as const } : action),
+                ? { ...action, confirmVerb: { key: 'actions.clear', fallback: 'Clear' }, irreversible: true as const,
+                    toolExposure: { agent: 'direct' as const, mcp: 'discoverable_only' as const } } : action),
         } };
         const loaded: LoadedPlugin = {
             pluginId: manifest.id, pluginRootPath: '/plugins/reviews', manifestPath: '/plugins/reviews/.happier-plugin/plugin.json',
@@ -71,8 +162,10 @@ describe('buildPluginProjectionV2', () => {
         expect(projection.actionsById[`${manifest.id}/clear`]).not.toHaveProperty('confirmationWhen');
         expect(projection.actionsById[`${manifest.id}/clear`]).toMatchObject({
             confirmVerb: { key: 'actions.clear', fallback: 'Clear' }, irreversible: true,
+            toolExposure: { agent: 'direct', mcp: 'discoverable_only' },
         });
         expect(projection.actionsById[`${manifest.id}/restore`]).not.toHaveProperty('confirmationWhen');
+        expect(projection.actionsById[`${manifest.id}/restore`]).not.toHaveProperty('toolExposure');
     });
 
     it('carries generated UI refusals through the real plugin details projection and clears them after repair', async () => {
@@ -1001,16 +1094,22 @@ describe('buildPluginProjectionV2', () => {
                 engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
                 contributes: { resources: [
                     { id: 'packaged', kind: 'asset', path: 'resources/banner.txt', contentType: 'text/plain' },
-                    { id: 'account', source: 'dynamic', kind: 'config', contentType: 'application/json' },
+                    { id: 'account', source: 'dynamic', kind: 'config', contentType: 'application/json',
+                        execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } },
                     { id: 'session', source: 'dynamic', scope: 'session', kind: 'config', contentType: 'application/json' },
-                    { id: 'surface', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' },
+                    { id: 'surface', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json',
+                        sessionInbox: { detailResourceId: 'session' } },
                 ] },
             }),
         };
         const resolved = projectLoadedPluginContributes({ loadResult: { loadedPlugins: [loaded], diagnosticsByPluginId: {} }, provenance: 'external' });
         const projection = buildPluginProjectionV2({ registry: { ...createEmptyResolvedContributionRegistry(), resources: resolved.resources ?? [] }, generation: 1 });
         const admitted = PluginProjectionV2Schema.parse(projection).resourcesById;
+        expect(admitted[`${pluginId}/account`]).toMatchObject({ execution: {
+            target: 'account', account: { artifactId: 'portable', exportName: 'activate' },
+        } });
         expect(admitted[`${pluginId}/packaged`]).toMatchObject({ path: 'resources/banner.txt', scope: 'global' });
+        expect(admitted[`${pluginId}/surface`]).toMatchObject({ sessionInbox: { detailResourceId: 'session' } });
         for (const [id, scope] of [['account', 'global'], ['session', 'session'], ['surface', 'surface']]) {
             expect(admitted[`${pluginId}/${id}`]).toMatchObject({ id, pluginId, scope, contentType: 'application/json' });
             expect(admitted[`${pluginId}/${id}`]).not.toHaveProperty('path');
@@ -1509,6 +1608,50 @@ describe('buildPluginProjectionV2', () => {
         }
     });
 
+    it('isolates an unadmitted optional authentication entry without withdrawing the Machine projection', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            ...resolveBuiltInContributions(),
+            occurrenceIdsByPluginId: Object.fromEntries([
+                'happier.agent.codex', 'happier.agent.claude', 'happier.agent.antigravity',
+            ].map((pluginId) => [pluginId, createPluginRuntimeOccurrenceId(pluginId)])),
+        } satisfies ResolvedContributionRegistry;
+        const projection = buildPluginProjectionV2({ registry, generation: 21 });
+        const connectedAccounts = projection.familiesById.connectedAccounts!;
+        const entryId = 'happier.agent.codex/openai-codex';
+        const entry = connectedAccounts.entriesById[entryId]!;
+        expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
+        // The real producer supplied this declaration; an older daemon's wire
+        // response carried these interim values before the contract narrowed.
+        for (const browserReachability of ['reachable', 'unknown']) {
+            const response = { protocolVersion: 1, projection: { ...projection,
+                familiesById: { ...projection.familiesById, connectedAccounts: {
+                    ...connectedAccounts, entriesById: { ...connectedAccounts.entriesById, [entryId]: {
+                        ...entry, authentication: { ...entry.authentication,
+                            modes: [{ ...entry.authentication.modes[0], browserReachability }],
+                        },
+                    } },
+                } },
+            } };
+            const admitted = parseDaemonContributionRegistryProjectionDescribeResponse(response);
+            expect(admitted).not.toBeNull();
+            expect(admitted?.projection.agentsById).toEqual(projection.agentsById);
+            expect(admitted?.projection.familiesById.connectedAccounts?.entriesById[entryId]).toBeUndefined();
+            expect(admitted?.projection.familiesById.connectedAccounts?.entriesById['happier.agent.antigravity/antigravity-account'])
+                .toEqual(connectedAccounts.entriesById['happier.agent.antigravity/antigravity-account']);
+            expect(admitted?.projection.diagnostics).toEqual(expect.arrayContaining([
+                expect.objectContaining({ data: expect.objectContaining({
+                    code: 'plugin_compatibility_projection_invalid',
+                    details: expect.objectContaining({ family: 'connectedAccounts', entryId }),
+                }) }),
+            ]));
+            expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(response).success).toBe(true);
+            expect(parseDaemonContributionRegistryProjectionDescribeResponse({ ...response,
+                projection: { ...response.projection, generation: -1 },
+            })).toBeNull();
+        }
+    });
+
     it('fails closed when an Agent lacks its manifest-qualified identity', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
@@ -1753,7 +1896,6 @@ describe('buildPluginProjectionV2', () => {
                         installPolicy: 'link',
                     },
                     definition: {
-                        hookApiVersion: 1,
                         id: 'session.spawned',
                         category: 'lifecycle',
                         scope: 'backend',
@@ -2239,7 +2381,7 @@ describe('buildPluginProjectionV2', () => {
         });
     });
 
-    it('fails closed with contribution and field context for an ambiguous settings schema', () => {
+    it('omits an ambiguous settings contribution with contribution and field diagnostics', () => {
         const registry = createEmptyResolvedContributionRegistry();
         const invalidDefinition = {
             id: 'settings',
@@ -2255,24 +2397,24 @@ describe('buildPluginProjectionV2', () => {
             presentation: { sections: [], subagentSections: [] },
         };
 
-        expect(() => buildPluginProjectionV2({
+        const projection = buildPluginProjectionV2({
             registry: {
                 ...registry,
                 settings: [{
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.ambiguous',
+                    pluginVersion: '1.0.0',
                     definition: invalidDefinition,
                 }],
             },
             generation: 10,
-        })).toThrowError(expect.objectContaining({
-            name: 'PluginSettingsProjectionError',
-            code: 'PLUGIN_SETTINGS_PROJECTION_INVALID',
-            pluginId: 'acme.ambiguous',
-            contributionId: 'settings',
-            fieldId: 'ambiguous',
-        }));
+        });
+        expect(projection.settingsById).toEqual({});
+        expect(projection.diagnostics).toEqual([expect.objectContaining({
+            contribution: { pluginId: 'acme.ambiguous', localId: 'settings' },
+            data: expect.objectContaining({ code: 'PLUGIN_SETTINGS_PROJECTION_INVALID', details: { fieldId: 'ambiguous' } }),
+        })]);
     });
 
     it.each([
@@ -2293,16 +2435,17 @@ describe('buildPluginProjectionV2', () => {
                 default: 'true',
             },
         },
-    ])('fails closed before projection for a $name', ({ field }) => {
+    ])('omits only the invalid settings contribution for a $name', ({ field }) => {
         const registry = createEmptyResolvedContributionRegistry();
 
-        expect(() => buildPluginProjectionV2({
+        const projection = buildPluginProjectionV2({
             registry: {
                 ...registry,
                 settings: [{
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.invalid-declaration',
+                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,
@@ -2315,13 +2458,12 @@ describe('buildPluginProjectionV2', () => {
                 }],
             },
             generation: 10,
-        })).toThrowError(expect.objectContaining({
-            name: 'PluginSettingsProjectionError',
-            code: 'PLUGIN_SETTINGS_PROJECTION_INVALID',
-            pluginId: 'acme.invalid-declaration',
-            contributionId: 'settings',
-            fieldId: field.id,
-        }));
+        });
+        expect(projection.settingsById).toEqual({});
+        expect(projection.diagnostics).toEqual([expect.objectContaining({
+            contribution: { pluginId: 'acme.invalid-declaration', localId: 'settings' },
+            data: expect.objectContaining({ code: expect.stringMatching(/^PLUGIN_SETTINGS_/), details: { fieldId: field.id } }),
+        })]);
     });
 
     it.each([
@@ -2333,16 +2475,17 @@ describe('buildPluginProjectionV2', () => {
             name: 'partially untyped',
             schema: { anyOf: [{ type: 'string' as const }, {}] },
         },
-    ])('fails closed when a $name settings schema can accept values outside its projected scalar type', ({ schema }) => {
+    ])('omits a $name settings schema that accepts values outside its projected scalar type', ({ schema }) => {
         const registry = createEmptyResolvedContributionRegistry();
 
-        expect(() => buildPluginProjectionV2({
+        const projection = buildPluginProjectionV2({
             registry: {
                 ...registry,
                 settings: [{
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.lossy',
+                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,
@@ -2355,25 +2498,25 @@ describe('buildPluginProjectionV2', () => {
                 }],
             },
             generation: 10,
-        })).toThrowError(expect.objectContaining({
-            name: 'PluginSettingsProjectionError',
-            code: 'PLUGIN_SETTINGS_PROJECTION_INVALID',
-            pluginId: 'acme.lossy',
-            contributionId: 'settings',
-            fieldId: 'value',
-        }));
+        });
+        expect(projection.settingsById).toEqual({});
+        expect(projection.diagnostics).toEqual([expect.objectContaining({
+            contribution: { pluginId: 'acme.lossy', localId: 'settings' },
+            data: expect.objectContaining({ code: 'PLUGIN_SETTINGS_PROJECTION_INVALID', details: { fieldId: 'value' } }),
+        })]);
     });
 
-    it('fails closed when allOf narrows a oneOf exclusivity contradiction to no values', () => {
+    it('omits a settings contribution when allOf narrows a oneOf exclusivity contradiction to no values', () => {
         const registry = createEmptyResolvedContributionRegistry();
 
-        expect(() => buildPluginProjectionV2({
+        const projection = buildPluginProjectionV2({
             registry: {
                 ...registry,
                 settings: [{
                     provenance: 'external',
                     source: { kind: 'path' },
                     pluginId: 'acme.contradictory',
+                    pluginVersion: '1.0.0',
                     definition: {
                         id: 'settings',
                         version: 1,
@@ -2395,13 +2538,12 @@ describe('buildPluginProjectionV2', () => {
                 }],
             },
             generation: 10,
-        })).toThrowError(expect.objectContaining({
-            name: 'PluginSettingsProjectionError',
-            code: 'PLUGIN_SETTINGS_PROJECTION_INVALID',
-            pluginId: 'acme.contradictory',
-            contributionId: 'settings',
-            fieldId: 'value',
-        }));
+        });
+        expect(projection.settingsById).toEqual({});
+        expect(projection.diagnostics).toEqual([expect.objectContaining({
+            contribution: { pluginId: 'acme.contradictory', localId: 'settings' },
+            data: expect.objectContaining({ code: 'PLUGIN_SETTINGS_PROJECTION_INVALID', details: { fieldId: 'value' } }),
+        })]);
     });
 
     it('projects settings availability for the canonical UI policy evaluator', () => {

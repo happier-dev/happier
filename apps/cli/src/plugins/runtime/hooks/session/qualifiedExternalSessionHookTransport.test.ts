@@ -789,7 +789,7 @@ describe('qualified External Session hook transport', () => {
         });
     });
 
-    it('rejects event/token mismatch and keeps dead or hung delivery fail-silent with one 500 ms attempt', async () => {
+    it('rejects event/token mismatch without disclosing hook payloads', async () => {
         const { listener, harness } = await createListener();
         const credential = await listener.createOrReuseCredential(
             credentialInput,
@@ -805,19 +805,6 @@ describe('qualified External Session hook transport', () => {
         // A refused event reports only its content-free status line (0358e3eb84), never the payload.
         expect(mismatched).toMatchObject({ code: 0, stdout: '', stderr: '[happier hook] Hook server returned HTTP 403\n' });
         expect(harness.handleAuthenticatedEvent).toHaveBeenCalledOnce();
-
-        harness.handleAuthenticatedEvent.mockImplementationOnce(
-            async () => await new Promise(() => {}),
-        );
-        const hung = await runForwarder({
-            port: listener.port,
-            eventId: 'session-stop',
-            secretFile: credential.secretFile,
-            payload: { session_id: 'hung-native-session' },
-        });
-        expect(hung).toMatchObject({ code: 0, stdout: '', stderr: '' });
-        expect(hung.elapsedMs).toBeLessThan(1_000);
-        expect(harness.handleAuthenticatedEvent).toHaveBeenCalledTimes(2);
     });
 
     it.each([

@@ -92,6 +92,8 @@ async function readCurrentAccountPluginIntentReads(input: AccountReadBinding & R
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
                 knownPluginIds: knownPluginIds.filter(id => !cursor || id > cursor).slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
                 ...(cursor ? { cursor } : {}),
+                // Execution selection consumes intent and release facts, never declaration bodies.
+                omitDeclarations: true,
             }));
         if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
         if (page.failedPluginIds.length > 0) throw new Error('plugin_account_execution_unavailable');

@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createPluginInvocationServicesFactory,
-} from './factory';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from './factory';
 import { createStablePluginEventsBroker } from './events';
 import { createStablePluginResourcesOwner } from './resources';
 import { createProductionPluginInvocationServiceOwners } from './production';
@@ -34,7 +31,7 @@ describe('plugin resources invocation factory seam', () => {
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('registry:7', 'binding');
+        const binding = createPluginInvocationServiceBinding('registry:7', 'binding');
 
         const services = createServices(seed, binding);
         expect(services.availability('resources')).toEqual({ status: 'available' });

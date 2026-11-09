@@ -3,7 +3,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
-import { createManifestTargetedContributionsService, type TargetedContributionManifestDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { createManifestTargetedContributionsService, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import {
     defineProtocolJsonValue,
@@ -31,6 +31,54 @@ function permissiveTargetProtocol(role: string) {
 }
 
 describe('admitted targeted-operation execution', () => {
+    it('retains read observation only for the original admitted handle and retires it with demand', async () => {
+        const controller = new AbortController();
+        let active = 0;
+        let invalidated = 0;
+        let retired = 0;
+        let publish = () => {};
+        let retire = () => {};
+        const handle = createAdmittedTargetedOperationExecutionHandle({
+            action: { pluginId: 'acme.source', localId: 'inspect' }, targetOccurrenceId: 'target-a',
+            identity: { target: { pluginId: 'acme.target' }, point: { pointId: 'sources', protocol: { id: 'acme.source/inspect', version: 1 } },
+                contributor: { pluginId: 'acme.source', contributionId: 'primary', occurrenceId: 'source-a', sourceCustody: createManagedPluginSourceCustody('source-a') }, role: 'inspect' },
+            targetProtocol: permissiveTargetProtocol('inspect'),
+        });
+        const service = createPluginInvocationActionsService({ seed: {
+            plugin: { id: 'acme.target', version: '1.0.0' }, contribution: { id: 'read', qualifiedId: 'acme.target/actions/read' },
+            occurrenceId: 'target-a', sourceCustody: createManagedPluginSourceCustody('target-a'),
+            surface: 'plugin', signal: controller.signal, isOccurrenceCurrent: () => true,
+            retireReadObservation() { retired++; },
+        }, actionExecutor: { execute: vi.fn() },
+        // Cross-host dispatch boundary: admission/opaque-handle validation above stays real.
+        invokeContributedAction: async request => {
+            if (!request.requiredReadOnly || !request.readObservation) throw new Error('Unconstrained observation');
+            await request.beforeHandlerInvocation?.();
+            active++;
+            publish = request.readObservation.invalidate;
+            retire = () => request.readObservation?.retire?.();
+            let disposed = false;
+            request.readObservation.accept({ dispose() { if (!disposed) { disposed = true; active--; } } });
+            return { status: 'executed', value: null };
+        } });
+        const subscription = await service.observeAdmittedTargetedOperation(handle, { key: 'selected' }, () => { invalidated++; });
+        expect(active).toBe(1);
+        publish();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(invalidated).toBe(1);
+        expect(retired).toBe(0);
+        retire();
+        expect(retired).toBe(1);
+        expect(invalidated).toBe(1);
+        expect(active).toBe(0);
+        await expect(service.observeAdmittedTargetedOperation({ ...handle }, { key: 'selected' }, () => {}))
+            .rejects.toMatchObject({ code: 'plugin_admitted_targeted_operation_handle_invalid' });
+        controller.abort();
+        expect(active).toBe(0);
+        await subscription.dispose();
+        expect(active).toBe(0);
+    });
     it.each(['target-retired', 'role-removed'] as const)('rechecks the original operation after an asynchronous dispatch wait (%s)', async change => {
         const inputSchema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
         const resultSchema = defineProtocolObject({ accepted: defineProtocolLiteral(true) }, { policy: 'closed' });

@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readAccountNoticeArtifactV1, readAccountNoticeArtifactHeaderV1, AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema,
   UsageNoticeArtifactHeaderV1Schema, UsageNoticeArtifactBodyV1Schema, type UsageNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticePushDataV1Schema, PluginSessionPushDataV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { ArtifactAccessRecipientCensusResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -12,6 +13,28 @@ import { decodeBase64, decryptWithDataKey, encodeBase64, encryptWithDataKey } fr
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createStablePluginNotificationsService, type StablePluginNotificationsHost } from './notifications';
+import { createPluginNativeNotificationDelivery } from '@/notifications/activity/pluginNativeNotificationDelivery';
+import { notificationSettingsFixture, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { publishTriageAttentionV1 } from '@happier-dev/triage-sources/runtime';
+import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
+
+const nativePush = vi.hoisted(() => ({ messages: [] as Readonly<Record<string, unknown>>[] }));
+// Expo is the actual outward network boundary; the host push client and its
+// authenticated token/badge reads remain real beneath this test.
+vi.mock('expo-server-sdk', () => ({ Expo: class {
+  static isExpoPushToken() { return true; }
+  chunkPushNotifications(messages: Readonly<Record<string, unknown>>[]) { return [messages]; }
+  async sendPushNotificationsAsync(messages: Readonly<Record<string, unknown>>[]) {
+    nativePush.messages.push(...messages);
+    return messages.map(() => ({ status: 'ok' as const }));
+  }
+} }));
+
+afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); nativePush.messages.length = 0; });
 
 describe('plugin notification Account Artifact custody', () => {
   it.each(['plain', 'e2ee'] as const)('persists and updates one %s private item with badges disabled, preserving dismissal, resolution, and plugin isolation', async mode => {
@@ -19,6 +42,8 @@ describe('plugin notification Account Artifact custody', () => {
     // the persistent-service boundary, including the real revision contract.
     type Row = { id: string; kind?: string; header: string; body: string; dataEncryptionKey: string; headerVersion: number; bodyVersion: number };
     const rows = new Map<string, Row>();
+    let pushTokenReads = 0;
+    let sessionReads = 0;
     let accountMode = mode;
     const secret = randomBytes(32);
     const decodeHeader = (row: Row) => {
@@ -45,6 +70,18 @@ describe('plugin notification Account Artifact custody', () => {
       const id = decodeURIComponent(url.pathname.slice('/v1/artifacts/'.length));
       const existing = rows.get(id);
       const reply = (status: number, value: unknown) => response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(value));
+      if (request.method === 'GET' && url.pathname === '/v1/push-tokens') {
+        pushTokenReads += 1;
+        request.resume();
+        return reply(200, { tokens: [{ id: 'device', token: 'ExponentPushToken[ak1]', clientServerUrl: 'https://home.example.test' }] });
+      }
+      if (request.method === 'GET' && url.pathname === '/v1/account/activity/badge-snapshot') {
+        request.resume(); return reply(200, { badgeCount: rows.size });
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/v2/sessions/')) {
+        sessionReads += 1;
+        request.resume(); return reply(200, { session: createSessionNotificationContextFixture('session-bound') });
+      }
       if (request.method === 'GET' && url.pathname.endsWith('/access/recipients')) {
         request.resume();
         const row = rows.get(decodeURIComponent(url.pathname.split('/')[3]!));
@@ -140,6 +177,148 @@ describe('plugin notification Account Artifact custody', () => {
           async activateChannel() {}, readChannel: () => null,
           resolveNoticeArtifacts: async () => ({ accountId: 'owner', store: activeStore }) } satisfies StablePluginNotificationsHost;
         const service = createStablePluginNotificationsService(seed, host);
+        const nativeRequests: unknown[] = [];
+        const settings = notificationSettingsFixture({});
+        const catalog = notificationCatalogFixture(settings);
+        setActiveAccountSettingsSnapshot({ source: 'network', settings, scopeKey: resolveAccountSettingsScopeKey(credentials),
+          settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(), notificationChannelCatalog: catalog.notificationChannelCatalog });
+        let routable = true;
+        let current = true;
+        const sendNative = createPluginNativeNotificationDelivery({ credentials, readCredentials: async () => current ? credentials : null,
+          serverUrl: 'https://home.example.test', serverHttpBaseUrl: `http://127.0.0.1:${address.port}`, serverId: 'srv_bound_home',
+          isCurrent: () => current, resolveServerFeaturesSnapshot: () => routable ? { status: 'ready',
+            features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_bound_home' } } }) } : undefined });
+        const native = createStablePluginNotificationsService(seed, { ...host,
+            categories: [{ ...host.categories[0]!, definition: { ...host.categories[0]!.definition,
+              buttons: [{ id: 'Open review', label: 'Review', effect: { kind: 'open' } },
+                { id: 'Ship 🚀', label: 'Ship', effect: { kind: 'action', invocation: {
+                  action: { pluginId: 'acme.tasks', localId: 'release' }, input: { repository: 'default' } } } }],
+            } }],
+            readAttentionPolicy: () => getActiveAccountSettingsSnapshot()?.settings.attentionDeliveryPolicyV1,
+            sendNative: async (caller, input, signal) => {
+              nativeRequests.push(input);
+              return sendNative(caller, input, signal);
+            },
+        });
+        const review = { clientRequestId: 'native-review', categoryId: 'updates', title: 'Review deployment',
+          itemId: 'deployment/one', type: 'decision' as const, page: { pageId: 'deployment-review', subPath: 'repo/one' } };
+        for (const page of [
+          { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine' },
+            service: { kind: 'deployment', machineId: 'machine', environmentId: 'environment',
+              environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+          { kind: 'host', page: 'environment', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+            targetLinkId: 'target' },
+        ]) {
+          // The plugin transport is untyped at runtime; host destinations are not authorable plugin pages.
+          // @ts-expect-error A plugin cannot author a host page through the public notification API.
+          await expect(native.send({ ...review, page })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
+          expect(rows.size).toBe(0);
+          expect(nativeRequests).toEqual([]);
+        }
+        await expect(native.send(review)).resolves.toMatchObject({ deliveries: [{ status: 'accepted' }] });
+        expect(nativeRequests).toEqual([expect.objectContaining({ notice: { artifactId: [...rows.keys()][0], itemId: review.itemId, page: review.page } })]);
+        await native.send(review);
+        expect(nativeRequests).toHaveLength(1);
+        await native.send({ ...review, clientRequestId: 'same-open-notice' });
+        await native.send({ ...review, clientRequestId: 'updated-open-notice', title: 'Updated deployment review' });
+        expect(nativeRequests).toHaveLength(1);
+        expect(readAccountNoticeArtifactV1((await activeStore.read([...rows.keys()][0]!))!))
+          .toMatchObject({ title: 'Updated deployment review', resolved: false });
+        await expect(native.send({ ...review, channelIds: [] })).rejects.toMatchObject({ code: 'plugin_notification_request_conflict' });
+        await native.send({ ...review, clientRequestId: 'native-resolved', resolved: true });
+        expect(nativeRequests).toHaveLength(1);
+        expect(nativePush.messages).toEqual([expect.objectContaining({ categoryId: 'happier.pluginNotification.v1/acme.tasks/updates',
+          data: expect.objectContaining({ topic: 'account_notice', accountId: 'owner', page: review.page,
+            serverUrl: 'https://home.example.test', source: { kind: 'plugin', pluginId: 'acme.tasks', itemId: review.itemId } }) })]);
+        expect(AccountNoticePushDataV1Schema.safeParse(nativePush.messages[0]!.data).success).toBe(true);
+        expect(nativePush.messages[0]!.data).toMatchObject({ pluginNotification: {
+          pluginId: 'acme.tasks', categoryId: 'updates', occurrenceId: 'one', clientRequestId: 'native-review' } });
+        await native.send({ ...review, clientRequestId: 'reopened-review' });
+        expect(nativeRequests).toHaveLength(2);
+        // A restarted/second Machine owner has no request-id history; the retained Inbox still owns opening.
+        const restarted = createStablePluginNotificationsService({ ...seed, occurrenceId: 'restarted' }, { ...host,
+          sendNative: async (_caller, input) => {
+            nativeRequests.push(input);
+            return { attemptedChannels: 1, deliveredChannels: 1 };
+          } });
+        await restarted.send({ ...review, clientRequestId: 'restart-replay' });
+        expect(nativeRequests).toHaveLength(2);
+        const pendingDeployment = { ...review, itemId: 'deployment/pending', type: 'update' as const,
+          clientRequestId: 'deployment-not-yet-eligible' };
+        await native.send(pendingDeployment);
+        await native.send({ ...pendingDeployment, clientRequestId: 'deployment-still-ineligible' });
+        expect(nativeRequests).toHaveLength(2);
+        const eligibleDeployment = { ...pendingDeployment, type: 'approval' as const, clientRequestId: 'deployment-now-eligible' };
+        await expect(native.send(eligibleDeployment)).resolves.toMatchObject({ notice: { changed: true, opened: false } });
+        expect(nativeRequests).toHaveLength(3);
+        await native.send({ ...eligibleDeployment, clientRequestId: 'deployment-still-eligible' });
+        expect(nativeRequests).toHaveLength(3);
+        rows.clear();
+        nativePush.messages.length = 0;
+        // Triage's real shared publisher reaches the real C1 store in both Account modes.
+        const attentionService = createStablePluginNotificationsService({ ...seed, plugin: { id: 'happier.triage', version: '0.0.0' } }, {
+          ...host, categories: [{ pluginId: 'happier.triage', definition: { id: 'source-attention', kind: 'plugin', title: 'Attention', eventIds: [] } }],
+        });
+        const attentionContext = { signal: seed.signal, services: { notifications: attentionService } };
+        const entryRef = { source: { pluginId: 'happier.sentry', localId: 'sentry-issues' }, kindId: 'error-issue', collisionScope: 'deployment-and-organization', entryId: '1284' };
+        const attentionInput = { entryRef, reason: 'assignment', notice: { clientRequestId: 'attention-first', categoryId: 'source-attention',
+          title: 'Assigned issue', type: 'update' as const, resolved: false,
+          page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1(entryRef) } } };
+        const attentionResult = await publishTriageAttentionV1(attentionContext, attentionInput);
+        expect(attentionResult.notice?.opened).toBe(true);
+        await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: { ...attentionInput.notice, clientRequestId: 'attention-second', title: 'Updated issue' } });
+        expect(rows.size).toBe(1);
+        const attentionArtifactId = [...rows.keys()][0]!;
+        expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!)).toMatchObject({
+          source: { kind: 'plugin', pluginId: 'happier.triage' }, type: 'update', resolved: false, page: attentionInput.notice.page,
+        });
+        await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: { ...attentionInput.notice, clientRequestId: 'attention-resolved', resolved: true } });
+        expect(rows.size).toBe(1);
+        expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!)).toMatchObject({ resolved: true });
+        rows.clear();
+        const pushOnly = { clientRequestId: 'push-only', categoryId: 'updates', title: 'PR needs attention', type: 'blocked' as const,
+          buttonInputs: { 'Ship 🚀': { repository: 'selected' } },
+          data: { sessionId: 'session-bound', serverId: 'forged-home', serverUrl: 'https://forged.example.test', requestId: 'never-answer' } };
+        await native.send(pushOnly);
+        expect(rows.size).toBe(0);
+        expect(nativePush.messages).toEqual([expect.objectContaining({ categoryId: 'happier.pluginNotification.v1/acme.tasks/updates',
+          data: expect.objectContaining({ v: 1, topic: 'plugin_session', sessionId: 'session-bound', serverId: 'srv_bound_home', serverUrl: 'https://home.example.test', accountId: 'owner',
+            pluginNotification: { pluginId: 'acme.tasks', categoryId: 'updates', occurrenceId: 'one', clientRequestId: 'push-only',
+              buttonInputs: { 'Ship 🚀': { repository: 'selected' } } } }) })]);
+        expect(PluginSessionPushDataV1Schema.safeParse(nativePush.messages[0]!.data).success).toBe(true);
+        await native.send(pushOnly);
+        expect(nativePush.messages).toHaveLength(1);
+        await expect(native.send({ ...pushOnly, buttonInputs: { 'Ship 🚀': { repository: 'changed' } } }))
+          .rejects.toMatchObject({ code: 'plugin_notification_request_conflict' });
+        await expect(native.send({ ...pushOnly, clientRequestId: 'unknown-button', buttonInputs: { 'foreign-button': {} } }))
+          .rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
+        await expect(native.send({ ...pushOnly, clientRequestId: 'open-button-operands', buttonInputs: { 'Open review': {} } }))
+          .rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
+        expect(nativePush.messages).toHaveLength(1);
+        const reads = { pushTokenReads, sessionReads };
+        for (let i = 0; i < 1000; i += 1) await native.send({ ...pushOnly, clientRequestId: `quiet-update-${i}`, type: 'update' });
+        expect(nativePush.messages).toHaveLength(1);
+        expect({ pushTokenReads, sessionReads }).toEqual(reads);
+        routable = false;
+        await native.send({ ...pushOnly, clientRequestId: 'unavailable-home' });
+        expect({ pushTokenReads, sessionReads }).toEqual(reads);
+        routable = true;
+        const snapshot = getActiveAccountSettingsSnapshot()!;
+        setActiveAccountSettingsSnapshot({ ...snapshot, settings: notificationSettingsFixture({ attentionDeliveryPolicyV1: {
+          quietHours: { enabled: true, timezone: 'UTC', windows: [{ startLocalTime: '00:00', endLocalTime: '23:59' }] },
+        } }), settingsVersion: 2 });
+        await native.send({ ...pushOnly, clientRequestId: 'quiet-hours' });
+        expect({ pushTokenReads, sessionReads }).toEqual(reads);
+        current = false;
+        await native.send({ ...pushOnly, clientRequestId: 'retired-account' });
+        expect(nativePush.messages).toHaveLength(1);
+        expect(rows.size).toBe(0);
+        nativePush.messages.length = 0;
+        // A live Resource already owns the Inbox row. Typed channel attention
+        // must not materialize a second private notice in either Account mode.
+        await service.send({ clientRequestId: 'live-update', categoryId: 'updates', title: 'Live update', type: 'update' });
+        await service.send({ clientRequestId: 'live-blocked', categoryId: 'updates', title: 'Live blocked', type: 'blocked' });
+        expect(rows.size).toBe(0);
         const input = { clientRequestId: 'first', categoryId: 'updates', title: 'First', itemId: 'task-1', type: 'update' as const };
         await service.send(input);
         expect(rows.size).toBe(1);

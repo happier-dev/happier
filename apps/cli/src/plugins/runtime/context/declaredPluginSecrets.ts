@@ -1,5 +1,5 @@
 import { readPluginSettingManagedServiceOrigin, readPluginSettingSecretCustody } from '@happier-dev/protocol/plugins/contributions/settings';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { notificationChannelSettingFieldId } from '@/plugins/settings/notificationChannelSettings';
 
@@ -14,6 +14,7 @@ type SecretBearingManifest = Readonly<{
     secrets?: readonly Readonly<{
         id: string;
         custody?: 'account' | 'daemon';
+        saveShared?: true;
     }>[];
     contributes: Readonly<{
         settings?: readonly Readonly<{
@@ -61,6 +62,7 @@ export function collectDeclaredPluginSecrets(
             id: string,
             custody: 'account' | 'daemon',
             managedServiceOrigin?: DeclaredPluginSecret['managedServiceOrigin'],
+            saveShared?: true,
         ): void => {
             const key = `${pluginId}\u0000${id}`;
             // A contested id stays refused for every later declaration of it, so
@@ -71,6 +73,7 @@ export function collectDeclaredPluginSecrets(
                 declaration: Object.freeze({
                     id,
                     custody,
+                    ...(saveShared ? { saveShared } : {}),
                     ...(managedServiceOrigin
                         ? {
                             managedServiceOrigin: Object.freeze({
@@ -107,7 +110,7 @@ export function collectDeclaredPluginSecrets(
             declarations.set(key, declaration);
         };
         for (const secret of manifest.secrets ?? []) {
-            add(secret.id, secret.custody ?? 'account');
+            add(secret.id, secret.custody ?? 'account', undefined, secret.saveShared);
         }
         for (const contribution of manifest.contributes.settings ?? []) {
             for (const field of contribution.fields) {

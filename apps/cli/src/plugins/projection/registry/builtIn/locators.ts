@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { formatPluginManifestIngestionDiagnostics } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { assertHostCanExcludeBundledPlugin } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
 import { readCurrentBundledPluginPublicationFailures } from './publication';
 export { readCurrentBundledPluginPublicationFailures, readAdmittedBundledPluginPublicationFailures } from './publication';
@@ -11,7 +12,7 @@ export { readCurrentBundledPluginPublicationFailures, readAdmittedBundledPluginP
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { defaultCanImportFirstPartyPluginSource, isExecutingFirstPartySourceRuntime } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
-import { readGeneratedPluginUiArtifactsManifestSync } from '@/plugins/install/ui/generatedArtifacts';
+import { readGeneratedPluginUiArtifactsManifestSync, readGeneratedPluginCompiledManifestSync } from '@/plugins/install/ui/generatedArtifacts';
 import { projectPluginManifestCompatibilityDiagnostic } from '../../../manifest/diagnostics';
 import type { BundledPluginPublicationFailure } from '@/plugins/validation/diagnostics/types';
 import * as generatedBundledPluginManifests from '../sources/generatedBundledPluginManifests';
@@ -191,6 +192,9 @@ export function loadBundledPluginLocatorResult(
         const generatedUiArtifactsManifest = installedPluginRootPath
             ? readGeneratedPluginUiArtifactsManifestSync(installedPluginRootPath)
             : null;
+        const compiledAccountManifest = installedPluginRootPath && generatedUiArtifactsManifest
+            && ingestion.manifest.contributes.resources.some(resource => isDynamicPluginResourceContributionV2(resource) && resource.execution?.target === 'account')
+            ? readGeneratedPluginCompiledManifestSync(installedPluginRootPath, locator.pluginId) : null;
 
         loadedPlugins.push(Object.freeze({
             pluginId: locator.pluginId,
@@ -202,6 +206,7 @@ export function loadBundledPluginLocatorResult(
             ...(ingestion.diagnostics?.length ? { admissionDiagnostics: ingestion.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) } : {}),
             sourceSpec: locator.sourceSpec,
             ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
+            ...(compiledAccountManifest ? { compiledAccountManifest } : {}),
         }));
         } catch (error) {
             // Required package imports/builds remain host obligations. An

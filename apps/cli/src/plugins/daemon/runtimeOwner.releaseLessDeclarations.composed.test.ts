@@ -53,6 +53,7 @@ describe('daemon release-less declaration publication', () => {
         const claimsByPlugin = new Map<string, number>();
         let accountPluginEnabled = startupMode === 'normal';
         let accountReadable = true;
+        let accountReadErrorCode = 'ECONNRESET';
         const accountReadStates: boolean[] = [];
         const diagnostics = vi.spyOn(logger, 'debug');
         const controller = createPluginReloadController({ happyHomeDir });
@@ -75,7 +76,9 @@ describe('daemon release-less declaration publication', () => {
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
                 if (String(url).endsWith('/intents/list')) {
                     accountReadStates.push(accountReadable);
-                    if (!accountReadable) throw new Error('Account temporarily unavailable during reconnect');
+                    if (!accountReadable) throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect', accountReadErrorCode), {
+                        requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616',
+                    });
                     const pluginIds = [...(PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [])];
                     return { data: { availabilityCursor: 17, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
                         response: { availabilityCursor: 17, hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
@@ -223,12 +226,23 @@ describe('daemon release-less declaration publication', () => {
             await refreshStore.refreshRuntime([manifest.id]);
             const unavailable = controller.getState().activeRegistry!;
             expect(unavailable.contributes.pluginEnablementById?.[target.identity.pluginId])
-                .toMatchObject({ enabled: false, unavailableCode: 'plugin_account_execution_unavailable' });
+                .toMatchObject({ enabled: false, unavailableCode: 'plugin_account_census_failed',
+                    unavailableCause: { errorClass: 'AxiosError', errorCode: 'ECONNRESET', phase: 'plugins.account_census' },
+                    unavailableRequestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616' });
             expect(() => resolveSessionCreationAgentTarget(target, unavailable.contributes))
-                .toThrow(expect.objectContaining({ code: 'plugin_account_execution_unavailable' }));
+                .toThrow(expect.objectContaining({ code: 'plugin_account_census_failed' }));
+            const readCensusDiagnostic = async () => (await owner!.readCatalog()).find(row => row.pluginId === target.identity.pluginId)
+                ?.contributionIntrospection.diagnostics.find(row => row.data.code === 'plugin_runtime_capability_missing')?.data.details;
+            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNRESET' } });
+            // Remaining unavailable is not unchanged: the currently reported
+            // cause must replace the preceding census's catalog diagnostic.
+            accountReadErrorCode = 'ECONNREFUSED';
+            await refreshStore.refreshRuntime([manifest.id]);
+            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNREFUSED' } });
             accountReadable = true;
-            // A successful reconnect can carry no changed availability rows.
-            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [], { accountReadable: true });
+            // A single-plugin live signal must also recover the other bundled
+            // rows withdrawn by the failed whole-Account census.
+            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [change]);
             await vi.waitFor(() => expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[target.identity.pluginId]?.enabled,
                 `Account reads: ${JSON.stringify(accountReadStates)}; refresh failures: ${JSON.stringify(diagnostics.mock.calls.filter(call => String(call[0]).includes('refresh failed')))}`)
                 .toBe(true), { timeout: 120_000 });

@@ -94,6 +94,20 @@ describe('plugin workflows through the canonical projection', () => {
             }));
     });
 
+    it('checks built-in Action inputs before publishing a Workflow source', () => {
+        const invalid = loaded('com.acme.invalid', { workflows: [{ ...workflow,
+            definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+                input: { message: { kind: 'literal', value: 42 } },
+            }] },
+        }] });
+        expect(() => projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: [invalid], diagnosticsByPluginId: {} }, provenance: 'first_party',
+        })).toThrowError(expect.objectContaining({
+            code: 'plugin_workflow_invalid', pluginId: 'com.acme.invalid', workflowId: 'review',
+            issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/input/message' })]),
+        }));
+    });
+
     it('admits a workflows-only plugin without executable activation and fences its source with the occurrence', async () => {
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
             plugins: [{ manifest: loaded('com.acme.review').manifest, files: {} }],

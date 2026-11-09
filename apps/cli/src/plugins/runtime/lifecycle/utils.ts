@@ -1,6 +1,7 @@
 import { projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
+import { classifyPluginModuleFailure, findPluginFailureDiagnostic, type PluginFailurePhase } from '../moduleFailure';
 import {
     findPluginDiagnosticSourceLocation,
     normalizePluginDiagnosticSourceRoot,
@@ -32,6 +33,7 @@ export type PluginFailureDiagnosticRealm = Readonly<{
 
 export type PluginFailureDiagnosticProjection = Readonly<{
     message: string;
+    details?: PluginCompatibilityDiagnostic['details'];
     source?: PluginDiagnosticSourceLocation;
     stack?: string;
 }>;
@@ -118,27 +120,31 @@ function projectLocalDevelopmentStack(
  * development plugin by supplying its authenticated project root.
  *
  * The location is repeated as a `file:line:column: ` message prefix because
- * published diagnostic sinks (the protocol diagnostic record, the daemon log,
- * the CLI stage report's human text) carry text only. Both come from this one
+ * text-only sinks can still show the location. Structured sinks additionally
+ * retain the closed cause through the existing details slot. Both come from this one
  * resolution, so the structured field and the message can never disagree.
  */
 export function projectPluginFailureDiagnostic(
     error: unknown,
     realm: PluginFailureDiagnosticRealm = {},
+    phase?: PluginFailurePhase,
 ): PluginFailureDiagnosticProjection {
     const message = projectPluginFailureText(error);
+    const details = phase ? { cause: classifyPluginModuleFailure(error, phase) } : undefined;
+    const base = { message, ...(details ? { details } : {}) };
     const sourceRoot = realm.localDevelopmentSourceRoot?.trim();
-    if (!sourceRoot) return { message };
+    if (!sourceRoot) return base;
     const source = findPluginDiagnosticSourceLocation({
         texts: readPluginFailureLocationTexts(error),
         sourceRoot,
     });
     const stack = projectLocalDevelopmentStack(error, sourceRoot);
     if (!source) {
-        return { message, ...(stack ? { stack } : {}) };
+        return { ...base, ...(stack ? { stack } : {}) };
     }
     const located = prefixPluginDiagnosticSourceLocation(source, message);
     return {
+        ...base,
         message: located || message,
         source,
         ...(stack ? { stack } : {}),
@@ -147,8 +153,8 @@ export function projectPluginFailureDiagnostic(
 
 function readDaemonModuleLoadErrorCode(error: unknown): string {
     try {
-        if (!(error instanceof Error)) return '';
-        const code = (error as Error & { code?: unknown }).code;
+        if (!error || typeof error !== 'object') return '';
+        const code: unknown = Reflect.get(error, 'code');
         return typeof code === 'string' ? code : '';
     } catch {
         return '';
@@ -214,7 +220,9 @@ export function mapDaemonModuleLoadErrorToDiagnostic(
     options: PluginFailureDiagnosticRealm = {},
 ): PluginCompatibilityDiagnostic {
     const errorCode = readDaemonModuleLoadErrorCode(error);
-    const projected = projectPluginFailureDiagnostic(error, options);
+    const inherited = findPluginFailureDiagnostic(error);
+    if (inherited) return inherited;
+    const projected = projectPluginFailureDiagnostic(error, options, 'evaluate');
     return {
         code:
             errorCode === 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'

@@ -26,6 +26,7 @@ describe('resolved plugin resource projection', () => {
                     resources: [{
                         id: 'progress', source: 'dynamic', kind: 'config',
                         contentType: 'application/json', scope: 'session',
+                        execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
                         hostAccess: ['account-storage'],
                     }],
                 },
@@ -40,6 +41,7 @@ describe('resolved plugin resource projection', () => {
                 id: 'progress',
                 source: 'dynamic',
                 scope: 'session',
+                execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
                 hostAccess: ['account-storage'],
             },
         }]);

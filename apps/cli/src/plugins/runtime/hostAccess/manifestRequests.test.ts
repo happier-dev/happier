@@ -32,7 +32,7 @@ function manifest() {
             }],
         },
         contributes: {
-            projectNativeAdapters: [{ id: 'pixi', files: ['pixi.toml'], roles: ['resolveCommand', 'produceEnvironment'] }],
+            projectNativeAdapters: [{ id: 'pixi', files: ['pixi.toml'], roles: ['resolveCommand', 'prepareToolchain'] }],
             backgroundServices: [{ id: 'account-supervisor' }],
             composerReferences: [{ id: 'account-reference', title: 'Account', description: 'Find Account context', icon: 'search', triggers: ['@'] }],
             composerAttachments: [{ id: 'account-attachment', title: 'Account', icon: 'search', cardinality: 'many', valueSchema: { type: 'object' } }],

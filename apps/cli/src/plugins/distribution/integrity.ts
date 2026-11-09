@@ -29,7 +29,7 @@ export type StreamingIntegrityVerifier = Readonly<{
   verify(): boolean;
 }>;
 
-/** One streaming Subresource Integrity owner shared by download and archive verification. */
+/** Streaming Subresource Integrity admission at the archive extraction boundary. */
 export function createStreamingIntegrityVerifier(integrity: string): StreamingIntegrityVerifier {
   const entries = integrity.trim().split(/\s+/).map((token) => {
     const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})(?:\?.*)?$/.exec(token);

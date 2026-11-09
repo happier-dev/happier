@@ -7,6 +7,7 @@ import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fu
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createIngressSupervisor } from '../../../../../packages/plugins/channels/src/checkpointedPollSupervisor';
+import { runConversationCheckpointedPollForInvocation } from '../../../../../packages/plugins/channels/src/ingress';
 import { CHANNEL_STATE_COLLECTION } from '../../../../../packages/plugins/channels/src/collections';
 import { createCurrentConversationConnectionFixture } from '../../../../../packages/plugins/channels/src/testkit/currentConnectionFixture';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
@@ -18,7 +19,7 @@ describe('admitted Channels checkpoint supervisor caller provenance', () => {
     it.each(['materialization', 'missing-origin', 'wrong-machine', 'missing-descriptor'] as const)(
         'runs the real supervisor through Actions and the installed provider with %s authority', async kind => {
             const state = new MemoryCollection();
-            await state.put(createCurrentConversationConnectionFixture({
+            const originalConnection = await state.put(createCurrentConversationConnectionFixture({
                 connectionId: 'connection-background-poll',
                 authority: {
                     providerPluginId: providerId,
@@ -35,9 +36,18 @@ describe('admitted Channels checkpoint supervisor caller provenance', () => {
                 if (definition.id !== CHANNEL_STATE_COLLECTION.id) throw new Error('Unexpected Collection');
                 return state;
             } } } as unknown as PluginServices['storage'];
-            const supervisor = createIngressSupervisor();
+            const pollResults: Array<Awaited<ReturnType<typeof runConversationCheckpointedPollForInvocation>>> = [];
+            const supervisor = createIngressSupervisor({
+                async runPoll(input, context) {
+                    const result = await runConversationCheckpointedPollForInvocation(input, context);
+                    pollResults.push(result);
+                    return result;
+                },
+            });
             const core = definePlugin({
                 id: 'happier.channels', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+                hostAccess: { required: [{ id: 'account-storage', capability: 'storage.account',
+                    reason: 'Receive mail into the current Account.', scope: { enabled: true } }], optional: [] },
                 contributionPoints: { providers: ConversationProvidersContributionPointV1 },
                 backgroundServices: [{ declaration: { id: 'ingress-supervisor', title: 'Checkpointed polling' },
                     runner: context => supervisor.run({ ...context, services: { ...context.services, storage } }),
@@ -127,9 +137,10 @@ describe('admitted Channels checkpoint supervisor caller provenance', () => {
                 await vi.waitFor(async () => {
                     const connection = await state.get('connection-background-poll');
                     if (kind === 'missing-origin' || kind === 'wrong-machine') {
-                        expect(connection?.value.payload).toMatchObject({ pollFailure: {
-                            phase: 'blocked', evidence: { kind: 'action', code: 'plugin_action_caller_unavailable' },
-                        } });
+                        // Foreign or unavailable host routing cannot mutate the shared connection.
+                        // Await a real settled poll so an unstarted supervisor cannot pass this case.
+                        expect(pollResults).toContainEqual({ kind: 'ineligible' });
+                        expect(connection).toEqual(originalConnection);
                         expect(effects).toBe(0);
                         expect([...state.rows.values()].some(row => row.value['record-kind'] === 'checkpoint')).toBe(false);
                     } else {

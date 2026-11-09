@@ -1,9 +1,11 @@
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { describe, expect, it } from 'vitest';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
+import { createMergedContributionRegistry, createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from './fullProjection';
+import { loadCurrentBundledPluginLocatorResult } from './builtIn/locators';
 
 describe('resolved plugin activation projection', () => {
   it('resolves external qualified Connected Account access against bundled manifests without projecting bundled contributions', () => {
@@ -131,49 +133,76 @@ describe('resolved plugin activation projection', () => {
       }),
     };
 
-    expect(() => projectLoadedPluginContributes({
+    const excluded = projectLoadedPluginContributes({
       loadResult: {
         loadedPlugins: [plugin],
         diagnosticsByPluginId: {},
       },
       provenance: 'external',
-    })).toThrow(
-      /references missing connectedAccountDescriptors contribution happier\.agent\.claude\/missing/u,
-    );
+    });
+    expect(excluded.activationTargets).toEqual([]);
+    expect(excluded.pluginDiagnosticsByPluginId?.[plugin.pluginId]).toMatchObject([{
+      code: 'plugin_manifest_invalid', details: { reason: 'plugin_manifest_dangling_reference' },
+    }]);
   });
 
-  it('rejects an external projection that collides with a bundled plugin identity', () => {
-    const spoofed: LoadedPlugin = {
-      pluginId: 'happier.agent.claude',
-      pluginRootPath: '/plugins/spoofed-claude',
-      manifestPath: '/plugins/spoofed-claude/.happier-plugin/plugin.json',
+  it('projects a development replacement of bundled Channels as one effective identity', () => {
+    const bundled = loadCurrentBundledPluginLocatorResult().loadedPlugins.find(plugin => plugin.pluginId === 'happier.channels');
+    if (!bundled) throw new Error('Bundled Channels fixture is required');
+    const candidate: LoadedPlugin = {
+      ...bundled,
+      pluginRootPath: '/plugins/development-channels',
+      manifestPath: '/plugins/development-channels/.happier-plugin/plugin.json',
       daemonEntryPath: null,
-      devDaemonEntryPath: null,
+      devDaemonEntryPath: '/plugins/development-channels/src/index.ts',
       sourceSpec: {
         kind: 'path',
-        locator: '/plugins/spoofed-claude',
+        locator: '/plugins/development-channels',
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
+        devWatch: true,
       },
       manifest: normalizePluginManifestV2({
-        schemaVersion: 2,
-        id: 'happier.agent.claude',
-        version: '999.0.0',
-        displayName: 'Spoofed Claude',
-        engines: { happier: '^1.0.0' },
-        runtime: { apiVersion: 1 },
-        entrypoints: {},
-        contributes: {},
+        ...bundled.manifest,
+        version: '2.0.0',
+        contributes: {
+          ...bundled.manifest.contributes,
+          actions: [...bundled.manifest.contributes.actions, {
+            id: 'development-check', title: 'Development check', scopes: ['global'],
+            surfaces: ['ui'], placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe',
+          }],
+        },
       }),
     };
 
-    expect(() => projectLoadedPluginContributes({
-      loadResult: {
-        loadedPlugins: [spoofed],
-        diagnosticsByPluginId: {},
-      },
+    const projected = projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: [candidate], diagnosticsByPluginId: {} },
       provenance: 'external',
-    })).toThrow(/Duplicate plugin identity 'happier\.agent\.claude'/u);
+    });
+    const registry = createMergedContributionRegistry(projected, getResolvedContributionRegistry());
+    expect(registry.activationTargets.filter(target => target.pluginId === candidate.pluginId)).toEqual([expect.objectContaining({
+      pluginId: 'happier.channels', manifestPath: candidate.manifestPath,
+    })]);
+    const actions = registry.actions.filter(action => action.pluginId === candidate.pluginId);
+    expect(actions).toHaveLength(candidate.manifest.contributes.actions.length);
+    expect(actions.every(action => action.pluginVersion === '2.0.0')).toBe(true);
+    expect(registry.actions.find(action => action.definition.id === 'development-check')).toMatchObject({
+      pluginId: candidate.pluginId, pluginRootPath: candidate.pluginRootPath,
+      source: { kind: 'path' },
+    });
+  });
+
+  it('rejects two external sources claiming the same bundled identity', () => {
+    const bundled = loadCurrentBundledPluginLocatorResult().loadedPlugins.find(plugin => plugin.pluginId === 'happier.channels');
+    if (!bundled) throw new Error('Bundled Channels fixture is required');
+    const candidates = ['/plugins/channels-one', '/plugins/channels-two'].map((pluginRootPath): LoadedPlugin => ({
+      ...bundled, pluginRootPath,
+      sourceSpec: { kind: 'path', locator: pluginRootPath, trustPolicy: 'local_trusted', installPolicy: 'link' },
+    }));
+    expect(() => projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: candidates, diagnosticsByPluginId: {} },
+      provenance: 'external',
+    })).toThrow(/Duplicate plugin identity 'happier\.channels'/u);
   });
 
   it('carries an executable Voice declaration through the canonical resolved registry', () => {

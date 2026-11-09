@@ -88,11 +88,6 @@ export async function attestRetainedManagedProvider(input: Readonly<{
                 managedRuntime: runtimeBindingBasis.deployment.managedRuntime,
             })
     ) return null;
-    try {
-        await retainedSource.assertStillAvailable();
-    } catch {
-        return null;
-    }
     return Object.freeze({
         identity,
         sessionId,

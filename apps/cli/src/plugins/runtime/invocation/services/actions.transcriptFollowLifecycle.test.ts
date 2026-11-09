@@ -5,9 +5,7 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import { createSessionTranscriptFollowLeaseRegistry } from '@/api/session/transcriptQueries';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-} from './factory';
+import { createPluginInvocationServiceBinding } from './factory';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
 import { createProductionPluginInvocationServiceOwners } from './production';
 
@@ -86,10 +84,7 @@ describe('production Plugin ActionsService transcript follow lifetime', () => {
                 message: 'test_target_action_unavailable',
             }),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'occurrenceId-1',
-            'binding-1',
-        );
+        const binding = createPluginInvocationServiceBinding('occurrenceId-1', 'binding-1');
         const firstRetirement = new AbortController();
         const secondRetirement = new AbortController();
         const createServices = (correlationId: string, signal: AbortSignal) => owners.createServices({

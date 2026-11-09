@@ -752,10 +752,17 @@ describe('A.11 plugin context services', () => {
             evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 1 })),
             dispose: vi.fn(async () => undefined),
         };
+        let releaseTermination!: () => void;
+        const termination = new Promise<void>((resolve) => { releaseTermination = resolve; });
+        let markTerminating!: () => void;
+        const terminating = new Promise<void>((resolve) => { markTerminating = resolve; });
         const process = {
             whenExited: new Promise<never>(() => undefined),
             launcherIdentity: null,
-            terminate: vi.fn(async () => undefined),
+            terminate: vi.fn(async () => {
+                markTerminating();
+                await termination;
+            }),
             signal: vi.fn(async () => undefined),
         };
         const disposeHost = vi.fn(async () => undefined);
@@ -775,7 +782,14 @@ describe('A.11 plugin context services', () => {
             launch: { kind: 'agent-cli', agentId: 'claude' },
             isolatedEnv: true,
         });
-        await service.dispose(handle, { kind: 'destroy_owned_host', reason: 'session_closed' });
+        const disposal = service.dispose(handle, { kind: 'destroy_owned_host', reason: 'session_closed' });
+        try {
+            await terminating;
+            expect(disposeHost).not.toHaveBeenCalled();
+        } finally {
+            releaseTermination();
+            await disposal;
+        }
 
         expect(process.terminate).toHaveBeenCalledOnce();
         expect(disposeHost).toHaveBeenCalledWith({

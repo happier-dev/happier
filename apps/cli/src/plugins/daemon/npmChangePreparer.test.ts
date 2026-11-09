@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import crypto from 'node:crypto';
 import { readdir, readFile, rm, writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import fastify from 'fastify';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -25,14 +28,11 @@ import {resetActiveAccountSettingsSnapshotForTests} from '@/settings/accountSett
 import {createMarketplaceIndexService} from '@/plugins/store/marketplace/service';
 import { marketplaceListingMatchesExpected } from '@/plugins/store/marketplace/exactInstall';
 import * as undici from 'undici';
-import * as https from 'node:https';
-import {EventEmitter} from 'node:events';
-import type {ClientRequest,IncomingMessage} from 'node:http';
 import {createMarketplaceNpmDiscoveryProjectionV1} from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import {PluginCompatibilityProjectionV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
 
 import { createDaemonPluginChangeService } from './changeService';
-import { describeUserPluginChangeFailure } from './changeClient';
+import { readPluginManifest } from '@/plugins/manifest/read';
 import type { DaemonPluginChangeService } from './changeService';
 import { resolveInstalledPluginUpdate } from './resolveInstalledUpdate';
 import {
@@ -42,14 +42,17 @@ import {
 } from '@happier-dev/protocol/marketplace/internal';
 
 import { createDaemonNpmPluginChangePreparer } from './npmChangePreparer';
+import { createRegistryHostV1 } from '@happier-dev/protocol/registries';
+import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
+import { createRegistryHttpV1 } from '@/registries/registryHttp';
+import { registerDaemonPluginChangeRoutes, PLUGIN_CHANGE_REQUEST_PATH, PLUGIN_CHANGE_DECISION_PATH } from './controlRoutes';
 
 // Only third-party DNS/HTTP transport is mocked below.
 vi.mock('node:dns/promises',async original=>({...await original<typeof import('node:dns/promises')>(),lookup:async()=>[{address:'93.184.216.34',family:4}]}));
 vi.mock('undici',async original=>{const actual=await original<typeof import('undici')>();return {...actual,fetch:vi.fn(actual.fetch)};});
-vi.mock('node:https',async original=>{const actual=await original<typeof import('node:https')>();return {...actual,request:vi.fn(actual.request)};});
 const roots: string[] = [];
 const COMMUNITY_NPM_MARKETPLACE_SOURCE=communityMarketplaceSourceFixture();
-beforeEach(()=>publishAccountRegistrySourcesFixture());
+beforeEach(()=>{publishAccountRegistrySourcesFixture();vi.stubGlobal('fetch',undici.fetch);});
 
 /**
  * Reports what the runtime adopted exactly as `registryRuntimeLifecycle` does:
@@ -69,7 +72,7 @@ function reportAdoptedGenerations(
 }
 
 afterEach(async () => {
-  vi.restoreAllMocks();vi.mocked(undici.fetch).mockReset();vi.mocked(https.request).mockReset();resetActiveAccountSettingsSnapshotForTests();
+  vi.unstubAllGlobals();vi.restoreAllMocks();syncBuiltinESMExports();vi.mocked(undici.fetch).mockReset();resetActiveAccountSettingsSnapshotForTests();
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
@@ -87,6 +90,7 @@ async function createNpmPackageFixture(params: Readonly<{
   happierEngine?: string;
   includeCompatibilityProjection?: boolean;
   compatibilityProjection?: unknown;
+  integrity?: string;
   markerPath: string;
   tarballUrl?: string;
 }>): Promise<Readonly<{
@@ -154,7 +158,7 @@ async function createNpmPackageFixture(params: Readonly<{
     { name: 'package/dist/runtimeDependency.mjs', body: 'export const bundledDependency = true;\n' },
     { name: 'package/payload.txt', body: `reviewed bytes ${version}` },
   ]);
-  const integrity = sriSha512(archive);
+  const integrity = params.integrity ?? sriSha512(archive);
   const metadata = {
     name: packageName,
     'dist-tags': { latest: version },
@@ -288,7 +292,7 @@ function exactMarketplaceIndexSourceSnapshot(params: Readonly<{
     picks: [],
     diagnostics: [],
     entries: [{
-      pluginId: 'acme.npm-candidate',
+      pluginId: params.listingOverrides?.pluginId ?? 'acme.npm-candidate',
       publisher: params.listingOverrides?.publisher ?? { id: 'acme', displayName: 'Acme' },
       display: { title: 'Acme npm candidate', description: curated ? 'Reviewed curated plugin' : 'Community npm plugin' },
       distribution: {
@@ -319,27 +323,22 @@ function exactMarketplaceIndexService(
   params:Parameters<typeof exactMarketplaceIndexSourceSnapshot>[0]|(()=>Parameters<typeof exactMarketplaceIndexSourceSnapshot>[0]),
 ){
   const read=typeof params==='function'?params:()=>params;
-  vi.mocked(undici.fetch).mockImplementation(async()=>{
+  vi.mocked(undici.fetch).mockImplementation(async url=>{
     const current=read();
-    if(current.source.origin==='community-npm')return new undici.Response(JSON.stringify({total:1,objects:[{package:{name:current.fixture.packageName,version:current.fixture.version,publisher:{username:'acme'}}}]}),{status:200});
-    return new undici.Response(JSON.stringify(exactMarketplaceIndexSourceSnapshot(current)),{status:200});
-  });
-  // Native HTTPS is a genuine npm metadata boundary, not a resolver or registry double.
-  vi.mocked(https.request).mockImplementation(((options:unknown,callback:(response:IncomingMessage)=>void)=>{
-    const emitter=new EventEmitter() as EventEmitter & {end():void;destroy(error?:Error):void};
-    emitter.end=()=>queueMicrotask(()=>{
-      const current=read();const metadata=current.fixture.metadata;
+    if(current.source.origin==='community-npm'){
+      if(String(url).includes('/-/v1/search'))return new undici.Response(JSON.stringify({total:1,objects:[{package:{name:current.fixture.packageName,version:current.fixture.version,publisher:{username:'acme'}}}]}),{status:200});
+      const metadata=current.fixture.metadata;
       const raw=metadata?.versions[current.fixture.version];
       if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('npm metadata fixture absent');
       const version=raw as Record<string,unknown>; // Untrusted external npm metadata fixture.
       const happier=version.happier as Record<string,unknown>;
       const compatibility=PluginCompatibilityProjectionV1Schema.parse(happier.compatibilityProjection);
       const discovery=createMarketplaceNpmDiscoveryProjectionV1({compatibility,manifestDigest:current.fixture.manifestDigest});
-      const published={...metadata,versions:{...metadata?.versions,[current.fixture.version]:{...version,happier:{...happier,marketplaceDiscovery:discovery}}}};
-      callback(Object.assign(Readable.from([JSON.stringify(published)]),{statusCode:200,headers:{'content-type':'application/json'}}) as unknown as IncomingMessage);
-    });
-    emitter.destroy=error=>{if(error)emitter.emit('error',error);};return emitter as unknown as ClientRequest;
-  }) as typeof https.request);
+      const published={...metadata,'dist-tags':{latest:current.fixture.version},versions:{...metadata?.versions,[current.fixture.version]:{...version,_npmUser:{name:'acme'},happier:{...happier,marketplaceDiscovery:discovery}}}};
+      return new undici.Response(JSON.stringify(published),{status:200});
+    }
+    return new undici.Response(JSON.stringify(exactMarketplaceIndexSourceSnapshot(current)),{status:200});
+  });
   return createMarketplaceIndexService({happyHomeDir});
 }
 
@@ -436,37 +435,124 @@ async function requestCuratedUpdate(params: Readonly<{
 }
 
 describe('createDaemonNpmPluginChangePreparer', () => {
+  it('admits an exact marketplace pointer once before review and sees removal on the next install', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-marketplace-admission-'));
+    roots.push(happyHomeDir);
+    const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
+    const source = curatedMarketplaceSourceFixture();
+    exactMarketplaceIndexService(happyHomeDir, { fixture, source });
+    const sources = vi.fn(() => createCliRegistryHostV1().readSources());
+    const host = createCliRegistryHostV1({ readSources: sources });
+    const query = vi.fn(createMarketplaceIndexService({ happyHomeDir, registryHost: host }).queryExactListing);
+    const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt: async () => undefined }));
+    const service = createDaemonPluginChangeService({ prepare: createDaemonNpmPluginChangePreparer({
+      happyHomeDir, runtimeLifecycle: { prepare: prepareRuntime }, createClient: () => fixture.client,
+      marketplaceIndexService: { queryExactListing: query },
+    }) });
+    const request = { kind: 'installMarketplace' as const, sourceId: source.id, pluginId: 'acme.npm-candidate',
+      packageName: fixture.packageName, version: fixture.version };
+    const app = fastify();
+    registerDaemonPluginChangeRoutes(app, { service, requireAuth: async () => undefined });
+    try {
+      const response = await app.inject({ method: 'POST', url: PLUGIN_CHANGE_REQUEST_PATH, payload: request });
+      expect(response.statusCode).toBe(200);
+      const result = response.json<Awaited<ReturnType<typeof service.requestPluginChange>>>();
+      expect(result).toMatchObject({ kind: 'reviewRequired', review: { pluginId: 'acme.npm-candidate', version: fixture.version } });
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(sources).toHaveBeenCalledTimes(1);
+      publishAccountRegistrySourcesFixture([], [source.id]);
+      if (result.kind !== 'reviewRequired') throw new Error('Expected the exact candidate review');
+      const decision = await app.inject({ method: 'POST', url: PLUGIN_CHANGE_DECISION_PATH,
+        payload: { pendingChangeId: result.pendingChangeId, decision: 'installAndTrust' } });
+      expect(decision.json()).toMatchObject({ kind: 'committed', pluginId: 'acme.npm-candidate' });
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(sources).toHaveBeenCalledTimes(1);
+      const next = await app.inject({ method: 'POST', url: PLUGIN_CHANGE_REQUEST_PATH, payload: request });
+      expect(next.json()).toMatchObject({ kind: 'failed', code: 'install_unavailable' });
+      expect(query).toHaveBeenCalledTimes(2);
+      expect(sources).toHaveBeenCalledTimes(2);
+    } finally { await app.close(); await service.shutdown(); }
+  });
+  it.each([true, false])('admits npm SRI once at extraction before installation (valid=%s)', async (valid) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-sri-admission-'));
+    roots.push(happyHomeDir);
+    const markerPath = join(happyHomeDir, 'never-imported');
+    const fixture = await createNpmPackageFixture({ markerPath,
+      ...(valid ? {} : { integrity: sriSha512(Buffer.from('different archive bytes')) }),
+    });
+    // Observe native hash work while preserving the real download, extractor and staging owners.
+    const hash = vi.spyOn(crypto, 'createHash');
+    syncBuiltinESMExports();
+    const applied = vi.fn();
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: { prepare: async () => { throw new Error('Review preparation must not activate candidate code'); } },
+        createClient: () => fixture.client,
+        onRegistryApplied: applied,
+      }),
+    });
+    try {
+      const result = await service.requestPluginChange({
+        kind: 'installNpm', packageName: fixture.packageName, selector: fixture.version,
+        registryOrigin: 'https://registry.npmjs.org',
+      });
+      expect(result).toMatchObject(valid
+        ? { kind: 'reviewRequired', review: { pluginId: 'acme.npm-candidate' } }
+        : { kind: 'failed', code: 'archive_rejected' });
+      expect(hash.mock.calls.filter(([algorithm]) => algorithm === 'sha512')).toHaveLength(1);
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
+      expect(applied).not.toHaveBeenCalled();
+      if (!valid) expect(await candidateRoots(happyHomeDir)).toEqual([]);
+      await expect(readFile(markerPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(`${markerPath}.lifecycle`)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await service.shutdown();
+    }
+  });
   it.each([
     ['default', undefined],
     ['tag', 'latest'],
     ['range', '^1.0.0'],
     ['exact', '1.2.3'],
-  ] as const)('returns the typed attributed Settings refusal for a %s npm selector without publishing', async (_label, selector) => {
+  ] as const)('reviews a %s npm selector with invalid Settings skipped and healthy siblings retained', async (_label, selector) => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-settings-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never'), contributes: {
       settings: [{ id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
-        fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: 'private-settings-value' }] }],
+        fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: 'private-settings-value' }] },
+        { id: 'healthy', title: 'Healthy', scope: 'daemon', target: { kind: 'plugin' },
+          fields: [{ id: 'healthyEnabled', title: 'Enabled', schema: { type: 'boolean' }, default: true }] }],
     } });
     const service = createDaemonPluginChangeService({ prepare: createDaemonNpmPluginChangePreparer({
       happyHomeDir, createClient: () => fixture.client,
-      runtimeLifecycle: { prepare: async () => { throw new Error('Invalid candidate must not publish'); } },
+      runtimeLifecycle: { prepare: async () => { throw new Error('Unreviewed candidate must not publish'); } },
     }) });
     try {
       const result = await service.requestPluginChange({ kind: 'installNpm', packageName: fixture.packageName,
         ...(selector === undefined ? {} : { selector }), registryOrigin: 'https://registry.npmjs.org' });
-      expect(result).toMatchObject({ kind: 'failed', code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
-        message: expect.stringContaining("Plugin 'acme.npm-candidate' Settings 'preferences' field 'enabled'") });
-      if (result.kind !== 'failed') throw new Error('Invalid Settings must refuse preparation');
-      const publicFailure = describeUserPluginChangeFailure(result);
-      expect(publicFailure).toMatchObject({
-        code: 'failed',
-        message: expect.stringContaining("Plugin 'acme.npm-candidate' Settings 'preferences' field 'enabled'"),
-        details: { causeCode: 'PLUGIN_SETTINGS_DEFAULT_INVALID' },
+      expect(result).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation', reason: 'firstInstall',
+        review: { pluginId: 'acme.npm-candidate', version: fixture.version } });
+      if (result.kind !== 'reviewRequired') throw new Error('Expected installation review');
+      const stagedRoots = await candidateRoots(happyHomeDir);
+      expect(stagedRoots).toHaveLength(1);
+      const admitted = await readPluginManifest({
+        manifestPath: await findFile(stagedRoots[0]!, 'plugin.json'),
+        sourceProvenance: 'registryCustodied',
+        purpose: 'admission',
+      });
+      expect(admitted).toMatchObject({ ok: true,
+        manifest: { contributes: { settings: [{ id: 'healthy' }] } },
+        diagnostics: [expect.objectContaining({ code: 'plugin_contribution_skipped',
+          contribution: { pluginId: 'acme.npm-candidate', localId: 'preferences' } })],
       });
       expect(JSON.stringify(result)).not.toContain('private-settings-value');
-      expect(JSON.stringify(publicFailure)).not.toContain('private-settings-value');
+      expect(JSON.stringify(admitted.diagnostics)).not.toContain('private-settings-value');
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
+      await expect(service.decidePluginChange({ pendingChangeId: result.pendingChangeId, decision: 'cancel' }))
+        .resolves.toEqual({ kind: 'cancelled' });
+      expect(await candidateRoots(happyHomeDir)).toEqual([]);
+      expect(await preparedGenerationRoots(happyHomeDir)).toEqual([]);
     } finally { await service.shutdown(); }
   });
   it('uses supplied generation-custody retirement dependencies for the npm registry mutation', async () => {
@@ -618,20 +704,24 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     },
   );
 
-  it('prepares an exact approved curated marketplace candidate and commits only after a decision', async () => {
+  it('prepares an exact approved curated marketplace candidate through the captured Registry host and commits only after a decision', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
     const marketplaceSource = curatedMarketplaceSourceFixture();
     const adopt = vi.fn(async () => undefined);
     const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt }));
-    const marketplaceIndexService = exactMarketplaceIndexService(happyHomeDir, { fixture, source: marketplaceSource });
+    const readRegistrySources=createCliRegistryHostV1().readSources;
+    const catalogFetch=vi.fn(async()=>new Response(JSON.stringify(exactMarketplaceIndexSourceSnapshot({fixture,source:marketplaceSource})),{status:200}));
+    const marketplaceRegistryHost={...createRegistryHostV1({host:'node',readSources:readRegistrySources,
+      http:createRegistryHttpV1({fetch:catalogFetch})}),readSources:readRegistrySources};
     const service = createDaemonPluginChangeService({
       prepare: createDaemonNpmPluginChangePreparer({
         happyHomeDir,
         runtimeLifecycle: { prepare: prepareRuntime },
         createClient: () => fixture.client,
-        marketplaceIndexService,
+        marketplaceRegistryHost,
+        readRegistrySources,
       }),
     });
 
@@ -689,10 +779,14 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     });
     if (result.kind !== 'reviewRequired') throw new Error('Expected curated npm Install and trust review');
     expect(result.review).not.toHaveProperty('integrity');
+    // The daemon verifies the requested listing against its source once, at
+    // admission, so the review shows verified facts and apply fetches nothing.
+    expect(catalogFetch).toHaveBeenCalledTimes(1);
     await expect(service.decidePluginChange({
       pendingChangeId: result.pendingChangeId,
       decision: 'installAndTrust',
     })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.npm-candidate' });
+    expect(catalogFetch).toHaveBeenCalledTimes(1);
     expect(prepareRuntime).toHaveBeenCalledOnce();
     expect(adopt).toHaveBeenCalledOnce();
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.npm-candidate']).toMatchObject({
@@ -954,8 +1048,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           blockedNewerVersions: [{
             version: incompatibleFixture.version,
             diagnostics: [expect.objectContaining({
-              code: 'plugin_manifest_invalid',
-              message: 'Plugin manifest requires a compatible Happier CLI version',
+              code: 'plugin_manifest_engine_incompatible',
             })],
           }],
         },
@@ -1128,8 +1221,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           blockedNewerVersions: [{
             version: incompatibleFixture.version,
             diagnostics: [{
-              code: 'plugin_manifest_invalid',
-              message: 'Plugin manifest requires a compatible Happier CLI version',
+              code: 'plugin_manifest_engine_incompatible',
             }],
           }],
         },
@@ -1457,7 +1549,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     }
   });
 
-  it('rejects metadata whose generated compatibility projection differs from the staged archive facts', async () => {
+  it('installs compatible staged facts despite differing metadata enrichment', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-projection-mismatch-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({
@@ -1485,12 +1577,17 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       createClient: () => fixture.client,
     });
 
-    await expect(prepare({
+    const prepared = await prepare({
       kind: 'installNpm',
       packageName: fixture.packageName,
       selector: fixture.version,
       registryOrigin: 'https://registry.npmjs.org',
-    })).rejects.toThrow(/compatibility projection.*staged/i);
+    });
+    expect(prepared.review).toMatchObject({ pluginId: 'acme.npm-candidate' });
+    await expect(prepared.apply({ optionalSelections: [] })).resolves.toMatchObject({ kind: 'committed' });
+    const installed = await createPluginRegistryStateStore({ happyHomeDir }).read();
+    expect(installed.plugins['acme.npm-candidate']?.install.manifestVersion).toBe(fixture.version);
+    await prepared.cleanup();
   });
 
   it('drops a removed optional selection while preserving still-valid selections during an automatic update', async () => {
@@ -2022,68 +2119,18 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
   });
 
-  it('rejects approval when the persisted public curated source changes during review', async () => {
+  it('commits the approved exact candidate when editorial listing facts change during review', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
     const marketplaceSource = curatedMarketplaceSourceFixture();
     const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt: async () => undefined }));
-    const service = createDaemonPluginChangeService({
-      prepare: createDaemonNpmPluginChangePreparer({
-        happyHomeDir,
-        runtimeLifecycle: { prepare: prepareRuntime },
-        createClient: () => fixture.client,
-      }),
-    });
-
-    const result = await service.requestPluginChange({
-      kind: 'installNpm',
-      packageName: fixture.packageName,
-      selector: fixture.version,
-      registryOrigin: 'https://registry.npmjs.org',
-      expectedMarketplaceListing: {
-        source: {
-          id: marketplaceSource.id,
-          kind: 'curated',
-          sourceUrl: marketplaceSource.sourceUrl,
-        },
-        pluginId: 'acme.npm-candidate',
-        publisher: { id: 'acme', displayName: 'Acme' },
-        packageName: fixture.packageName,
-        registryOrigin: 'https://registry.npmjs.org',
-        version: fixture.version,
-        integrity: fixture.integrity,
-        manifestDigest: fixture.manifestDigest,
-        review: { status: 'approved', reviewedAt: '2026-07-21T00:00:00.000Z' },
-        updatePolicy: 'allowed',
-      },
-    });
-    if (result.kind !== 'reviewRequired') throw new Error('Expected curated npm Install and trust review');
-
-    publishAccountRegistrySourcesFixture([],[marketplaceSource.id]);
-    await expect(service.decidePluginChange({
-      pendingChangeId: result.pendingChangeId,
-      decision: 'installAndTrust',
-    })).resolves.toEqual({ kind: 'conflict', pluginId: 'acme.npm-candidate' });
-
-    expect(prepareRuntime).not.toHaveBeenCalled();
-    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.npm-candidate']).toBeUndefined();
-    expect(await candidateRoots(happyHomeDir)).toEqual([]);
-  });
-
-  it('rejects approval when the exact approved marketplace entry changed during review', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-change-home-'));
-    roots.push(happyHomeDir);
-    const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
-    const marketplaceSource = curatedMarketplaceSourceFixture();
-    const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt: async () => undefined }));
-    // The source re-answers with a different review timestamp than the one the
-    // user approved, so revalidation at apply must refuse the change.
-    const marketplaceIndexService = exactMarketplaceIndexService(happyHomeDir, {
+    let reviewedAt = '2026-07-21T00:00:00.000Z';
+    const marketplaceIndexService = exactMarketplaceIndexService(happyHomeDir, () => ({
       fixture,
       source: marketplaceSource,
-      review: { status: 'approved', reviewedAt: '2026-07-22T00:00:00.000Z' },
-    });
+      review: { status: 'approved', reviewedAt },
+    }));
     const service = createDaemonPluginChangeService({
       prepare: createDaemonNpmPluginChangePreparer({
         happyHomeDir,
@@ -2107,19 +2154,65 @@ describe('createDaemonNpmPluginChangePreparer', () => {
         version: fixture.version,
         integrity: fixture.integrity,
         manifestDigest: fixture.manifestDigest,
-        review: { status: 'approved', reviewedAt: '2026-07-21T00:00:00.000Z' },
+        review: { status: 'approved', reviewedAt },
         updatePolicy: 'allowed',
       },
     });
     if (result.kind !== 'reviewRequired') throw new Error('Expected curated npm Install and trust review');
 
+    // A catalog correction after the person reviewed the pinned bytes.
+    reviewedAt = '2026-07-22T00:00:00.000Z';
     await expect(service.decidePluginChange({
       pendingChangeId: result.pendingChangeId,
       decision: 'installAndTrust',
-    })).resolves.toEqual({ kind: 'conflict', pluginId: 'acme.npm-candidate' });
+    })).resolves.toMatchObject({ kind: 'committed', pluginId: 'acme.npm-candidate' });
+    expect(prepareRuntime).toHaveBeenCalledOnce();
+  });
 
+  it('refuses an expected listing its source does not list before any registry access or review', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-npm-change-home-'));
+    roots.push(happyHomeDir);
+    const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
+    const marketplaceSource = curatedMarketplaceSourceFixture();
+    const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt: async () => undefined }));
+    // The request names facts the source does not list (an agent or stale
+    // caller), so daemon admission refuses before acquisition and review.
+    const marketplaceIndexService = exactMarketplaceIndexService(happyHomeDir, {
+      fixture,
+      source: marketplaceSource,
+      review: { status: 'approved', reviewedAt: '2026-07-22T00:00:00.000Z' },
+    });
+    const createClient = vi.fn(() => fixture.client);
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonNpmPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: { prepare: prepareRuntime },
+        createClient,
+        marketplaceIndexService,
+      }),
+    });
+
+    await expect(service.requestPluginChange({
+      kind: 'installNpm',
+      packageName: fixture.packageName,
+      selector: fixture.version,
+      registryOrigin: 'https://registry.npmjs.org',
+      expectedMarketplaceListing: {
+        source: { id: marketplaceSource.id, kind: 'curated', sourceUrl: marketplaceSource.sourceUrl },
+        pluginId: 'acme.npm-candidate',
+        publisher: { id: 'acme', displayName: 'Acme' },
+        packageName: fixture.packageName,
+        registryOrigin: 'https://registry.npmjs.org',
+        version: fixture.version,
+        integrity: fixture.integrity,
+        manifestDigest: fixture.manifestDigest,
+        review: { status: 'approved', reviewedAt: '2026-07-21T00:00:00.000Z' },
+        updatePolicy: 'allowed',
+      },
+    })).resolves.toMatchObject({ kind: 'failed', message: 'source_changed' });
+
+    expect(createClient).not.toHaveBeenCalled();
     expect(prepareRuntime).not.toHaveBeenCalled();
-    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.npm-candidate']).toBeUndefined();
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
   });
 
@@ -2163,7 +2256,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
   });
 
-  it('uses the exact persisted private profile id through the shared npm resolver and currentness path', async () => {
+  it('admits the exact private profile once and observes logout on the next install', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-private-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
@@ -2247,6 +2340,12 @@ describe('createDaemonNpmPluginChangePreparer', () => {
         sourceUrl: marketplaceSource.sourceUrl,
       },
     });
+    // The finite candidate already holds verified bytes. Changing credentials
+    // affects the next acquisition, not this reviewed installation.
+    await profiles.mutate({
+      action: 'logout', machineId: 'machine-1', expectedRevision: 3, mutationId: 'mutation-logout-private',
+      profileId: 'registry_private',
+    });
     await expect(prepared.apply({
       optionalSelections: [],
     })).resolves.toMatchObject({ kind: 'committed' });
@@ -2264,10 +2363,6 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     await expect(prepare(request)).rejects.toMatchObject({ code: 'source_changed' });
     await publishMarketplaceUserBindingFixture({ sourceUrl: marketplaceSource.sourceUrl, registryProfileId: 'registry_private' });
 
-    await profiles.mutate({
-      action: 'logout', machineId: 'machine-1', expectedRevision: 3, mutationId: 'mutation-logout-private',
-      profileId: 'registry_private',
-    });
     // A signed-out bound profile is a registry selection the user still owes,
     // named exactly, and nothing reaches the registry.
     await expect(prepare(request)).rejects.toMatchObject({
@@ -2294,6 +2389,10 @@ describe('createDaemonNpmPluginChangePreparer', () => {
       }),
     });
     const userSource = await publishMarketplaceUserBindingFixture({ sourceUrl: 'https://catalog.acme.example.test/index.json' });
+    // The single admission now reads the public catalog before deciding which
+    // private artifact registry profile is missing. Only that catalog HTTP is available.
+    exactMarketplaceIndexService(happyHomeDir, { fixture, source: userSource,
+      listingOverrides: { registryOrigin: 'https://npm.acme.example.test' } });
     const request = {
       kind: 'installNpm',
       packageName: fixture.packageName,
@@ -2376,10 +2475,11 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
   });
 
-  it('binds an implicitly resolved registry profile and rejects approval after that profile mapping rebounds', async () => {
+  it('keeps the admitted profile through apply and resolves a rebound mapping on the next install', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-inferred-private-npm-change-home-'));
     roots.push(happyHomeDir);
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
+    const getBody = vi.fn(fixture.client.getBody);
     const profiles = createNpmRegistryProfileService({
       happyHomeDir,
       probe: async () => ({ status: 'available' }),
@@ -2405,7 +2505,7 @@ describe('createDaemonNpmPluginChangePreparer', () => {
           prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
         },
         npmRegistryProfiles: profiles,
-        createClient: () => fixture.client,
+        createClient: () => ({ ...fixture.client, getBody }),
       }),
     });
 
@@ -2450,14 +2550,22 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     await expect(service.decidePluginChange({
       pendingChangeId: requested.pendingChangeId,
       decision: 'installAndTrust',
-    })).resolves.toEqual({
-      kind: 'conflict',
+    })).resolves.toMatchObject({
+      kind: 'committed',
       pluginId: 'acme.npm-candidate',
     });
+    expect(getBody).toHaveBeenCalledOnce();
     expect(
       (await createPluginRegistryStateStore({ happyHomeDir }).read())
-        .plugins['acme.npm-candidate'],
-    ).toBeUndefined();
+        .plugins['acme.npm-candidate']?.install.trust?.distribution,
+    ).toMatchObject({ registryProfileId: 'registry_private_a' });
+    const next = await service.requestPluginChange({
+      kind: 'installNpm', packageName: fixture.packageName, selector: fixture.version,
+    });
+    expect(next).toMatchObject({ kind: 'reviewRequired', review: {
+      updateChannel: { registryProfileId: 'registry_private_b' },
+    } });
+    expect(getBody).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -2472,10 +2580,21 @@ describe('createDaemonNpmPluginChangePreparer', () => {
     const fixture = await createNpmPackageFixture({ markerPath: join(happyHomeDir, 'never') });
     const marketplaceSource = curatedMarketplaceSourceFixture();
     const prepareRuntime = vi.fn(async () => ({ abort: async () => undefined, adopt: async () => undefined }));
+    // The source itself lists these facts, so only the staged bytes disagree.
+    const listed = override as Partial<ExpectedMarketplaceListingV1>;
     const prepare = createDaemonNpmPluginChangePreparer({
       happyHomeDir,
       runtimeLifecycle: { prepare: prepareRuntime },
       createClient: () => fixture.client,
+      marketplaceIndexService: exactMarketplaceIndexService(happyHomeDir, {
+        fixture: {
+          ...fixture,
+          ...(listed.integrity ? { integrity: listed.integrity } : {}),
+          ...(listed.manifestDigest ? { manifestDigest: listed.manifestDigest } : {}),
+        },
+        source: marketplaceSource,
+        ...(listed.pluginId ? { listingOverrides: { pluginId: listed.pluginId } } : {}),
+      }),
     });
 
     await expect(prepare({

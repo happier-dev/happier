@@ -11,6 +11,7 @@ import { readComposerAttachmentRuntimeRegistrationFieldsV1 } from '@happier-dev/
 import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1, ComposerAttachmentMessageAcceptedV1, ComposerAttachmentPrepareRequestV1, ComposerAttachmentPrepareResultV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveRequestV2, ComposerAttachmentResolveResultV1, PluginJsonSchemaV2, PluginLocalizedStringV2, PluginContributionIdentityV1, PluginExecutionScopeV1 } from '@happier-dev/protocol';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -28,6 +29,7 @@ export type TargetComposerAttachmentInvocationContextFactory = (
         attachment: PluginContributionIdentityV1;
         occurrenceId: string;
         scope: PluginExecutionScopeV1;
+        requesterAccount?: SavedSecretOperationContextV1;
         signal: AbortSignal;
         isCurrent(): boolean;
     }>,
@@ -239,6 +241,8 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
     resolveForDispatch(input: Readonly<{
         attachment: PluginContributionIdentityV1;
         request: ComposerAttachmentResolveRequestV1 | ComposerAttachmentResolveRequestV2;
+        /** Retained by authenticated Session admission, never supplied on the wire. */
+        requesterAccount?: SavedSecretOperationContextV1;
         signal: AbortSignal;
     }>): Promise<ComposerAttachmentResolveResultV1>;
     afterMessageAccepted(input: Readonly<{
@@ -323,6 +327,7 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
         attachment: PluginContributionIdentityV1;
         phase: TargetComposerAttachmentPhase;
         scope: PluginExecutionScopeV1;
+        requesterAccount?: SavedSecretOperationContextV1;
         signal: AbortSignal;
         operation(
             runtime: ComposerAttachmentRuntime,
@@ -356,6 +361,7 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
                 attachment: paramsForCall.attachment,
                 occurrenceId: entry.occurrenceId,
                 scope: paramsForCall.scope,
+                ...(paramsForCall.requesterAccount ? { requesterAccount: paramsForCall.requesterAccount } : {}),
                 signal,
                 isCurrent: () => !signal.aborted && isEntryCurrent(entry, lifecycle),
             });
@@ -520,7 +526,7 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
                         throw callbackUnavailableError(input.attachment, 'prepareForSend');
                     }
                     if (context.scope.kind !== 'session') throw invalidRequestError(input.attachment);
-                    return await callback(request.data, context);
+                    return await callback.call(runtime, request.data, context);
                 },
             });
             const parsed = ComposerAttachmentPrepareResultV1Schema.safeParse(result);
@@ -546,19 +552,20 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
                 attachment: input.attachment,
                 phase: 'resolveForDispatch',
                 scope,
+                ...(input.requesterAccount ? { requesterAccount: input.requesterAccount } : {}),
                 signal: input.signal,
                 operation: async (runtime, context) => {
                     if (requestV2.success) {
                         const callback = runtime.resolveForDispatchV2;
                         if (!callback) throw callbackUnavailableError(input.attachment, 'resolveForDispatch');
-                        return await callback(requestV2.data, context);
+                        return await callback.call(runtime, requestV2.data, context);
                     }
                     const callback = runtime.resolveForDispatch;
                     if (!callback) throw callbackUnavailableError(input.attachment, 'resolveForDispatch');
                     if (!requestV1Data || context.scope.kind !== 'session') {
                         throw invalidRequestError(input.attachment);
                     }
-                    return await callback(requestV1Data, context);
+                    return await callback.call(runtime, requestV1Data, context);
                 },
             });
             const parsed = ComposerAttachmentResolveResultV1Schema.safeParse(result);
@@ -588,7 +595,7 @@ export function createTargetComposerAttachmentRegistry(params: Readonly<{
                         throw callbackUnavailableError(input.attachment, 'afterMessageAccepted');
                     }
                     if (context.scope.kind !== 'session') throw invalidRequestError(input.attachment);
-                    return await callback(event.data, context);
+                    return await callback.call(runtime, event.data, context);
                 },
             });
             if (result !== undefined) throw invalidResultError(input.attachment);

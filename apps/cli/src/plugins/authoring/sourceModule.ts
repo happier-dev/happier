@@ -7,10 +7,7 @@ import {
   type PluginAccountCollectionMigrationRuntimeProjection,
   type PluginDaemonDatabaseRuntimeProjection,
 } from '@happier-dev/plugin-sdk';
-import {
-  normalizePluginAccountCollectionMigrationRuntimeProjection,
-  normalizePluginDaemonDatabaseRuntimeProjection,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { normalizePluginAccountCollectionMigrationRuntimeProjection, normalizePluginDaemonDatabaseRuntimeProjection } from '@/plugins/authoring/registrationProjections';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import { assertPluginManifestSettingsValid } from '@/plugins/settings/manifestSettings';
 import {
@@ -196,7 +193,7 @@ export async function resolvePluginAuthoringSource(
 ): Promise<ResolvedPluginAuthoringSource> {
   const expandedLocator = expandHomeDirPath(String(locator ?? '').trim());
   if (!expandedLocator) {
-    const source = await resolveLocalPathPluginSource({ locator });
+    const source = await resolveLocalPathPluginSource({ locator, purpose: 'authoring' });
     return source.ok ? { ok: true, kind: 'manifest', source } : source;
   }
   const absoluteLocator = resolve(expandedLocator);
@@ -204,7 +201,7 @@ export async function resolvePluginAuthoringSource(
   try {
     metadata = await lstat(absoluteLocator);
   } catch {
-    const source = await resolveLocalPathPluginSource({ locator });
+    const source = await resolveLocalPathPluginSource({ locator, purpose: 'authoring' });
     return source.ok ? { ok: true, kind: 'manifest', source } : source;
   }
 
@@ -235,7 +232,7 @@ export async function resolvePluginAuthoringSource(
     }
   }
 
-  const source = await resolveLocalPathPluginSource({ locator: absoluteLocator });
+  const source = await resolveLocalPathPluginSource({ locator: absoluteLocator, purpose: 'authoring' });
   return source.ok ? { ok: true, kind: 'manifest', source } : source;
 }
 

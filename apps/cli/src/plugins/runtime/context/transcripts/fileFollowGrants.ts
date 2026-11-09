@@ -14,6 +14,7 @@ export type TranscriptFileFollowPathGrantReason =
 
 export type TranscriptFileFollowPathGrantEvidence =
     | Readonly<{ kind: 'sessionStartTranscriptPath'; providerSessionId?: string }>
+    | Readonly<{ kind: 'authenticatedStatuslineTranscriptPath'; providerSessionId?: string }>
     | Readonly<{ kind: 'acpProviderSessionJournal'; providerSessionId: string }>
     | Readonly<{ kind: 'hostMaterializedTranscriptPath'; sourceId?: string }>
     | Readonly<{ kind: 'testOnly' }>;
@@ -119,6 +120,7 @@ export function createTranscriptFileFollowPathGrantRegistry(): TranscriptFileFol
             let realPath = await resolveTranscriptFileFollowRealPath(normalizedPath);
             let pendingPath: string | null = null;
             if (!realPath && (input.evidence.kind === 'sessionStartTranscriptPath'
+                || input.evidence.kind === 'authenticatedStatuslineTranscriptPath'
                 || input.evidence.kind === 'acpProviderSessionJournal')) {
                 pendingPath = normalizedPath;
                 realPath = await resolvePendingTranscriptPath(normalizedPath);

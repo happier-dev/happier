@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
+import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client.test-support';
 
@@ -18,20 +19,23 @@ import {
     disposePluginProtocolClientGracefullyForHost,
     bindPluginExecProcessOwnerForHost,
     installManagedProcessCustodyForHost,
-    createProjectNativeEnvironmentIoForHost,
+    createProjectNativeToolchainIoForHost,
     produceProjectLaunchEnvironmentForHost,
     resolvePluginExecManagedDependencyForHost,
     resolvePluginExecSystemToolForHost,
     resolveStablePluginExecInvocation,
+    spawnAuthorizedHostExecLaunchForHost,
 } from './exec';
 import { readSupervisedPluginProcessIdForHost, spawnSupervisedPluginProcess } from '../../exec/processSupervisor';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { resolveProjectNativeCommand } from '@/workspaces/projectSetup/projectNativeResolution';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
-import { ProjectNativeEnvironmentUncertainError } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { waitForProcessExit } from '@/testkit/process/spawn';
 import { resolvePluginPathWithinRoots } from './filesystem';
-import { parseProcessOwnerTag } from '@/processes/ownerTag';
+import { parseProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/ownerTag';
+import { configuration } from '@/configuration';
 import { createEndOwnerRemainder } from '@/daemon/processes/endOwnerRemainder';
 import { createProcessOwnershipRuntime } from '@/daemon/processes/ownership/processOwnershipRuntime';
 import { readProcessCensus } from '@/processes/census/processCensus';
@@ -39,6 +43,11 @@ import { resolveProcessOwnership } from '@/daemon/processes/ownership/resolvePro
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import { captureProcessTree, terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import type { PluginFileSystemRoots } from './types';
+import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
+import { assemblePluginRuntimeConsumers } from '../../composition/consumerAssembly';
+import { activatePluginRuntimeRegistry } from '../../lifecycle/manager';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createProductionPluginInvocationServiceOwners } from './production';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const satisfies ManagedExecutableRef);
 
@@ -61,43 +70,88 @@ function createService(options?: Readonly<{ current?: () => boolean; controller?
 }
 
 describe('createStablePluginExecService', () => {
-    it('observes native notification receipts through the public client while ordered dispatch is blocked', async () => {
-        const handle = await createService().clients.spawn({
-            kind: 'jsonRpc', framing: 'jsonLines', maxFrameBytes: 1024 * 1024,
-            launch: { executable, args: ['-e', `
-                const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
-                require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
-                    const request=JSON.parse(line);
-                    if(request.method==='emit') {
-                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:1}});
-                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:2}});
-                        send({jsonrpc:'2.0',id:request.id,result:null});
-                    }
-                });
-            `] },
+    it.each(['caller', 'host'] as const)('cancels admitted finite work on actual %s cancellation', async source => {
+        const cancellation = new AbortController();
+        let ready!: () => void;
+        let observedOutput = '';
+        const started = new Promise<void>(resolve => { ready = resolve; });
+        const service = createStablePluginExecService({
+            signal: source === 'host' ? cancellation.signal : new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
+            observeProcessOutput(output) {
+                observedOutput += new TextDecoder().decode(output.data);
+                if (observedOutput.includes('ready')) ready();
+            },
         });
-        let release!: () => void;
-        const blocked = new Promise<void>(resolve => { release = resolve; });
-        const ordered: unknown[] = [];
-        const receipts: unknown[] = [];
-        const subscription = handle.client.onNotificationReceived?.(message => { receipts.push(message); });
-        handle.client.onNotification(async message => {
-            await blocked;
-            ordered.push(message);
-        });
+        const pending = service.run({ executable, args: ['-e', 'process.stdout.write("ready");setInterval(() => {}, 1000)'] },
+            { outputDelivery: 'invocation', ...(source === 'caller' ? { signal: cancellation.signal } : {}) });
         try {
-            await handle.client.request('emit');
-            expect(ordered).toEqual([]);
-            expect(receipts).toEqual([
-                { method: 'native/event', params: { sequence: 1 }, receivedAtMs: expect.any(Number) },
-                { method: 'native/event', params: { sequence: 2 }, receivedAtMs: expect.any(Number) },
-            ]);
-            subscription?.dispose();
-            await handle.client.request('emit');
-            expect(receipts).toHaveLength(2);
+            await started;
+            cancellation.abort();
+            await expect(pending).resolves.toMatchObject({ termination: { requestedBy: { kind: 'abort' } } });
+        } finally { cancellation.abort(); await pending.catch(() => undefined); }
+    });
+
+    it('finishes an admitted finite run after retirement and refuses the next launch', async () => {
+        let entered!: () => void;
+        const admitted = new Promise<void>(resolve => { entered = resolve; });
+        let release!: () => void;
+        const server = createServer((_request, response) => {
+            release = () => response.end('completed');
+            entered();
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a TCP fixture address');
+        const registry = await activatePluginRuntimeRegistry({
+            contributes: createResolvedContributionRegistry({}), generation: 1,
+        });
+        const consumers = assemblePluginRuntimeConsumers({ activatedRegistry: registry,
+            onFencePlugin() {}, async retirePluginDatabases() {} });
+        const owners = createProductionPluginInvocationServiceOwners({
+            resolveRetirementSignal: pluginId => consumers.resolveLifecycle(pluginId).retirementSignal,
+            exec: { resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd() },
+        });
+        const operationSignal = consumers.composeSignal('acme.finite-exec');
+        const service = owners.createOperationServices({
+            plugin: { id: 'acme.finite-exec', version: '1' },
+            contribution: { id: 'finite', qualifiedId: 'acme.finite-exec/actions/finite' },
+            occurrenceId: 'finite', correlationId: 'finite', surface: 'cli',
+            signal: operationSignal,
+            isOccurrenceCurrent: () => consumers.isPluginCurrent('acme.finite-exec'),
+        }, { hostAccessRequests: [], environment: {},
+            filesystemRoots: { pluginData: process.cwd(), workspace: process.cwd(), projects: new Map() },
+        }).exec;
+        const request = { executable, args: ['-e',
+            `require('node:http').get('http://127.0.0.1:${address.port}',r=>{r.pipe(process.stdout);r.on('end',()=>process.exit(0));});`,
+        ] };
+        const pending = service.run(request);
+        let open: Awaited<ReturnType<typeof service.spawn>> | undefined;
+        try {
+            await admitted;
+            open = await service.spawn({ executable, args: ['-e', 'setInterval(() => {}, 1000)'] });
+            consumers.fencePlugins(['acme.finite-exec']);
+            expect(operationSignal.aborted).toBe(false);
+            await expect(open.wait()).resolves.toMatchObject({
+                termination: { requestedBy: { kind: 'dispose', reason: 'generationRetired' } },
+            });
             release();
-            await expect.poll(() => ordered.length).toBe(4);
-        } finally { release(); subscription?.dispose(); await handle.dispose(); }
+            await expect(pending).resolves.toMatchObject({
+                stdout: new Uint8Array(Buffer.from('completed')),
+                termination: { observed: { kind: 'exit', exitCode: 0 } },
+            });
+            await expect(service.run(request)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        } finally {
+            release?.();
+            await open?.dispose();
+            await pending.catch(() => undefined);
+            consumers.dispose('test shutdown');
+            await owners.dispose();
+            await registry.dispose();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+        }
     });
 
     it('round-trips WebSocket JSON-RPC through private process bytes while a secret redaction lease is active', async () => {
@@ -117,7 +171,7 @@ describe('createStablePluginExecService', () => {
         const source = { environmentId: 'ws-env', environmentInstanceId: 'ws-instance', deploymentId: 'ws-deploy',
             machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
             async assertCurrent() {}, async commit() {}, async abort() {} };
-        const port = createDeploymentExecEnvPortForHost({ exec: service, source, phase: 'runtime',
+        const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
             signal: new AbortController().signal, isCurrent: () => true,
             async prepare() { return { env: { SECRET: 'private-ws-sentinel' }, secretValues: ['private-ws-sentinel'], refs: [],
                 async recheck() {}, dispose() {} }; } });
@@ -158,7 +212,7 @@ describe('createStablePluginExecService', () => {
             const service = createService({ current: () => current });
             const spec = { endpoint: { kind: 'unixWebSocket' as const, socketPath }, maxFrameBytes: 1024 };
             await expect(service.clients.connectJsonRpc(spec)).rejects.toMatchObject({ code: 'ENOENT', syscall: 'connect' });
-            const server = await createCodexControlSocketFixture(socketPath, request => {
+            const server = await createCodexControlSocketFixture(socketPath, (request): ReturnType<Parameters<typeof createCodexControlSocketFixture>[1]> => {
                 if (request.method === 'thread/resume') return { oversized: 'λ😀'.repeat(1024) };
                 return { thread: { id: 'native-thread', name: 'λ😀 Native title' } };
             });
@@ -266,6 +320,198 @@ describe('createStablePluginExecService', () => {
         }, '/tmp');
     });
 
+    it('retains an admitted native environment beyond client exit until its native owner releases it', async () => {
+        const service = createStablePluginExecService({
+            environment: { PATH: '/bin', HOME: process.cwd(), COMPOSE_PROJECT_NAME: 'ambient-project', UNREVIEWED: 'ambient-value' },
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd() });
+        let disposed = 0;
+        let release: (() => void | Promise<void>) | undefined;
+        const source = { environmentId: 'env', environmentInstanceId: 'instance', deploymentId: 'deploy',
+            machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
+            async assertCurrent() {}, async commit() {}, async abort() {} };
+        const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
+            signal: new AbortController().signal, isCurrent: () => true,
+            async prepare() { return { env: { SECRET: 'native-retained-secret', PORT: '3000' }, secretValues: ['native-retained-secret'], refs: [],
+                async recheck() {}, dispose() { disposed += 1; } }; } });
+        const request = { executable, deploymentEnv: await port.prepare({ source, phase: 'runtime' }), args: ['-e',
+            'process.stdout.write(JSON.stringify({secret:process.env.SECRET,port:process.env.PORT,ambient:process.env.UNREVIEWED,compose:process.env.COMPOSE_PROJECT_NAME}))'] };
+        const launch = await authorizePluginExecLaunchForHost(service, request, { agentIsolation: null });
+        const supervised = spawnAuthorizedHostExecLaunchForHost(launch, { retainLaunch(value) { release = value; } });
+        try {
+            const result = await supervised.handle.wait();
+            expect(JSON.parse(Buffer.from(result.stdout).toString())).toMatchObject({ secret: '[REDACTED]', port: '3000' });
+            expect(disposed, 'Docker client exit does not settle the native command').toBe(0);
+            expect(release).toBeTypeOf('function');
+            await release?.();
+            expect(disposed).toBe(1);
+        } finally { await supervised.dispose(); await release?.(); }
+    });
+
+    it('preserves the host launch frame through the actual authorized spawn boundary', async () => {
+        const preamble = Buffer.from([72, 65, 80, 0, 255]);
+        const input = Buffer.from([0, 10, 255, 128, 65]);
+        const supervised = spawnAuthorizedHostExecLaunchForHost({ command: process.execPath,
+            args: ['-e', 'process.stdin.pipe(process.stdout)'], env: {}, stdinPreamble: preamble,
+            stdin: input, release() {} });
+        try {
+            const result = await supervised.handle.wait();
+            expect(Buffer.from(result.stdout)).toEqual(Buffer.concat([preamble, input]));
+        } finally { await supervised.dispose(); }
+    });
+
+    it('lets trusted code choose Exec and add environment while preserving attachment custody and redaction', async () => {
+        const service = createService();
+        let current = true;
+        let disposed = 0;
+        const source = { environmentId: 'env', environmentInstanceId: 'instance', deploymentId: 'deploy',
+            machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
+            async assertCurrent() { if (!current) throw new Error('source_stale'); }, async commit() {}, async abort() {} };
+        const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
+            signal: new AbortController().signal, isCurrent: () => current,
+            async prepare() { return { env: { S0_SECRET: 's0-secret-sentinel', PORT: '3000', COMMIT: 'abc123' },
+                secretValues: ['s0-secret-sentinel'], refs: [{ resourceId: 'resource', resourceRevision: 1 }],
+                async recheck() { if (!current) throw new Error('binding_stale'); }, dispose() { disposed += 1; } }; },
+        });
+        await expect(port.prepare({ source, phase: 'build' })).rejects.toMatchObject({ code: 'unavailable' });
+        await expect(port.prepare({ source: { ...source }, phase: 'runtime' })).rejects.toMatchObject({ code: 'unavailable' });
+        const attachment = await port.prepare({ source, phase: 'runtime' });
+        // Plugins are trusted, unsandboxed code. The attachment is launch
+        // custody, not a per-plugin permission or secret-disclosure fence.
+        const launch = await authorizePluginExecLaunchForHost(service, { executable, deploymentEnv: attachment,
+            env: { S0_SECRET: 'caller-value', EXTRA: 'trusted-addition' } }, { agentIsolation: null });
+        expect(launch.env).toMatchObject({ S0_SECRET: 's0-secret-sentinel', PORT: '3000', COMMIT: 'abc123', EXTRA: 'trusted-addition' });
+        expect(launch.secretRedactionLease?.redact('s0-secret-sentinel PORT=3000 COMMIT=abc123'))
+            .toBe('[REDACTED] PORT=3000 COMMIT=abc123');
+        await expect(authorizePluginExecLaunchForHost(service, { executable, deploymentEnv: attachment }, { agentIsolation: null }))
+            .rejects.toMatchObject({ code: 'unavailable' });
+        await launch.release();
+        expect(disposed).toBe(1);
+        // The final Exec overlay is owned finite custody too: clearing only the
+        // materializer's original map must not leave a secret-bearing clone.
+        expect(Object.keys(launch.env)).toEqual([]);
+        expect(launch.secretRedactionLease?.values()).toEqual([]);
+        const stale = await port.prepare({ source, phase: 'runtime' });
+        current = false;
+        await expect(authorizePluginExecLaunchForHost(service, { executable, deploymentEnv: stale }, { agentIsolation: null })).rejects.toThrow();
+        expect(disposed).toBe(2);
+    });
+
+    it('sanitizes attached process capture and live output before returning them to a plugin', async () => {
+        const output: string[] = [];
+        const service = createStablePluginExecService({
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
+            observeProcessOutput: event => { output.push(Buffer.from(event.data).toString('utf8')); },
+        });
+        const source = { environmentId: 'env', environmentInstanceId: 'instance', deploymentId: 'deploy',
+            machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
+            async assertCurrent() {}, async commit() {}, async abort() {} };
+        const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
+            signal: new AbortController().signal, isCurrent: () => true,
+            async prepare() { return { env: { S0_SECRET: 's0-secret-sentinel', PORT: '3000' },
+                secretValues: ['s0-secret-sentinel'], refs: [{ resourceId: 'resource', resourceRevision: 1 }],
+                async recheck() {}, dispose() {} }; },
+        });
+        const deploymentEnv = await port.prepare({ source, phase: 'runtime' });
+        const result = await service.run({ executable, deploymentEnv, args: ['-e',
+            'process.stdout.write(process.env.S0_SECRET.slice(0,5));setImmediate(()=>{process.stdout.write(process.env.S0_SECRET.slice(5)+" PORT="+process.env.PORT);process.stderr.write(process.env.S0_SECRET)})'],
+        }, { outputDelivery: 'invocation' });
+        expect(Buffer.from(result.stdout).toString()).toBe('[REDACTED] PORT=3000');
+        expect(Buffer.from(result.stderr).toString()).toBe('[REDACTED]');
+        expect(output.join('')).not.toContain('s0-secret-sentinel');
+        expect(output.join('')).toContain('[REDACTED]');
+    });
+
+    it('rechecks deployment binding custody after asynchronous launch admission and before spawn', async () => {
+        let current = true;
+        let disposed = 0;
+        const service = createStablePluginExecService({
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => process.cwd(),
+            assertLaunchCurrent: async () => { current = false; },
+        });
+        const source = { environmentId: 'env', environmentInstanceId: 'instance', deploymentId: 'deploy',
+            machineId: 'machine', installationId: 'installation', rootPath: process.cwd(), manifestFingerprint: 'manifest',
+            async assertCurrent() {}, async commit() {}, async abort() {} };
+        const port = createDeploymentExecEnvPortForHost({ source, phase: 'runtime',
+            signal: new AbortController().signal, isCurrent: () => true,
+            async prepare() { return { env: { S0_SECRET: 's0-secret-sentinel' }, secretValues: ['s0-secret-sentinel'], refs: [],
+                async recheck() { if (!current) throw new PluginError({ code: 'secret_missing', message: 'Binding withdrawn' }); },
+                dispose() { disposed += 1; } }; },
+        });
+        const deploymentEnv = await port.prepare({ source, phase: 'runtime' });
+        await expect(service.run({ executable, deploymentEnv, args: ['-e', 'process.stdout.write("spawned")'] }))
+            .rejects.toMatchObject({ code: 'secret_missing', execLaunch: 'notStarted' });
+        expect(disposed).toBe(1);
+    });
+
+    it('refuses unqualified workspace Exec before spawn while requested isolation is not effective', async () => {
+        const params = {
+            allowedExecutables: [executable], signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }),
+            resolvePath: async () => process.cwd(),
+            agentIsolation: {
+                read: () => ({ enabled: true, status: { kind: 'applying' as const, phase: 'runtime_replacement' as const },
+                    workspaceRoots: [process.cwd()] }),
+            },
+        };
+        const service = createStablePluginExecService(params);
+        await expect(authorizePluginExecLaunchForHost(service, {
+            executable, args: ['--version'], cwd: { root: 'workspace', relativePath: '' },
+        }, { agentIsolation: null })).rejects.toMatchObject({ code: 'workspace_exec_isolation_unavailable', execLaunch: 'notStarted' });
+    });
+
+    it('applies workspace isolation admission to forwarded authorized launches', async () => {
+        const release = vi.fn();
+        const params = {
+            allowedExecutables: [executable], signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }),
+            resolvePath: async () => process.cwd(),
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['--version'], env: {}, cwd: process.cwd(), release }),
+            agentIsolation: {
+                read: () => ({ enabled: true, status: { kind: 'unavailable' as const, code: 'launch_probe_failed' as const },
+                    workspaceRoots: [process.cwd()] }),
+            },
+        };
+        await expect(authorizePluginExecLaunchForHost(createStablePluginExecService(params), { executable }, { agentIsolation: null }))
+            .rejects.toMatchObject({ code: 'workspace_exec_isolation_unavailable', execLaunch: 'notStarted' });
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it.each(['ordinary', 'forwarded'] as const)('refuses a workspace cwd symlink escape before canonicalization can erase its enrolled origin (%s)', async route => {
+        await withTempDir('workspace-exec-isolation-', async root => {
+            const workspace = join(root, 'workspace');
+            const outside = join(root, 'workspace-sibling');
+            await mkdir(workspace);
+            await mkdir(outside);
+            const escape = join(workspace, 'escape');
+            await symlink(outside, escape, process.platform === 'win32' ? 'junction' : 'dir');
+            const service = createStablePluginExecService({ signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({ command: process.execPath }),
+                resolvePath: async () => workspace,
+                ...(route === 'forwarded' ? {
+                    // The daemon transport returns its already-canonical tuple.
+                    authorizeLaunch: async (request: Parameters<typeof authorizePluginExecLaunchForHost>[1]) => ({
+                        command: process.execPath, args: [], env: {},
+                        cwd: await realpath(typeof request.cwd === 'string' ? request.cwd : workspace), release() {},
+                    }),
+                } : {}),
+                agentIsolation: { read: () => ({ enabled: true,
+                    status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [workspace] }) },
+            });
+            await expect(authorizePluginExecLaunchForHost(service, { executable, cwd: escape }, { agentIsolation: null }))
+                .rejects.toMatchObject({ code: 'workspace_exec_isolation_unavailable', execLaunch: 'notStarted' });
+            // A real sibling is trusted non-workspace administration, not a prefix match.
+            const sibling = await authorizePluginExecLaunchForHost(service, { executable, cwd: outside }, { agentIsolation: null });
+            expect(sibling.cwd).toBe(await realpath(outside));
+            await sibling.release();
+        });
+    });
+
     it.skipIf(process.platform !== 'linux')('keeps an ordinary Exec launch in its own process group by default', async () => {
         const handle = await createService().spawn({ executable, args: ['-e', 'process.stdin.resume()'] });
         try {
@@ -301,6 +547,45 @@ describe('createStablePluginExecService', () => {
             expect(notifications).toContainEqual({ method: 'shutdown_seen', params: { hasParams: false } });
             expect((await handle.wait()).termination.observed.kind).not.toBe('failed');
         } finally { await handle.dispose(); }
+    });
+
+    it('observes native notification receipts through the public client while ordered dispatch is blocked', async () => {
+        const handle = await createService().clients.spawn({
+            kind: 'jsonRpc', framing: 'jsonLines', maxFrameBytes: 1024 * 1024,
+            launch: { executable, args: ['-e', `
+                const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+                require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+                    const request=JSON.parse(line);
+                    if(request.method==='emit') {
+                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:1}});
+                        send({jsonrpc:'2.0',method:'native/event',params:{sequence:2}});
+                        send({jsonrpc:'2.0',id:request.id,result:null});
+                    }
+                });
+            `] },
+        });
+        let release!: () => void;
+        const blocked = new Promise<void>(resolve => { release = resolve; });
+        const ordered: unknown[] = [];
+        const receipts: unknown[] = [];
+        const subscription = handle.client.onNotificationReceived?.(message => { receipts.push(message); });
+        handle.client.onNotification(async message => {
+            await blocked;
+            ordered.push(message);
+        });
+        try {
+            await handle.client.request('emit');
+            expect(ordered).toEqual([]);
+            expect(receipts).toEqual([
+                { method: 'native/event', params: { sequence: 1 }, receivedAtMs: expect.any(Number) },
+                { method: 'native/event', params: { sequence: 2 }, receivedAtMs: expect.any(Number) },
+            ]);
+            subscription?.dispose();
+            await handle.client.request('emit');
+            expect(receipts).toHaveLength(2);
+            release();
+            await expect.poll(() => ordered.length).toBe(4);
+        } finally { release(); subscription?.dispose(); await handle.dispose(); }
     });
 
     it('delivers request cancellation to a declared protocol method with the original request id', async () => {
@@ -350,7 +635,7 @@ describe('createStablePluginExecService', () => {
     it('attributes generic native IO to Happier instead of borrowing the invoking Session owner', async () => {
         vi.stubEnv('HAPPIER_PROCESS_OWNER', 'v1.0123456789ab.session.session-caller');
         try {
-            const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null });
+            const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
             const observed = await io.run({ command: process.execPath,
                 args: ['-e', 'process.stdout.write(process.env.HAPPIER_PROCESS_OWNER || "absent")'],
                 cwd: process.cwd(), env: { HAPPIER_PROCESS_OWNER: 'forged-native-owner' } });
@@ -359,8 +644,7 @@ describe('createStablePluginExecService', () => {
     });
     it('keeps finite Run and managed Service owners separate from retained Session services', async () => {
         const retained = createStablePluginExecService({
-            processOwner: { kind: 'session', sessionId: 'session-retained' },
-             signal: new AbortController().signal,
+            processOwner: { kind: 'session', sessionId: 'session-retained' }, signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
             resolvePath: async () => process.cwd(), transformAgentChildLaunchEnvironment: () => ({}),
         });
@@ -385,7 +669,7 @@ describe('createStablePluginExecService', () => {
         const run = bindPluginExecProcessOwnerForHost(retained, { kind: 'run', runId: 'run-cancelled' }, lifetime.signal);
         lifetime.abort();
         await expect(run.spawn({ executable })).rejects.toMatchObject({ code: 'plugin_exec_aborted' });
-        const sessionLaunch = await authorizePluginExecLaunchForHost(retained, { executable });
+        const sessionLaunch = await authorizePluginExecLaunchForHost(retained, { executable }, { agentIsolation: null });
         expect(sessionLaunch.command).toBe(process.execPath);
         await sessionLaunch.release();
     });
@@ -394,7 +678,6 @@ describe('createStablePluginExecService', () => {
         vi.stubEnv('HAPPIER_PROCESS_OWNER', hostTag);
         try {
             const service = createStablePluginExecService({
-
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => process.cwd(),
@@ -404,8 +687,7 @@ describe('createStablePluginExecService', () => {
                 args: ['-e', 'process.stdout.write(process.env.HAPPIER_PROCESS_OWNER || "absent")'] });
             const result = await child.wait();
             expect(Buffer.from(result.stdout).toString()).toBe(hostTag);
-            const omitted = createStablePluginExecService({
-                 signal: new AbortController().signal,
+            const omitted = createStablePluginExecService({ signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => process.cwd(), transformAgentChildLaunchEnvironment: () => ({}),
             });
@@ -443,7 +725,7 @@ describe('createStablePluginExecService', () => {
             let releases = 0;
             const projectLaunch = {
                 status: 'ready' as const, reviewedEffectDigest: 'current-native-effect',
-                environment: {
+                toolchain: {
                     root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
                     platform: 'linux' as const, io: {
                         resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
@@ -460,13 +742,13 @@ describe('createStablePluginExecService', () => {
                 launch: { command: process.execPath, args: [], cwd: root, env: {}, release: () => { releases += 1; } },
                 projectLaunch, signal: controller.signal, assertCurrent: () => undefined,
             }).then(() => null, (error: unknown) => error);
-            expect(outcome).toBeInstanceOf(ProjectNativeEnvironmentUncertainError);
-            expect(outcome).toMatchObject({ kind: 'outcome_uncertain', code: 'native_environment_termination_incomplete' });
+            expect(outcome).toBeInstanceOf(ProjectNativeToolchainUncertainError);
+            expect(outcome).toMatchObject({ kind: 'outcome_uncertain', code: 'native_toolchain_termination_incomplete' });
             expect(String(outcome)).not.toContain('private native output');
             expect(releases).toBe(1);
             await expect(produceProjectLaunchEnvironmentForHost({
                 cwd: root, env: {}, projectLaunch, signal: new AbortController().signal, assertCurrent: () => undefined,
-            })).rejects.toBeInstanceOf(ProjectNativeEnvironmentUncertainError);
+            })).rejects.toBeInstanceOf(ProjectNativeToolchainUncertainError);
         });
     });
     it('prepares the admitted complete environment without inventing an executable for environment-only setup', async () => {
@@ -475,7 +757,7 @@ describe('createStablePluginExecService', () => {
             const input = {
                 cwd: root, env: { REMOVE: 'host' }, signal: new AbortController().signal, assertCurrent: () => undefined,
                 projectLaunch: { status: 'ready' as const, reviewedEffectDigest: 'environment-only-current-effect',
-                    environment: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                    toolchain: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
                         platform: 'linux' as const, io: {
                             resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
                             run: async (request: { cwd: string }) => {
@@ -522,7 +804,7 @@ describe('createStablePluginExecService', () => {
                     }, signal, assertCurrent: () => signal.throwIfAborted(),
                     projectLaunch: {
                         status: 'ready', reviewedEffectDigest: 'native-lane-reviewed-effect',
-                        environment: {
+                        toolchain: {
                             root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, platform: 'linux',
                             io: createProjectNativeIo().environmentIo,
                         },
@@ -553,7 +835,7 @@ describe('createStablePluginExecService', () => {
         await withTempDir('happier native effect custody ', async (root) => {
             const pidFile = join(root, 'owned-pids.json');
             const controller = new AbortController();
-            const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null });
+            const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
             const pending = io.run({
                 command: process.execPath, cwd: root,
                 env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
@@ -592,9 +874,12 @@ describe('createStablePluginExecService', () => {
             if (initial.status !== 'ok') throw new Error('Native census unavailable');
             const self = initial.rows.find(row => row.pid === process.pid)!;
             const roots: HappierProcessRoot[] = [{ owner, pid: self.pid, start: self.start, live: true, ownerCreatedAtMs: 0 }];
-            const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc', listRoots: () => roots });
+            // Native IO stamps the configured host home, so its observation
+            // must use that same canonical scope on every execution target.
+            const daemonScopeKey = resolveProcessOwnerScopeKey(configuration.happyHomeDir);
+            const runtime = createProcessOwnershipRuntime({ daemonScopeKey, listRoots: () => roots });
             let observed = false;
-            const ownerRemainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey: '123456789abc',
+            const ownerRemainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey,
                 retainEndedRoots: ended => { roots.push(...ended); }, firstPass: () => { observed = true; } });
             const io = createProjectNativeIo({ ownerRemainder }).environmentIo;
             const pending = io.run({ command: process.execPath, cwd: root, env: {}, args: ['-e', [
@@ -623,7 +908,7 @@ describe('createStablePluginExecService', () => {
                 const current = await runtime.readOwners({ freshness: 'fresh' });
                 if (current.status !== 'ok') throw new Error('Native census unavailable');
                 const rows = resolveProcessOwnership({ snapshot: current.snapshot, roots,
-                    daemonScopeKey: '123456789abc', daemonPrincipal: self.principal });
+                    daemonScopeKey, daemonPrincipal: self.principal });
                 const survivor = rows.find(row => row.pid === pids[1]);
                 expect(survivor?.level, JSON.stringify({ roots,
                     native: current.snapshot.rows.find(row => row.pid === pids[1]), ownership: survivor,
@@ -650,7 +935,7 @@ describe('createStablePluginExecService', () => {
                 signal: new AbortController().signal, assertCurrent: () => undefined,
                 projectLaunch: {
                     status: 'ready' as const, reviewedEffectDigest: 'current-reviewed-effect',
-                    environment: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                    toolchain: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
                         platform: 'linux' as const, io: {
                             resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
                             run: async (request: { cwd: string; env: Readonly<Record<string, string>> }) => {
@@ -678,8 +963,6 @@ describe('createStablePluginExecService', () => {
             let released = 0;
             const installedArgs = ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(1),env:process.env}))', '--'];
             const service = createStablePluginExecService({
-
-
                 environment: { REMOVE: 'host', KEEP: 'host' },
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
@@ -694,9 +977,10 @@ describe('createStablePluginExecService', () => {
                 cwd: { root: 'workspace', relativePath: '' },
                 stdin: new Uint8Array([0, 255]), maxStdoutBytes: 1024,
             }, {
+                agentIsolation: null,
                 projectLaunch: {
                     status: 'ready', reviewedEffectDigest: 'reviewed-current-effect',
-                    environment: {
+                    toolchain: {
                         selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
                         platform: 'linux',
                         // Tool resolution/native execution are genuine OS boundaries;
@@ -710,7 +994,7 @@ describe('createStablePluginExecService', () => {
                             },
                         },
                     },
-                    secretReferences: {
+                    secretReferences: withSavedSecretMaterializer({
                         requirements: [{ name: 'PROJECT_KEY', required: true }],
                         accountSettings: {}, settingsSecretsReadKeys: [],
                         secretReferenceOverlay: { v: 1, bindings: {
@@ -724,7 +1008,7 @@ describe('createStablePluginExecService', () => {
                                 content: { v: 1, name: 'Project key', kind: 'apiKey', value: 'exact-project-key' },
                             }),
                         }],
-                    },
+                    }),
                 },
             });
             expect(launch).toMatchObject({
@@ -734,6 +1018,8 @@ describe('createStablePluginExecService', () => {
                 stdin: new Uint8Array([0, 255]), maxStdoutBytes: 1024,
             });
             expect(launch.env).not.toHaveProperty('REMOVE');
+            expect(launch.secretRedactionLease?.redact('exact-project-key KEEP=native NATIVE=active'))
+                .toBe('[REDACTED] KEEP=native NATIVE=active');
             const processOwner = spawnSupervisedPluginProcess(launch);
             try {
                 const observed = await processOwner.handle.wait();
@@ -744,7 +1030,7 @@ describe('createStablePluginExecService', () => {
                 if (process.platform === 'darwin') delete actual.env.__CF_USER_TEXT_ENCODING;
                 expect(actual).toEqual({
                     cwd: await realpath(root), args: ['--session', 'opaque "resume" \\'],
-                    env: { KEEP: 'native', NATIVE: 'active', PROJECT_KEY: 'exact-project-key' },
+                    env: { KEEP: 'native', NATIVE: 'active', PROJECT_KEY: '[REDACTED]' },
                 });
             } finally {
                 await processOwner.dispose();
@@ -757,7 +1043,6 @@ describe('createStablePluginExecService', () => {
     it('keeps plugin-supplied project purpose/options nonactivating and refuses host preparation holds before resolving a process', async () => {
         let resolutions = 0;
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => { resolutions += 1; return { command: process.execPath }; },
@@ -776,7 +1061,7 @@ describe('createStablePluginExecService', () => {
             { status: 'refused' as const, kind: 'approval_pending' as const, code: 'project_setup_consent_required' },
             { status: 'refused' as const, kind: 'child_required' as const, code: 'project_environment_child_required' },
         ]) {
-            await expect(authorizePluginExecLaunchForHost(service, { executable }, { projectLaunch: failure }))
+            await expect(authorizePluginExecLaunchForHost(service, { executable }, { agentIsolation: null, projectLaunch: failure }))
                 .rejects.toMatchObject({ code: failure.code });
         }
         expect(resolutions).toBe(1);
@@ -791,8 +1076,7 @@ describe('createStablePluginExecService', () => {
             });
             expect(command.kind).toBe('resolved');
             if (command.kind !== 'resolved') throw new Error('Expected the real native command owner to resolve');
-            const service = createStablePluginExecService({
-                 signal: new AbortController().signal,
+            const service = createStablePluginExecService({ signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: command.command, args: command.args, env: command.environmentOverlay }),
                 resolvePath: async () => command.cwd,
@@ -800,11 +1084,12 @@ describe('createStablePluginExecService', () => {
             const launch = await authorizePluginExecLaunchForHost(service, {
                 executable, cwd: { root: 'workspace', relativePath: '' },
             }, {
+                agentIsolation: null,
                 projectLaunch: {
                     status: 'ready', reviewedEffectDigest: 'current-reviewed-native-command',
-                    environment: {
+                    toolchain: {
                         selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
-                        nativeCommandEnvironment: command.nativeCommandEnvironment,
+                        nativeCommandToolchain: command.nativeCommandToolchain,
                         platform: 'linux', io: {
                             resolveTool: async () => { throw new Error('A native command must not be re-probed for wrapping'); },
                             run: async () => { throw new Error('A native command must not evaluate its environment twice'); },
@@ -827,7 +1112,6 @@ describe('createStablePluginExecService', () => {
                 const controller = new AbortController();
                 let releases = 0;
                 const service = createStablePluginExecService({
-
                     signal: controller.signal, isOccurrenceCurrent: () => true,
                     resolveExecutable: async () => ({ command: process.execPath, release: () => { releases += 1; } }),
                     resolvePath: async () => root,
@@ -835,10 +1119,11 @@ describe('createStablePluginExecService', () => {
                 await expect(authorizePluginExecLaunchForHost(service, {
                     executable, cwd: { root: 'workspace', relativePath: '' },
                 }, {
+                    agentIsolation: null,
                     signal: new AbortController().signal,
                     projectLaunch: {
                         status: 'ready', reviewedEffectDigest: 'reviewed-current-effect',
-                        environment: {
+                        toolchain: {
                             selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, platform: 'linux',
                             io: {
                                 resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
@@ -852,7 +1137,7 @@ describe('createStablePluginExecService', () => {
                             },
                         },
                     },
-                })).rejects.toMatchObject({ code: outcome === 'failed' ? 'native_environment_failed' : 'plugin_exec_aborted' });
+                })).rejects.toMatchObject({ code: outcome === 'failed' ? 'native_toolchain_failed' : 'plugin_exec_aborted' });
                 expect(releases).toBe(1);
             }
         });
@@ -897,7 +1182,7 @@ describe('createStablePluginExecService', () => {
                 env: { FIXTURE_VALUE: 'request' },
                 stdin: new Uint8Array([1, 2]),
                 maxStdoutBytes: 4_096,
-            },
+            }, { agentIsolation: null },
         );
 
         expect(launch).toMatchObject({
@@ -1106,7 +1391,6 @@ describe('createStablePluginExecService', () => {
 
     it('resolves the exact invocation-local system-tool launch for its host composer', async () => {
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -1150,7 +1434,6 @@ describe('createStablePluginExecService', () => {
         } as const satisfies ManagedExecutableRef);
         const release = vi.fn();
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async (ref) => {
@@ -1210,7 +1493,6 @@ describe('createStablePluginExecService', () => {
         });
         const release = vi.fn();
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => current,
             resolveExecutable: async () => await resolution,
@@ -1246,7 +1528,6 @@ describe('createStablePluginExecService', () => {
         });
         const release = vi.fn();
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => await resolution,
@@ -1338,7 +1619,6 @@ describe('createStablePluginExecService', () => {
             await symlink(process.execPath, command);
             const args = ['value with spaces', 'folder\\mixed/path', 'literal "quotes"', '$HOME;$(echo should-not-run)'];
             const service = createStablePluginExecService({
-
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 // Executable and filesystem resolution are the OS boundaries;
@@ -1419,7 +1699,7 @@ describe('createStablePluginExecService', () => {
             executable: otherExecutable,
             cwd: { root: 'workspace', relativePath: 'outside-disclosure' },
             env: { UNDECLARED_VALUE: 'request' },
-        });
+        }, { agentIsolation: null });
         expect(launch).toMatchObject({
             command: process.execPath,
             cwd: '/workspace/outside-disclosure',
@@ -1433,16 +1713,15 @@ describe('createStablePluginExecService', () => {
 
         await expect(authorizePluginExecLaunchForHost(service, {
             executable: { kind: 'systemTool', id: 'missing' },
-        })).rejects.toMatchObject({ code: 'plugin_system_tool_undeclared' });
+        }, { agentIsolation: null })).rejects.toMatchObject({ code: 'plugin_system_tool_undeclared' });
         await expect(authorizePluginExecLaunchForHost(service, {
             executable: otherExecutable,
             env: { 'INVALID-NAME': 'value' },
-        })).rejects.toMatchObject({ code: 'plugin_exec_invalid_environment' });
+        }, { agentIsolation: null })).rejects.toMatchObject({ code: 'plugin_exec_invalid_environment' });
     });
 
-    it('enforces the declared system-tool argument allowlist before spawning', async () => {
+    it('lets trusted plugins pass arguments beyond the system-tool declaration', async () => {
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({
@@ -1452,15 +1731,14 @@ describe('createStablePluginExecService', () => {
             resolvePath: async () => { throw new Error('unexpected path'); },
         });
 
-        await expect(service.spawn({
+        await expect(service.run({
             executable,
             args: ['--eval', 'process.exit(0)'],
-        })).rejects.toMatchObject({ code: 'plugin_exec_argument_denied' });
+        })).resolves.toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
     });
 
-    it('preserves argument policy across invocation-local system-tool resolution', async () => {
+    it('lets trusted plugins pass arguments through invocation-local system-tool resolution', async () => {
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => {
@@ -1490,10 +1768,10 @@ describe('createStablePluginExecService', () => {
             purpose: 'exercise invocation-local launch policy',
         });
 
-        await expect(service.spawn({
+        await expect(service.run({
             executable: resolved.executable,
             args: ['--eval', 'process.exit(0)'],
-        })).rejects.toMatchObject({ code: 'plugin_exec_argument_denied' });
+        })).resolves.toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
     });
 
     it('rejects every operation after its plugin occurrenceId becomes stale', async () => {
@@ -1517,8 +1795,7 @@ describe('createStablePluginExecService', () => {
             await continuation;
             return { command: process.execPath, release };
         };
-        const service = createStablePluginExecService({
-             signal: new AbortController().signal,
+        const service = createStablePluginExecService({ signal: new AbortController().signal,
             isOccurrenceCurrent: () => true, resolveExecutable: resolver,
             resolveManagedExecutable: resolver,
             resolvePath: async () => { throw new Error('Unexpected path'); },
@@ -1566,8 +1843,8 @@ describe('createStablePluginExecService', () => {
         const released = new Promise<void>(resolve => { markReleased = resolve; });
         const release = vi.fn(markReleased);
         const service = createStablePluginExecService({
-
-            signal: controller.signal,
+            signal: new AbortController().signal,
+            retirementSignal: controller.signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
             resolvePath: async () => { throw new Error('unexpected path'); },
@@ -1599,7 +1876,6 @@ describe('createStablePluginExecService', () => {
 
     it('normalizes resolver failure before a process handle exists', async () => {
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => { throw new Error('ambient resolver detail'); },
@@ -1616,7 +1892,6 @@ describe('createStablePluginExecService', () => {
         await withTempDir('happier managed executable custody ', async root => {
         const release = vi.fn();
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
@@ -1650,7 +1925,8 @@ describe('createStablePluginExecService', () => {
                 expect(Number.isSafeInteger(childPid)).toBe(true);
                 expect(process.kill(childPid, 0)).toBe(true);
             }
-            expect(release).not.toHaveBeenCalled();
+            if (preExitOpportunity) expect(release).not.toHaveBeenCalled();
+            else await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
             const wrongGeneration = await terminateProcessTree({ targets: [{ pid: peerPid, start: {
                 startTimeMs: peerIdentity.start.startTimeMs + 1,
                 ...(peerIdentity.start.native ? { native: `${peerIdentity.start.native}:different-generation` } : {}),
@@ -1687,7 +1963,6 @@ describe('createStablePluginExecService', () => {
     it('releases a managed executable lease when spawn rejects before a handle exists', async () => {
         const release = vi.fn();
         const service = createStablePluginExecService({
-
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
             resolveExecutable: async () => ({ command: process.execPath, release }),
@@ -1716,8 +1991,7 @@ describe('createStablePluginExecService', () => {
         await withTempDir('happier protocol cleanup recovery ', async root => {
             const pidPath = join(root, 'survivor.pid');
             const service = createStablePluginExecService({
-                processOwner: { kind: 'run', runId: 'protocol-cleanup-recovery' },
-                 signal: new AbortController().signal,
+                processOwner: { kind: 'run', runId: 'protocol-cleanup-recovery' }, signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => root,

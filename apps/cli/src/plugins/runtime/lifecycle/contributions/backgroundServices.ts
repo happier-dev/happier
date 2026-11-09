@@ -19,7 +19,7 @@ export type HostBackgroundServiceContext = Readonly<{
     isOccurrenceCurrent(): boolean;
 }>;
 
-/** One placement lifetime, reused for the coalesced batch and joined at disposal. */
+/** One placement lifetime for the coalesced batch, joined before settlement. */
 export type BackgroundServiceExecution<TContext = BackgroundServiceContext> = Readonly<{
     run(context: TContext): Promise<void>;
     /** Definitive host shutdown, including a child that does not honor abort. */
@@ -178,6 +178,11 @@ export function createBackgroundServiceRunnerHost(params: Readonly<{
                     } catch (error) {
                         failed = true;
                         failure = error;
+                        // Failure settles the admitted batch; a caller's cancellation leaves newer demands intact.
+                        if (!service.controller.signal.aborted) {
+                            for (const caller of service.pending) caller.reject(error);
+                            service.pending.clear();
+                        }
                         if (!unavailable && !service.controller.signal.aborted && isCurrent(registration)) diagnose({ ...identityOf(registration), code: 'background_service_failed', error });
                     } finally {
                         const completion = complete();

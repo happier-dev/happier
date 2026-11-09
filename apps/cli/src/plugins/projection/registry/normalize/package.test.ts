@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginProjectedActionInputHintsV2Schema } from '@happier-dev/protocol';
 
 import { buildPluginContributionRegistry } from './package';
+import { projectSelectedLoadedPluginContributes } from '../selected';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { createListExtensionSource } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '../fullProjection';
+import { projectPluginUiDeclarationEntries } from '../ui/projection';
+import { admitPluginContributionGraph } from './admission';
+import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../../../packages/plugins/deepseek/src/provider/contribution';
 
 function loaded(
   pluginId: string,
@@ -69,6 +78,119 @@ function bundledAgentWithConnectedAccounts(
 }
 
 describe('target package contribution projection', () => {
+  it.each(['full', 'selected'] as const)('reuses admitted Provider definitions during %s projection', (mode) => {
+    const plugin = loaded('com.acme.provider', { providers: [DEEPSEEK_PROVIDER_CONTRIBUTION] });
+    const admittedGraph = admitPluginContributionGraph({ loadedPlugins: [plugin] });
+    const admitted = admittedGraph.loadedPlugins[0]!;
+    const definition = admitted.manifest.contributes.providers[0]!;
+    const registry = mode === 'full'
+      ? buildPluginContributionRegistry({ loadedPlugins: [admitted], admittedGraph })
+      : projectSelectedLoadedPluginContributes({
+        loadResult: { loadedPlugins: [admitted], diagnosticsByPluginId: {} },
+        provenance: 'first_party', admittedGraph,
+        providerContributionKeys: ['com.acme.provider/deepseek'],
+      });
+    // Ingress already parsed this definition. A second parse copies its schema
+    // graph and inflates startup allocation without adding an admission decision.
+    expect(registry.providers?.[0]?.definition).toBe(definition);
+  });
+
+  it('projects an exact Provider without reading unrelated admitted declarations and observes a changed definition', () => {
+    const plugin = loaded('com.acme.provider', { providers: [DEEPSEEK_PROVIDER_CONTRIBUTION,
+      ...Array.from({ length: 100 }, (_, index) => ({ ...DEEPSEEK_PROVIDER_CONTRIBUTION, id: `other-${index}` })),
+    ] });
+    let unrelatedReads = 0;
+    const peer = loaded('com.acme.prov', { providers: [DEEPSEEK_PROVIDER_CONTRIBUTION] });
+    const admittedGraph = admitPluginContributionGraph({ loadedPlugins: [plugin, peer] });
+    const current = admittedGraph.loadedPlugins[0]!;
+    const contributes = new Proxy(current.manifest.contributes, {
+      get(target, key, receiver) {
+        if (key !== 'providers') unrelatedReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const observed = { ...current, manifest: { ...current.manifest, contributes } };
+    let unrelatedPluginReads = 0;
+    const admittedPeer = admittedGraph.loadedPlugins[1]!;
+    const unrelated = { ...admittedPeer, manifest: { ...admittedPeer.manifest,
+      contributes: new Proxy(admittedPeer.manifest.contributes, { get(target, key, receiver) {
+        unrelatedPluginReads++;
+        return Reflect.get(target, key, receiver);
+      } }) } };
+    const params = { loadedPlugins: [observed, unrelated], admittedGraph: { ...admittedGraph, loadedPlugins: [observed, unrelated] },
+      providerContributionKeys: ['com.acme.provider/deepseek'] };
+    const project = (input: typeof params) => projectSelectedLoadedPluginContributes({
+      loadResult: { loadedPlugins: input.loadedPlugins, diagnosticsByPluginId: {} },
+      provenance: 'first_party', admittedGraph: input.admittedGraph,
+      providerContributionKeys: input.providerContributionKeys,
+    });
+    const registry = project(params);
+    expect(registry.providers?.map(row => row.definition.name)).toEqual([DEEPSEEK_PROVIDER_CONTRIBUTION.name]);
+    expect(unrelatedReads).toBe(0);
+    expect(unrelatedPluginReads).toBe(0);
+    const changed = { ...current, manifest: { ...current.manifest, contributes: { ...current.manifest.contributes,
+      providers: [{ ...DEEPSEEK_PROVIDER_CONTRIBUTION, name: 'Changed Provider declaration' }] } } };
+    expect(project({ ...params, loadedPlugins: [changed],
+      admittedGraph: { ...admittedGraph, loadedPlugins: [changed] } }).providers?.[0]?.definition.name)
+      .toBe('Changed Provider declaration');
+  });
+
+  it('does not reread admitted bundled manifests for an empty installed graph', () => {
+    const admitted = admitPluginContributionGraph({ loadedPlugins: Array.from({ length: 100 }, (_, index) => loaded(`com.acme.peer${index}`, {})) });
+    let manifestReads = 0;
+    const referenceGraph = { ...admitted, loadedPlugins: admitted.loadedPlugins.map(plugin => ({
+      ...plugin, get manifest() { manifestReads++; return plugin.manifest; },
+    })) };
+    expect(buildPluginContributionRegistry({ loadedPlugins: [], referenceGraph }).agents).toEqual([]);
+    expect(manifestReads).toBe(0);
+  });
+  it('excludes only the invalid dependency closure, including bundled consumers of a replacement', () => {
+    const action = { id: 'run', title: 'Run', scopes: ['global'], surfaces: ['ui'],
+      execution: { target: 'daemon' }, placementBindings: ['commandPalette'], dangerLevel: 'safe' };
+    const producer = loaded('com.acme.producer', { actions: [action] });
+    const dependant = loaded('com.acme.dependant', { browserTargets: [{ id: 'page', title: 'Page', url: 'https://example.com' }], browserActions: [{
+      id: 'use', title: 'Use', target: 'page', action: { pluginId: producer.pluginId, localId: 'run' },
+    }] });
+    const replacement = loaded(producer.pluginId, { browserTargets: [{ id: 'page', title: 'Page', url: 'https://example.com' }], browserActions: [{
+      id: 'bad', title: 'Bad', target: 'page', action: { pluginId: 'com.acme.absent', localId: 'run' },
+    }] });
+    const healthy = loaded('com.acme.healthy', { actions: [action] });
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [replacement, healthy], referencePlugins: [producer, dependant] });
+    expect(registry.actions.map(action => action.pluginId)).toEqual([healthy.pluginId]);
+    expect(Object.keys(registry.admittedGraph.diagnosticsByPluginId).sort()).toEqual([dependant.pluginId, producer.pluginId]);
+  });
+  it.each(['loaded', 'reference'] as const)('rejects duplicate %s identities even when their fallback is replaced', (input) => {
+    const first = loaded('happier.channels', {});
+    const second = { ...first, pluginRootPath: '/plugins/another-channels-source' };
+    expect(() => buildPluginContributionRegistry({
+      loadedPlugins: input === 'loaded' ? [first, second] : [first],
+      referencePlugins: input === 'reference' ? [first, second] : [first],
+    })).toThrow(/Duplicate plugin identity 'happier\.channels'/u);
+  });
+
+  it('carries an external list extension from public authoring through normalization and the strict UI projection', () => {
+    let resourceReads = 0;
+    const source = createListExtensionSource(() => resourceReads++);
+    expect(parsePluginManifest(source.manifest)).toMatchObject({ ok: true });
+    const plugin = loaded(source.manifest.id, source.manifest.contributes ?? {});
+    const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} }, provenance: 'external',
+    }));
+    expect(registry.uiListExtensionsV1).toMatchObject([{
+      identity: { pluginId: source.manifest.id, localId: 'releases' },
+      definition: { entity: 'sessionWork', rowMark: { fieldId: 'release-stage', slot: 'context' } },
+    }]);
+    expect(projectPluginUiDeclarationEntries(registry)['listExtension:com.acme.release:releases']).toMatchObject({
+      contributionKind: 'listExtension', pluginId: source.manifest.id,
+      listExtension: { entity: 'sessionWork' },
+    });
+    const retired = createResolvedContributionRegistry(projectLoadedPluginContributes({
+      loadResult: { loadedPlugins: [], diagnosticsByPluginId: {} }, provenance: 'external',
+    }));
+    expect(projectPluginUiDeclarationEntries(retired)['listExtension:com.acme.release:releases']).toBeUndefined();
+    expect(resourceReads).toBe(0);
+  });
+
   it('admits current UI declarations without retaining retired root contribution routes', () => {
     for (const root of ['hostedWeb', 'uiTranslations']) {
       expect(() => loaded('com.acme.ui', { [root]: [] })).toThrow();
@@ -132,7 +254,7 @@ describe('target package contribution projection', () => {
     }]);
   });
 
-  it('qualifies action presentation references and preserves exact declarations', () => {
+  it('preserves tool and CLI presentation on the canonical Action declaration', () => {
     const resultSchema = {
       type: 'object',
       properties: {
@@ -153,19 +275,23 @@ describe('target package contribution projection', () => {
         sessionTarget: { field: 'sessionId', cardinality: 'many' },
         placementBindings: ['primary'],
         resultSchema,
+        tool: { name: 'runner', title: 'Runner' },
+        toolExposure: { agent: 'discoverable_only', mcp: 'direct' },
+        cli: { path: ['run'], aliases: [['execute']] },
         dangerLevel: 'writesRemote',
         confirmation: {
           title: { key: 'actions.run.title', fallback: 'Run remotely?' },
           confirmLabel: { key: 'actions.run.confirm', fallback: 'Run' },
         },
       }],
-      tools: [{ id: 'runner', name: 'runner', title: 'Runner', action: 'run' }],
-      commands: [{ id: 'run-command', title: 'Run', path: ['run'], action: 'run' }],
     })] });
-    expect(registry.tools[0]?.definition.actionId).toBe('com.acme.plugin/run');
-    expect(registry.commands[0]?.definition.actionId).toBe('com.acme.plugin/run');
+    expect(registry.actions[0]?.admittedTarget.declaration).toMatchObject({
+      id: 'run', tool: { name: 'runner', title: 'Runner' }, cli: { path: ['run'], aliases: [['execute']] },
+    });
     expect(registry.actions[0]?.definition).toMatchObject({
       outputSchema: resultSchema,
+      toolExposure: { agent: 'discoverable_only', mcp: 'direct' },
+      bindings: { mcpToolName: 'runner' },
       sessionTarget: { field: 'sessionId', cardinality: 'many' },
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' } },
       dangerLevel: 'writesRemote',
@@ -355,7 +481,9 @@ describe('target package contribution projection', () => {
           properties: {
             provider: { type: 'string' },
             enabled: { type: 'boolean' },
+            revision: { type: 'integer' },
           },
+          required: ['revision'],
           additionalProperties: false,
         },
         inputHints: {
@@ -389,18 +517,31 @@ describe('target package contribution projection', () => {
         path: 'enabled',
         title: 'Enabled',
         widget: 'boolean',
-      }],
+      }, { path: 'revision', title: 'Revision', widget: 'integer', required: true }],
     });
+    const localized = PluginProjectedActionInputHintsV2Schema.parse(registry.actions[0]?.localizedPresentation?.inputHints);
+    expect(localized.fields).toMatchObject([
+      { path: 'provider', title: { key: 'configure.provider', fallback: 'Provider' },
+        options: [{ value: 'acme', label: { key: 'configure.provider.acme', fallback: 'Acme' } }] },
+      { path: 'enabled', title: { key: 'configure.enabled', fallback: 'Enabled' } },
+      { path: 'revision', title: 'Revision', widget: 'integer', required: true },
+    ]);
   });
 
   it('resolves foreign structured references against all loaded manifests', () => {
-    expect(() => buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.consumer', {
-      tools: [{ id: 'runner', name: 'runner', title: 'Runner', action: { pluginId: 'com.acme.missing', localId: 'run' } }],
-    })] })).toThrow(/Invalid cross-plugin contribution reference/);
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [loaded('com.acme.consumer', {
+      browserTargets: [{ id: 'page', title: 'Page', url: 'https://example.com' }],
+      browserActions: [{ id: 'runner', title: 'Runner', target: 'page', action: { pluginId: 'com.acme.missing', localId: 'run' } }],
+    })] });
+    expect(registry.browserActions).toEqual([]);
+    expect(registry.browserTargets).toMatchObject([{ definition: { id: 'page' } }]);
+    expect(registry.admittedGraph.diagnosticsByPluginId['com.acme.consumer']).toMatchObject([{
+      code: 'plugin_contribution_skipped', details: { reason: 'plugin_manifest_dangling_reference' },
+    }]);
   });
 
   it('fails closed when bundled request-auth consumers omit their descriptor producers', () => {
-    expect(() => buildPluginContributionRegistry({
+    expect(buildPluginContributionRegistry({
       loadedPlugins: [bundledAgentWithConnectedAccounts('happier.agent.consumer', [{
         purpose: 'codex-model-request',
         service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
@@ -408,7 +549,7 @@ describe('target package contribution projection', () => {
         purpose: 'claude-model-request',
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
       }])],
-    })).toThrow(/Invalid cross-plugin contribution reference/);
+    }).agents).toEqual([]);
   });
 
   it('does not let external producers satisfy references missing from the bundled universe', () => {
@@ -443,12 +584,10 @@ describe('target package contribution projection', () => {
       }],
     );
 
-    expect(() => buildPluginContributionRegistry({
+    expect(buildPluginContributionRegistry({
       loadedPlugins: [externalProducer],
       referencePlugins: [bundledConsumer],
-    })).toThrow(
-      /happier\.agent\.consumer references missing connectedAccountDescriptors contribution com\.acme\.external\/account/u,
-    );
+    }).agents).toEqual([]);
   });
 
   it('resolves an external host-access reference against bundled descriptors without projecting the bundled contribution', () => {
@@ -612,33 +751,33 @@ describe('target package contribution projection', () => {
       },
     }]);
 
-    expect(() => buildPluginContributionRegistry({
+    expect(buildPluginContributionRegistry({
       loadedPlugins: [consumer],
       referencePlugins: [wrongFamilyProducer],
-    })).toThrow(
-      /references missing connectedAccountDescriptors contribution happier\.agent\.claude\/claude-subscription/u,
-    );
+    }).admittedGraph.diagnosticsByPluginId[consumer.pluginId]).toMatchObject([{
+      code: 'plugin_contribution_skipped', details: { reason: 'plugin_manifest_wrong_family_reference' },
+    }]);
   });
 
   it('keeps legacy request-auth purpose targets closed to external and unknown references', () => {
-    expect(() => buildPluginContributionRegistry({
+    expect(buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.external', {
         agents: bundledAgentWithConnectedAccounts('happier.agent.consumer', [{
           purpose: 'codex-model-request',
           service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         }]).manifest.contributes.agents,
       })],
-    })).toThrow(/Invalid cross-plugin contribution reference/);
+    }).agents).toEqual([]);
 
-    expect(() => buildPluginContributionRegistry({
+    expect(buildPluginContributionRegistry({
       loadedPlugins: [bundledAgentWithConnectedAccounts('happier.agent.consumer', [{
         purpose: 'unknown-model-request',
         service: { pluginId: 'happier.agent.other', localId: 'missing' },
       }])],
-    })).toThrow(/Invalid cross-plugin contribution reference/);
+    }).agents).toEqual([]);
   });
 
-  it('preserves a valid foreign structured reference and qualifies its resolved action identity', () => {
+  it('preserves a valid foreign structured Action reference', () => {
     const registry = buildPluginContributionRegistry({
       loadedPlugins: [
         loaded('com.acme.actions', {
@@ -652,11 +791,12 @@ describe('target package contribution projection', () => {
             dangerLevel: 'safe',
           }],
         }),
-        loaded('com.acme.tools', {
-          tools: [{
+        loaded('com.acme.browser', {
+          browserTargets: [{ id: 'page', title: 'Page', url: 'https://example.com' }],
+          browserActions: [{
             id: 'runner',
-            name: 'runner',
             title: 'Runner',
+            target: 'page',
             action: { pluginId: 'com.acme.actions', localId: 'run' },
           }],
         }),
@@ -664,9 +804,8 @@ describe('target package contribution projection', () => {
     });
 
     expect(registry.actions).toHaveLength(1);
-    expect(registry.tools[0]?.definition).toMatchObject({
+    expect(registry.browserActions[0]?.definition).toMatchObject({
       action: { pluginId: 'com.acme.actions', localId: 'run' },
-      actionId: 'com.acme.actions/run',
     });
   });
 
@@ -866,6 +1005,7 @@ describe('target package contribution projection', () => {
   it('preserves canonical nested UI views, renderers, and translations with qualified identities', () => {
     const registry = buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.ui', {
+        resources: [{ id: 'copy-en', kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' }],
         ui: {
           views: [{
             id: 'panel',
@@ -888,7 +1028,7 @@ describe('target package contribution projection', () => {
             title: 'Review settings',
             renderer: 'panel-renderer',
           }],
-          translations: [{ locale: 'en', messages: { title: 'Acme' } }],
+          translations: [{ locale: 'en', resourceId: 'copy-en' }],
         },
         openableContentViewers: [{
           id: 'markdown',
@@ -933,7 +1073,7 @@ describe('target package contribution projection', () => {
   });
 
   it('rejects a multiple-instance details destination for an openable-content viewer before UI projection', () => {
-    expect(() => buildPluginContributionRegistry({
+    const registry = buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.viewer', {
         ui: {
           renderers: [{ id: 'viewer-renderer', kind: 'declarative', root: { kind: 'text', text: 'Viewer' } }],
@@ -951,7 +1091,12 @@ describe('target package contribution projection', () => {
           contentClasses: ['text'],
         }],
       })],
-    })).toThrow(/Openable-content viewer destinations must use singleton instance policy/u);
+    });
+    expect(registry.openableContentViewers).toEqual([]);
+    expect(registry.uiViewsV2).toMatchObject([{ definition: { id: 'file-details' } }]);
+    expect(registry.admittedGraph.diagnosticsByPluginId['com.acme.viewer']).toMatchObject([{
+      code: 'plugin_contribution_skipped', details: { reason: 'plugin_manifest_invalid' },
+    }]);
   });
 
   it('retains a session-scoped transcript Activity descriptor with its canonical plugin identity', () => {

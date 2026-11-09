@@ -1,6 +1,6 @@
-import type { ResolvedActionLocalizedPresentation } from '../types';
 import type { ActionInputHints, PluginActionContributionV2 } from '@happier-dev/protocol';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import type { ResolvedActionLocalizedPresentation } from '../types';
 
 /** The input facet shared by full Action normalization and admitted listings. */
 export function projectPluginActionInputDefinition(definition: PluginActionContributionV2): Readonly<{
@@ -15,6 +15,7 @@ export function projectPluginActionInputDefinition(definition: PluginActionContr
   };
 }
 
+/** Localized presentation projects the same completed fields as execution/discovery. */
 export function projectPluginActionLocalizedPresentation(
   definition: PluginActionContributionV2,
   inputHints: ActionInputHints | null,

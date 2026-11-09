@@ -27,7 +27,6 @@ function resolvedHook(params: Readonly<{
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: params.hookId,
       category: before ? 'augmentation' : 'lifecycle',
       scope: 'tool',

@@ -197,6 +197,41 @@ describe('retired Settings fields are never pruned', () => {
         expect(record.readRawValues()).toMatchObject({ legacyMode: 'turbo' });
     });
 
+    it('reads released Account fields before defaults while scoped values including null win', async () => {
+        let persisted: Readonly<Record<string, JsonValue>> = {};
+        const host = createStablePluginSettingsHost({
+            declarations: [{ pluginId: 'acme.plugin', contribution: {
+                ...accountDeclaration(),
+                fields: [
+                    { id: 'theme', title: 'Theme', schema: { anyOf: [{ type: 'string', enum: ['light', 'dark'] }, { type: 'null' }] }, default: 'light', presentation: { control: 'json', hidden: true } },
+                    { id: 'analyticsOptOut', title: 'Owned host field', schema: { type: 'boolean' }, default: false },
+                ],
+            } }],
+            recordStore: createAccountSettingsBackedSettingsRecordStore({
+                async bindOperation() { return {
+                    async readRecord() { return { status: 'present' as const, revision: 1, values: persisted }; },
+                    async writeRecord() { throw new Error('Reading released fields cannot write a second record'); },
+                }; },
+            }),
+            broker: createStablePluginEventsBroker(),
+            onPluginSettingsUnavailable: ({ error }) => { throw error; },
+        });
+        const service = host.bind(seed(() => true))!.forScope({ kind: 'account' });
+        const releasedAccountSettings = {
+            settings: { theme: 'dark', analyticsOptOut: true },
+            hostDefaults: { analyticsOptOut: false },
+        };
+        await expect(readPluginSettingsValuesWithDefaults(service, { releasedAccountSettings })).resolves.toEqual({ theme: 'dark', analyticsOptOut: false });
+        persisted = { theme: null };
+        await expect(readPluginSettingsValuesWithDefaults(service, { releasedAccountSettings })).resolves.toEqual({ theme: null, analyticsOptOut: false });
+        persisted = { theme: 'light' };
+        await expect(readPluginSettingsValuesWithDefaults(service, { releasedAccountSettings })).resolves.toEqual({ theme: 'light', analyticsOptOut: false });
+        persisted = {};
+        await expect(readPluginSettingsValuesWithDefaults(service, { releasedAccountSettings: {
+            ...releasedAccountSettings, settings: { theme: { malformed: true } },
+        } })).rejects.toMatchObject({ code: 'plugin_settings_record_invalid' });
+    });
+
     it('projects declaration defaults with persisted non-secret fields while excluding secrets', async () => {
         const declaration = {
             ...accountDeclaration(),

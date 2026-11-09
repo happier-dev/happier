@@ -52,6 +52,8 @@ export type ConnectedAccountMaterializationCredentialRevisionBasis = Readonly<{
 }>;
 
 export type StablePluginConnectedAccountsOwner = Readonly<{
+    /** Host Agent factories bind an already-admitted Run, rather than durable defaults. */
+    readExecutionRunPurposeBindingSubjectId?(runId: string): string | null;
     getBinding(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
             exactPurposeBindingSubjectId?: string;
@@ -79,6 +81,8 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
             sessionId?: string;
             expectedAccount?: PluginConnectedAccountRef;
             credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+            /** Classification supplied by the established materialization owner only. */
+            observeMaterializationPublicValues?: (values: readonly string[]) => void;
             request: ConnectedAccountMaterializationRequest;
             /** Host-only native-home snapshot; never supplied by SDK service callers. */
             existingFiles?: Readonly<Record<string, Uint8Array>>;
@@ -109,6 +113,7 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
             exactPurposeBindingSubjectId?: string;
             sessionId?: string;
             account: PluginConnectedAccountRef;
+            observeMaterializationPublicValues?: (values: readonly string[]) => void;
             request: ConnectedAccountMaterializationRequest;
             signal: AbortSignal;
         }>,
@@ -166,16 +171,6 @@ function operationDenied(purpose: string, operation: 'select' | 'use'): PluginEr
     });
 }
 
-function materializationKindDenied(
-    purpose: string,
-    kind: ConnectedAccountMaterializationRequest['kind'],
-): PluginError {
-    return new PluginError({
-        code: 'plugin_host_access_operation_denied',
-        message: `Connected Accounts purpose '${purpose}' does not authorize '${kind}' materialization`,
-    });
-}
-
 function materializationOutOfScope(): PluginError {
     return new PluginError({
         code: 'plugin_connected_account_binding_out_of_scope',
@@ -194,14 +189,16 @@ function assertCurrent(seed: PluginInvocationServicesSeed): void {
     if (seed.signal.aborted || !seed.isOccurrenceCurrent()) throw generationRetired();
 }
 
+function assertNotCancelled(signal: AbortSignal): void {
+    if (signal.aborted) throw generationRetired();
+}
+
 function resolveScope(
     scopes: ReadonlyMap<string, PluginConnectedAccountBindingScope>,
     purpose: string,
-    operation: 'select' | 'use',
 ): PluginConnectedAccountBindingScope {
     const scope = scopes.get(purpose);
     if (!scope) throw undeclaredPurpose(purpose);
-    if (!scope.operations.includes(operation)) throw operationDenied(purpose, operation);
     return scope;
 }
 
@@ -263,10 +260,12 @@ function registerMaterializationForRedaction(
     materialization: PluginConnectedAccountMaterialization,
     seed: PluginInvocationServicesSeed,
     options: StablePluginConnectedAccountsHostOptions | undefined,
+    publicValues: readonly string[] = [],
 ): void {
     if (!options) return;
+    const publicStrings = new Set(publicValues);
     const registerString = (value: string): void => {
-        if (value.length === 0) return;
+        if (value.length === 0 || publicStrings.has(value)) return;
         options.registerRawForRedaction(seed, value);
         for (const redactionValue of readCredentialRedactionValues({
             authorizationValue: value,
@@ -453,8 +452,6 @@ function snapshotMaterialization(
     });
 }
 
-const CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX = 32;
-const CONNECTED_ACCOUNT_LISTED_DISPLAY_NAME_MAX_LENGTH = 512;
 const CONNECTED_ACCOUNT_LISTED_STATES = Object.freeze({
     connected: true,
     expired: true,
@@ -539,14 +536,13 @@ function snapshotListedAccount(
     if (
         typeof displayName !== 'string'
         || displayName.length === 0
-        || displayName.length > CONNECTED_ACCOUNT_LISTED_DISPLAY_NAME_MAX_LENGTH
     ) {
         throw listingOutOfScope();
     }
     const state = listed.state;
     if (!isListedAccountState(state)) throw listingOutOfScope();
     const origins = listed.connectedAccountOrigins;
-    if (!Array.isArray(origins) || origins.length > CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX) {
+    if (!Array.isArray(origins)) {
         throw listingOutOfScope();
     }
     const uniqueOrigins = new Set<string>();
@@ -556,15 +552,15 @@ function snapshotListedAccount(
         uniqueOrigins.add(normalized);
     }
     const bases = listed.connectedAccountBases;
-    if (!Array.isArray(bases) || bases.length > CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX) {
+    if (!Array.isArray(bases)) {
         throw listingOutOfScope();
     }
     const uniqueBases = new Set<string>();
     for (const base of bases) {
         const normalized = assertListedBase(base);
         if (uniqueBases.has(normalized.base)) throw listingOutOfScope();
-        // A base a source would route by must live under an origin HostAccess
-        // already admits, so the two facts can never disagree.
+        // A routed base must agree with the Account issuer's configured-origin
+        // projection; these two endpoint facts cannot disagree.
         if (!uniqueOrigins.has(normalized.origin)) throw listingOutOfScope();
         uniqueBases.add(normalized.base);
     }
@@ -656,7 +652,7 @@ export function createStablePluginConnectedAccountsHost(
             return Object.freeze<ConnectedAccountsService>({
                 async getBinding(purpose, options = {}) {
                     assertCurrent(seed);
-                    const scope = resolveScope(scopes, purpose, 'use');
+                    const scope = resolveScope(scopes, purpose);
                     return withConnectedAccountBindingDiagnostic({
                         correlationId: seed.correlationId, ...(seed.session ? { sessionId: seed.session.id } : {}),
                         pluginId: seed.plugin.id, localId: seed.contribution.id, purpose: scope.purpose,
@@ -672,7 +668,7 @@ export function createStablePluginConnectedAccountsHost(
                                 ...(seed.session ? { sessionId: seed.session.id } : {}),
                                 signal: signals.signal,
                             });
-                            assertCurrent(seed);
+                            assertNotCancelled(signals.signal);
                             return summary === null ? null : assertAuthorizedSummary(scope, summary);
                         } finally {
                             signals.dispose();
@@ -686,7 +682,7 @@ export function createStablePluginConnectedAccountsHost(
                     if (exactPurposeBindingSubjectId) {
                         throw operationDenied(purpose, 'select');
                     }
-                    const scope = resolveScope(scopes, purpose, 'select');
+                    const scope = resolveScope(scopes, purpose);
                     const reason = input.reason;
                     assertCurrent(seed);
                     const signals = combineSignals(seed.signal, options.signal);
@@ -716,15 +712,13 @@ export function createStablePluginConnectedAccountsHost(
                     assertCurrent(seed);
                     const optionSnapshot = snapshotMaterializationOptions(options);
                     assertCurrent(seed);
-                    const scope = resolveScope(scopes, purpose, 'use');
+                    const scope = resolveScope(scopes, purpose);
                     if (optionSnapshot.nativeService && !scope.serviceRefs.some((service) => (
                         service.pluginId === optionSnapshot.nativeService?.pluginId
                         && service.localId === optionSnapshot.nativeService?.localId
                     ))) throw materializationOutOfScope();
-                    if (scope.materializationKinds?.includes(requestSnapshot.kind) !== true) {
-                        throw materializationKindDenied(purpose, requestSnapshot.kind);
-                    }
                     const signals = combineSignals(seed.signal, optionSnapshot.signal);
+                    let publicValues: readonly string[] = [];
                     assertCurrent(seed);
                     try {
                         const result = await runTracedExternalActionInnerStage('contributed.connected_account.materialize', () => owner.materialize({
@@ -743,11 +737,12 @@ export function createStablePluginConnectedAccountsHost(
                                 ? { nativeService: optionSnapshot.nativeService }
                                 : {}),
                             request: requestSnapshot,
+                            observeMaterializationPublicValues(values) { publicValues = values; },
                             signal: signals.signal,
                         }));
                         assertCurrent(seed);
                         const snapshot = snapshotMaterialization(requestSnapshot, result);
-                        registerMaterializationForRedaction(snapshot, seed, hostOptions);
+                        registerMaterializationForRedaction(snapshot, seed, hostOptions, publicValues);
                         assertCurrent(seed);
                         return snapshot;
                     } finally {
@@ -758,7 +753,7 @@ export function createStablePluginConnectedAccountsHost(
                     assertCurrent(seed);
                     const requestSnapshot = snapshotListRequest(request);
                     assertCurrent(seed);
-                    const scope = resolveScope(scopes, requestSnapshot.purpose, 'use');
+                    const scope = resolveScope(scopes, requestSnapshot.purpose);
                     const signals = combineSignals(seed.signal, options.signal);
                     assertCurrent(seed);
                     try {
@@ -771,7 +766,7 @@ export function createStablePluginConnectedAccountsHost(
                             ...(requestSnapshot.limit === undefined ? {} : { limit: requestSnapshot.limit }),
                             signal: signals.signal,
                         });
-                        assertCurrent(seed);
+                        assertNotCancelled(signals.signal);
                         return snapshotMetadataList(scope, requestSnapshot.limit, result);
                     } finally {
                         signals.dispose();
@@ -781,23 +776,14 @@ export function createStablePluginConnectedAccountsHost(
                     assertCurrent(seed);
                     const requestSnapshot = snapshotListedMaterializationRequest(request);
                     assertCurrent(seed);
-                    const scope = resolveScope(scopes, requestSnapshot.purpose, 'use');
-                    if (
-                        scope.materializationKinds?.includes(
-                            requestSnapshot.materialization.kind,
-                        ) !== true
-                    ) {
-                        throw materializationKindDenied(
-                            requestSnapshot.purpose,
-                            requestSnapshot.materialization.kind,
-                        );
-                    }
+                    const scope = resolveScope(scopes, requestSnapshot.purpose);
                     const serviceAuthorized = scope.serviceRefs.some((service) => (
                         service.pluginId === requestSnapshot.account.service.pluginId
                         && service.localId === requestSnapshot.account.service.localId
                     ));
                     if (!serviceAuthorized) throw materializationOutOfScope();
                     const signals = combineSignals(seed.signal, options.signal);
+                    let publicValues: readonly string[] = [];
                     assertCurrent(seed);
                     try {
                         const result = await runTracedExternalActionInnerStage('contributed.connected_account.materialize_listed', () => owner.materializeListedAccount({
@@ -811,6 +797,7 @@ export function createStablePluginConnectedAccountsHost(
                             ...(seed.session ? { sessionId: seed.session.id } : {}),
                             account: requestSnapshot.account,
                             request: requestSnapshot.materialization,
+                            observeMaterializationPublicValues(values) { publicValues = values; },
                             signal: signals.signal,
                         }));
                         assertCurrent(seed);
@@ -818,7 +805,7 @@ export function createStablePluginConnectedAccountsHost(
                             requestSnapshot.materialization,
                             result,
                         );
-                        registerMaterializationForRedaction(snapshot, seed, hostOptions);
+                        registerMaterializationForRedaction(snapshot, seed, hostOptions, publicValues);
                         assertCurrent(seed);
                         return snapshot;
                     } finally {
@@ -827,7 +814,7 @@ export function createStablePluginConnectedAccountsHost(
                 },
                 watch(purpose, listener) {
                     assertCurrent(seed);
-                    const scope = resolveScope(scopes, purpose, 'use');
+                    const scope = resolveScope(scopes, purpose);
                     let disposed = false;
                     let registrationComplete = false;
                     let scheduled = false;
@@ -920,6 +907,7 @@ export function createStablePluginConnectedAccountsHost(
                             disposed = true;
                             activeWatchSubscriptions.delete(subscription);
                             seed.signal.removeEventListener('abort', abort);
+                            seed.retirementSignal?.removeEventListener('abort', abort);
                             resolveDeliveryWaiters(deliveryWaiters);
                             deliveryWaiters = [];
                             resolveDeliveryWaiters(activeDeliveryWaiters);
@@ -929,9 +917,10 @@ export function createStablePluginConnectedAccountsHost(
                     });
                     activeWatchSubscriptions.add(subscription);
                     seed.signal.addEventListener('abort', abort, { once: true });
+                    seed.retirementSignal?.addEventListener('abort', abort, { once: true });
                     registrationComplete = true;
                     startDelivery();
-                    if (seed.signal.aborted || !seed.isOccurrenceCurrent()) subscription.dispose();
+                    if (seed.signal.aborted || seed.retirementSignal?.aborted || !seed.isOccurrenceCurrent()) subscription.dispose();
                     return subscription;
                 },
             });

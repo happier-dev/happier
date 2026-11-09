@@ -64,6 +64,24 @@ function registry(resources: readonly ResolvedResourceContribution[]): Pick<Reso
 }
 
 describe('stable plugin resources owner', () => {
+    it('reads declared packaged paths beyond the former host-local inventory ceiling', async () => {
+        const resource = await fixture('acme.long-path', 'prompt');
+        const relativePath = `${Array.from({ length: 12 }, (_, index) => `segment-${index}-${'a'.repeat(40)}`).join('/')}/prompt.txt`;
+        await mkdir(join(resource.rootPath, relativePath, '..'), { recursive: true });
+        await writeFile(join(resource.rootPath, relativePath), resource.bytes);
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([{ ...resource.contribution,
+                definition: { ...resource.contribution.definition, path: relativePath },
+            }]),
+            generations: new Map([['acme.long-path', {
+                pluginId: 'acme.long-path', immutableGenerationId: 'long-path', rootPath: resource.rootPath,
+                files: [{ relativePath, byteLength: resource.bytes.byteLength }],
+            }]]),
+        });
+        const service = owner.bind({ pluginId: 'acme.long-path', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(Buffer.from((await service.read('prompt')).bytes)).toEqual(resource.bytes);
+    });
+
     it('admits retained packaged Resources with dot-prefixed declaration paths', async () => {
         const resource = await fixture('acme.retained-paths', 'prompt');
         const owner = await createStableRetainedPluginResourcesOwner({
@@ -488,6 +506,28 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
             },
         };
     }
+
+    it('preserves canonical occurrence ids and metadata without shorter host-local string ceilings', async () => {
+        const contribution = dynamicContribution('acme.long-metadata', 'live');
+        const contentType = `application/x-${'a'.repeat(600)}`;
+        const occurrenceId = 'g'.repeat(512);
+        const rootPath = `/${'long-segment/'.repeat(400)}`;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([{ ...contribution, pluginRootPath: rootPath,
+                manifestPath: `${rootPath}.happier-plugin/plugin.json`,
+                sourceSpec: { kind: 'path', ...contribution.sourceSpec, locator: 'l'.repeat(5_000) },
+                definition: { ...contribution.definition, contentType },
+            }]),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.long-metadata', occurrenceId]]),
+            dynamicProducers: [{ pluginId: 'acme.long-metadata', localId: 'live', runtime: {
+                read: () => 'visible bytes', observe: () => ({ dispose() {} }),
+            } }],
+        });
+        const service = owner.bind({ pluginId: 'acme.long-metadata', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(service.describe('live')).toMatchObject({ contentType });
+        expect(new TextDecoder().decode((await service.read('live')).bytes)).toBe('visible bytes');
+    });
 
     it('admits independent global producers without an unrelated four-read throttle', async () => {
         const localIds = Array.from({ length: 6 }, (_, index) => `resource-${index}`);

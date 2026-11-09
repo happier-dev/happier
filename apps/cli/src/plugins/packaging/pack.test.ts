@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -9,6 +9,7 @@ import { PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH } from '../authoring/daemon
 import { createTestNpmTarball, sriSha512 } from '../distribution/testkit/npmTarball';
 import { createTestPluginSdkTarball } from '../distribution/testkit/pluginSdkTarball';
 import { createPluginManifestV2Fixture } from '../testkit/manifestV2Fixture';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { startCandidateRegistry } from '../../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import { packLocalPlugin } from './pack';
 
@@ -76,6 +77,20 @@ async function writeDescriptorPackFixture(
     files: ['.happier-plugin', 'daemon.mjs'],
   }), 'utf8');
   return manifestPath;
+}
+
+async function readPackedManifest(archivePath: string): Promise<Record<string, unknown>> {
+  const extractDir = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-extract-'));
+  try {
+    await tar.x({ file: archivePath, cwd: extractDir });
+    const [rootEntry] = await readdir(extractDir);
+    if (!rootEntry) throw new Error('Packed plugin archive did not contain a root directory');
+    return JSON.parse(
+      await readFile(join(extractDir, rootEntry, '.happier-plugin', 'plugin.json'), 'utf8'),
+    ) as Record<string, unknown>;
+  } finally {
+    await rm(extractDir, { recursive: true, force: true });
+  }
 }
 
 async function createCandidateChannelsProtocolTarball(): Promise<Buffer> {
@@ -624,6 +639,73 @@ describe('packLocalPlugin', () => {
         .rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await registry.close();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('expands tilde output paths through the CLI home directory helper', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-pack-tilde-'));
+    const root = join(parent, 'plugin');
+    const outHome = join(parent, 'home');
+    // POSIX resolves the home directory from HOME and Windows from USERPROFILE.
+    const envScope = createEnvKeyScope(['HOME', 'USERPROFILE']);
+    try {
+      await mkdir(outHome, { recursive: true });
+      await writeDescriptorPackFixture(root, createPluginManifestV2Fixture({ id: 'acme.pack-tilde' }));
+      envScope.patch({ HOME: outHome, USERPROFILE: outHome });
+
+      const result = await packLocalPlugin({ locator: root, outPath: '~/packed.happier-plugin.tgz' });
+
+      expect(result, result.ok ? '' : result.diagnostics.map((diagnostic) => diagnostic.message).join('\n')).toMatchObject({
+        ok: true,
+        archivePath: join(outHome, 'packed.happier-plugin.tgz'),
+        digestPath: join(outHome, 'packed.happier-plugin.tgz.sha256'),
+      });
+    } finally {
+      envScope.restore();
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs a canonical manifest into the archive without rewriting the authored source manifest', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-pack-normalized-'));
+    const root = join(parent, 'plugin');
+    const manifest = createPluginManifestV2Fixture({
+      id: 'acme.pack-normalized',
+      displayName: { key: 'plugin.title', fallback: 'Localized package' },
+      description: { key: 'plugin.description', fallback: 'Localized description' },
+      contributes: {
+        hooks: [
+          {
+            id: 'session-started',
+            on: 'session.spawned',
+            category: 'lifecycle',
+            scope: 'session',
+            executionKind: 'observe',
+          },
+        ],
+      },
+    });
+    const authoredBytes = `${JSON.stringify(manifest, null, 4)}\n`;
+    try {
+      const manifestPath = await writeDescriptorPackFixture(root, manifest, authoredBytes);
+
+      const result = await packLocalPlugin({
+        locator: root,
+        outPath: join(parent, 'acme-pack-normalized.happier-plugin.tgz'),
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(await readFile(manifestPath, 'utf8')).toBe(authoredBytes);
+      const packedManifest = await readPackedManifest(result.archivePath);
+      expect(packedManifest.displayName).toEqual(manifest.displayName);
+      expect(packedManifest.description).toEqual(manifest.description);
+      const contributes = packedManifest.contributes as {
+        hooks?: Array<{ executionKind?: string }>;
+      };
+      expect(contributes.hooks?.[0]?.executionKind).toBe('observe');
+    } finally {
       await rm(parent, { recursive: true, force: true });
     }
   });

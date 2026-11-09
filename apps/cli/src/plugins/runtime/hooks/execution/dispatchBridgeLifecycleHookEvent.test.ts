@@ -73,7 +73,6 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
       daemonEntryPath: '/plugins/acme.observer/daemon.mjs',
       sourceSpec: { kind: 'path' as const, locator: '/plugins/acme.observer', trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
       definition: {
-        hookApiVersion: 1 as const,
         id: 'executionRun.started' as const,
         category: 'lifecycle' as const,
         scope: 'session' as const,

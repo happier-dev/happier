@@ -124,8 +124,17 @@ describe('declared managed-service secret resolver', () => {
             expect(foreignOriginLease.value).toBeNull();
             await expect(resolveSecret(query('account-password', originOne)))
                 .resolves.toBeNull();
-            await expect(resolveSecret(query('not-declared', originOne)))
-                .resolves.toBeNull();
+            const undeclared = await resolveSecret(query('not-declared', originOne));
+            expectDeclaredSecretLease(undeclared);
+            expect(undeclared.value).toBeNull();
+            const declarationFreePort = createStableDeclaredPluginSecretsHost({
+                declarations: [], resolveCustody: createPluginSecretCustodyRouter({ daemon: daemonCustody.resolve }).resolve,
+            }).bindManagedServiceSecretReadPort({ pluginId: scope.pluginId, signal: new AbortController().signal,
+                isOccurrenceCurrent: scope.isOccurrenceCurrent, registerRawForRedaction: () => {} });
+            if (!declarationFreePort) throw new Error('Expected a daemon read port without declarations');
+            const declarationFree = await declarationFreePort({ secretId: 'daemon-password', canonicalOrigin: originOne });
+            expectDeclaredSecretLease(declarationFree);
+            expect(declarationFree.value).toBe('origin-one-secret');
         } finally {
             await rm(happyHomeDir, { recursive: true, force: true });
         }
@@ -202,9 +211,8 @@ describe('declared managed-service secret resolver', () => {
                 expectedRevision: initial.revision,
             });
 
-            // G and H bind different normalized declaration sets. The
-            // retained call must use G's daemon port while the H port cannot
-            // reinterpret or access G's identifier.
+            // Declaration metadata still selects Account custody when present;
+            // trusted same-plugin daemon reads do not require declarations.
             const resolveSecret = createDeclaredManagedServiceSecretResolver();
 
             const firstLease = await resolveSecret({
@@ -214,12 +222,13 @@ describe('declared managed-service secret resolver', () => {
             });
             expectDeclaredSecretLease(firstLease);
             expect(firstLease.value).toBe('g-password-v1');
-            await expect(resolveSecret({
+            const hLease = await resolveSecret({
                 scope: hScope,
                 secretId: 'g-password',
                 canonicalOrigin: managedOrigin,
-            }))
-                .resolves.toBeNull();
+            });
+            expectDeclaredSecretLease(hLease);
+            expect(hLease.value).toBe('g-password-v1');
 
             const configured = await gPassword.status('g-password', { canonicalOrigin: managedOrigin });
             await gPassword.set({

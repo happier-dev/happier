@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readPluginManifest } from './read';
 import { ingestCanonicalPluginManifest } from './ingest';
 import { serializeCanonicalPluginManifest } from './serialize';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { projectPluginAttributedCompatibilityFailure } from './diagnostics';
 import { CHANNEL_STATE_COLLECTION } from '../../../../../packages/plugins/channels/src/collections';
 
 const roots: string[] = [];
@@ -15,6 +17,47 @@ const requireFromCli = createRequire(import.meta.url);
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe('readPluginManifest target route', () => {
+  it('loads stored retired families at installed-file ingress while keeping authoring strict', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-manifest-retired-'));
+    roots.push(root);
+    const manifestPath = join(root, 'plugin.json');
+    const current = createPluginManifestV2Fixture({ contributes: { actions: [{
+      id: 'healthy', title: 'Healthy', scopes: ['global'], surfaces: ['plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe',
+    }] } });
+    for (const retired of [[], [{ id: 'retired' }]]) {
+      await writeFile(manifestPath, JSON.stringify({ ...current,
+        contributes: { ...current.contributes, tools: retired, commands: retired },
+      }));
+      const loaded = await readPluginManifest({ manifestPath, sourceProvenance: 'localSource', purpose: 'installedRead' });
+      expect(loaded).toMatchObject({ ok: true, manifest: { contributes: { actions: [{ id: 'healthy' }] } } });
+      if (!loaded.ok) throw new Error('Stored installed declaration must remain readable');
+      expect(loaded.manifest.contributes).not.toHaveProperty('tools');
+      expect(loaded.manifest.contributes).not.toHaveProperty('commands');
+      expect(loaded.diagnostics ?? []).toEqual(retired.length === 0 ? [] : [
+        expect.objectContaining({ code: 'plugin_contribution_skipped' }),
+        expect.objectContaining({ code: 'plugin_contribution_skipped' }),
+      ]);
+      expect(await readPluginManifest({ manifestPath, sourceProvenance: 'localSource', purpose: 'authoring' }))
+        .toMatchObject({ ok: false });
+    }
+  });
+
+  it('keeps the typed engine refusal at the file boundary and cannot bypass host load', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-manifest-engine-'));
+    roots.push(root);
+    const manifestPath = join(root, 'plugin.json');
+    await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ engines: { happier: '>=999.0.0' } })));
+    const result = await readPluginManifest({ manifestPath, sourceProvenance: 'localSource',
+      manifestAuthority: 'bundled_first_party', purpose: 'installedRead', enforceEngineCompatibility: false });
+    expect(result).toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_manifest_engine_incompatible' }] });
+    if (result.ok) throw new Error('Incompatible host must be refused');
+    expect(projectPluginAttributedCompatibilityFailure(result.diagnostics)).toEqual({
+      code: 'plugin_manifest_engine_incompatible', message: 'Plugin manifest requires a compatible Happier CLI version',
+    });
+    expect(await readPluginManifest({ manifestPath, sourceProvenance: 'localSource', purpose: 'authoring' }))
+      .toMatchObject({ ok: true });
+  });
   it('rejects malformed UTF-8 bytes before materializing manifest text', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-manifest-'));
     roots.push(root);
@@ -45,6 +88,7 @@ describe('readPluginManifest target route', () => {
       manifestAuthority: 'bundled_first_party' as const,
       sourceProvenance: 'localSource' as const,
       enforceEngineCompatibility: false,
+      purpose: 'authoring' as const,
     };
     const compiledManifest = compiledManifestModule.PLUGIN_MANIFEST;
     const channelStateCollection = compiledManifest.contributes?.accountCollections?.find(
@@ -120,7 +164,7 @@ describe('readPluginManifest target route', () => {
         },
       },
     }));
-    const result = await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path });
+    const result = await readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path, purpose: 'authoring' });
     expect(result.ok).toBe(false);
     const message = result.ok ? '' : result.diagnostics.map((diagnostic) => diagnostic.message).join(' | ');
     expect(message).toContain('contributes.ui.renderers.0.root.children.0.kind');

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 
-import { createLoggerAvailablePluginInvocationServiceBinding } from '../invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '../invocation/services/factory';
 import { createPluginInvocationHostPolicyResolver } from '../hostAccess/resolve';
 import {
   evaluateContributionAvailability,
@@ -63,6 +63,7 @@ describe('evaluateTargetActionPolicy', () => {
 
   it.each([
     [{ ...action }, 'visible'],
+    [{ ...action, scopes: ['global', 'session', 'message'] }, 'visible'],
     [{ ...action, surfaces: ['agent'] }, 'unavailable'],
     [{ ...action, scopes: ['session'] }, 'unavailable'],
     [{ ...action, availability: { status: 'disabled', code: 'feature_disabled' } }, 'disabled'],
@@ -166,7 +167,7 @@ describe('evaluateTargetActionPolicy', () => {
     'resolves required $request.capability HostAccess to a $outcome execution decision',
     ({ request, outcome, code }) => {
       const resolved = createPluginInvocationHostPolicyResolver({
-        createServiceBinding: createLoggerAvailablePluginInvocationServiceBinding,
+        createServiceBinding: createPluginInvocationServiceBinding,
       })({
         qualifiedId: action.qualifiedId,
         pluginId: 'acme.alpha',

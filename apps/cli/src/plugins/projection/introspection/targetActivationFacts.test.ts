@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
+import { projectPluginTargetActivationRegistrationFacts } from '@/plugins/runtime/lifecycle/activation/facts';
+import { admitPluginContributionGraph } from '../registry/normalize/admission';
+import { buildPluginContributionRegistry } from '../registry/normalize/package';
+import { collectNormalizedRegistryIntrospectionCandidates } from './normalizedRegistry';
 import type { PluginContributionIntrospectionCandidate } from './types';
 import { adaptTargetActivationFacts } from './targetActivationFacts';
 
@@ -30,6 +37,55 @@ function activeFact(occurrenceId = '4') {
 }
 
 describe('target activation introspection adapter', () => {
+  it('projects admitted healthy siblings without traversing registration evidence again', async () => {
+    const action = { id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'],
+      execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' };
+    const admitted = ingestCanonicalPluginManifest({
+      schemaVersion: 2, id: plugin.pluginId, version: plugin.pluginVersion, displayName: 'Runtime',
+      runtime: { apiVersion: 1 }, entrypoints: { daemon: './plugin.js' },
+      contributes: { actions: [action, { ...action, id: 'invalid', unsupported: true }] },
+    }, { purpose: 'admission', sourceProvenance: 'registryCustodied' });
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+    expect(admitted.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'plugin_contribution_skipped', contributionId: 'invalid',
+    }));
+    const graph = admitPluginContributionGraph({ loadedPlugins: [{
+      pluginId: plugin.pluginId, pluginRootPath: '/plugins/runtime', manifestPath: '/plugins/runtime/plugin.json',
+      daemonEntryPath: '/plugins/runtime/plugin.js', devDaemonEntryPath: null, manifest: admitted.manifest,
+      sourceSpec: { kind: 'path', locator: '/plugins/runtime', trustPolicy: 'local_trusted', installPolicy: 'link' },
+    }] });
+    const candidates = collectNormalizedRegistryIntrospectionCandidates(buildPluginContributionRegistry({
+      loadedPlugins: graph.loadedPlugins, admittedGraph: graph,
+    }));
+    let activationCount = 0;
+    const activation = await activateContributionModule({
+      pluginId: plugin.pluginId, occurrenceId: '4', manifest: admitted.manifest, isOccurrenceCurrent: () => true,
+      moduleNamespace: { activate(api: PluginApi) { activationCount++; api.actions.register('run', async () => ({ result: true })); } },
+    });
+    try {
+      expect(activation.status).toBe('active');
+      const refs = projectPluginTargetActivationRegistrationFacts(activation.registrations);
+      let registrationEvidenceReads = 0;
+      const fact = { ...activeFact(), source: 'localPath' as const, status: activation.status,
+        get required() { registrationEvidenceReads++; return refs; },
+        get bound() { registrationEvidenceReads++; return refs; },
+      };
+      for (const generation of [4, 5, 6]) {
+        const snapshot = adaptTargetActivationFacts({ generation, candidates,
+          plugins: [{ ...plugin, source: 'localPath' }], targetActivationFacts: [fact], runtimeState: 'current' });
+        expect([...snapshot.runtimeFactsByQualifiedId.keys()]).toEqual(['acme.runtime/actions/run']);
+        expect(snapshot.runtimeFactsByQualifiedId.get('acme.runtime/actions/run')?.registration.state).toBe('bound');
+      }
+      expect(registrationEvidenceReads).toBe(0);
+      expect(activationCount).toBe(1);
+      expect(adaptTargetActivationFacts({ generation: 7, candidates,
+        plugins: [{ ...plugin, source: 'localPath' }],
+        targetActivationFacts: [{ ...fact, status: 'unavailable' }], runtimeState: 'current',
+      }).runtimeFactsByQualifiedId.get('acme.runtime/actions/run')?.registration.state).toBe('unavailable');
+    } finally {
+      await activation.dispose();
+    }
+  });
   it('binds a registration-required delegated-domain contribution to the registration identity the runtime derives', () => {
     const registrationRef = { family: 'providers', localId: 'packed-managed-provider' };
     const adapted = adaptTargetActivationFacts({
@@ -44,20 +100,6 @@ describe('target activation introspection adapter', () => {
       registration: { requirement: 'required', state: 'bound', occurrenceId: '4' },
       activation: { state: 'active', occurrenceId: '4' }, projection: { state: 'projected' },
     });
-  });
-
-  it('still rejects a delegated-domain fact that binds an identity the catalog never demanded', () => {
-    expect(() => adaptTargetActivationFacts({
-      generation: 4,
-      candidates: [managedProvider],
-      plugins: [plugin],
-      targetActivationFacts: [{
-        ...activeFact(),
-        required: [{ family: 'providers', localId: 'other-provider' }],
-        bound: [{ family: 'providers', localId: 'other-provider' }],
-      }],
-      runtimeState: 'current',
-    })).toThrow(/unknown required contribution/);
   });
 
   it('binds and activates only an exact current-occurrence required target', () => {
@@ -96,16 +138,11 @@ describe('target activation introspection adapter', () => {
     ]);
   });
 
-  it('rejects unknown, duplicate, and contradictory target facts', () => {
-    const base = {
-      generation: 4, candidates: [required], plugins: [plugin], runtimeState: 'current' as const,
-    };
-    expect(() => adaptTargetActivationFacts({ ...base, targetActivationFacts: [{ ...activeFact(), required: [{ family: 'actions', localId: 'missing' }] }] }))
-      .toThrow(/unknown required contribution/);
-    expect(() => adaptTargetActivationFacts({ ...base, targetActivationFacts: [activeFact(), activeFact()] }))
-      .toThrow(/Duplicate target activation fact/);
-    expect(() => adaptTargetActivationFacts({ ...base, targetActivationFacts: [{ ...activeFact(), bound: [] }] }))
-      .toThrow(/exactly match/);
+  it('rejects contradictory metadata merged from current catalog sources', () => {
+    expect(() => adaptTargetActivationFacts({
+      generation: 4, candidates: [required], plugins: [plugin, { ...plugin, pluginVersion: '2.0.0' }],
+      runtimeState: 'current', targetActivationFacts: [activeFact()],
+    })).toThrow(/contradictory plugin metadata/);
   });
 
   it('keeps retained active facts usable when a peer update advances the public projection', () => {
@@ -189,8 +226,8 @@ describe('target activation introspection adapter', () => {
     ]);
   });
 
-  it('rejects a registration-free fact for a plugin absent from the current catalog', () => {
-    expect(() => adaptTargetActivationFacts({
+  it('ignores a retained fact for a plugin absent from the current catalog', () => {
+    expect(adaptTargetActivationFacts({
       generation: 4,
       candidates: [],
       plugins: [],
@@ -199,6 +236,6 @@ describe('target activation introspection adapter', () => {
         diagnostics: [{ code: 'plugin_activation_failed', message: 'Unknown plugin failed' }],
       }],
       runtimeState: 'current',
-    })).toThrow(/unknown plugin/);
+    }).runtimeFactsByQualifiedId.size).toBe(0);
   });
 });

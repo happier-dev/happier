@@ -1,4 +1,3 @@
-import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,8 +14,10 @@ import {
     type ResolveSessionResourceAccess,
     type StablePluginResourcesOwner,
 } from './resources';
-import { STABLE_PLUGIN_EVENT_QUEUE_LIMITS } from './events';
-import { createStablePluginUiResourceWatchOwner, type HostResourceWatchError } from './uiResourceWatch';
+import { createStablePluginUiResourceWatchOwner, UI_RESOURCE_WATCH_DELIVERY_LIMITS, type HostResourceWatchError } from './uiResourceWatch';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 /**
  * The daemon half of the EU-4b invalidation transport.
@@ -148,7 +149,6 @@ describe('native host Resource binding', () => {
         owner.retire();
     });
 });
-
 
 afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -308,6 +308,45 @@ function deferred<T>(): Readonly<{
 const CALLER = 'acme.alpha';
 
 describe('daemon plugin UI resource invalidation transport (EU-4b)', () => {
+    it('delivers authority expiry before a pending replacement read even when no poll was waiting', async () => {
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a' });
+        let retireAuthority = () => {};
+        let pending: ReturnType<typeof deferred<string>> | undefined;
+        const resources = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution(CALLER, 'live')]), generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([[CALLER, 'alpha-1']]),
+            bindDynamicResourceActions(binding) {
+                return { async readAction() { throw new Error('No native read during observer attachment'); },
+                    async observeAction() {
+                        // Retain the actual live observer's authority, not the
+                        // baseline snapshot read's already-settled lifetime.
+                        if (binding.retireObservation) retireAuthority = binding.retireObservation;
+                        return { dispose() {} };
+                    } };
+            },
+            dynamicProducers: [{ pluginId: CALLER, localId: 'live', runtime: {
+                read() { return pending?.promise ?? 'admitted-native-bytes'; },
+                observe(_invalidate, options) {
+                    return options.observeAction({ pluginId: CALLER, localId: 'read-ci' }, {}, () => {}, { signal: options.signal });
+                },
+            } }],
+        });
+        const watches = createWatchOwner(resources);
+        try {
+            await watches.open({ subscriptionId: 'authority-watch', callerPluginId: CALLER, resourceId: 'live' });
+            pending = deferred<string>();
+            retireAuthority();
+            expect(await watches.next({ callerPluginId: CALLER, subscriptionId: 'authority-watch', waitMs: 1 }))
+                .toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource' } });
+            await expect(watches.next({ callerPluginId: CALLER, subscriptionId: 'authority-watch', waitMs: 1 }))
+                .rejects.toMatchObject({ code: 'plugin_resource_subscription_unknown' });
+        } finally {
+            pending?.resolve('replacement');
+            watches.retire();
+            resetActiveAccountSettingsSnapshotForTests();
+        }
+    });
     it('retires only watches owned by changed plugin occurrences', async () => {
         const listeners = new Map<string, () => void>();
         const values = new Map([
@@ -739,7 +778,7 @@ describe('daemon plugin UI resource invalidation transport (EU-4b)', () => {
         const watches = createWatchOwner(live.owner, { record: (sample) => { samples.push(sample); } });
         await watches.open({ subscriptionId: 'sub-4', callerPluginId: CALLER, resourceId: 'live' });
 
-        const flood = STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription + 64;
+        const flood = UI_RESOURCE_WATCH_DELIVERY_LIMITS.pendingDeliveriesPerSubscription + 64;
         for (let index = 0; index < flood; index += 1) {
             live.set(`payload-${index}`);
             live.notify();
@@ -758,7 +797,7 @@ describe('daemon plugin UI resource invalidation transport (EU-4b)', () => {
             .filter((sample) => !sample.backpressured)
             .map((sample) => sample.queuedItems));
         expect(admittedHighWater).toBeLessThanOrEqual(
-            STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription,
+            UI_RESOURCE_WATCH_DELIVERY_LIMITS.pendingDeliveriesPerSubscription,
         );
         // …because the broker REFUSED the overflow rather than growing for it.
         expect(queueSamples.some((sample) => sample.backpressured)).toBe(true);

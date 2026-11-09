@@ -189,7 +189,7 @@ function legacyUnsupportedCode(descriptor: InstallableDependencyDescriptor): str
  */
 function projectedInstallId(source: ManagedDependencySourceModelEntry): string | null {
     if (source.declaration.kind === 'githubReleaseBinary') return source.declaration.installId.slice('dep.'.length);
-    return source.declaration.kind === 'managedPypiWheelAsset' || source.declaration.kind === 'pinnedArchive'
+    return source.declaration.kind === 'managedPypiWheelAsset' || source.declaration.kind === 'pinnedArchive' || source.declaration.kind === 'managedJavaScriptPackage'
         ? source.declaration.installId
         : null;
 }
@@ -287,6 +287,9 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
                         ? { trustedPublisher: source.declaration.trustedPublisher }
                         : {}),
                 })
+                : source.declaration.kind === 'managedJavaScriptPackage'
+                    ? { kind: 'managed_package' as const, packageManager: 'managed_js_runtime' as const,
+                        packageName: source.declaration.packageName, version: source.declaration.version }
                 : source.declaration.kind === 'githubReleaseBinary'
                     ? (() => {
                         const { kind: _kind, installId: _installId, ...declaration } = source.declaration;

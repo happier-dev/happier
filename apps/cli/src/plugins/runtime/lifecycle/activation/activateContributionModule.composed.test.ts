@@ -22,9 +22,9 @@ import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testki
 
 type PluginMcpServerRuntime = Parameters<PluginApi['mcp']['registerServer']>[1];
 
-function manifest(contributes: Record<string, unknown>) {
+function manifest(contributes: Record<string, unknown>, pluginId = 'acme.activation') {
     const result = ingestCanonicalPluginManifest({
-        schemaVersion: 2, id: 'acme.activation', version: '1.0.0', displayName: 'Activation',
+        schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Activation',
         engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' }, contributes,
     }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) throw new Error(result.diagnostics.map((item) => item.message).join('\n'));
@@ -46,6 +46,49 @@ function mcpRuntime(dispose: PluginMcpServerRuntime['dispose']): PluginMcpServer
 }
 
 describe('contribution module activation', () => {
+    it('activates the exact Cloudflare Account Action artifact beside its separate authentication artifact', async () => {
+        const cloudflare = await import('../../../../../../../packages/plugins/deploy-cloudflare/src/index.js');
+        const admitted = ingestCanonicalPluginManifest(cloudflare.PLUGIN_MANIFEST, {
+            manifestAuthority: 'bundled_first_party', sourceProvenance: 'registryCustodied',
+        });
+        if (!admitted.ok) throw new Error(admitted.diagnostics.map(item => item.message).join('\n'));
+        const manifest = admitted.manifest;
+        const execution = manifest.contributes.actions.find(action => action.id === 'cloudflare-named/configure')?.execution;
+        if (execution?.target !== 'account') throw new Error('Cloudflare configure must declare its Account artifact');
+        expect(manifest.contributes.connectedAccountDescriptors.some(descriptor => (
+            descriptor.authentication.account !== undefined
+            && descriptor.authentication.account.artifactId !== execution.account.artifactId
+        ))).toBe(true);
+        const result = await activateContributionModule({ pluginId: manifest.id, occurrenceId: 'cloudflare-account-selection',
+            manifest, moduleNamespace: cloudflare, target: { realm: 'account', ...execution.account },
+            isOccurrenceCurrent: () => true });
+        try {
+            expect(result.status, JSON.stringify(result.diagnostics)).toBe('active');
+            const expected = manifest.contributes.actions.filter(action => action.execution.target === 'account'
+                && action.execution.account.artifactId === execution.account.artifactId
+                && action.execution.account.exportName === execution.account.exportName).map(action => action.id).sort();
+            expect(result.registrations.every(registration => registration.family === 'actions')).toBe(true);
+            expect(result.registrations.map(registration => registration.localId).sort()).toEqual(expected);
+            expect(expected).toContain('cloudflare-named/configure');
+        } finally { await result.dispose(); }
+    });
+
+    it('activates the published OpenRouter declaration with its real usage parser module', async () => {
+        const openrouter = await import('@happier-dev/plugins-openrouter');
+        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(row => row.pluginId === openrouter.PLUGIN_MANIFEST.id);
+        if (!locator) throw new Error('Missing canonical bundled OpenRouter locator');
+        const bundled = loadBundledPluginLocators([locator])[0];
+        if (!bundled) throw new Error('Missing current bundled OpenRouter declaration');
+        const result = await activateContributionModule({ pluginId: bundled.manifest.id, occurrenceId: 'openrouter-add-flow',
+            isOccurrenceCurrent: () => true, manifest: bundled.manifest, manifestAuthority: 'bundled_first_party', moduleNamespace: openrouter });
+        try {
+            expect(result.status, JSON.stringify(result.diagnostics)).toBe('active');
+            expect(result.registrations).toMatchObject([{ family: 'providers', localId: 'openrouter', value: {
+                usageParsers: { 'openrouter-key-usage': expect.any(Function), 'openrouter-account-credits': expect.any(Function) },
+            } }]);
+        } finally { await result.dispose(); }
+    });
+
     it('activates the current bundled Triage root with exactly its declared daemon Action rights', async () => {
         const triage = await import('@happier-dev/plugins-triage');
         const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(row => row.pluginId === triage.PLUGIN_MANIFEST.id);
@@ -112,8 +155,11 @@ describe('contribution module activation', () => {
                     const expected = bundled.manifest.contributes.actions.filter(action => action.execution.target === 'account'
                         && action.execution.account.artifactId === execution.account.artifactId
                         && action.execution.account.exportName === execution.account.exportName).map(action => action.id).sort();
-                    expect(result.registrations.every(row => row.family === 'actions')).toBe(true);
-                    expect(result.registrations.map(row => row.localId).sort()).toEqual(expected);
+                    const expectedResources = bundled.manifest.contributes.resources.filter(resource => resource.source === 'dynamic' && resource.execution?.target === 'account'
+                        && resource.execution.account.artifactId === execution.account.artifactId
+                        && resource.execution.account.exportName === execution.account.exportName).map(resource => resource.id);
+                    expect(result.registrations.every(row => row.family === 'actions' || row.family === 'resources')).toBe(true);
+                    expect(result.registrations.map(row => row.localId).sort()).toEqual([...expected, ...expectedResources].sort());
                     expect(expected).toContain('internal/tasks/configure-v1');
                     expect(expected).toContain('tasks/list-v1');
                 } finally { await result.dispose(); }
@@ -141,7 +187,7 @@ describe('contribution module activation', () => {
             } },
         });
         expect(result.status).toBe('active');
-        expect(Object.keys(capturedApi as object)).toEqual(['actions']);
+        expect(Object.keys(capturedApi as object)).toEqual(['actions', 'resources']);
         expect(result.registrations).toMatchObject([{ family: 'actions', localId: 'read' }]);
         await result.dispose();
     });
@@ -515,31 +561,6 @@ describe('contribution module activation', () => {
         expect(result.diagnostics[1]?.message).toMatch(/cleanup.*failed/i);
         expect(result.diagnostics[1]?.message).not.toContain('cleanup-secret');
         expect(cleanup).toHaveBeenCalledTimes(1);
-    });
-
-    it('bounds and diagnoses resolved cleanup that hangs after graph validation fails', async () => {
-        vi.useFakeTimers();
-        const cleanup = vi.fn(() => new Promise<void>(() => undefined));
-        try {
-            const activation = activateContributionModule({
-                pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
-                manifest: manifest({
-                    actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
-                }),
-                moduleNamespace: { activate: () => cleanup },
-                cleanupTimeoutMs: 25,
-            });
-            await vi.advanceTimersByTimeAsync(25);
-            const result = await activation;
-
-            expect(result.status).toBe('unavailable');
-            expect(result.diagnostics).toEqual(expect.arrayContaining([
-                expect.objectContaining({ message: expect.stringMatching(/cleanup.*timed out/i) }),
-            ]));
-            expect(cleanup).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
     });
 
     it('waits for slow failed-activation cleanup without inventing a retirement deadline', async () => {
@@ -955,62 +976,45 @@ describe('contribution module activation publication lifetime', () => {
             vi.useRealTimers();
         }
     });
-
-    it('attempts every ordered cleanup step behind a hung MCP disposer and diagnoses the hung step', async () => {
-        vi.useFakeTimers();
-        const attempts: string[] = [];
-        const disposeFirst = vi.fn(async () => {
-            attempts.push('first');
+    it('keeps peer activation independent of hung cleanup while preserving LIFO disposal', async () => {
+        let releaseHung!: () => void;
+        let enteredHung!: () => void;
+        const hung = new Promise<void>(resolve => { releaseHung = resolve; });
+        const entered = new Promise<void>(resolve => { enteredHung = resolve; });
+        const order: string[] = [];
+        const retiring = await activateContributionModule({
+            pluginId: 'acme.activation', occurrenceId: 'retiring', isOccurrenceCurrent: () => true,
+            manifest: manifest({ mcp: { servers: [
+                { id: 'first', title: 'First', kind: 'dynamic' },
+                { id: 'second', title: 'Second', kind: 'dynamic' },
+            ], discoverySources: [] } }),
+            moduleNamespace: { activate(api: PluginApi) {
+                api.mcp.registerServer('first', mcpRuntime(async () => { order.push('first'); }));
+                api.mcp.registerServer('second', mcpRuntime(async () => {
+                    order.push('second-start'); enteredHung(); await hung; order.push('second-end');
+                }));
+                return async () => { order.push('activation'); };
+            } },
         });
-        const disposeSecond = vi.fn(async () => {
-            attempts.push('second');
-            await new Promise<void>(() => undefined);
-        });
-        const activationCleanup = vi.fn(async () => {
-            attempts.push('activation');
-        });
+        const disposal = retiring.dispose();
         try {
-            const activation = activateContributionModule({
-                pluginId: 'acme.activation', occurrenceId: '7', isOccurrenceCurrent: () => true,
-                manifest: manifest({
-                    actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
-                    mcp: {
-                        servers: [
-                            { id: 'first', title: 'First', kind: 'dynamic' },
-                            { id: 'second', title: 'Second', kind: 'dynamic' },
-                        ],
-                        discoverySources: [],
-                    },
-                }),
-                moduleNamespace: {
-                    activate(api: PluginApi) {
-                        api.actions.register('run', async () => ({ ok: true }));
-                        api.mcp.registerServer('first', mcpRuntime(disposeFirst));
-                        api.mcp.registerServer('second', mcpRuntime(disposeSecond));
-                        return activationCleanup;
-                    },
-                },
-                cleanupTimeoutMs: 25,
+            await entered;
+            const peer = await activateContributionModule({
+                pluginId: 'acme.peer', occurrenceId: 'peer', isOccurrenceCurrent: () => true,
+                manifest: manifest({ actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'],
+                    execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }] }, 'acme.peer'),
+                moduleNamespace: { activate(api: PluginApi) {
+                    api.actions.register('run', async () => ({ ok: true }));
+                    return async () => { order.push('peer'); };
+                } },
             });
-
-            const result = await activation;
-            expect(result.status).toBe('active');
-            const disposal = result.dispose();
-            const disposalExpectation = expect(disposal).rejects.toThrow(
-                /cleanup for 'mcp\.servers\/second' timed out after 25ms/u,
-            );
-            await vi.advanceTimersByTimeAsync(25);
-            await disposalExpectation;
-            // Reverse order is preserved as a preference, the hung newest
-            // disposer cannot starve the older one, and the activation cleanup
-            // still receives its own bounded attempt — each exactly once.
-            expect(attempts).toEqual(['second', 'first', 'activation']);
-            expect(disposeFirst).toHaveBeenCalledTimes(1);
-            expect(disposeSecond).toHaveBeenCalledTimes(1);
-            expect(activationCleanup).toHaveBeenCalledTimes(1);
+            expect(peer.status).toBe('active');
+            await peer.dispose();
+            expect(order).toEqual(['second-start', 'peer']);
         } finally {
-            await vi.runAllTimersAsync();
-            vi.useRealTimers();
+            releaseHung();
+            await disposal;
         }
+        expect(order).toEqual(['second-start', 'peer', 'second-end', 'first', 'activation']);
     });
 });

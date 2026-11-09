@@ -2,7 +2,7 @@ import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type { PluginCleanup } from '@happier-dev/plugin-sdk';
 import type { PluginActivationSource } from '../../activationSources';
 import type { PluginDaemonModuleNamespace } from '../../types';
-import type { ActivationTarget } from './targets';
+import type { ResolvedActivationTarget } from '../../../projection/registry/types';
 
 /**
  * Resolution of "where does this plugin's activation code come from and how
@@ -31,9 +31,9 @@ export function resolveActivationExport(moduleNamespace: PluginDaemonModuleNames
     return { status: 'missing' };
 }
 
-export function resolveActivationSource(
-    target: ActivationTarget,
-    resolver: ((target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null) | undefined,
+export function resolveActivationSource<TTarget extends ResolvedActivationTarget>(
+    target: TTarget,
+    resolver: ((target: TTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null) | undefined,
 ): PluginActivationSource<PluginDaemonModuleNamespace> {
     const resolved = resolver?.(target) ?? null;
     if (resolved) {

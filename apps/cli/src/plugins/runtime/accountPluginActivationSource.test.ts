@@ -10,7 +10,7 @@ import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/curr
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { readCurrentAccountPluginExecutionSelection, readCurrentMountedAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
+import { readCurrentAccountPluginEnablements, readCurrentAccountPluginExecutionSelection, readCurrentMountedAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createCommittedContributedActionInvoker, createCommittedContributedActionDefinitionLister,
     createCommittedContributedActionSchemaReader } from './invocation/actions/createCommittedContributedActionDeps';
@@ -375,6 +375,30 @@ describe('Account activation source assembly', () => {
             expect(sources.sourcesByPluginId.has(ready.pluginId)).toBe(true);
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
+    it('reads Account enablement once per call without requesting any declaration body', async () => {
+        const app = fastify();
+        const pluginIds = ['fixture.scratch-a', 'fixture.scratch-b'];
+        const bodies: unknown[] = [];
+        const response = (enabled: boolean) => ({ availabilityCursor: 1, hostingCapability: { enabled: false },
+            intent: { pluginId: pluginIds[0]!, desiredVersion: null, enabled, offlineUiHosting: 'disabled',
+                revision: '1', writableCollections: [] }, release: null, uiArtifacts: [], packageAssets: [] });
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+            bodies.push(request.body);
+            return { availabilityCursor: 1, pluginIds: [pluginIds[0]],
+                intentReads: [{ pluginId: pluginIds[0], response: response(false) },
+                    { pluginId: pluginIds[1], response: { ...response(true), intent: null } }], failedPluginIds: [] };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-enablement.test' });
+        try {
+            const enabled = await readCurrentAccountPluginEnablements({ pluginIds,
+                credentials: { token: 'fixture', encryption: null } as never, serverUrl: 'http://account-enablement.test' });
+            expect([...enabled]).toEqual([[pluginIds[0], false], [pluginIds[1], true]]);
+            expect(bodies).toHaveLength(1);
+            expect(bodies[0]).toMatchObject({ omitDeclarations: true });
+        } finally { restore(); await app.close(); }
+    });
+
     it('checks fresh Account placement for repeated Machine Actions without rebuilding the full Account census', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-machine-placement-'));
         const app = fastify();

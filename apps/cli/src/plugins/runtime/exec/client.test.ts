@@ -61,6 +61,16 @@ describe('A.13p spawned protocol client runtime', () => {
         protocol.dispose();
     });
 
+    it('does not send a notification whose client is disposed before the transport write', async () => {
+        const { writes, protocol } = createInMemoryJsonRpcProcess();
+        const pending = protocol.client.notify('initialized').catch((error: unknown) => error);
+
+        protocol.dispose();
+
+        await expect(pending).resolves.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_DISPOSED' });
+        expect(writes).toEqual([]);
+    });
+
     it('dispatches child-to-host JSON-RPC notifications without writing responses', async () => {
         const { stdout, writes, protocol } = createInMemoryJsonRpcProcess();
         const received: unknown[] = [];

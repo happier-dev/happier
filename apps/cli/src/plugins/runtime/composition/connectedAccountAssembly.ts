@@ -16,6 +16,7 @@ export function assembleConnectedAccountRuntime(input: Readonly<{
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
     isPluginOccurrenceCurrent(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): boolean;
+    isPluginActivationUnavailable?: Parameters<typeof createConnectedAccountContributionRegistry>[0]['isPluginActivationUnavailable'];
     resolveRetirementSignal?(pluginId: string): AbortSignal;
     activateOnDemand(ref: Readonly<{ pluginId: string; localId: string }>): Promise<void>;
     readRegistrations(): Parameters<typeof createConnectedAccountContributionRegistry>[0]['readRegistrations'] extends () => infer Result
@@ -35,6 +36,7 @@ export function assembleConnectedAccountRuntime(input: Readonly<{
         readPluginOccurrenceId: input.readPluginOccurrenceId,
         readPluginSourceCustody: input.readPluginSourceCustody,
         isPluginOccurrenceCurrent: input.isPluginOccurrenceCurrent,
+        isPluginActivationUnavailable: input.isPluginActivationUnavailable,
         resolveRetirementSignal: input.resolveRetirementSignal,
         descriptors: input.descriptors,
         onDescriptorUnavailable: input.onDescriptorUnavailable,

@@ -6,6 +6,7 @@ import {
     type StablePluginSettingsModel,
     type StablePluginSettingsScope,
 } from '@happier-dev/protocol/plugins/contributions/ui/settingsDescriptors';
+import { readReleasedFlatPluginSettingValue } from '@happier-dev/protocol/account/settings/releasedFlatPluginSettings';
 import { PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 import { isBoundedPluginPerActiveServerValueV1 } from '@happier-dev/protocol/plugins/contributions/settings';
 import type { PluginJsonSchemaValidator, PluginSettingsContributionV2 } from '@happier-dev/protocol';
@@ -67,6 +68,7 @@ export type CanonicalPluginSettingsRecord = Readonly<{
     values: Readonly<Record<string, JsonValue>>;
 }>;
 
+const modelsByService = new WeakMap<ScopedSettingsService, StablePluginSettingsModel>();
 const validatorsByModel = new WeakMap<object, ReadonlyMap<string, PluginJsonSchemaValidator>>();
 const storedValueReadersByModel = new WeakMap<object, ReadonlyMap<string, ReturnType<typeof createPluginJsonSchemaZodValueAdapter>>>();
 const perActiveServerMapFieldIdsByModel = new WeakMap<object, ReadonlySet<string>>();
@@ -640,12 +642,32 @@ function visibleValues(
  */
 export async function readPluginSettingsValuesWithDefaults(
     service: ScopedSettingsService,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{
+        signal?: AbortSignal;
+        releasedAccountSettings?: Readonly<{
+            settings: Readonly<Record<string, unknown>> | null;
+            hostDefaults: Readonly<Record<string, unknown>>;
+        }>;
+    }>,
 ): Promise<Readonly<Record<string, JsonValue>>> {
     const snapshot = await service.snapshot(options);
     const values: Record<string, JsonValue> = { ...snapshot.values };
+    const model = modelsByService.get(service);
     for (const descriptor of service.describe()) {
         if (descriptor.secret === true || Object.hasOwn(values, descriptor.id)) continue;
+        if (model?.scope === 'account' && options?.releasedAccountSettings) {
+            const released = readReleasedFlatPluginSettingValue({
+                ...options.releasedAccountSettings, localId: descriptor.id,
+            });
+            if (released !== undefined) {
+                const parsed = storedValueReadersByModel.get(model)?.get(descriptor.id)?.safeParse(released);
+                if (!parsed?.success || !validateStablePluginSettingValue(model, descriptor.id, parsed.data)) {
+                    throw settingsError('plugin_settings_record_invalid', `Plugin settings record '${model.identity.qualifiedId}' contains an invalid field value`);
+                }
+                values[descriptor.id] = parsed.data;
+                continue;
+            }
+        }
         if (descriptor.default !== undefined) values[descriptor.id] = clonePlainData(descriptor.default);
     }
     return Object.freeze(values);
@@ -1062,6 +1084,7 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     return Object.freeze({ dispose });
                 },
             };
+            modelsByService.set(service, model);
             return Object.freeze(service);
         },
     });

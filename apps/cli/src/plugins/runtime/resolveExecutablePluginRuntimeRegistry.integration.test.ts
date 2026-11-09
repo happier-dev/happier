@@ -24,11 +24,17 @@ import {
     createPluginStateStore,
     writeCommittedLocalPathPluginFixture,
 } from '@/plugins/store/state.testkit';
-import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    createMergedContributionRegistry,
+    resolveMergedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { executeContributedAction } from './invocation/actions/executeContributedAction';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
     readPluginRegistryCommitRecord,
@@ -139,6 +145,76 @@ async function createTrustedLocalLinkInstall(params: Readonly<{
 }
 
 describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
+    it.each(['reviewed', 'proposedOnly', 'wrongAudience', 'wrongId'] as const)('carries a reviewed explicit-id shared save into an installed external Action without byte egress: %s', async scenario => {
+        const pluginId = 'acme.external-shared-save';
+        const sentinel = 'external-generated-shared-save-sentinel';
+        const home = await createSavedSecretsCliHttpFixture();
+        const fixtureCredentials = await home.deps.readCredentialsFn?.();
+        if (!fixtureCredentials) throw new Error('Fixture credentials unavailable');
+        const credentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(fixtureCredentials);
+        const records: unknown[] = [];
+        const log = vi.spyOn(logger, 'appendPluginInvocationLogRecord').mockImplementation(record => { records.push(record); });
+        let runtime: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
+        try {
+            runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+                manifest: createPluginManifestV2Fixture({ id: pluginId,
+                    secrets: [{ id: 'database', saveShared: true }, { id: 'backup', saveShared: true }],
+                    contributes: { actions: [{ id: 'save', title: 'Save provider connection', scopes: ['global'], surfaces: ['cli'],
+                        dangerLevel: scenario === 'proposedOnly' ? 'safe' : 'writesRemote',
+                        ...(scenario === 'proposedOnly' ? {} : { confirmation: { title: 'Save provider connection', confirmLabel: 'Save' } }),
+                        execution: { target: 'daemon' } }] },
+                }),
+                files: { 'daemon.mjs': `export function activate(api) {
+                    api.actions.register('save', async (input, context) => {
+                        const bytes = new TextEncoder().encode('${sentinel}');
+                        const audience = ${scenario === 'wrongAudience' ? "{ ...input.audience, teamGrants: [...input.audience.teamGrants, 'unreviewed-team'] }" : 'input.audience'};
+                        try { return await context.services.secrets.saveShared('${scenario === 'wrongId' ? 'backup' : 'database'}', {
+                            label: 'Provider database', bytes, audience,
+                        }, { signal: context.signal }); } finally { bytes.fill(0); }
+                    });
+                }` },
+            }], async resolveContributes(happyHomeDir) {
+                return createMergedContributionRegistry(projectLoadedPluginContributes({
+                    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+                }), {});
+            } });
+            const reviewedInput = { id: 'database', purpose: 'data.connection', audience: { teamGrants: ['team-data'] } };
+            let reviewed = false;
+            const runtimeRegistry = runtime.registry;
+            const result = await home.inHome(() => executeContributedAction({ runtimeRegistry, actionId: `${pluginId}/save`,
+                input: reviewedInput, context: { surface: 'cli', approvalInputCustody: 'live_only', signal: new AbortController().signal },
+                // The person's approval decision is the external boundary. The
+                // production admission producer must project its exact operands
+                // into the invocation; a fixture must not manufacture that seed.
+                requestCurrentIntent: async request => {
+                    expect(request.action.input).toEqual(reviewedInput);
+                    reviewed = true;
+                    return { status: 'approved', fingerprint: request.fingerprint };
+                },
+            }));
+            expect(reviewed).toBe(scenario !== 'proposedOnly');
+            expect(JSON.stringify({ result, records })).not.toContain(sentinel);
+            if (scenario === 'reviewed') {
+                expect(result, JSON.stringify(result)).toMatchObject({ matched: true, result: { ok: true,
+                    result: { ref: expect.stringMatching(/^happier:shared-secret:v1:/), resourceRevision: 1 } } });
+                expect(home.writes).toHaveLength(1);
+                expect(home.writes[0]).toMatchObject({ teamGrants: ['team-data'] });
+                expect(home.opened(home.writes[0]!)).toMatchObject({ value: sentinel,
+                    createdByPlugin: { pluginId, secretId: 'database' } });
+            } else {
+                expect(result, JSON.stringify(result)).toMatchObject({ matched: true,
+                    result: { ok: false, errorCode: 'plugin_secret_save_not_admitted' } });
+                expect(home.writes).toEqual([]);
+            }
+        } finally {
+            await runtime?.dispose();
+            resetActiveAccountSettingsSnapshotForTests();
+            credentials.mockRestore();
+            log.mockRestore();
+            await home.close();
+        }
+    });
+
     it('retires current materialization after acquiring every declared managed Provider runtime from one committed activation target', async () => {
         const happyHomeDir = await mkdtemp(
             join(tmpdir(), 'happier-managed-provider-acquisition-home-'),
@@ -890,7 +966,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         }, signature: { alg: 'Ed25519', keyId: 'home-key', valueBase64Url: Buffer.alloc(64).toString('base64url') } },
                         target: { custodianAccountId: 'account-1', brokerMachineId: openedRequest.targetMachineId,
                             endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
-                        admitConsumer: async () => ({ ok: true }),
                         openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'relay',
                             retire: async () => undefined, close: async () => { carrierClosed = true; } }),
                         // The carrier is the network boundary; serve the real
@@ -1639,6 +1714,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
     it('routes dynamic and discovered MCP servers through the bound native session owner', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-mcp-session-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-mcp-session-plugin-'));
+        const mcpSecret = 'mcp-quoted-"credential"\nsecond-line-42';
         await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
         await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
             schemaVersion: 2,
@@ -1647,6 +1723,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             displayName: 'Session MCP fixture',
             engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
+            secrets: [{ id: 'echo-token', custody: 'daemon' }],
             hostAccess: {
                 required: [{
                     id: 'session-tools-access',
@@ -1692,9 +1769,28 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             api.mcp.registerServer('session-tools', {
                 async dispose() {},
                 async listTools() {
-                    return { items: [{ name: 'confirm', inputSchema: { type: 'object' } }] };
+                    return { items: [
+                        { name: 'confirm', inputSchema: { type: 'object' } },
+                        { name: 'echo-credential', inputSchema: { type: 'object' } }
+                    ] };
                 },
-                async callTool(_request, context) {
+                async callTool(request, context) {
+                    if (request.name === 'echo-credential') {
+                        if (request.input.operation === 'readResource' || request.input.operation === 'getPrompt') {
+                            const client = await context.services.mcp.connect({
+                                pluginId: 'acme.mcp.session', localId: 'session-tools'
+                            }, { sessionId: context.session.id, elicitation: { mode: 'reject' } });
+                            try {
+                                return request.input.operation === 'readResource'
+                                    ? await client.readResource('file:///credential')
+                                    : await client.getPrompt('credential');
+                            } finally {
+                                await client.dispose();
+                            }
+                        }
+                        const value = await context.services.secrets.get('echo-token');
+                        return { ordinary: 'visible-tool-result', value, escaped: JSON.stringify(value), [value]: 'visible-key-value' };
+                    }
                     const result = await context.services.interactions.confirm({
                         kind: 'confirmation',
                         message: 'Run the session MCP tool?'
@@ -1707,7 +1803,11 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 async listResourceTemplates() {
                     return { items: [{ uriTemplate: 'file:///{path}', name: 'file' }] };
                 },
-                async readResource(request) {
+                async readResource(request, context) {
+                    if (request.uri === 'file:///credential') {
+                        const value = await context.services.secrets.get('echo-token');
+                        return { contents: [{ uri: request.uri, text: 'visible-resource-result ' + value }] };
+                    }
                     return { contents: [
                         { uri: request.uri, mimeType: 'text/markdown', text: '# Guide' },
                         { uri: 'file:///image.png', mimeType: 'image/png', blob: 'aW1hZ2U=' }
@@ -1720,7 +1820,11 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 async listPrompts() {
                     return { items: [{ name: 'review', arguments: [{ name: 'scope', required: true }] }] };
                 },
-                async getPrompt(request) {
+                async getPrompt(request, context) {
+                    if (request.name === 'credential') {
+                        const value = await context.services.secrets.get('echo-token');
+                        return { messages: [{ role: 'user', content: { type: 'text', text: 'visible-prompt-result ' + value } }] };
+                    }
                     return { messages: [{ role: 'user', content: { type: 'text', text: 'Review ' + request.args.scope } }] };
                 }
             });
@@ -1799,6 +1903,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         try {
             const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, pluginIds: ['acme.mcp.session'] });
             try {
+                const mcpSecrets = runtimeRegistry.createPluginSecretsService?.({ pluginId: 'acme.mcp.session' });
+                if (!mcpSecrets) throw new Error('Expected MCP fixture daemon secret service');
+                await mcpSecrets.set('echo-token', mcpSecret);
                 expect(runtimeRegistry.contributes.mcpDiscoverySources).toEqual(expect.arrayContaining([
                     expect.objectContaining({
                         pluginId: 'acme.mcp.session',
@@ -2046,6 +2153,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     expect.objectContaining({
                         name: 'confirm',
                     }),
+                    expect.objectContaining({ name: 'echo-credential' }),
                 ]);
                 await expect(confirmPending(hostOwners.permissionSession, projectedClient.callTool({
                     name: projectedTools.tools[0]!.name,
@@ -2058,6 +2166,16 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 });
                 expect(Object.keys(hostOwners.permissionSession.__getAgentState().completedRequests ?? {})).toHaveLength(1);
                 expect(Object.keys(directSession.__getAgentState().completedRequests ?? {})).toHaveLength(1);
+                // This is the actual agent-facing loopback transport. Resource/prompt
+                // results reach it through an ordinary nested plugin MCP client.
+                for (const operation of ['callTool', 'readResource', 'getPrompt']) {
+                    const echoed = await projectedClient.callTool({ name: 'echo-credential', arguments: { operation } });
+                    const wireResult = JSON.stringify(echoed);
+                    expect.soft(wireResult, operation).not.toContain(mcpSecret);
+                    expect.soft(wireResult, operation).not.toContain(JSON.stringify(mcpSecret).slice(1, -1));
+                    expect.soft(wireResult, operation).not.toContain(JSON.stringify(JSON.stringify(mcpSecret).slice(1, -1)).slice(1, -1));
+                    expect.soft(wireResult, operation).toContain(`visible-${operation === 'callTool' ? 'tool' : operation === 'readResource' ? 'resource' : 'prompt'}-result`);
+                }
                 await projectedClient.close();
                 await hostOwners.dispose();
                 await expect(fetch(projectedUrl, {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 

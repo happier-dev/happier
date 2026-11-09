@@ -5,10 +5,9 @@ import { join } from 'node:path';
 
 import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createUnavailablePluginInvocationServiceBinding,
-} from '../../invocation/services/factory';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import { createPluginInvocationServiceBinding, createUnavailablePluginInvocationServiceBinding } from '../../invocation/services/factory';
 import {
     createUnavailablePluginServices,
 } from '../../invocation/services/unavailable';
@@ -65,7 +64,7 @@ describe('background service runner host', () => {
         });
 
         host.start();
-        await Promise.resolve();
+        await host.settle(['acme.indexer']);
 
         expect(runner).not.toHaveBeenCalled();
         expect(diagnostics).toEqual([{
@@ -183,12 +182,8 @@ describe('background service runner host', () => {
         const serviceBindings: ReturnType<typeof createUnavailablePluginInvocationServiceBinding>[] = [];
         let ordinaryBindingCalls = 0;
         const resolvePolicy = createPluginInvocationHostPolicyResolver({
-            createServiceBinding(generation, id, requests) {
-                return createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                    generation,
-                    id,
-                    requests,
-                );
+            createServiceBinding(generation, id) {
+                return createPluginInvocationServiceBinding(generation, id);
             },
         });
         const invocationServices = {
@@ -268,12 +263,6 @@ describe('background service runner host', () => {
         expect(policyCalls[0]?.context).not.toHaveProperty('executionRealm');
         expect(ordinaryBindingCalls).toBe(0);
         expect(serviceBindings).toEqual(policyBindings);
-        expect(serviceBindings[0]).toMatchObject({
-            availability: {
-                http: 'available',
-            },
-            networkClientRequestIds: ['gateway'],
-        });
         expect(terminalFailure).not.toHaveBeenCalled();
         expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
         expect(activated.failedActivationPluginIds.has(pluginId)).toBe(false);
@@ -406,7 +395,7 @@ describe('background service runner host', () => {
         }
     });
 
-    it('does not enter an adopted runner when required HostAccess is unavailable', async () => {
+    it('lets the service owner report unavailable operations inside an adopted runner', async () => {
         const pluginId = 'acme.background-required-host-access';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
@@ -432,7 +421,15 @@ describe('background service runner host', () => {
         if (!ingested.ok) {
             throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
         }
-        const runner = vi.fn(async () => {});
+        let observedCode: string | undefined;
+        const runner = vi.fn(async (context: BackgroundServiceContext) => {
+            try {
+                await context.services.http.request({ method: 'GET', url: 'https://gateway.example.test' });
+            } catch (error) {
+                if (!(error instanceof PluginError)) throw error;
+                observedCode = error.code;
+            }
+        });
         const policyBinding = createUnavailablePluginInvocationServiceBinding('1', 'required-background-policy');
         let policyCalls = 0;
         const resolvePolicy = createPluginInvocationHostPolicyResolver({
@@ -447,7 +444,7 @@ describe('background service runner host', () => {
                 return resolvePolicy(_target, context);
             },
             createServices() {
-                throw new Error('Unavailable required HostAccess must prevent service construction');
+                return createUnavailablePluginServices();
             },
         } satisfies TargetInvocationServiceOwner;
         const contributes = {
@@ -489,9 +486,8 @@ describe('background service runner host', () => {
         });
 
         activated.startAdoptedBackgroundServices();
-        await vi.waitFor(() => expect(policyCalls).toBe(1));
-
-        expect(runner).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(observedCode).toBe('plugin_service_unavailable'));
+        expect(policyCalls).toBe(1);
         expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
         expect(activated.failedActivationPluginIds.has(pluginId)).toBe(false);
         await activated.dispose();

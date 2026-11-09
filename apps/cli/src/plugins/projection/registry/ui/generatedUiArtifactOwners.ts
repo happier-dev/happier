@@ -1,7 +1,7 @@
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 import type { PluginUiArtifactsManifestEntryV2, PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { ResolvedContributionRegistry, ResolvedContributionSource } from '../types';
 
@@ -219,6 +219,39 @@ export function collectResolvedGeneratedReactNativeClientContributionArtifactOwn
         expectedExecutable: Object.freeze({ exportName: contribution.definition.client.exportName }),
       }));
     }
+  }
+  const accountContributions = [
+    ...(registry.connectedAccountDescriptors ?? []).flatMap(contribution => {
+      const reference = contribution.definition.authentication.account;
+      return reference ? [{ family: 'connectedAccountDescriptors' as const, contribution, reference,
+        platforms: ['web', 'ios', 'android'] as const }] : [];
+    }),
+    ...(registry.resources ?? []).flatMap(contribution => {
+      const execution = contribution.definition.execution;
+      if (contribution.definition.source !== 'dynamic' || execution?.target !== 'account') return [];
+      return [{ family: 'resources' as const, contribution,
+        reference: execution.account, platforms: ['web', 'ios', 'android'] as const }];
+    }),
+  ];
+  for (const { family, contribution, reference, platforms } of accountContributions) {
+    const pluginId = contribution.pluginId;
+    const manifestPath = contribution.manifestPath?.trim();
+    if (!pluginId || !manifestPath) continue;
+    const localId = contribution.definition.id;
+    owners.push(Object.freeze({
+      kind: 'clientContribution',
+      pluginId,
+      pluginSource: Object.freeze({ ...contribution.source }),
+      ...(contribution.pluginVersion ? { pluginVersion: contribution.pluginVersion } : {}),
+      contributionId: `${family}/${localId}`,
+      contributionIdentity: createPluginContributionIdentity({ pluginId, localId }),
+      artifactId: reference.artifactId,
+      ...(contribution.pluginRootPath ? { pluginRootPath: contribution.pluginRootPath } : {}),
+      manifestPath,
+      ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}),
+      declaredPlatforms: Object.freeze([...platforms]),
+      expectedExecutable: Object.freeze({ exportName: reference.exportName }),
+    }));
   }
   return Object.freeze(owners);
 }

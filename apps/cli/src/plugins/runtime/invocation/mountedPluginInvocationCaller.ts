@@ -6,11 +6,11 @@ import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { normalizePluginSourceCustody, pluginSourceCustodyEqual } from '@/plugins/runtime/sourceAuthority';
 import { listComposerSurfaceDeclarations } from '@/plugins/projection/registry/composer';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
 
 export type MountedAccountPluginExecutionSelectionResolver = (
     pluginId: string,
-    registry: ResolvedExecutablePluginRuntimeRegistry,
     signal?: AbortSignal,
 ) => Promise<PluginAccountExecutionSelectionV1>;
 
@@ -54,6 +54,7 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
             ? invocation.clientActionBinding
             : undefined;
     if (!binding) return Object.freeze({ status: 'absent' as const });
+    const matchesCallerContributionId = (localId: string) => localId === binding.contributionLocalId;
     const contributes = input.registry.contributes;
     let resolvedMachineContext: Readonly<{ serverIdentityId: string; machineId: string }> | null;
     try {
@@ -77,11 +78,15 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
             if (selection.kind !== 'available' || selection.manifest.id !== binding.pluginId
                 || (binding.pluginVersion !== undefined && binding.pluginVersion !== selection.manifest.version)) return false;
             const contributions = selection.manifest.contributes;
+            // A client caller is an Account Action or the plugin's Work Items registration, whose
+            // callback reaches source Actions through context.services.actions.
             const declaredCaller = invocation?.kind === 'clientPluginAction'
                 ? contributions.actions?.some(action => action.id === binding.contributionLocalId && action.execution.target === 'account')
+                    || contributions.workItems?.some(entry => entry.id === binding.contributionLocalId) === true
                 : invocation?.kind === 'mountedPluginSurface' && [
                     ...contributions.ui.views, ...contributions.ui.settingsPages,
-                ].some(surface => surface.id === binding.contributionLocalId);
+                    ...contributions.targetedPluginContributions,
+                ].some(surface => matchesCallerContributionId(surface.id));
             if (!declaredCaller) return false;
             if (accountSourceCustody.kind === 'account_release') {
                 return pluginSourceCustodyEqual(accountSourceCustody, selection.sourceCustody);
@@ -164,26 +169,37 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
 
     let contributionIdentity: Readonly<{ pluginId: string; localId: string }> | null = null;
     if (invocation?.kind === 'clientPluginAction') {
-        const mountedAction = contributes.actionsById?.get(buildQualifiedPluginContributionKey({
+        const mountedAction = readResolvedActionContribution(contributes, {
             pluginId,
             localId: binding.contributionLocalId,
-        }));
-        if (!mountedAction || !mountedAction.pluginId || !('execution' in mountedAction.definition)) {
-            return Object.freeze({ status: 'unavailable' as const });
+        });
+        // The plugin's declared Work Items registration is the other client caller family;
+        // its callback reaches source Actions through context.services.actions.
+        const workItems = mountedAction ? undefined : contributes.workItems?.find((entry) => (
+            entry.pluginId === pluginId
+            && entry.identity.pluginId === pluginId
+            && entry.identity.localId === binding.contributionLocalId
+        ));
+        if (workItems) {
+            contributionIdentity = workItems.identity;
+        } else {
+            if (!mountedAction || !mountedAction.pluginId || !('execution' in mountedAction.definition)) {
+                return Object.freeze({ status: 'unavailable' as const });
+            }
+            const execution = mountedAction.definition.execution;
+            if (
+                typeof execution !== 'object'
+                || execution === null
+                || !('target' in execution)
+                || execution.target !== 'client'
+            ) {
+                return Object.freeze({ status: 'unavailable' as const });
+            }
+            contributionIdentity = {
+                pluginId: mountedAction.pluginId,
+                localId: mountedAction.definition.id,
+            };
         }
-        const execution = mountedAction.definition.execution;
-        if (
-            typeof execution !== 'object'
-            || execution === null
-            || !('target' in execution)
-            || execution.target !== 'client'
-        ) {
-            return Object.freeze({ status: 'unavailable' as const });
-        }
-        contributionIdentity = {
-            pluginId: mountedAction.pluginId,
-            localId: mountedAction.definition.id,
-        };
     } else {
         const mountedContribution = [
             ...(contributes.uiViewsV2 ?? []),
@@ -207,7 +223,7 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
             const declaration = contributes.targetedPluginContributions?.find((entry) => (
                 entry.pluginId === pluginId
                 && entry.identity.pluginId === pluginId
-                && entry.identity.localId === binding.contributionLocalId
+                && matchesCallerContributionId(entry.identity.localId)
             ));
             const admitted = declaration && contributes.readAdmittedTargetedContributions?.({
                 targetPluginId: declaration.definition.target.pluginId,

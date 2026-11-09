@@ -1,5 +1,6 @@
 import { createPluginCompatibilityProjectionV1, PluginCompatibilityProjectionV1Schema } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
 import type { PluginCompatibilityProjectionV1 } from '@happier-dev/protocol';
+import { z } from 'zod/mini';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
@@ -7,6 +8,11 @@ import { generatedUiArtifactDefaultHostCompatibilityFailure } from '@/plugins/pr
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 
 const INVALID_COMPATIBILITY_PROJECTION_DIAGNOSTIC = 'Plugin compatibility projection is invalid.';
+// Validate generated facts here; only the canonical admission owner interprets
+// the manifest. Parsing the author schema first would reject healthy siblings.
+const CompatibilityProjectionEnvelopeSchema = z.extend(PluginCompatibilityProjectionV1Schema, {
+  manifest: z.unknown(),
+});
 
 export type PluginCompatibilityProjectionEvaluation =
   | Readonly<{
@@ -32,7 +38,7 @@ export type PluginCompatibilityProjectionEvaluation =
 export function evaluatePluginCompatibilityProjection(
   input: unknown,
 ): PluginCompatibilityProjectionEvaluation {
-  const parsed = PluginCompatibilityProjectionV1Schema.safeParse(input);
+  const parsed = CompatibilityProjectionEnvelopeSchema.safeParse(input);
   if (!parsed.success) {
     return Object.freeze({
       kind: 'invalid',
@@ -47,10 +53,7 @@ export function evaluatePluginCompatibilityProjection(
   // artifact; nothing local reaches this evaluation.
   const manifestValidation = ingestCanonicalPluginManifest(parsed.data.manifest, {
     sourceProvenance: 'registryCustodied',
-  });
-  const projection = createPluginCompatibilityProjectionV1({
-    manifest: manifestValidation.ok ? manifestValidation.manifest : parsed.data.manifest,
-    uiArtifacts: parsed.data.uiArtifacts,
+    purpose: 'admission',
   });
   if (!manifestValidation.ok) {
     // Author diagnostics may restate unverified manifest content. Only the
@@ -60,12 +63,17 @@ export function evaluatePluginCompatibilityProjection(
       const diagnostic = projectPluginManifestCompatibilityDiagnostic(entry);
       return [JSON.stringify(diagnostic), diagnostic] as const;
     })).values()];
-    return Object.freeze({
-      kind: 'incompatible',
-      projection,
-      diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
-    });
+    const failure = { diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))) };
+    return manifestValidation.manifest
+      ? Object.freeze({ kind: 'incompatible', ...failure, projection: createPluginCompatibilityProjectionV1({
+        manifest: manifestValidation.manifest, uiArtifacts: parsed.data.uiArtifacts,
+      }) })
+      : Object.freeze({ kind: 'invalid', ...failure });
   }
+  const projection = createPluginCompatibilityProjectionV1({
+    manifest: manifestValidation.manifest,
+    uiArtifacts: parsed.data.uiArtifacts,
+  });
   for (const artifact of projection.uiArtifacts.entries) {
     const failure = generatedUiArtifactDefaultHostCompatibilityFailure(artifact);
     if (!failure) continue;

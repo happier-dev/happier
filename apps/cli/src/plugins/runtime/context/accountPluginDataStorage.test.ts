@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 import tweetnacl from 'tweetnacl';
 import * as collectionCodec from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import * as artifactIntegrity from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -41,7 +42,7 @@ import {
     type AccountPluginDataStorageHostDependencies,
     type PluginAccountCollectionWatchInvalidation,
 } from './accountPluginDataStorage';
-import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, retirePluginAccountCollectionWatchScope } from './pluginAccountSettingsChangeBroker';
+import { publishPluginAccountAvailabilityChanges, publishPluginAccountCollectionWatchInvalidation, readPluginAccountCollectionWatchInvalidations, retirePluginAccountCollectionWatchScope } from './pluginAccountSettingsChangeBroker';
 
 const PLUGIN_ID = 'example.tasks';
 const COLLECTION_ID = 'tasks';
@@ -197,7 +198,7 @@ function bindHost(params: Readonly<{
     randomBytes?: (length: number) => Uint8Array;
     resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
     signal?: AbortSignal;
-    isOccurrenceCurrent?: () => boolean;
+    isOccurrenceCurrent?: () => boolean | Promise<boolean>;
 }>) {
     // Keep the test boundary forward-compatible while the host consumes this
     // optional daemon-cached capability. The production dependency remains
@@ -242,6 +243,61 @@ function bindHost(params: Readonly<{
 }
 
 describe('Account plugin Data storage host', () => {
+    it.each([plainCredentials, encryptedCredentials])('reads stored union rows with branch-local schemas on $token', async credentials => {
+        const definition = {
+            ...collectionDefinition,
+            schema: {
+                ...collectionDefinition.schema,
+                properties: { ...collectionDefinition.schema.properties, privateNote: {} },
+                oneOf: [
+                    { properties: { status: { const: 'open' }, privateNote: { type: 'string' } } },
+                    { properties: { status: { const: 'closed' }, privateNote: { type: 'string' } } },
+                ],
+            },
+        } satisfies PluginAccountCollectionDefinition;
+        const contract = normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_ID,
+            contribution: { ...definition, migrations: [] } });
+        const value = { id: 'retained-union', status: 'closed', privateNote: 'retained' };
+        const encoded = collectionCodec.encodePluginCollectionLogicalValueV1({
+            contract, isValidLogicalValue: compilePluginJsonSchema(contract.schema), value,
+            encryptionMode: credentials.encryption ? 'e2ee' : 'plain',
+            material: credentials.encryption ? { type: 'dataKey', machineKey: encryptedMachineKey } : null,
+            randomBytes: length => new Uint8Array(length).fill(3),
+        });
+        if (encoded.status !== 'encoded') throw new Error('Expected the real Collection writer to accept the stored row');
+        const row = { rowId: encoded.rowId, revision: 1, content: encoded.content, projection: encoded.projection };
+        // Only authenticated HTTP is replaced. The producer, wire admission,
+        // encryption codec and stored-read schema all remain real.
+        const account = bindHost({ contracts: [contract], credentials,
+            get: async () => ({ status: 200, data: { row, absenceEpoch: 0 } }),
+            post: async () => ({ status: 200, data: { rows: [row], changeCursor: 1 } }),
+        });
+        const collection = account.collection(definition);
+        await expect(collection.get(row.rowId)).resolves.toMatchObject({ value });
+        await expect(collection.query({ index: 'by-status', prefix: ['closed'], order: 'asc' }))
+            .resolves.toMatchObject({ rows: [{ value }] });
+    });
+
+    it('reads physical collection presence without binding, claiming writers, or loading migration modules', async () => {
+        const calls: string[] = [];
+        const host = createAccountPluginDataStorageHost({
+            contracts: [], readCredentials: async () => plainCredentials,
+            isCurrentAccount: () => true, resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
+            resolveBaseUrl: () => 'https://data.example.test',
+            resolveReleaseLessDeclaration: () => { throw new Error('Presence must not claim a writer'); },
+            resolveReleaseLessCollectionMigrations: async () => { throw new Error('Presence must not evaluate plugin modules'); },
+            http: { get: async () => { throw new Error('Unexpected GET'); },
+                post: async (url) => { calls.push(url); return { status: 200, data: {
+                    collections: [{ pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, present: false }], changeCursor: 17,
+                } }; },
+            },
+        });
+        const result = await host.readCollectionPresence({ collections: [{ pluginId: PLUGIN_ID, collectionId: COLLECTION_ID }] }, {
+            pluginId: PLUGIN_ID, occurrenceId: '1', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        });
+        expect(result).toEqual({ collections: [{ pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, present: false }], changeCursor: 17, accountScopeKey: ACCOUNT_SCOPE_KEY });
+        expect(calls).toEqual(['https://data.example.test/v1/plugins/data/presence']);
+    });
     describe('authenticated encryption identity admission', () => {
         function createHost(initialCredentials: StoredCredentials = plainCredentials,
             contracts: readonly NormalizedPluginAccountCollectionContractV1[] = [admitted]) {
@@ -820,17 +876,21 @@ describe('Account plugin Data storage host', () => {
         } finally { decode.mockRestore(); }
     });
 
-    it.each([plainCredentials, encryptedCredentials])('revalidates changed same-revision content and projection on $token', async credentials => {
+    it.each([plainCredentials, encryptedCredentials])('reuses decoded same-revision rows while checking envelope mode on $token', async credentials => {
         const decode = vi.spyOn(collectionCodec, 'decodePluginCollectionLogicalRowV1');
-        let privateNote: string | number = 'first';
+        let privateNote = 'first';
         let status = 'open';
+        let revision = 3;
+        let wrongEnvelope = false;
         const host = createAccountPluginDataStorageHost({
             contracts: [admitted], readCredentials: async () => credentials,
             isCurrentAccount: () => true, resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
             resolveBaseUrl: () => 'https://data.example.test',
             resolveAccountEncryptionCurrentness: async value => currentnessFor(value),
             http: { get: async () => ({ status: 200, data: {} }), post: async () => ({ status: 200, data: {
-                row: { rowId: 'task-witness', revision: 3, projection: { status }, content: credentials.encryption === null
+                row: { rowId: 'task-witness', revision, projection: { status }, content: wrongEnvelope
+                    ? (credentials.encryption === null ? { t: 'encrypted', c: 'invalid' } : { t: 'plain', v: {} })
+                    : credentials.encryption === null
                     ? { t: 'plain', v: { privateNote } }
                     : { t: 'encrypted', c: sealPluginCollectionPrivatePayloadV1({
                         payload: { privateNote }, material: { type: 'dataKey', machineKey: encryptedMachineKey },
@@ -845,19 +905,16 @@ describe('Account plugin Data storage host', () => {
         try {
             expect((await collection.get('task-witness'))?.value.privateNote).toBe('first');
             privateNote = 'second';
-            expect((await collection.get('task-witness'))?.value.privateNote).toBe('second');
-            expect(decode).toHaveBeenCalledTimes(2);
             status = 'closed';
-            expect((await collection.get('task-witness'))?.value.status).toBe('closed');
-            expect(decode).toHaveBeenCalledTimes(3);
-            await collection.get('task-witness');
-            expect(decode).toHaveBeenCalledTimes(3);
-            privateNote = 42;
-            await expect(collection.get('task-witness')).rejects.toBeInstanceOf(PluginError);
-            expect(decode).toHaveBeenCalledTimes(4);
-            privateNote = 'second';
-            expect((await collection.get('task-witness'))?.value.privateNote).toBe('second');
-            expect(decode).toHaveBeenCalledTimes(4); // A rejected envelope did not replace the validated witness.
+            expect((await collection.get('task-witness'))?.value).toEqual({ id: 'task-witness', status: 'open', privateNote: 'first' });
+            expect(decode).toHaveBeenCalledTimes(1);
+            wrongEnvelope = true;
+            await expect(collection.get('task-witness')).rejects.toMatchObject({ code: 'plugin_collection_protocol_invalid' });
+            expect(decode).toHaveBeenCalledTimes(1);
+            wrongEnvelope = false;
+            revision += 1;
+            expect((await collection.get('task-witness'))?.value).toEqual({ id: 'task-witness', status: 'closed', privateNote: 'second' });
+            expect(decode).toHaveBeenCalledTimes(2);
         } finally { decode.mockRestore(); }
     });
 
@@ -1434,6 +1491,7 @@ describe('Account plugin Data storage host', () => {
                 scopeKey: () => 'private-account-scope-marker',
                 post: async (url) => {
                     if (url === CLAIM_URL) { started(); await claimBoundary; return { status: 200, data: {} }; }
+                    if (url.endsWith('/v1/plugins/data/query')) return { status: 200, data: { rows: [], changeCursor: 1 } };
                     return { status: 200, data: { row: null, absenceEpoch: 0 } };
                 },
             });
@@ -1445,6 +1503,7 @@ describe('Account plugin Data storage host', () => {
                     collection.get('private-row-marker'));
                 release();
                 await expect(pending).resolves.toBeNull();
+                await collection.query({ index: 'by-status', order: 'asc' });
                 const records = sink.mock.calls.filter(([message]) => message === '[external-action-stage]');
                 const claimHttp = records.find(([, record]) => record && typeof record === 'object'
                     && 'stage' in record && record.stage === 'collection.http.claim.end');
@@ -1467,6 +1526,11 @@ describe('Account plugin Data storage host', () => {
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     rootRequestId: requestId, stage: 'collection.http.get.end', httpStatus: 200,
+                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                })]);
+                expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
+                    stage: 'collection.http.query.end', httpStatus: 200,
+                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
                 })]);
                 expect(JSON.stringify(records)).not.toContain('private-');
             } finally { release(); sink.mockRestore(); vi.unstubAllEnvs(); }
@@ -2076,6 +2140,135 @@ describe('Account plugin Data storage host', () => {
         }]);
     });
 
+    it('observes an intrinsic exact row through real AccountChange fanout without unrelated reads', async () => {
+        retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+        const definitions = Array.from({ length: 16 }, (_, index) => ({ ...collectionDefinition, id: `tasks-${index}` }));
+        const contracts = definitions.map(definition => normalizePluginAccountCollectionContractV1({
+            pluginId: PLUGIN_ID, contribution: { ...definition, migrations: [] },
+        }));
+        const calls: HttpCall[] = [];
+        const abort = new AbortController();
+        const host = createAccountPluginDataStorageHost({
+            contracts, readCredentials: async () => plainCredentials, isCurrentAccount: () => true,
+            resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY, resolveBaseUrl: () => 'https://data.example.test',
+            resolveAccountEncryptionCurrentness: async () => currentnessFor(plainCredentials),
+            http: {
+                get: async () => { throw new Error('Unexpected GET transport'); },
+                post: async (url, body) => {
+                    calls.push({ url, body: JSON.parse(body) });
+                    return { status: 200, data: { row: null, absenceEpoch: 0 } };
+                },
+            },
+        });
+        const account = host.bind({ pluginId: PLUGIN_ID, occurrenceId: '1', signal: abort.signal, isOccurrenceCurrent: () => true });
+        if (!account) throw new Error('Expected Account Data binding');
+        const invalidations: unknown[] = [];
+        const reads: Promise<unknown>[] = [];
+        const watchers = definitions.flatMap(definition => [1, 2].map(index => {
+            const collection = account.collection(definition);
+            const rowId = `task-${index}`;
+            return collection.watch({ kind: 'row', rowId }, change => {
+                invalidations.push(change);
+                const read = collection.get(rowId);
+                void read.catch(() => undefined);
+                reads.push(read);
+            });
+        }));
+        const contract = contracts[0]!;
+        const publish = (cursor: number, rowIds: string[]) => {
+            const [hint] = readPluginAccountCollectionWatchInvalidations([{
+                cursor, kind: 'pluginDomain', entityId: `pluginDomain/${PLUGIN_ID}/data-collection/${contract.collectionId}`, changedAt: cursor,
+                hint: { pluginDomain: 'dataCollection', pluginId: PLUGIN_ID, collectionId: contract.collectionId,
+                    contractDigest: contract.contractDigest, revision: cursor, rowIds },
+            }]);
+            if (!hint) throw new Error('Expected admitted Collection hint');
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: ACCOUNT_SCOPE_KEY, ...hint });
+        };
+        try {
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(calls).toEqual([]);
+            for (let cursor = 1; cursor <= 1_000; cursor++) publish(cursor, [`unrelated-${cursor}`]);
+            await Promise.resolve();
+            expect(invalidations).toEqual([]);
+            expect(calls).toEqual([]);
+            publish(1_001, ['task-1']);
+            await Promise.resolve();
+            await expect(Promise.all(reads)).resolves.toEqual([null]);
+            expect(invalidations).toEqual([{ kind: 'changed', changeCursor: 1_001 }]);
+            expect(calls).toEqual([{ url: 'https://data.example.test/v1/plugins/data/get',
+                body: expect.objectContaining({ pluginId: PLUGIN_ID, collectionId: contract.collectionId, rowId: 'task-1' }) }]);
+            expect(() => account.collection(definitions[0]!).watch({ kind: 'row', rowId: '' }, () => undefined)).toThrow();
+            abort.abort();
+            publish(1_002, ['task-1']);
+            await Promise.resolve();
+            expect(invalidations).toHaveLength(1);
+            expect(calls).toHaveLength(1);
+        } finally {
+            for (const watcher of watchers) watcher.dispose();
+            abort.abort();
+            await Promise.allSettled(reads);
+            retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not lose an exact row notice while asynchronous occurrence admission is pending', async () => {
+        retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+        let admit!: (current: boolean) => void;
+        const admission = new Promise<boolean>(resolve => { admit = resolve; });
+        const account = bindHost({ post: async () => { throw new Error('Unexpected mutation'); },
+            isOccurrenceCurrent: () => admission });
+        const invalidations: unknown[] = [];
+        const watcher = account.collection(collectionDefinition).watch({ kind: 'row', rowId: 'task-1' },
+            change => invalidations.push(change));
+        try {
+            const [hint] = readPluginAccountCollectionWatchInvalidations([{
+                cursor: 1, kind: 'pluginDomain', entityId: `pluginDomain/${PLUGIN_ID}/data-collection/${COLLECTION_ID}`, changedAt: 1,
+                hint: { pluginDomain: 'dataCollection', pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                    contractDigest: admitted.contractDigest, revision: 1, rowIds: ['task-1'] },
+            }]);
+            if (!hint) throw new Error('Expected admitted Collection hint');
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: ACCOUNT_SCOPE_KEY, ...hint });
+            await Promise.resolve();
+            expect(invalidations).toEqual([]);
+            admit(true);
+            await vi.waitFor(() => expect(invalidations).toEqual([{ kind: 'changed', changeCursor: 1 }]));
+        } finally {
+            watcher.dispose();
+            retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+        }
+    });
+
+    it.each(['deny', 'abort'] as const)('withholds pending row callbacks after %s without reads or network registration', async outcome => {
+        retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+        let admit!: (current: boolean) => void;
+        const admission = new Promise<boolean>(resolve => { admit = resolve; });
+        const abort = new AbortController();
+        const get = vi.fn(async () => { throw new Error('Unexpected read'); });
+        const post = vi.fn(async () => { throw new Error('Unexpected mutation'); });
+        const account = bindHost({ get, post, signal: abort.signal, isOccurrenceCurrent: () => admission });
+        const listener = vi.fn();
+        const watcher = account.collection(collectionDefinition).watch({ kind: 'row', rowId: 'task-1' }, listener);
+        try {
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: ACCOUNT_SCOPE_KEY, kind: 'collection',
+                pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, contractDigest: admitted.contractDigest,
+                rowIds: ['task-1'], changeCursor: 1 });
+            await Promise.resolve();
+            if (outcome === 'abort') abort.abort();
+            admit(outcome !== 'deny');
+            await admission;
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(listener).not.toHaveBeenCalled();
+            expect(get).not.toHaveBeenCalled();
+            expect(post).not.toHaveBeenCalled();
+        } finally {
+            watcher.dispose();
+            retirePluginAccountCollectionWatchScope(ACCOUNT_SCOPE_KEY);
+        }
+    });
+
     it('uses the dedicated Collection cipher domain and only wakes the matching admitted collection', async () => {
         const changeSubscription: {
             listener: ((hint: PluginAccountCollectionWatchInvalidation) => void) | null;
@@ -2367,6 +2560,26 @@ describe('Account plugin Data storage host', () => {
             maxCollectionEncodedBytes: PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1.maxAccountBytes,
             basis: 'default',
         });
+    });
+
+    it.each([plainCredentials, encryptedCredentials])('reports oversize private envelopes without a write ($token)', async (credentials) => {
+        const maximum = PLUGIN_COLLECTION_LIMITS_V1.maximumPrivateEnvelopeEncodedBytes;
+        const definition = { ...collectionDefinition, schema: { ...collectionDefinition.schema,
+            properties: { ...collectionDefinition.schema.properties, privateNote: { type: 'string' as const } },
+        } };
+        const post = vi.fn(async () => { throw new Error('Oversize data must never be sent'); });
+        const account = bindHost({ credentials, post, contracts: [normalizePluginAccountCollectionContractV1({
+            pluginId: PLUGIN_ID, contribution: { ...definition, migrations: [] },
+        })] });
+        const collection = account.collection(definition);
+        const operations = [{ kind: 'put' as const, expectedRevision: 1,
+            value: { id: 'oversize', status: 'open' as const, privateNote: 'é'.repeat(maximum / 2) } }];
+        const expected = { code: 'collection_quota_incompatible', retryable: false,
+            details: { dimension: 'maxRowEncodedBytes', effectiveMaximum: maximum } };
+        await expect(collection.measureBatch(operations)).rejects.toMatchObject(expected);
+        await expect(collection.batch(operations)).rejects.toMatchObject(expected);
+        await expect(collection.put(operations[0]!.value, { expectedRevision: 1 })).rejects.toMatchObject(expected);
+        expect(post).not.toHaveBeenCalled();
     });
 
     it('measures a candidate batch through the same sealed request the mutation sends', async () => {

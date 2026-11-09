@@ -6,9 +6,8 @@ import type { PluginSourceKindV1 } from '@happier-dev/protocol';
 import type { PluginDistributionIdentity } from '@/plugins/store/install/trustIdentity';
 
 /**
- * Provenance of the record a manifest's bytes came from. It scopes the two
- * manifest rules that only describe a *published* artifact — the reserved
- * `happier.*` namespace and the release-stamped engine range. See
+ * Provenance of the record a manifest's bytes came from. It scopes the reserved
+ * `happier.*` namespace rule for published artifacts, not host-engine compatibility. See
  * `PluginManifestValidationOptions.sourceProvenance`.
  *
  * This is derived from what the record IS, never re-verified from the bytes:

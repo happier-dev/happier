@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createActionExecutor, formatQualifiedPluginActionId, normalizeActionsSettingsV1, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { ActionDiscoveryDefinitionSummaryV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
@@ -16,6 +16,7 @@ import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projectio
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createSessionReadBatchResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { createDaemonExternalActionContributedApprovalReplay } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { configuration } from '@/configuration';
@@ -35,14 +36,19 @@ const context: ActionExecutorContext = { surface: 'cli', serverId: homeId, serve
     defaultSessionId: 'parent', defaultSessionMachineId: 'machine', authority: 'present_user',
     actionCaller: { kind: 'host' }, actionRequestId: 'external-target-test', actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
 
-async function harness(durableApproval = false) {
+async function harness(durableApproval = false, observations?: Readonly<{
+    admitActions(): void;
+    readCatalog(): void;
+    readManifestActions(): void;
+}>) {
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
     vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
     let workers = ['a'];
     const effects: unknown[] = [];
-    const reads: string[] = [];
+    const reads: Array<Readonly<{ actionId?: string; sessionId?: string }>> = [];
     const listReads: string[] = [];
     const approvals: TargetActionCurrentIntentRequest[] = [];
+    const approvalUnavailableReasons: string[] = [];
     let storedApproval: TargetActionApprovalRequestV1 | null = null;
     // Substitute only the Artifact persistence boundary. Real approval subject
     // construction, transition admission, decision and replay stay composed.
@@ -72,25 +78,78 @@ async function harness(durableApproval = false) {
             run: async input => { effects.push(input); return input; },
         } },
     });
+    const unrelated = observations ? definePlugin({ id: 'example.unrelated-actions', version: '1.0.0',
+        entrypoints: { daemon: './daemon.mjs' },
+        actions: Object.fromEntries(Array.from({ length: 128 }, (_, index) => [
+            index === 0 ? 'read' : `read-${index}`,
+            { scopes: ['global'] as const, surfaces: ['cli'] as const,
+                title: `Unrelated read ${index}`, dangerLevel: 'safe' as const,
+                inputSchema: sessionIdSchema(), resultSchema: sessionIdSchema(),
+                run: async (input: JsonValue) => input },
+        ] as const)),
+    }) : null;
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: plugin.manifest,
-        files: { 'daemon.mjs': 'export function activate() {}' }, instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
-        async resolveContributes(happyHomeDir) { return createResolvedContributionRegistry(projectLoadedPluginContributes({
-            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })); },
+        files: { 'daemon.mjs': 'export function activate() {}' }, instantiateCommittedModule: () => ({ activate: plugin.activate }) },
+        ...(unrelated ? [{ manifest: unrelated.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+            instantiateCommittedModule: () => ({ activate: unrelated.activate }) }] : [])],
+        async resolveContributes(happyHomeDir) {
+            const projected = projectLoadedPluginContributes({
+                loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+            });
+            // Observe the real producer consuming authored declarations. The
+            // Proxy forwards every array value/method unchanged.
+            return createResolvedContributionRegistry({ ...projected,
+                ...(observations && projected.actions ? { actions: new Proxy(projected.actions, {
+                    get(target, key, receiver) {
+                        if (key === Symbol.iterator) observations.admitActions();
+                        return Reflect.get(target, key, receiver);
+                    },
+                }) } : {}),
+                ...(observations && projected.activationTargets ? {
+                    activationTargets: projected.activationTargets.map(target => ({
+                        ...target,
+                        manifest: { ...target.manifest, contributes: new Proxy({ ...target.manifest.contributes }, {
+                            get(target, key, receiver) {
+                                if (key === 'actions') observations.readManifestActions();
+                                return Reflect.get(target, key, receiver);
+                            },
+                        }) },
+                    })),
+                } : {}),
+            });
+        },
         runtimeOptions: { resolveCurrentMachineId: () => 'machine',
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'machine' }) },
     });
-    const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () =>
-        tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: fixture.controller }) });
+    const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: fixture.controller });
+        if (!lease || !observations) return lease;
+        // The real lease, admitted map, policy and currentness owners are
+        // unchanged. Observe only a request for the full declaration array.
+        return { ...lease, registry: { ...lease.registry, contributes: new Proxy({ ...lease.registry.contributes }, {
+            get(target, key, receiver) {
+                if (key === 'actions') observations.readCatalog();
+                return Reflect.get(target, key, receiver);
+            },
+        }) } };
+    } });
     const deps: ActionExecutorDeps = { ...createUnavailableActionTransportDeps(),
         listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
         invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry(),
             requestCurrentIntent: async request => { approvals.push(request);
-                if (durableApproval) return durableIntent(request);
+                if (durableApproval) return durableIntent({ ...request,
+                    reportUnavailable: reason => { approvalUnavailableReasons.push(reason); } });
                 workers = ['replacement'];
                 return { status: 'approved', fingerprint: request.fingerprint }; },
         }),
-        resolveSessionReference: async request => { reads.push(request.actionId ?? 'missing-root');
+        resolveSessionReference: async request => { reads.push({ actionId: request.actionId, sessionId: request.sessionId });
             return { kind: 'unique', address: { serverId: homeId, sessionId: request.sessionId! } }; },
+        sessionRead: async ({ sessionIds, underSessionId }) => createSessionReadBatchResponseFixture({
+            request: { sessionIds: [...sessionIds], underSessionId, includeTurns: false },
+            sessions: underSessionId === 'parent' ? ['parent', ...workers].map(id => createSessionRecordFixture({ id,
+                ...(id === 'parent' ? {} : { manager: { sessionId: 'parent' } }),
+            })) : [],
+        }),
         sessionList: async ({ query }) => { listReads.push(query!.storage); return markSessionListQueryResultV1({
             sessions: ['parent', ...workers].map(id => projectSessionSummaryV1({
                 row: { id, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
@@ -100,12 +159,54 @@ async function harness(durableApproval = false) {
             nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
         }); },
     };
-    return { fixture, deps, list, effects, reads, listReads, approvals, updateApproval,
+    return { fixture, deps, list, effects, reads, listReads, approvals, approvalUnavailableReasons, updateApproval,
         readApproval: () => storedApproval,
         executor: createActionExecutor(deps), setWorkers: (ids: string[]) => { workers = ids; } };
 }
 
 describe('external authored Action SessionTarget parity', () => {
+    it('enumerates declarations once at admission and never for repeated exact Action execution with 128 unrelated Actions', async () => {
+        let admissionEnumerations = 0;
+        let catalogReads = 0;
+        let manifestActionReads = 0;
+        const h = await harness(false, {
+            admitActions: () => { admissionEnumerations += 1; },
+            readCatalog: () => { catalogReads += 1; },
+            readManifestActions: () => { manifestActionReads += 1; },
+        });
+        try {
+            expect(admissionEnumerations).toBe(1);
+            // Explicit discovery is separate from admission and remains a
+            // complete catalog read, including another installed plugin.
+            const discovered = h.list().map(definition => definition.id);
+            expect(discovered).toHaveLength(130);
+            expect(discovered).toEqual(expect.arrayContaining([
+                qualifiedId, formatQualifiedPluginActionId({ pluginId, localId: 'change' }),
+                formatQualifiedPluginActionId({ pluginId: 'example.unrelated-actions', localId: 'read' }),
+            ]));
+            expect(catalogReads).toBe(1);
+            // Warm the real handler before measuring repeated execution;
+            // activation may legitimately consume authored declarations.
+            expect(await h.executor.execute('action.invoke', { action, input: { sessionId: 'exact' } }, context))
+                .toEqual({ ok: true, result: { sessionId: 'exact' } });
+            expect(manifestActionReads).toBeGreaterThan(0);
+            catalogReads = 0;
+            manifestActionReads = 0;
+            for (let index = 0; index < 3; index += 1) {
+                expect(await h.executor.execute('action.invoke', { action, input: { sessionId: 'exact' } }, context))
+                    .toEqual({ ok: true, result: { sessionId: 'exact' } });
+                expect(await h.executor.execute('action.spec.get', { id: qualifiedId }, context))
+                    .toMatchObject({ ok: true, result: { actionSpec: { id: qualifiedId } } });
+            }
+            // Neither execution nor one-id schema discovery may enumerate
+            // this or the unrelated plugin after canonical admission.
+            expect(catalogReads).toBe(0);
+            expect(manifestActionReads).toBe(0);
+            expect(admissionEnumerations).toBe(1);
+            expect(h.effects).toEqual(Array.from({ length: 4 }, () => ({ sessionId: 'exact' })));
+        } finally { await h.fixture.dispose(); }
+    });
+
     it('advertises the authored operand through strict discovery and the same read-only inspection front door', async () => {
         const h = await harness();
         try {
@@ -136,9 +237,12 @@ describe('external authored Action SessionTarget parity', () => {
                     .toEqual({ ok: true, result: { sessionId: expected } });
             }
             expect(h.effects).toEqual([{ sessionId: 'parent' }, { sessionId: 'a' }, { sessionId: 'exact' }]);
-            expect(h.reads).toHaveLength(2);
+            expect(h.reads).toEqual([
+                { actionId: 'action.invoke', sessionId: 'parent' },
+                { actionId: 'action.invoke', sessionId: 'parent' },
+                { actionId: 'action.invoke', sessionId: 'exact' },
+            ]);
             expect(h.listReads.sort()).toEqual(['active', 'archived']);
-            expect(h.reads.every(root => root === 'action.invoke')).toBe(true);
         } finally { await h.fixture.dispose(); }
     });
 
@@ -192,6 +296,36 @@ describe('external authored Action SessionTarget parity', () => {
             expect(await executor.execute('action.invoke', { action, input: { sessionId: {
                 selector: 'matching', filter: normalizeSessionListFilterV1({}),
             } } }, restricted)).toMatchObject({ ok: false });
+            expect(h.effects).toEqual([]);
+        } finally { await h.fixture.dispose(); }
+    });
+
+    it('creates a durable CLI approval using the resolved daemon placement when the caller has no Machine context', async () => {
+        const h = await harness(true);
+        try {
+            const created = await h.executor.execute('action.invoke', {
+                action: { pluginId, localId: 'change' }, input: { sessionId: 'exact' },
+            }, { ...context, defaultSessionMachineId: undefined });
+            expect(created, JSON.stringify({ created, reasons: h.approvalUnavailableReasons }))
+                .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'external-target-approval' } });
+            const approval = TargetActionApprovalRequestV1Schema.parse(h.readApproval());
+            expect(approval).toMatchObject({ status: 'open', input: { sessionId: 'exact' },
+                replayPlacement: { serverId: homeId, machineId: 'machine', defaultSessionId: 'parent' },
+                executionOriginV1: { actionId: 'action.invoke', serverId: homeId, machineId: 'machine', sessionId: 'parent' } });
+            expect(h.approvalUnavailableReasons).toEqual([]);
+            expect(h.effects).toEqual([]);
+        } finally { await h.fixture.dispose(); }
+    });
+
+    it('refuses a durable CLI approval when the captured original Machine differs from the resolved daemon placement', async () => {
+        const h = await harness(true);
+        try {
+            const created = await h.executor.execute('action.invoke', {
+                action: { pluginId, localId: 'change' }, input: { sessionId: 'exact' },
+            }, { ...context, defaultSessionMachineId: 'original-machine' });
+            expect(created).toMatchObject({ ok: false, errorCode: 'plugin_action_current_intent_unavailable' });
+            expect(h.approvalUnavailableReasons).toEqual(['approval_subject_invalid']);
+            expect(h.readApproval()).toBeNull();
             expect(h.effects).toEqual([]);
         } finally { await h.fixture.dispose(); }
     });

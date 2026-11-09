@@ -22,8 +22,8 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
         isCurrent: seed.isOccurrenceCurrent, retainCleanup, unavailable,
         registerRawForRedaction: params.registerRawForRedaction });
     const { assertActive } = byteService;
-    const materializeCredential = (request: Readonly<{ kind: 'bytes' | 'file' }>):
-        Promise<MachineProvisionerBootstrapCredentialLeaseV1> => {
+    function materializeCredential(request: Readonly<{ kind: 'bytes' | 'file' }>):
+        Promise<MachineProvisionerBootstrapCredentialLeaseV1> {
         if (request.kind === 'bytes') return byteService.materializeBootstrapCredential();
         let byteLease: Awaited<ReturnType<typeof byteService.materializeBootstrapCredential>> | null = null;
         let fileCleanup: ManagedServiceCredentialFileCleanup | null = null;
@@ -66,8 +66,11 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
             }
         })();
         return materialization;
-    };
+    }
     return Object.freeze({
+        materializeGuestHostCredential(): ReturnType<MachineProvisionersService['materializeGuestHostCredential']> {
+            return byteService.materializeGuestHostCredential();
+        },
         async materializeNativeCredentialHeaders(request: Parameters<MachineProvisionersService['materializeNativeCredentialHeaders']>[0]):
             ReturnType<MachineProvisionersService['materializeNativeCredentialHeaders']> {
             const refused = { ok: false as const, code: 'native_credential_binding_unavailable' as const };

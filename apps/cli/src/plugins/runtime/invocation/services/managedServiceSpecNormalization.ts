@@ -14,17 +14,14 @@ export const MANAGED_SERVICE_NUMERIC_CONTRACT = Object.freeze({
     healthTimeoutMs: Object.freeze({
         defaultValue: 5_000,
         minimum: 1,
-        maximum: 60_000,
     }),
     healthIntervalMs: Object.freeze({
         defaultValue: 5_000,
-        minimum: 250,
-        maximum: 300_000,
+        minimum: 1,
     }),
     consecutiveFailures: Object.freeze({
         defaultValue: 2,
         minimum: 1,
-        maximum: 20,
     }),
     durableLogKeepCount: Object.freeze({
         defaultValue: 50,
@@ -108,7 +105,7 @@ function validatedBoundedInteger(
     fallback: number,
     bounds: Readonly<{
         minimum: number;
-        maximum: number;
+        maximum?: number;
     }>,
     label: string,
 ): number {
@@ -116,10 +113,12 @@ function validatedBoundedInteger(
     if (
         !Number.isSafeInteger(resolved)
         || resolved < bounds.minimum
-        || resolved > bounds.maximum
+        || (bounds.maximum !== undefined && resolved > bounds.maximum)
     ) {
         return specInvalid(
-            `${label} must be an integer between ${bounds.minimum} and ${bounds.maximum}`,
+            bounds.maximum === undefined
+                ? `${label} must be a positive safe integer`
+                : `${label} must be an integer between ${bounds.minimum} and ${bounds.maximum}`,
         );
     }
     return resolved;

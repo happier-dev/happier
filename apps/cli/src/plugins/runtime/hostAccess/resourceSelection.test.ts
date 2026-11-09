@@ -4,7 +4,7 @@ import { createDefaultPluginAccessScopeRegistry } from '@/plugins/store/install/
 import { isPluginHostAccessRequestAuthorizedBySelection } from './resourceSelection';
 
 describe('isPluginHostAccessRequestAuthorizedBySelection', () => {
-    it('rejects a stale optional selection that is broader than the current declaration', () => {
+    it('authorizes a current declaration contained in the selected scope, and nothing wider or foreign', () => {
         const registry = createDefaultPluginAccessScopeRegistry();
         const selection = registry.createSelection({
             pluginId: 'acme.plugin',
@@ -32,10 +32,39 @@ describe('isPluginHostAccessRequestAuthorizedBySelection', () => {
             },
             required: false,
             optionalAccess: [selection],
+        })).toBe(true);
+
+        const widerRequest = {
+            id: 'account',
+            capability: 'connectedAccounts' as const,
+            reason: 'Use more accounts',
+            scope: {
+                serviceRefs: ['github', 'slack', 'linear'],
+                operations: ['select', 'use'] as ('select' | 'use')[],
+                materializationKinds: ['environment', 'files'] as ('environment' | 'files')[],
+            },
+        };
+        expect(isPluginHostAccessRequestAuthorizedBySelection({
+            pluginId: 'acme.plugin',
+            request: widerRequest,
+            required: false,
+            optionalAccess: [selection],
+        })).toBe(false);
+        expect(isPluginHostAccessRequestAuthorizedBySelection({
+            pluginId: 'other.plugin',
+            request: { ...widerRequest, scope: { ...widerRequest.scope, serviceRefs: ['github'] } },
+            required: false,
+            optionalAccess: [selection],
+        })).toBe(false);
+        expect(isPluginHostAccessRequestAuthorizedBySelection({
+            pluginId: 'acme.plugin',
+            request: { ...widerRequest, scope: { ...widerRequest.scope, serviceRefs: ['github'] } },
+            required: false,
+            optionalAccess: [selection, selection],
         })).toBe(false);
     });
 
-    it('requires an exact optional MCP selection instead of semantic effect coverage', () => {
+    it('authorizes an MCP declaration covered by its selection and refuses one that reaches further', () => {
         const registry = createDefaultPluginAccessScopeRegistry();
         const request = {
             id: 'tools',
@@ -76,6 +105,12 @@ describe('isPluginHostAccessRequestAuthorizedBySelection', () => {
             request,
             required: false,
             optionalAccess: [staleBroaderSelection],
+        })).toBe(true);
+        expect(isPluginHostAccessRequestAuthorizedBySelection({
+            pluginId: 'acme.plugin',
+            request: { ...request, scope: { ...request.scope, operations: ['listTools', 'callTools'] } },
+            required: false,
+            optionalAccess: [exactSelection],
         })).toBe(false);
     });
 });

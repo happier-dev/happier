@@ -76,7 +76,8 @@ function loadedWithEveryIdentityKind(): LoadedPlugin {
           dangerLevel: 'safe',
         }],
         commands: [{ id: 'run-command', title: 'Run', path: ['run'], action: 'run' }],
-        ui: { translations: [{ locale: 'en-US', messages: { greeting: 'Hello' } }] },
+        resources: [{ id: 'copy-en', kind: 'asset', path: 'assets/i18n/en-US.json', contentType: 'application/json' }],
+        ui: { translations: [{ locale: 'en-US', resourceId: 'copy-en' }] },
         providers: [{
           v: 1,
           id: 'introspection-provider',

@@ -11,6 +11,9 @@ import type {
     ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { GITHUB_CI_ACTION_IDS_V1 } from '../../../../../packages/plugins/scm-github/src/actions/actionIds';
+import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts';
 
 import type {
     StablePluginConnectedAccountsOwner,
@@ -52,6 +55,7 @@ const resolveDevelopmentSourceAuthority = ({
 });
 
 afterEach(async () => {
+    vi.unstubAllGlobals();
     await Promise.all(temporaryRoots.splice(0).map(async (root) => {
         await rm(root, { recursive: true, force: true });
     }));
@@ -154,6 +158,38 @@ function createNetworkFixture(respond: (request: ObservedHttpRequest) => Respons
 }
 
 describe('executable plugin runtime Connected Accounts integration', () => {
+    it('admits the real native CI authority port and carries its owner retirement without invoking a native read', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-ci-authority-port-'));
+        temporaryRoots.push(happyHomeDir);
+        const invalidations = new Set<() => void>();
+        const noCredentialEffect = async () => { throw new Error('Authority observation cannot select, enumerate or materialize credentials'); };
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: noCredentialEffect, subscribe: () => ({ dispose() {} }) },
+            selectTarget: noCredentialEffect, resolveTarget: async () => null, materializeAccount: noCredentialEffect,
+            projectTargetAccounts: noCredentialEffect, assertTargetAccountMaterializable: noCredentialEffect,
+            subscribeInvalidations(listener) { invalidations.add(listener); return { dispose() { invalidations.delete(listener); } }; },
+        });
+        const network = createNetworkFixture(() => { throw new Error('Authority observation cannot issue a provider request'); });
+        const runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, resolveDevelopmentSourceAuthority,
+            pluginIds: [GITHUB_PLUGIN_ID], connectedAccounts: owner, actionFormConnectedAccounts: owner });
+        try {
+            await runtime.activateContributionsOnDemand([{ pluginId: GITHUB_PLUGIN_ID, family: 'actions', localId: GITHUB_CI_ACTION_IDS_V1.listWorkflows }]);
+            const occurrence = runtime.readPluginOccurrenceId?.(GITHUB_PLUGIN_ID);
+            if (!occurrence || !runtime.openUiResourceWatch || !runtime.pollUiResourceWatch) throw new Error('Expected the current native UI watch owner');
+            const address = { callerPluginId: GITHUB_PLUGIN_ID, expectedCallerOccurrenceId: occurrence, subscriptionId: 'native-ci-authority' };
+            await expect(runtime.openUiResourceWatch({ ...address, readAuthority: {
+                consumer: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_CI_ACTION_IDS_V1.listWorkflows },
+                purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+                input: { repository: { kind: 'github', deployment: 'https://github.com', repository: 'octo-org/example-app' } },
+            } })).resolves.toEqual({ subscriptionId: address.subscriptionId });
+            expect(invalidations.size).toBeGreaterThan(0);
+            for (const listener of [...invalidations]) listener();
+            await expect(runtime.pollUiResourceWatch(address)).resolves.toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource' } });
+            expect(network.observed).toEqual([]);
+        } finally { runtime.retireConsumers(); await runtime.dispose(); }
+        expect(invalidations.size).toBe(0);
+    });
+
     it('exposes the single host established-account owner only while the registry generation is current', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-connected-account-established-owner-'));
         temporaryRoots.push(happyHomeDir);

@@ -118,7 +118,6 @@ describe('stable plugin Composer content owner', () => {
             seed: invocationSeed(),
             fileSystem: createPluginFileSystemService({
                 roots: { pluginData: workspace, workspace, projects: new Map() },
-                scopes: [{ root: 'workspace', access: ['read'] }],
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             }),
@@ -188,7 +187,6 @@ describe('stable plugin Composer content owner', () => {
             seed: invocationSeed(),
             fileSystem: createPluginFileSystemService({
                 roots: { pluginData: workspace, workspace, projects: new Map() },
-                scopes: [{ root: 'workspace', access: ['read'] }],
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             }),
@@ -220,7 +218,6 @@ describe('stable plugin Composer content owner', () => {
         await writeFile(join(workspace, 'photo.png'), PNG_BYTES);
         const fileSystem = createPluginFileSystemService({
             roots: { pluginData: workspace, workspace, projects: new Map() },
-            scopes: [{ root: 'workspace', access: ['read'] }],
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
@@ -280,7 +277,6 @@ describe('stable plugin Composer content owner', () => {
             seed: invocationSeed(),
             fileSystem: createPluginFileSystemService({
                 roots: { pluginData: workspace, workspace, projects: new Map() },
-                scopes: [{ root: 'workspace', access: ['read'] }],
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             }),
@@ -388,7 +384,6 @@ describe('stable plugin Composer content owner', () => {
             seed: invocationSeed(),
             fileSystem: createPluginFileSystemService({
                 roots: { pluginData: workspace, workspace, projects: new Map() },
-                scopes: [{ root: 'workspace', access: ['read'] }],
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             }),

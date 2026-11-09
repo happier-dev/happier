@@ -12,7 +12,8 @@ const fileDigest = `sha256:${'a'.repeat(64)}` as const;
 const artifactDigest = `sha256:${'b'.repeat(64)}` as const;
 
 describe('generated UI artifact default host compatibility', () => {
-    it('admits a hosted-static artifact by Host UI API range', () => {
+    it.each([`^${PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.ui.hostApiVersion}`, '=1.0.0', '^1.1.0'])(
+        'admits a hosted-static artifact by supported Host UI API range %s', hostUiApiRange => {
         const entry = {
             artifactId: 'plain-dom-panel',
             tier: 'hostedWeb',
@@ -24,10 +25,14 @@ describe('generated UI artifact default host compatibility', () => {
             }],
             digest: artifactDigest,
             builtWith: { staging: 'staticDirectory' },
-            hostUiApiRange: `^${PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.ui.hostApiVersion}`,
+            hostUiApiRange,
         } satisfies PluginUiArtifactsManifestEntryV2;
 
         expect(generatedUiArtifactDefaultHostCompatibilityFailure(entry)).toBeNull();
+        if (hostUiApiRange === '^1.1.0') {
+            expect(generatedUiArtifactCompatibilityFailure({ entry, hostRuntime: { hostUiApiVersion: '1.0.0' } }))
+                .toBe('generated_ui_host_api_mismatch');
+        }
     });
 
     it('admits a universal executable without exact framework or engine gates', () => {

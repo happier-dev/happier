@@ -1,19 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text as localizedFallback } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import { AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticeInvestigationV1Schema, AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { PluginNotificationPushContextV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import {
-    isPluginError,
-    PluginError,
-    type Disposable,
-    type JsonValue,
-    type PluginApi,
-} from '@happier-dev/plugin-sdk';
-import {
-    type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { Disposable, JsonValue, PluginApi, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import {
     type NotificationPreferences as PluginNotificationPreferences,
     type NotificationsService as PluginNotificationsService,
@@ -53,12 +48,25 @@ export type PluginNotificationSenderBinding = Readonly<{
     send(request: PluginNotificationSendRequest, signal: AbortSignal): unknown | Promise<unknown>;
 }>;
 
+export type PluginNativeNotificationRequest = Readonly<{
+    pluginNotification?: PluginNotificationPushContextV1;
+    title: string;
+    body?: string;
+    type?: 'decision' | 'approval' | 'blocked' | 'update' | 'mention';
+    eventId: string;
+    data?: JsonValue;
+    notice?: Readonly<{ artifactId: string; itemId: string; page?: Readonly<{ pageId: string; subPath?: string }> }>;
+}>;
+
 export type StablePluginNotificationsHost = Readonly<{
     categories: readonly NotificationCategoryDeclaration[];
     channels: readonly ResolvedNotificationChannelContribution[];
     activateChannel(ref: PluginContributionRef): Promise<void>;
     readChannel(ref: PluginContributionRef, seed?: PluginInvocationServicesSeed): PluginNotificationSenderBinding | null;
     readAttentionPolicy?(): unknown;
+    sendNative?(seed: PluginInvocationServicesSeed, request: PluginNativeNotificationRequest, signal: AbortSignal): Promise<Readonly<{
+        attemptedChannels: number; deliveredChannels: number;
+    }>>;
     resolveNoticeArtifacts?(seed: PluginInvocationServicesSeed): Promise<Readonly<{
         accountId: string; store: Readonly<{
             writeNotice(input: Omit<Parameters<ReturnType<typeof createAccountArtifactStore>['writeNotice']>[0], 'page'>
@@ -96,10 +104,6 @@ type OperationRecord = Readonly<{
 
 function notificationError(code: string, message: string, retryable = false): PluginError {
     return new PluginError({ code, message, ...(retryable ? { retryable: true } : {}) });
-}
-
-function localizedFallback(value: string | Readonly<{ fallback: string }>): string {
-    return typeof value === 'string' ? value : value.fallback;
 }
 
 function resolveRef(ownerPluginId: string, reference: NotificationContributionReference): QualifiedRef {
@@ -215,25 +219,35 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
     body?: string;
     channelIds?: readonly string[];
     data?: JsonValue;
+    buttonInputs?: Readonly<Record<string, JsonValue>>;
     itemId?: string;
     type?: 'decision' | 'approval' | 'blocked' | 'update' | 'mention';
     page?: Readonly<{ pageId: string; subPath?: string }>;
     resolved?: boolean;
+    healthPhase?: 'open' | 'recovered';
+    investigation?: Parameters<PluginNotificationsService['send']>[0]['investigation'];
 }> {
     try {
         if (!request || typeof request !== 'object' || Array.isArray(request)) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
-        const allowedKeys = new Set(['clientRequestId', 'categoryId', 'title', 'body', 'channelIds', 'data', 'itemId', 'type', 'page', 'resolved']);
+        const allowedKeys = new Set(['clientRequestId', 'categoryId', 'title', 'body', 'channelIds', 'data', 'buttonInputs', 'itemId', 'type', 'page', 'resolved', 'healthPhase', 'investigation']);
         if (Object.keys(request).some((key) => !allowedKeys.has(key))) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request contains unknown fields');
         }
         const { clientRequestId, categoryId, title, body } = request;
         const channelIds = readChannelIds(request.channelIds);
         const rawData = request.data;
-        const { itemId, resolved } = request;
+        const buttonInputs = request.buttonInputs === undefined ? undefined : clonePluginPlainData(request.buttonInputs, {
+            path: 'notification button inputs', invalid: message => notificationError('plugin_notification_invalid_request', message),
+        });
+        if (buttonInputs !== undefined && (!buttonInputs || typeof buttonInputs !== 'object' || Array.isArray(buttonInputs))) {
+            throw notificationError('plugin_notification_invalid_request', 'Notification button inputs must be an object');
+        }
+        const { itemId, resolved, healthPhase } = request;
         const itemType = request.type === undefined ? undefined : AccountNoticeItemTypeV1Schema.parse(request.type);
         const itemPage = request.page === undefined ? undefined : PluginNoticePageV1Schema.parse(request.page);
+        const investigation = request.investigation === undefined ? undefined : AccountNoticeInvestigationV1Schema.parse(request.investigation);
         if (typeof clientRequestId !== 'string'
             || clientRequestId.length < 1
             || typeof categoryId !== 'string'
@@ -242,7 +256,8 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             || (body !== undefined && typeof body !== 'string')
             || (itemId !== undefined && (typeof itemId !== 'string' || itemId.trim().length === 0))
             || (resolved !== undefined && typeof resolved !== 'boolean')
-            || (itemId === undefined && (itemType !== undefined || itemPage !== undefined || resolved !== undefined))) {
+            || (healthPhase !== undefined && healthPhase !== 'open' && healthPhase !== 'recovered')
+            || (itemId === undefined && (itemPage !== undefined || resolved !== undefined || healthPhase !== undefined || investigation !== undefined))) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
         const data = rawData === undefined
@@ -258,8 +273,12 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             ...(body === undefined ? {} : { body }),
             ...(channelIds === undefined ? {} : { channelIds }),
             ...(data === undefined ? {} : { data }),
+            ...(buttonInputs === undefined ? {} : { buttonInputs }),
+            ...(itemType === undefined ? {} : { type: itemType }),
             ...(itemId === undefined ? {} : { itemId, type: itemType ?? 'update', resolved: resolved ?? false }),
             ...(itemPage === undefined ? {} : { page: Object.freeze(itemPage) }),
+            ...(healthPhase === undefined ? {} : { healthPhase }),
+            ...(investigation === undefined ? {} : { investigation }),
         });
     } catch (error) {
         if (isPluginError(error)) throw error;
@@ -620,16 +639,25 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 ensureCurrent(seed);
                 const request = readRequest(rawRequest);
                 const category = ensureCategory(request.categoryId);
+                if (request.buttonInputs && Object.keys(request.buttonInputs).some(id =>
+                    !category.definition.buttons?.some(button => button.id === id && button.effect.kind === 'action'))) {
+                    throw notificationError('plugin_notification_invalid_request', 'Notification input must name a declared Action button');
+                }
                 const selected = resolveSelectedChannels(category, request.channelIds);
                 const normalizedRequest: JsonValue = Object.freeze({
                     clientRequestId: request.clientRequestId,
                     categoryId: request.categoryId,
                     title: request.title,
                     ...(request.body === undefined ? {} : { body: request.body }),
+                    nativeDefault: request.channelIds === undefined,
                     channelIds: Object.freeze(selected.map((entry) => entry.key)),
                     ...(request.data === undefined ? {} : { data: request.data }),
+                    ...(request.buttonInputs === undefined ? {} : { buttonInputs: request.buttonInputs }),
+                    ...(request.type === undefined ? {} : { type: request.type }),
                     ...(request.itemId === undefined ? {} : { itemId: request.itemId, type: request.type!, resolved: request.resolved! }),
                     ...(request.page === undefined ? {} : { page: request.page }),
+                    ...(request.healthPhase === undefined ? {} : { healthPhase: request.healthPhase }),
+                    ...(request.investigation === undefined ? {} : { investigation: request.investigation }),
                 });
                 const requestFingerprint = fingerprint(normalizedRequest);
                 const key = operationKey(seed, request.categoryId, request.clientRequestId);
@@ -639,7 +667,8 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                         throw notificationError('plugin_notification_request_conflict', 'Notification request id was already bound to different content');
                     }
                     const result = await waitForOperationResult(existing.result, options?.signal);
-                    return Object.freeze({ deliveries: result.deliveries, replayed: true });
+                    return Object.freeze({ deliveries: result.deliveries, replayed: true,
+                        ...(result.notice ? { notice: Object.freeze({ ...result.notice, changed: false, opened: false }) } : {}) });
                 }
                 if (options?.signal?.aborted) throw notificationWaitAborted(false);
 
@@ -648,6 +677,9 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     : seed.signal;
                 const result = (async (): Promise<PluginNotificationBatchResult> => {
                     const deliveries: PluginNotificationDeliveryResult[] = [];
+                    let notice: PluginNativeNotificationRequest['notice'];
+                    let acknowledgement: PluginNotificationBatchResult['notice'];
+                    let noticePushWorthy: boolean | undefined;
                     const eventReference = category.definition.eventIds?.[0] ?? category.definition.id;
                     const event = typeof eventReference === 'string' ? eventReference : qualifiedKey(eventReference);
                     const attentionDecision = (channel: string) => resolveAttentionDeliveryPolicyDecision({
@@ -659,14 +691,54 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                         ensureCurrent(seed, operationSignal);
                         if (!artifacts) throw notificationError('plugin_notification_inbox_unavailable', 'Private Account notice custody is unavailable');
                         // Notice custody is independent of attention-channel eligibility.
-                        await artifacts.store.writeNotice({ accountId: artifacts.accountId,
+                        const persisted = await artifacts.store.writeNotice({ accountId: artifacts.accountId,
                             source: { kind: 'plugin', pluginId: seed.plugin.id, itemId: request.itemId },
                             type: request.type ?? 'update', title: request.title, resolved: request.resolved === true,
                             ...(request.body === undefined ? {} : { body: request.body }),
                             ...(request.page === undefined ? {} : { page: request.page }),
+                            ...(request.healthPhase === undefined ? {} : { healthPhase: request.healthPhase }),
+                            ...(request.investigation === undefined ? {} : { investigation: request.investigation }),
                             signal: operationSignal, beforeWrite: () => ensureCurrent(seed, operationSignal) });
+                        ensureCurrent(seed, operationSignal);
+                        noticePushWorthy = persisted.pushWorthy;
+                        if (persisted.revision) acknowledgement = Object.freeze({ artifactId: persisted.artifactId,
+                            changed: persisted.changed, opened: persisted.opened === true });
+                        notice = { artifactId: persisted.artifactId, itemId: request.itemId, ...(request.page ? { page: request.page } : {}) };
                     }
-                    if (request.resolved) return Object.freeze({ deliveries: Object.freeze(deliveries), replayed: false });
+                    if (request.itemId !== undefined && noticePushWorthy !== true) {
+                        return Object.freeze({ deliveries: Object.freeze(deliveries), replayed: false,
+                            ...(acknowledgement ? { notice: acknowledgement } : {}) });
+                    }
+                    // Explicit channel selection stays explicit. Default sends join
+                    // the host's configured native channel; plugin channels remain
+                    // contributed transports, not another native push owner.
+                    if (request.channelIds === undefined && host.sendNative && attentionDecision('expo_push').delivery !== 'suppress') {
+                        const deliveryId = `notification_${fingerprint(`${key}\u0000expo_push`)}`;
+                        ensureCurrent(seed, operationSignal);
+                        try {
+                            const native = await host.sendNative(seed, {
+                                title: request.title, eventId: event,
+                                ...(category.definition.buttons?.length ? { pluginNotification: {
+                                    pluginId: seed.plugin.id, categoryId: category.definition.id,
+                                    occurrenceId: seed.occurrenceId, clientRequestId: request.clientRequestId,
+                                    ...(request.buttonInputs ? { buttonInputs: request.buttonInputs } : {}),
+                                } } : {}),
+                                ...(request.body === undefined ? {} : { body: request.body }),
+                                ...(request.type === undefined ? {} : { type: request.type }),
+                                ...(request.data === undefined ? {} : { data: request.data }),
+                                ...(notice ? { notice } : {}),
+                            }, operationSignal);
+                            if (native.attemptedChannels > 0 || native.deliveredChannels > 0) deliveries.push(Object.freeze({ deliveryId, channelId: 'expo_push',
+                                ...(operationSignal.aborted || !seed.isOccurrenceCurrent()
+                                    ? { status: 'outcomeUnknown' as const, code: 'plugin_notification_outcome_unknown' }
+                                    : native.deliveredChannels > 0 ? { status: 'accepted' as const, evidence: 'provider' as const }
+                                        : native.attemptedChannels > 0 ? { status: 'failed' as const, code: 'plugin_notification_native_unavailable', retryable: true }
+                                            : { status: 'suppressed' as const, code: 'plugin_notification_native_suppressed' }) }));
+                        } catch {
+                            deliveries.push(Object.freeze({ deliveryId, channelId: 'expo_push', status: 'outcomeUnknown',
+                                code: 'plugin_notification_outcome_unknown' }));
+                        }
+                    }
                     for (const selectedChannel of selected) {
                         const deliveryId = `notification_${fingerprint(`${key}\u0000${selectedChannel.key}`)}`;
                         const availability = readAvailability(selectedChannel.channel);
@@ -753,7 +825,8 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                             }));
                         }
                     }
-                    return Object.freeze({ deliveries: Object.freeze(deliveries), replayed: false });
+                    return Object.freeze({ deliveries: Object.freeze(deliveries), replayed: false,
+                        ...(acknowledgement ? { notice: acknowledgement } : {}) });
                 })();
                 operations.set(key, Object.freeze({ fingerprint: requestFingerprint, result }));
                 return await waitForOperationResult(result, options?.signal);

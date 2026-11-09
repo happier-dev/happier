@@ -1,12 +1,10 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 
 function readProjectedText(value: unknown): string | undefined {
-    if (typeof value === 'string') return value.trim() || undefined;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    const fallback = Reflect.get(value, 'fallback');
-    return typeof fallback === 'string' ? fallback.trim() || undefined : undefined;
+    return resolvePluginLocalizedStringV2Text(value).trim() || undefined;
 }
 
 export const scmBackendProjectionFamily = definePluginProjectionFamilyV2({

@@ -63,7 +63,9 @@ describe('executable plugin declared event ownership', () => {
         try {
             firstRuntime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             expect(firstRuntime.pluginDiagnosticsByPluginId['acme.declared-events']).toEqual([]);
-            expect(firstRuntime.contributes.events?.map((entry) => entry.definition.id)).toEqual([
+            expect(firstRuntime.contributes.events
+                ?.filter((entry) => entry.pluginId === 'acme.declared-events')
+                .map((entry) => entry.definition.id)).toEqual([
                 'acme.declared-events/changed',
                 'acme.declared-events/watch-changed',
             ]);

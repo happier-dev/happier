@@ -4,6 +4,7 @@ import { resolvePluginAuthoringSource } from '@/plugins/authoring/sourceModule';
 import { projectPluginInstallationReviewHostAccess } from '@/plugins/daemon/installationReview';
 import { resolveLocalPluginInstallTrust } from '@/plugins/store/install/trustPolicy';
 import type { PluginChangePendingReviewResult } from '@happier-dev/protocol/marketplace/internal';
+import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
 
 type PluginInstallApprovalInput = Readonly<Record<string, unknown>>;
 
@@ -37,8 +38,10 @@ function withDefaultPreview(defaultPreview: unknown, pluginInstall: unknown): un
 
 function daemonDisclosure(evaluation: PluginChangePendingReviewResult | undefined): Readonly<Record<string, unknown>> {
   return evaluation?.reviewKind === 'installation'
-    ? { permissionsDisclosure: 'daemonEvaluated', pendingReview: evaluation }
-    : { permissionsDisclosure: 'pendingDaemonEvaluation' };
+    ? { permissionsDisclosure: 'daemonEvaluated', pendingReview: evaluation,
+        // Approval previews are retained snapshots, not a live inspect connection.
+        daemonAuthority: presentMachineAuthorityV1({ observation: evaluation.review.daemonRights?.observation, freshness: 'stale' }) }
+    : { permissionsDisclosure: 'pendingDaemonEvaluation', daemonAuthority: presentMachineAuthorityV1({}) };
 }
 
 /**

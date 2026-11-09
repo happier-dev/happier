@@ -12,22 +12,17 @@ function targetScopeMatches(
 }
 
 /**
- * A grant records the exact machine installation whose person approved it. The
- * same Account, plugin, capability, scope and subject can be reached from every
- * other machine on the Account, so an Account-wide match alone would let one
- * machine's approval authorize every other machine and any later installation
- * that replaced the approved one.
+ * One approval covers every Machine and installation of the same Account (owner
+ * ruling PL-19, 2026-10-30). The server lists only the asking Account's grants,
+ * so another person's grant never reaches this evaluator. The grant keeps the
+ * approving installation as provenance; the asking daemon must still be an
+ * identified installation of that Account.
  */
 function authoritySourceMatches(
   granted: PluginPermissionGrantAuthoritySourceV1,
   current: PluginPermissionGrantAuthoritySourceV1 | null,
 ): boolean {
-  if (!current || granted.kind !== current.kind) return false;
-  if (granted.kind !== 'machine_installation' || current.kind !== 'machine_installation') {
-    return false;
-  }
-  return granted.machineId === current.machineId
-    && granted.installationId === current.installationId;
+  return granted.kind === 'machine_installation' && current?.kind === 'machine_installation';
 }
 
 /** The single CLI-side exact evaluator for persisted plugin permission grants. */
@@ -37,7 +32,7 @@ export function evaluatePluginPermissionGrant(params: Readonly<{
   capability: PluginPermissionCapabilityV1;
   targetScope: PluginPermissionGrantTargetScopeV1;
   subject: PluginPermissionSubjectV1;
-  /** Exact machine installation asking now; a missing authority is never authorized. */
+  /** The identified machine installation asking now; a missing authority is never authorized. */
   currentAuthoritySource: PluginPermissionGrantAuthoritySourceV1 | null;
 }>): boolean {
   if (

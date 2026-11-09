@@ -51,20 +51,28 @@ describe('bundled Inspector canonical UI graph', () => {
                 requiredHostMethods: ['executeAction'],
             },
         });
-        // The Inspector ships one bundle per translated locale, so this pins the
-        // canonical `en` bundle rather than the locale count (same
-        // `arrayContaining` shape the view assertion above uses).
+        // Translation declarations bind locale Resources; message bytes are
+        // loaded by the translation owner when the surface needs them.
         expect(contributions.uiTranslationsV2?.filter(
             (entry) => entry.pluginId === INSPECTOR_PLUGIN_ID,
         )).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 definition: expect.objectContaining({
                     locale: 'en',
-                    messages: expect.objectContaining({
-                        'plugins.inspector.title': 'Plugin Inspector',
-                        'plugins.inspector.settings.showDiagnostics':
-                            'Show diagnostics in Plugin Inspector',
-                    }),
+                    resourceId: 'i18n-en',
+                }),
+            }),
+        ]));
+        expect(contributions.resources?.filter(
+            (entry) => entry.pluginId === INSPECTOR_PLUGIN_ID,
+        )).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    id: 'i18n-en',
+                    type: 'asset',
+                    source: 'packaged',
+                    path: 'assets/i18n/en.json',
+                    contentType: 'application/json',
                 }),
             }),
         ]));

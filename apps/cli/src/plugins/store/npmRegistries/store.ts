@@ -16,6 +16,7 @@ const PersistedProfileSchema = z.strictObject({
   useAsDefault: z.boolean(),
   allowPrivateNetwork: z.boolean(),
   credentialSecretRef: z.nullable(z.string().check(z.trim(), z.minLength(1))),
+  machineNpmConfig: z.optional(z.strictObject({ projectDir: z.string().check(z.minLength(1)) })),
   credentialRevision: z.number().check(z.int(), z.nonnegative()),
   availability: z.enum(['unknown', 'available', 'sign_in_required', 'offline']),
   lastSuccessfulCheckAtMs: z.nullable(z.number().check(z.int(), z.nonnegative())),

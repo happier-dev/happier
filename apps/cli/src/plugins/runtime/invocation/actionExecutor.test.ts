@@ -6,9 +6,10 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { CHANNELS_PLUGIN, PLUGIN_MANIFEST } from '@happier-dev/plugins-channels/manifest';
 import type { PluginActionDangerLevelV2 } from '@happier-dev/protocol';
 
-import { createTargetActionExecutor, fingerprintTargetActionPolicy } from './actionExecutor';
+import { createTargetActionExecutor, fingerprintTargetActionPolicy, type ResolvedTargetAction } from './actionExecutor';
 import { createUnavailablePluginInvocationServiceBinding } from './services/factory';
 import { projectPluginFailureText } from '../lifecycle/utils';
+import { createPluginInvocationSecretRedactor } from './services/logger';
 
 function resolved(dangerLevel: PluginActionDangerLevelV2 = 'safe') {
   return {
@@ -58,6 +59,74 @@ function createExecutor(
 }
 
 describe('target action executor', () => {
+  it('redacts registered values from successful agent results without secret-use declarations', async () => {
+    const raw = 'registered-value-"quoted"\nsecond-line';
+    const scope = { pluginId: 'acme.alpha', occurrenceId: '7', correlationId: 'success-redaction' };
+    const redactor = createPluginInvocationSecretRedactor();
+    redactor.beginInvocation(scope, new AbortController().signal);
+    redactor.registerRaw(scope, raw);
+    const executor = createExecutor({
+      resolve: () => ({ ...resolved(), surfaces: ['agent'] }),
+      invoke: async () => ({ status: 'executed', value: {
+        plain: raw, json: JSON.stringify({ echo: raw }), nested: [{ [raw]: raw }], ordinary: 'visible',
+        ['__proto__']: 'ordinary-prototype-key',
+      } }),
+      redactFailureText: (_action, value) => redactor.redact(scope, value),
+    });
+    try {
+      await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'agent' }))
+        .resolves.toEqual({ status: 'executed', value: {
+          plain: '[REDACTED]', json: '{"echo":"[REDACTED]"}',
+          nested: [{ '[REDACTED]': '[REDACTED]' }], ordinary: 'visible',
+          ['__proto__']: 'ordinary-prototype-key',
+        } });
+    } finally { redactor.completeInvocation(scope); }
+  });
+
+  it.each(['same_spec', 'changed_spec', 'changed_input', 'changed_origin', 'changed_authority'] as const)(
+    're-resolves approval after re-adoption and preserves its durable subject: %s', async scenario => {
+      let adopted = false;
+      const invoke = vi.fn(async (_action: ResolvedTargetAction) => ({ status: 'executed' as const, value: 'current implementation' }));
+      const receipts: unknown[] = [];
+      const executor = createExecutor({
+        resolve: () => ({
+          ...resolved('writesRemote'),
+          occurrenceId: adopted ? '8' : '7',
+          pluginVersion: adopted ? '0.0.2' : '0.0.1',
+          confirmation: { title: adopted && scenario === 'changed_spec' ? 'Different effect' : 'Run effect' },
+          input: { value: adopted && scenario === 'changed_input' ? 'different' : 'original' },
+          sourceCustody: { kind: 'development', registeredRootId: adopted && scenario === 'changed_origin' ? 'other-root' : 'original-root' },
+          accountId: adopted && scenario === 'changed_authority' ? 'other-account' : 'original-account',
+        }),
+        resolveAuthorizationFacts: () => ({ ...authorizationFacts(), generation: {
+          targetGeneration: adopted ? '8' : '7', desiredGeneration: adopted ? '8' : '7', appliedGeneration: adopted ? '8' : '7',
+        } }),
+        requestCurrentIntent: async ({ fingerprint }) => {
+          adopted = true;
+          return { status: 'approved', fingerprint, artifactId: 'authenticated-decision',
+            settleExecution: async receipt => { receipts.push(receipt); } };
+        },
+        invoke,
+      });
+      const prepared = await executor.prepare({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'original' }, surface: 'cli' });
+      if (scenario === 'same_spec') {
+        expect(prepared.kind).toBe('ready');
+        if (prepared.kind !== 'ready') throw new Error('Same-spec re-adoption refused');
+        expect(invoke).not.toHaveBeenCalled();
+        await expect(Promise.all([prepared.run(), prepared.run()])).resolves.toEqual([
+          { status: 'executed', value: 'current implementation' }, { status: 'executed', value: 'current implementation' },
+        ]);
+        expect(invoke).toHaveBeenCalledTimes(1);
+        expect(invoke.mock.calls[0]?.[0]).toMatchObject({ occurrenceId: '8' });
+      } else {
+        expect(prepared).toMatchObject({ kind: 'settled', result: { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' } });
+        expect(invoke).not.toHaveBeenCalled();
+      }
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({ artifactId: 'authenticated-decision', execution: { ok: scenario === 'same_spec', effectAttempted: scenario === 'same_spec' } });
+    },
+  );
+
   it.each(['agent', 'mcp'] as const)('requests approval for Channels management on %s and dispatches the existing handler once after approval', async (surface) => {
     const localId = 'connection/pairing-cancel-v1';
     const parsed = parsePluginManifest(PLUGIN_MANIFEST);
@@ -403,10 +472,11 @@ describe('target action executor', () => {
 
   it('preserves a coded stale-generation failure from final host binding', async () => {
     const invoke = vi.fn();
+    const error = new PluginError({ code: 'plugin_generation_stale', message: 'Plugin generation is stale' });
     const executor = createExecutor({
       resolve: () => resolved(),
       resolveHostBinding: async () => {
-        throw new PluginError({ code: 'plugin_generation_stale', message: 'Plugin generation is stale' });
+        throw error;
       },
       invoke,
     });
@@ -417,6 +487,8 @@ describe('target action executor', () => {
       status: 'failed',
       code: 'plugin_generation_stale',
       message: 'Plugin generation is stale',
+      retryable: false,
+      data: error.data,
       actionHandlerInvocation: 'notStarted',
     });
     expect(invoke).not.toHaveBeenCalled();
@@ -529,6 +601,19 @@ describe('target action executor', () => {
         },
       },
     });
+  });
+
+  it.each(['resolve', 'resolveHostBinding'] as const)('retains typed cause data when %s throws before invocation', async phase => {
+    const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
+    const error = new PluginError({ code: 'provider_request_rejected', details: { nativeCause } });
+    const executor = createExecutor({ resolve: () => resolved(),
+      invoke: async () => { throw new Error('Admission failure must not invoke the handler'); },
+      ...(phase === 'resolve' ? { resolve: () => { throw error; } }
+        : { resolveHostBinding: async () => { throw error; } }),
+    });
+    await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
+      .resolves.toMatchObject({ status: 'failed', code: 'provider_request_rejected', retryable: false,
+        data: { code: 'provider_request_rejected', details: { nativeCause } } });
   });
 
   it('retains thrown native PluginError codes and causes through the final invocation boundary', async () => {

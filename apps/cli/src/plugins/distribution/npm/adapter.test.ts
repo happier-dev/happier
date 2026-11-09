@@ -47,7 +47,7 @@ describe('resolveAndDownloadNpmArtifact', () => {
     }
   });
 
-  it('hands an exact integrity-verified immutable candidate to staging without executing package logic', async () => {
+  it('hands an exact acquired candidate to staging without executing package logic', async () => {
     const bytes = Buffer.from('self-contained plugin package');
     const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
     const calls: string[] = [];

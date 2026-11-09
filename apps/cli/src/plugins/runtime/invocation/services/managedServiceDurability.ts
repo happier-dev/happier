@@ -1,3 +1,6 @@
+import type { createProcessOwnershipRuntime } from '@/daemon/processes/ownership/processOwnershipRuntime';
+import type { ProcessStartIdentity } from '@/processes/census/processCensus';
+import { equalProcessStart, type ResolvedProcessOwnership } from '@/daemon/processes/ownership/types';
 import { createHash, randomUUID } from 'node:crypto';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import { link, open, readdir, rename, rm } from 'node:fs/promises';
@@ -91,6 +94,10 @@ export interface ManagedServiceDurabilityOwner
      */
     retireSessionRunnerOwnedProjections(input: Readonly<{
         sessionId: string;
+    }>): Promise<readonly number[]>;
+    /** Retry retained custody only when the canonical fresh native owner is positively ended. */
+    retireEndedSessionRunnerOwnedProjections(input: Readonly<{
+        processOwnership: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'readOwners'>;
     }>): Promise<readonly number[]>;
 }
 
@@ -363,8 +370,9 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         return outcome === 'unavailable' ? 'unknown' : outcome;
     }
 
-    async function terminateWindowsJobCustody(jobName: string): Promise<boolean> {
-        const result = await terminateTargets({ targets: [], containment: { kind: 'windows_job', name: jobName }, policy: 'kill' });
+    async function terminateWindowsJobCustody(jobName: string, authorizeSignal?: () => Promise<boolean>): Promise<boolean> {
+        const result = await terminateTargets({ targets: [], containment: { kind: 'windows_job', name: jobName }, policy: 'kill',
+            ...(authorizeSignal ? { authorizeSignal } : {}) });
         return result.status === 'complete';
     }
 
@@ -671,65 +679,141 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         });
     }
 
+    async function retireProjections(
+        owned: readonly ManagedServiceEndpointProjectionV1[],
+        authorizeProjection?: (projection: ManagedServiceEndpointProjectionV1, fresh?: boolean) => Promise<readonly Readonly<{ pid: number; start: ProcessStartIdentity }>[] | null>,
+    ): Promise<readonly number[]> {
+        const retiredPids: number[] = [];
+        for (const projection of owned) {
+            const authorizedTargets = authorizeProjection ? await authorizeProjection(projection) : undefined;
+            if (authorizeProjection && !authorizedTargets?.length) continue;
+            if (projection.mode === 'managedSpawn') {
+                // `live_root` proves this exact pid is still the process the runner started;
+                // `live_group` proves only that its POSIX containment survives root turnover;
+                // `stale` means the pid was recycled and must not be signalled. `unknown`
+                // leaves the record alone rather than guessing at somebody else's process.
+                const state = await observeManagedSpawnProjectionState(projection);
+                if (state === 'unknown') continue;
+                if (state === 'live_root' || state === 'live_group') {
+                    // Windows tagged records terminate through the named
+                    // job itself: taskkill against the root pid would
+                    // neither reach descendants that outlived the root
+                    // nor respect a recycled pid fence.
+                    const taggedCustody = platform === 'win32'
+                        ? parseProcessCustodyStartIdentity(projection.process.startIdentity)
+                        : null;
+                    let terminated: boolean;
+                    if (taggedCustody?.kind === 'win32-job') {
+                        terminated = await terminateWindowsJobCustody(
+                            taggedCustody.jobName,
+                            authorizeProjection ? async () => Boolean((await authorizeProjection(projection, true))?.length) : undefined,
+                        ).catch(() => false);
+                    } else if (authorizeProjection && authorizedTargets) {
+                        terminated = true;
+                        for (const target of authorizedTargets) {
+                            const result = await terminateTargets({
+                                targets: [target], tree: false, policy: 'kill',
+                                authorizeSignal: async () => Boolean((await authorizeProjection(projection, true))?.some(
+                                    current => current.pid === target.pid && equalProcessStart(current.start, target.start),
+                                )),
+                            });
+                            if (result.status !== 'complete') terminated = false;
+                        }
+                    } else {
+                        terminated = await (params.terminateProcessTree
+                            ?? ((target: Readonly<{
+                                pid: number;
+                                exitCode?: number | null;
+                            }>) =>
+                                terminateProcessTree(target, {
+                                    ownedProcessGroup: platform !== 'win32',
+                                })))({
+                            pid: projection.process.pid,
+                            ...(state === 'live_group'
+                                ? { exitCode: 0 }
+                                : {}),
+                        }).then(
+                            () => true,
+                            () => false,
+                        );
+                    }
+                    if (!terminated) continue;
+                    // A successful terminator return is not a process-terminal
+                    // fact on POSIX unless the dedicated process group is
+                    // also absent. Forget this projection only after that
+                    // containment proof settles stale.
+                    const postTerminationState =
+                        await observeManagedSpawnProjectionState(projection);
+                    if (postTerminationState !== 'stale') continue;
+                    retiredPids.push(projection.process.pid);
+                }
+            }
+            await removeEndpointProjectionIfCurrent(projection);
+        }
+        return Object.freeze(retiredPids);
+    }
+
     async function retireSessionRunnerOwnedProjections(input: Readonly<{
         sessionId: string;
     }>): Promise<readonly number[]> {
         return await runExclusive(async () => {
             await ensureDirs();
-            const retiredPids: number[] = [];
-            const owned = readManagedServiceEndpointProjectionCandidates(params.rootDir)
-                .filter((projection) => projection.sessionId === input.sessionId)
-                .filter((projection) => projection.custodyOwner === 'sessionRunner');
-            for (const projection of owned) {
-                if (projection.mode === 'managedSpawn') {
-                    // `live_root` proves this exact pid is still the process the runner started;
-                    // `live_group` proves only that its POSIX containment survives root turnover;
-                    // `stale` means the pid was recycled and must not be signalled. `unknown`
-                    // leaves the record alone rather than guessing at somebody else's process.
-                    const state = await observeManagedSpawnProjectionState(projection);
-                    if (state === 'unknown') continue;
-                    if (state === 'live_root' || state === 'live_group') {
-                        // Windows tagged records terminate through the named
-                        // job itself: taskkill against the root pid would
-                        // neither reach descendants that outlived the root
-                        // nor respect a recycled pid fence.
-                        const taggedCustody = platform === 'win32'
-                            ? parseProcessCustodyStartIdentity(projection.process.startIdentity)
-                            : null;
-                        const terminated = taggedCustody?.kind === 'win32-job'
-                            ? await terminateWindowsJobCustody(
-                                taggedCustody.jobName,
-                            ).catch(() => false)
-                            : await (params.terminateProcessTree
-                                ?? ((target: Readonly<{
-                                    pid: number;
-                                    exitCode?: number | null;
-                                }>) =>
-                                    terminateProcessTree(target, {
-                                        ownedProcessGroup: platform !== 'win32',
-                                    })))({
-                                pid: projection.process.pid,
-                                ...(state === 'live_group'
-                                    ? { exitCode: 0 }
-                                    : {}),
-                            }).then(
-                                () => true,
-                                () => false,
-                            );
-                        if (!terminated) continue;
-                        // A successful terminator return is not a process-terminal
-                        // fact on POSIX unless the dedicated process group is
-                        // also absent. Forget this projection only after that
-                        // containment proof settles stale.
-                        const postTerminationState =
-                            await observeManagedSpawnProjectionState(projection);
-                        if (postTerminationState !== 'stale') continue;
-                        retiredPids.push(projection.process.pid);
-                    }
-                }
-                await removeEndpointProjectionIfCurrent(projection);
-            }
-            return Object.freeze(retiredPids);
+            return await retireProjections(readManagedServiceEndpointProjectionCandidates(params.rootDir)
+                .filter(projection => projection.sessionId === input.sessionId && projection.custodyOwner === 'sessionRunner'));
+        });
+    }
+
+    async function retireEndedSessionRunnerOwnedProjections(input: Readonly<{
+        processOwnership: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'readOwners'>;
+    }>): Promise<readonly number[]> {
+        return await runExclusive(async () => {
+            await ensureDirs();
+            const projections = readManagedServiceEndpointProjectionCandidates(params.rootDir)
+                .filter(projection => projection.custodyOwner === 'sessionRunner' && projection.mode === 'managedSpawn');
+            if (!projections.length) return [];
+            const initialView = await input.processOwnership.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
+            if (initialView.status !== 'ok') return [];
+            return await retireProjections(projections,
+                async (projection, fresh = false) => {
+                    if (projection.mode !== 'managedSpawn') return null;
+                    // Share only the selection view of this pass; physical signals always re-read current owners.
+                    const view = fresh
+                        ? await input.processOwnership.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' })
+                        : initialView;
+                    if (view.status !== 'ok') return null;
+                    if (view.roots.some(root => root.live && (root.owner.kind === 'session'
+                        && root.owner.sessionId === projection.sessionId
+                        || root.owner.kind === 'service' && root.owner.serviceId === projection.instanceId))) return null;
+                    const matchesProjectionOwner = (row: ResolvedProcessOwnership | undefined): boolean => Boolean(
+                        row?.level === 'left_behind' && row.ownerEnded && row.owner
+                        && (row.owner.kind === 'session' && row.owner.sessionId === projection.sessionId
+                            || row.owner.kind === 'service' && row.owner.serviceId === projection.instanceId
+                                && row.owner.sessionId === projection.sessionId),
+                    );
+                    const nativeRoot = view.snapshot.rows.find(row => row.pid === projection.process.pid);
+                    const tagged = parseProcessCustodyStartIdentity(projection.process.startIdentity);
+                    let members: typeof view.snapshot.rows;
+                    if (tagged?.kind === 'win32-job') {
+                        members = view.snapshot.rows.filter(row => row.jobs?.includes(tagged.jobName));
+                    } else if (nativeRoot) {
+                        if (compareProcessGenerationIdentities(projection.process.startIdentity,
+                            platform === 'darwin' && nativeRoot.start.native ? nativeRoot.start.native
+                                : `${nativeRoot.pid}:${nativeRoot.start.startTimeMs}`, platform) !== 'same') return null;
+                        members = view.snapshot.rows.filter(row => row.pid === nativeRoot.pid
+                            || view.rows.find(candidate => candidate.pid === row.pid)?.chain.some(ancestor => ancestor.pid === nativeRoot.pid));
+                    } else if (platform === 'linux') {
+                        // The persisted dedicated group survives its root. Absence alone grants no authority:
+                        // every current member still needs exact native evidence of this same ended owner.
+                        members = view.snapshot.rows.filter(row => row.pgid === projection.process.pid);
+                    } else return null;
+                    if (!members.length || members.some(row => row.state === 'zombie'
+                        || !matchesProjectionOwner(view.rows.find(candidate => candidate.pid === row.pid)))) return null;
+                    // Keep ancestors alive until every child's fresh ownership check has settled.
+                    return [...members].sort((left, right) =>
+                        (view.rows.find(row => row.pid === right.pid)?.chain.length ?? 0)
+                        - (view.rows.find(row => row.pid === left.pid)?.chain.length ?? 0))
+                        .map(row => ({ pid: row.pid, start: row.start }));
+                });
         });
     }
 
@@ -758,6 +842,7 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         releaseEndpointProjection,
         resolveEndpointProjection,
         retireSessionRunnerOwnedProjections,
+        retireEndedSessionRunnerOwnedProjections,
         openLog,
         getCurrentLogPaths,
     });

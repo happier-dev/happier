@@ -360,6 +360,28 @@ describe('leased provider-binding adapter ABI', () => {
             credential: { kind: 'apiKey', transport: apiKeyTransport, value: 'raw-secret' },
         })).rejects.toThrow(/credential/i);
     });
+
+    it.each(['engineConfig', 'configFile'] as const)('keeps companion credentials out of %s output', async (kind) => {
+        const transport = ProviderCredentialTransportV1Schema.parse({
+            ...apiKeyTransport,
+            additionalCredentials: [{ slotId: 'companion', destination: { kind: 'httpHeader', name: 'X-Companion', format: 'bearer' } }],
+        });
+        const support = { ...staticSupport, materialization: kind };
+        const { lease } = leaseWithAdapter({
+            v: 1,
+            adapterVersion: 1,
+            prepare: () => ({ v: 1, materialization: kind }),
+            materialize: async () => kind === 'engineConfig'
+                ? { v: 1, kind, env: [{ name: 'GATEWAY_KEY', value: 'raw-secret', source: 'provider' }], engineConfig: { key: 'Bearer companion-secret' } }
+                : { v: 1, kind, env: [{ name: 'GATEWAY_KEY', value: 'raw-secret', source: 'provider' }], files: [{ relativePath: 'config/companion-secret.json', utf8: '{}' }] },
+        }, support);
+        const prepared = prepareLeasedAgentProviderBinding({ lease, agentId: 'codex', input: prepareInput });
+
+        await expect(materializeLeasedAgentProviderBinding({
+            lease, agentId: 'codex', binding: { ...binding, runtimeCredentialTransport: transport }, prepared,
+            credential: { kind: 'apiKey', transport, value: 'raw-secret', additionalCredentials: [{ slotId: 'companion', value: 'companion-secret' }] },
+        })).rejects.toThrow(/credential/i);
+    });
 });
 
 describe('leased provider-binding adapter generation currentness', () => {

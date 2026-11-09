@@ -9,6 +9,9 @@ import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/gene
 import { getAllAgentDefinitionContracts } from '@happier-dev/agents/definitions';
 import { readAdmittedPluginRegistryStateSync, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/admittedState';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { logger } from '@/ui/logger';
 
 /** Read desired scope facts once for this admission, never from its consumers. */
 export async function readCurrentBundledPluginEnablement(params?: Readonly<{
@@ -21,7 +24,7 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
   ).createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir }).readSnapshot()).bundledPluginEnabledById;
   const pluginIds = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map(plugin => plugin.pluginId);
   let accountEnabledById: ReadonlyMap<string, boolean> | undefined;
-  let accountUnavailable: true | undefined;
+  let accountFailure: Parameters<typeof resolveBundledPluginEnablement>[0]['accountFailure'];
   try {
     const { readStoredCredentials } = await import('@/persistence');
     const credentials = await (params?.accountStorageDependencies?.readCredentials ?? readStoredCredentials)();
@@ -31,12 +34,25 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
       accountEnabledById = await readCurrentAccountPluginEnablements({ credentials,
         serverUrl: params?.accountStorageDependencies?.resolveBaseUrl?.() ?? resolveServerHttpBaseUrl(), pluginIds });
     }
-  } catch {
-    // Optional plugin reachability cannot stop the host. A failed Account read
-    // withdraws new admission with its existing typed refusal, never as "on".
-    accountUnavailable = true;
+  } catch (error) {
+    // No exception prose, request configuration or payload leaves this boundary.
+    // Keep the read failure distinct from an authoritative Account refusal.
+    const response: unknown = error && typeof error === 'object' && 'response' in error ? error.response : undefined;
+    const data: unknown = response && typeof response === 'object' && 'data' in response ? response.data : undefined;
+    const headers: unknown = response && typeof response === 'object' && 'headers' in response ? response.headers : undefined;
+    const requestId = ExternalActionRequestIdV1Schema.safeParse(
+      error && typeof error === 'object' && 'requestId' in error ? error.requestId
+        : data && typeof data === 'object' && 'requestId' in data ? data.requestId
+          : headers && typeof headers === 'object' && 'x-request-id' in headers ? headers['x-request-id'] : undefined,
+    );
+    const failureCause = projectActionFailureCauseV1(error, 'plugins.account_census');
+    const errorCode = readActionErrorCodeV1(data) ?? failureCause.errorCode;
+    accountFailure = Object.freeze({ failureCause: Object.freeze({ ...failureCause, errorCode }),
+      ...(requestId.success ? { requestId: requestId.data } : {}),
+    });
+    logger.warn('[PLUGIN RUNTIME] Account plugin census failed', accountFailure);
   }
-  return resolveBundledPluginEnablement({ pluginIds, accountEnabledById, machineEnabledById, accountUnavailable });
+  return resolveBundledPluginEnablement({ pluginIds, accountEnabledById, machineEnabledById, accountFailure });
 }
 
 /**

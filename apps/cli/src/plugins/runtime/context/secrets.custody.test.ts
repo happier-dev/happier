@@ -141,7 +141,7 @@ describe('declared plugin secret custody', () => {
             await directCustody.set({ secretId, value: 'legacy-global-secret' });
 
             const host = createStableDeclaredPluginSecretsHost({
-                declarations: [{ pluginId, declaration }],
+                declarations: [{ pluginId, declaration }, { pluginId, declaration: { id: 'ordinary-token', custody: 'daemon' } }],
                 resolveCustody: createPluginSecretCustodyRouter({
                     daemon: daemonCustody.resolve,
                 }).resolve,
@@ -152,6 +152,18 @@ describe('declared plugin secret custody', () => {
                 isOccurrenceCurrent: () => true,
             });
             if (!port) throw new Error('Expected daemon secret administration port');
+
+            // Trusted code may select an explicit origin slot without a
+            // manifest permission. The unscoped token keeps its own identity.
+            const ordinaryCustody = daemonCustody.resolve({ pluginId, declaration: { id: 'ordinary-token', custody: 'daemon' } });
+            if (!ordinaryCustody) throw new Error('Expected ordinary daemon custody');
+            await port.set({ secretId: 'ordinary-token', value: 'ordinary-global-secret' });
+            const scopedMissing = await port.status({ secretId: 'ordinary-token', canonicalOrigin: originOne });
+            expect(scopedMissing.state).toBe('missing');
+            await port.set({ secretId: 'ordinary-token', canonicalOrigin: originOne, value: 'ordinary-origin-secret',
+                expectedRevision: scopedMissing.revision });
+            expect((await ordinaryCustody.get('ordinary-token'))?.value).toBe('ordinary-global-secret');
+            expect((await ordinaryCustody.get('ordinary-token', { canonicalOrigin: originOne }))?.value).toBe('ordinary-origin-secret');
 
             await expect(port.status({ secretId })).rejects.toMatchObject({
                 code: 'plugin_secret_origin_required',

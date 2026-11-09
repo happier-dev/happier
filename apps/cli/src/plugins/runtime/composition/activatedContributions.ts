@@ -4,7 +4,7 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../../projection/registry/createResolvedContributionRegistry';
 import { projectManifestAgentAcpCatalogPreflight } from '../../projection/registry/projectManifestAgentContribution';
-import { projectAgentCliAuthCatalogEntry, projectAgentCliSessionCommandCatalogEntry, projectAgentConnectedAccountLaunchCatalogEntry, projectAgentDaemonSpawnHooksCatalogEntry, projectAgentExperimentalVendorResumeSupportCatalogEntry, projectAgentPreflightSessionControlsCatalogEntry, projectAgentProviderCliAttachCatalogEntry, projectAgentSessionStartupCatalogEntry, projectAgentTerminalPromptSubmitVerificationCatalogEntry } from '../../projection/registry/agentCatalogEntryHooks';
+import { projectAgentAccountSettingsCatalogEntry, projectAgentCliAuthCatalogEntry, projectAgentCliSessionCommandCatalogEntry, projectAgentConnectedAccountLaunchCatalogEntry, projectAgentDaemonSpawnHooksCatalogEntry, projectAgentExperimentalVendorResumeSupportCatalogEntry, projectAgentPreflightSessionControlsCatalogEntry, projectAgentProviderCliAttachCatalogEntry, projectAgentSessionStartupCatalogEntry, projectAgentTerminalPromptSubmitVerificationCatalogEntry } from '../../projection/registry/agentCatalogEntryHooks';
 import type { ResolvedContributionRegistry } from '../../projection/registry/types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -264,6 +264,19 @@ export function projectActivatedAgentContributions(
                         connectedAccountLaunch: runtime.connectedAccountLaunch,
                         hostAccess: agent.hostAccess,
                         isCurrent: runtime.isCurrent,
+                    })
+                    : {}),
+                ...(runtime.accountSettings && resolveAgentPluginSettings
+                    ? projectAgentAccountSettingsCatalogEntry({
+                        accountSettings: runtime.accountSettings,
+                        pluginId: runtime.pluginId,
+                        localAgentId: runtime.localAgentId,
+                        declarations: (base.settings ?? []).filter(entry => entry.pluginId === runtime.pluginId).map(entry => entry.definition),
+                        isCurrent: runtime.isCurrent,
+                        resolvePluginSettings: () => resolveAgentPluginSettings({
+                            pluginId: runtime.pluginId,
+                            localAgentId: runtime.localAgentId,
+                        }),
                     })
                     : {}),
                 ...(runtime.preflightSessionControls

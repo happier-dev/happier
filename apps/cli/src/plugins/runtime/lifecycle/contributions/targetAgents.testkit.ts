@@ -12,6 +12,7 @@ import { createBundledActivationSourceResolver } from '../../bundledActivationSo
 import { isPrimaryAgentContributionDefinition } from '@/plugins/projection/registry/agentContributionDefinition';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { activateContributionModule } from '../activation/activateContributionModule';
+import { collectActivationTargets } from '../activation/targets';
 import {
     createDeclarativeAcpAgentRuntimeRegistry as createDeclarativeAcpAgentRuntimeRegistryProduction,
     createTargetAgentRuntimeRegistry as createTargetAgentRuntimeRegistryProduction,
@@ -243,7 +244,7 @@ export async function createTargetAgentRuntimeRegistry(params: TargetRegistryFix
     }));
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins });
     disposers.push(() => fixture.dispose());
-    const targets = fixture.registry.contributes.activationTargets.filter((target) => plugins.some(({ manifest }) => manifest.id === target.pluginId));
+    const targets = collectActivationTargets(fixture.registry.contributes).filter((target) => plugins.some(({ manifest }) => manifest.id === target.pluginId));
     if (behavior === 'physical') {
         const physical = new Map<string, (typeof fixture.registry.agentRuntimesByAgentId extends ReadonlyMap<string, infer Lease> ? Lease : never)>();
         for (const selected of params.agents) {
@@ -276,7 +277,14 @@ export async function createTargetAgentRuntimeRegistry(params: TargetRegistryFix
             && (activated.registrations.length !== 0 || activated.diagnostics.length !== 0)) {
             throw new Error('Dormant activation must have no registrations or diagnostics');
         }
-        targetRegistrations.push(...activated.registrations.map((registration) => ({ pluginId: target.pluginId, occurrenceId, registration })));
+        targetRegistrations.push(...activated.registrations.map((registration) => ({
+            pluginId: target.pluginId,
+            occurrenceId,
+            registration,
+            ...(registration.family === 'agents'
+                ? { agentSessionRunnerFactory: activated.validatedAgentSessionRunnerFactories.find((fact) => fact.localAgentId === registration.localId) }
+                : {}),
+        })));
     }
     const agents = params.invalidOwnerInput ? params.agents : params.agents.map((agent) => ({
         ...agent,

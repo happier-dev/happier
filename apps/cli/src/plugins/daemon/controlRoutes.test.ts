@@ -90,6 +90,12 @@ const acceptedRequests: ReadonlyArray<Readonly<{
   payload: Readonly<Record<string, unknown>>;
   result: unknown;
 }>> = [{
+  name: 'exact marketplace pointer without caller-described listing authority',
+  url: PLUGIN_CHANGE_REQUEST_URL,
+  owner: 'requestPluginChange',
+  payload: { kind: 'installMarketplace', sourceId: 'catalog', pluginId: 'acme.example', packageName: '@acme/example', version: '1.2.3' },
+  result: committedGeneration,
+}, {
   name: 'destructive uninstall',
   url: PLUGIN_CHANGE_REQUEST_URL,
   owner: 'requestPluginChange',

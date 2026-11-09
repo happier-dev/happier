@@ -22,13 +22,15 @@ import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 import type { TerminalHostNativeLaunch } from '@/integrations/terminal/host/_types';
 import {
     authorizeResolvedAgentNativeExecLaunchForHost,
+    captureAgentNativeLaunchAuthorityForHost,
+    requireAgentNativeLaunchAuthorityForHost,
     type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
 import { readHostProcessOwnerTag, withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { createTerminalLaunchSpec, type TerminalLaunchSpec } from '@/terminal/host/launchSpec';
 import { createNativeProcessExitObserver } from '@/terminal/host/nativeProcessExit';
 import { matchesTerminalClientInvocation } from '@/terminal/host/terminalClientCustody';
-import { resolveTerminalHostCreationFailure } from '@/integrations/terminal/host/errors';
+import { resolveTerminalHostCreationFailure, TerminalHostCreationError } from '@/integrations/terminal/host/errors';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import {
     readTerminalHostAttachmentInfo,
@@ -176,6 +178,13 @@ export type PreparedTerminalHostRequest = Readonly<{
     windowsVerbatimArguments?: boolean;
     signal?: AbortSignal;
     beforeSpawn?(): void;
+    /**
+     * When supplied, this request already contains the finalized native export.
+     * Recheck the same captured custody and return its identical held tuple/release;
+     * this is not a late tuple transformer. The host owns physical release while
+     * its prepared startup wrapper continues to execute that export unchanged.
+     */
+    finalizeNativeLaunch?(): Promise<HostAuthorizedPluginExecLaunch>;
 }>;
 
 export type PreparedTerminalHostOwner = Readonly<{
@@ -373,22 +382,42 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
         let nativeLaunch: HostAuthorizedPluginExecLaunch | undefined;
         let finalLaunchPromise: Promise<TerminalHostNativeLaunch> | undefined;
         const prepareLaunch = request.finalizeNativeLaunch ? () => finalLaunchPromise ??= (async () => {
-            nativeLaunch = await request.finalizeNativeLaunch!();
-            try { request.signal?.throwIfAborted(); }
-            catch (error) {
-                await nativeLaunch.release();
-                nativeLaunch = undefined;
-                throw error;
+            try {
+                nativeLaunch = await request.finalizeNativeLaunch!();
+                try { request.signal?.throwIfAborted(); }
+                catch (error) {
+                    await nativeLaunch.release();
+                    nativeLaunch = undefined;
+                    throw error;
+                }
+                if (request.preparedLaunch) {
+                    // The private handoff already contains the final native
+                    // export. Recheck its original custody without replacing
+                    // the startup launcher/receipt or quoting it as native argv.
+                    return { spawnArgv: request.preparedLaunch.argv,
+                        workingDirectory: request.workingDirectory, spawnEnv: request.spawnEnv,
+                        ...(request.unsetEnvKeys ? { unsetEnvKeys: request.unsetEnvKeys } : {}),
+                        isolatedEnv: request.isolatedEnv };
+                }
+                return {
+                    spawnArgv: [nativeLaunch.command, ...nativeLaunch.args],
+                    workingDirectory: nativeLaunch.cwd ?? request.workingDirectory,
+                    spawnEnv: withHostProcessOwnerEnvironment(nativeLaunch.env, nativeLaunch.processOwnerTag ?? readHostProcessOwnerTag()),
+                    // The complete native export already applied removals. Neither a
+                    // terminal server nor the runner's ambient env may revive them.
+                    unsetEnvKeys: [], isolatedEnv: true,
+                    ...(nativeLaunch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+                };
+            } catch (error) {
+                // Public terminal services retain the original typed refusal;
+                // only the private prepared owner has a staged handoff to retire.
+                if (!request.preparedLaunch) throw error;
+                // This exact callback precedes adapter submission. Later create
+                // failures still retain their own physical/uncertain disposition.
+                throw new TerminalHostCreationError([error], 'Native launch admission failed before terminal creation', {
+                    creationDisposition: 'not_created', cleanupIncomplete: false,
+                });
             }
-            return {
-                spawnArgv: [nativeLaunch.command, ...nativeLaunch.args],
-                workingDirectory: nativeLaunch.cwd ?? request.workingDirectory,
-                spawnEnv: withHostProcessOwnerEnvironment(nativeLaunch.env, nativeLaunch.processOwnerTag ?? readHostProcessOwnerTag()),
-                // The complete native export already applied removals. Neither a
-                // terminal server nor the runner's ambient env may revive them.
-                unsetEnvKeys: [], isolatedEnv: true,
-                ...(nativeLaunch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-            };
         })() : undefined;
         let submitted = false;
         let currentHostProcess: BorrowedTerminalProcess | undefined;
@@ -497,8 +526,13 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
         ...(params.resolveExistingHostForAdoption ? {
             async adoptExistingHost() {
                 assertCapability(params);
+                const binding = AGENT_CHILD_LAUNCH_BINDINGS.get(service);
+                const authority = binding?.exec ? requireAgentNativeLaunchAuthorityForHost(
+                    captureAgentNativeLaunchAuthorityForHost(binding.exec, 'attach', binding.signal)) : null;
+                await authority?.admit(binding?.signal);
                 const existing = await params.resolveExistingHostForAdoption!();
                 if (!existing) return null;
+                await authority?.admit(binding?.signal);
                 setActiveHost(existing.handle, existing);
                 return existing.handle;
             },
@@ -536,7 +570,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                 ...(binding?.exec ? {
                     finalizeNativeLaunch: () => authorizeResolvedAgentNativeExecLaunchForHost(binding.exec!, {
                         command: launch.command, args: spawnArgv.slice(1), cwd: request.workingDirectory, env: spawnEnv,
-                    }, binding.signal, binding.nativeLaunch),
+                    }, binding.signal, binding.nativeLaunch, 'terminal'),
                     ...(binding.signal ? { signal: binding.signal } : {}),
                 } : {}),
                 ...(request.launch.unsetEnvKeys ? { unsetEnvKeys: request.launch.unsetEnvKeys } : {}) });

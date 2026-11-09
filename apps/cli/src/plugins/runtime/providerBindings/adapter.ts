@@ -111,7 +111,7 @@ function transportsEqual(left: unknown, right: unknown): boolean {
         === JSON.stringify(ProviderCredentialTransportV1Schema.parse(right));
 }
 
-function renderCredential(value: string, transport: z.infer<typeof ProviderCredentialTransportV1Schema>): string {
+function renderCredential(value: string, transport: Pick<z.infer<typeof ProviderCredentialTransportV1Schema>, 'destination'>): string {
     const format = transport.destination.format;
     if (format === 'raw') return value;
     if (format === 'bearer') return `Bearer ${value}`;
@@ -168,8 +168,14 @@ function assertSecretFreeConfigAndFiles(
     credential: AgentProviderBindingCredential,
 ): void {
     if (credential.kind !== 'apiKey' || materialization.kind === 'spawnEnv') return;
-    const rendered = renderCredential(credential.value, ProviderCredentialTransportV1Schema.parse(credential.transport));
+    const transport = ProviderCredentialTransportV1Schema.parse(credential.transport);
+    const rendered = renderCredential(credential.value, transport);
     const sensitiveValues = new Set([credential.value, rendered]);
+    for (const companion of credential.additionalCredentials ?? []) {
+        sensitiveValues.add(companion.value);
+        const declaration = transport.additionalCredentials?.find(row => row.slotId === companion.slotId);
+        if (declaration) sensitiveValues.add(renderCredential(companion.value, declaration));
+    }
     const content = materialization.kind === 'engineConfig'
         ? materialization.engineConfig
         : materialization.files;
@@ -274,6 +280,9 @@ export async function materializeCapturedAgentProviderBinding(params: Readonly<{
             kind: 'apiKey' as const,
             transport: ProviderCredentialTransportV1Schema.parse(params.credential.transport),
             value: params.credential.value,
+            ...(params.credential.additionalCredentials ? {
+                additionalCredentials: params.credential.additionalCredentials.map(({ slotId, value }) => ({ slotId, value })),
+            } : {}),
         });
     if (prepared.materialization !== resolved.support.materialization) {
         throw new Error('Agent provider binding materialization does not match static agent support');

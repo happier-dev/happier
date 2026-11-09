@@ -1,7 +1,7 @@
 import { copyFile, lstat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
+import type { PluginSourceSpecV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { readPluginArchiveIntegrity } from '@/plugins/distribution/integrity';
 
 import {
@@ -149,6 +149,7 @@ async function cleanupOwnedCandidate(params: Readonly<{
 }
 
 export function createDaemonArchivePluginChangePreparer(params: Readonly<{
+  readDaemonRights?: () => MachineDaemonRightsV1;
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
@@ -225,6 +226,7 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
 
       const canonicalLocator = archiveLocator(distribution);
       const review = projectPluginInstallationReview({
+        daemonRights: params.readDaemonRights?.(),
         manifest: staged.candidate.manifest.value,
         source: {
           kind: 'archive',

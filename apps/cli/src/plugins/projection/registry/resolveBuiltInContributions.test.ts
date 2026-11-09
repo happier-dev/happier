@@ -38,7 +38,10 @@ import * as generatedBundledPlugins from './sources/generatedBundledPlugins';
 import { readBundledPluginManifest } from './builtIn/locators';
 
 function readResolverSource(): string {
-  return readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8');
+  return [
+    readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('./builtIn/project.ts', import.meta.url), 'utf8'),
+  ].join('\n');
 }
 
 function readPluginContributionResolverSource(): string {
@@ -136,7 +139,7 @@ describe('resolveBuiltInContributions', () => {
     const pluginContributionResolverSource = readPluginContributionResolverSource();
 
     expect(resolverSource).toContain(
-      "import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from './sources/generatedBundledPlugins';",
+      "import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';",
     );
     expect(resolverSource).toContain(
       "import { loadCurrentBundledPluginLocatorResult } from './builtIn/locators';",
@@ -185,8 +188,9 @@ describe('resolveBuiltInContributions', () => {
       generatedSource,
       resolverSource,
     ]) {
-      expect(source).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
-      expect(source).not.toMatch(/from ['"]@happier-dev\/agents['"]/u);
+      const runtimeSource = source.replace(/^import type\b[^;]*;\s*/gm, '');
+      expect(runtimeSource).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
+      expect(runtimeSource).not.toMatch(/from ['"]@happier-dev\/agents['"]/u);
     }
   });
 
@@ -588,9 +592,9 @@ describe('resolveBuiltInContributions', () => {
           id: 'opencode',
           managedInstall: {
             kind: 'managed_package',
-            packageName: 'opencode-ai',
+            packageName: '@opencode/cli',
             binaryName: 'opencode',
-            packageBinarySetup: { kind: 'opencode_platform_binary' },
+            allowBuild: true,
           },
           manualInstallKind: 'command',
           manualInstallRecipes: null,
@@ -862,6 +866,7 @@ describe('resolveBuiltInContributions', () => {
       isExplicitCliSubcommand: true,
     }));
     const call = runBackendSessionCliCommandMock.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+    expect(call?.resolveSessionRuntimePreferences).toBeNull();
     expect(call).not.toHaveProperty('directoryFlags');
     expect(call).not.toHaveProperty('forwardModelFlag');
     expect(call).not.toHaveProperty('versionFlags');

@@ -1,6 +1,7 @@
 import type { BackgroundServiceProcessBootstrap } from './backgroundServiceProcessBootstrap';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSupervisedProcess } from '@/subprocess/supervision/supervisedProcess';
+import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { spawnBackgroundServiceProcessChannel, type BackgroundServiceProcessChannel } from './backgroundServiceProcessChannel';
 import { createBackgroundServiceProcessServiceHost } from './backgroundServiceProcessBridge';
 import {
@@ -84,7 +85,7 @@ export function createBackgroundServiceProcessExecution(params: Readonly<{
             serviceId: params.serviceId,
             ...(params.pluginId ? { pluginId: params.pluginId } : {}),
         });
-        channel = await channelPromise;
+        channel = await timeWebLatencyPhase('backgroundService.process.spawn', () => channelPromise!);
         const decoder = createBackgroundServiceProcessFrameDecoder();
         channel.onData(chunk => {
             if (disposed) return;
@@ -174,7 +175,7 @@ export function createBackgroundServiceProcessExecution(params: Readonly<{
                     supervisor.start();
                     startup = ready.promise;
                 }
-                await startup;
+                await timeWebLatencyPhase('backgroundService.process.ready', () => startup!);
             } finally {
                 context.signal.removeEventListener('abort', abortStartup);
             }
@@ -201,7 +202,7 @@ export function createBackgroundServiceProcessExecution(params: Readonly<{
             };
             context.signal.addEventListener('abort', abort, { once: true });
             const metadata = Object.fromEntries(Object.entries(context).filter(([key]) => (
-                ['plugin', 'contribution', 'surface', 'invokedAtMs', 'invocationId', 'caller'].includes(key)
+                ['plugin', 'contribution', 'materialization', 'surface', 'invokedAtMs', 'invocationId', 'caller'].includes(key)
             )));
             try {
                 send({ kind: 'run', id, context: metadata, services: services.description,

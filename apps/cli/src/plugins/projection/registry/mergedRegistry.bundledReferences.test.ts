@@ -48,6 +48,8 @@ describe('resolveMergedContributionRegistry bundled reference universe', () => {
           optional: [],
         },
         contributes: {
+          agents: [{ id: 'assistant', title: 'Assistant', runtime: { kind: 'custom' }, primary: 'sessions',
+            capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
           actions: [{
             id: 'run',
             title: 'Run',
@@ -94,6 +96,15 @@ describe('resolveMergedContributionRegistry bundled reference universe', () => {
     });
 
     const registry = await resolveMergedContributionRegistry({ happyHomeDir });
+    const selected = await resolveMergedContributionRegistry({ happyHomeDir,
+      agentIdentity: { pluginId, localId: 'assistant' },
+    });
+    expect(selected.agentDefinitionsById.get(`${pluginId}/assistant`)).toMatchObject({
+      identity: { pluginId, localId: 'assistant' },
+      hostAccess: { required: [expect.objectContaining({ capability: 'connectedAccounts' })] },
+    });
+    expect([...selected.agentDefinitionsById.keys()]).toEqual([`${pluginId}/assistant`]);
+    expect(selected.actions).toEqual([]);
 
     expect(registry.actions).toEqual(expect.arrayContaining([
       expect.objectContaining({

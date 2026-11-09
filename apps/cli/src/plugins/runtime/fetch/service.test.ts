@@ -6,7 +6,8 @@ import {
     PluginConnectedAccountDescriptorContributionV2Schema,
     type PluginRequestInterceptorContributionV1,
 } from '@happier-dev/protocol';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { logger } from '@/ui/logger';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import type {
@@ -23,6 +24,11 @@ import { createUnavailablePluginServices } from '../invocation/services/unavaila
 import { createConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationRecord } from '@happier-dev/cli-common/connectedAccounts';
 // Compose the real account owner and factories without extending the plugin's
 // production export surface for this host-boundary test.
+import {
+    beginGithubAccountRequestOccurrenceV1,
+    createGithubApiClient,
+    createGithubListedAccountApiClient,
+} from '../../../../../../packages/plugins/scm-github/src/observations/githubApiClient';
 import {
     createStablePluginHttpHost as createProductionStablePluginHttpHost,
     createPluginHttpService as createProductionPluginHttpService,
@@ -419,6 +425,169 @@ describe('createPluginHttpService', () => {
             await expect(pending).resolves.toMatchObject({ value: { status: 200 } });
             expect(adapter).toHaveBeenCalledOnce();
         } finally { release?.(); }
+    });
+
+    it('finishes admitted coalesced GitHub reads across revoke within its original admitted binding', async () => {
+        const retire = beginGithubAccountRequestOccurrenceV1();
+        const account: ConnectedAccountRef = {
+            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'shared-purpose-account',
+        };
+        const firstScope = new AbortController();
+        const peerScope = new AbortController();
+        const originalQuery = 'query { viewer { login } }';
+        const body = new TextEncoder().encode(originalQuery);
+        let completeHttp!: () => void;
+        const adapter = vi.fn(async (request: TestFetchRequest) => {
+            return await new Promise<TestFetchResponse>((resolve) => {
+                completeHttp = () => {
+                    expect(new TextDecoder().decode(request.body as Uint8Array)).toBe(originalQuery);
+                    resolve({ status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode('{"data":{"viewer":{"login":"reader"}}}') });
+                };
+            });
+        });
+        const host = createStablePluginHttpHost({
+            adapter,
+        });
+        const baseBinding = createPluginInvocationServiceBinding('github-purpose-occurrence', 'github-purpose-grant');
+        const createContext = (correlationId: string, authority: AbortController): PluginInvocationContext => {
+            const unavailable = createUnavailablePluginServices();
+            const seed = {
+                plugin: { id: account.service.pluginId, version: '1.0.0' },
+                contribution: { id: correlationId, qualifiedId: `${account.service.pluginId}/actions/${correlationId}` },
+                occurrenceId: 'github-purpose-occurrence', correlationId, surface: 'agent' as const,
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            };
+            return {
+                plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface, invokedAtMs: 1_000, signal: seed.signal,
+                services: {
+                    ...unavailable,
+                    // Each coalesced caller retains its exact configuration lifetime.
+                    http: host.bind(seed, { ...baseBinding, networkRevocationSignal: authority.signal }),
+                    connectedAccounts: {
+                        ...unavailable.connectedAccounts,
+                        async materialize(_purpose, _request, options) {
+                            expect(options?.expectedAccount).toEqual(account);
+                            return { kind: 'httpHeaders', headers: { authorization: 'Bearer admitted-purpose-account' } };
+                        },
+                        async materializeListedAccount(request) {
+                            expect(request.account).toEqual(account);
+                            return { kind: 'httpHeaders', headers: { authorization: 'Bearer admitted-purpose-account' } };
+                        },
+                    },
+                },
+            };
+        };
+        try {
+            const first = await createGithubApiClient(createContext('first', firstScope), account);
+            const peer = await createGithubListedAccountApiClient(createContext('peer', peerScope), account);
+            const input = { url: 'https://api.github.com/graphql', method: 'POST' as const, readOnlyGraphql: true, body };
+            const firstResult = first.request(input).then(value => ({ value }), error => ({ error }));
+            const peerResult = peer.request(input).then(value => ({ value }), error => ({ error }));
+            await vi.waitFor(() => {
+                expect(adapter).toHaveBeenCalledTimes(1);
+            });
+            peerScope.abort();
+            body.fill(0);
+            completeHttp();
+            await expect(firstResult).resolves.toMatchObject({ value: { status: 200 } });
+            await expect(peerResult).resolves.toMatchObject({ value: { status: 200 } });
+            expect(adapter).toHaveBeenCalledTimes(1);
+        } finally { completeHttp?.(); retire(); }
+    });
+
+    it('shares admitted GitHub reads across invocation-bound hosts without borrowing caller cancellation or retired authority', async () => {
+        const retire = beginGithubAccountRequestOccurrenceV1();
+        const foregroundInvocation = new AbortController();
+        const channelsInvocation = new AbortController();
+        let current = true;
+        let completeHttp!: () => void;
+        const transportSignals: AbortSignal[] = [];
+        const account: ConnectedAccountRef = {
+            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'shared-account',
+        };
+        const adapter = vi.fn(async (request: TestFetchRequest) => {
+            if (!request.signal) throw new Error('Expected the account-owned transport signal');
+            transportSignals.push(request.signal);
+            expect(request.headers?.Authorization).toBe('Bearer admitted-account');
+            // The genuine HTTP boundary deliberately ignores abort to prove that
+            // retirement retracts even a response which arrives afterwards.
+            return await new Promise<TestFetchResponse>((resolve) => {
+                completeHttp = () => resolve({ status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode('{"ok":true}') });
+            });
+        });
+        const host = createStablePluginHttpHost({
+            adapter,
+        });
+        const baseBinding = createPluginInvocationServiceBinding('github-shared-occurrence', 'github-shared-grant');
+        const binding = baseBinding;
+        const createContext = (controller: AbortController, correlationId: string): PluginInvocationContext => {
+            const unavailable = createUnavailablePluginServices();
+            const seed = {
+                plugin: { id: account.service.pluginId, version: '1.0.0' },
+                contribution: { id: correlationId, qualifiedId: `${account.service.pluginId}/actions/${correlationId}` },
+                occurrenceId: 'github-shared-occurrence', correlationId, surface: 'agent' as const,
+                signal: controller.signal, isOccurrenceCurrent: () => current,
+            };
+            return {
+                plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface, invokedAtMs: 1_000, signal: seed.signal,
+                services: {
+                    ...unavailable,
+                    http: host.bind(seed, binding),
+                    // Saved credential delivery is the host system boundary; all
+                    // authorization parsing, client/owner and HTTP logic stay real.
+                    connectedAccounts: {
+                        ...unavailable.connectedAccounts,
+                        async materialize(purpose, request, options) {
+                            expect(purpose).toBe('github-connected-account');
+                            expect(request).toEqual({ kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] });
+                            expect(options?.expectedAccount).toEqual(account);
+                            expect(options?.signal).toBe(controller.signal);
+                            return { kind: 'httpHeaders', headers: { authorization: 'Bearer admitted-account' } };
+                        },
+                        async materializeListedAccount(request, options) {
+                            expect(request).toEqual({ purpose: 'github-connected-account', account,
+                                materialization: { kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] },
+                            });
+                            expect(options?.signal).toBe(controller.signal);
+                            return { kind: 'httpHeaders', headers: { authorization: 'Bearer admitted-account' } };
+                        },
+                    },
+                },
+            };
+        };
+        try {
+            const foreground = await createGithubApiClient(createContext(foregroundInvocation, 'foreground'), account);
+            const channels = await createGithubListedAccountApiClient(createContext(channelsInvocation, 'channels'), account);
+            const input = { url: 'https://api.github.com/repos/owner/repository' };
+            const first = foreground.request(input);
+            const peer = channels.request(input);
+            const cancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => {
+                expect(adapter).toHaveBeenCalledTimes(1);
+            });
+            foregroundInvocation.abort();
+            await cancelled;
+            expect(transportSignals[0]?.aborted).toBe(false);
+            completeHttp();
+            await expect(peer).resolves.toMatchObject({ status: 200 });
+            expect(adapter).toHaveBeenCalledTimes(1);
+
+            const late = channels.request({ url: `${input.url}?phase=late` });
+            const retracted = expect(late).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => expect(adapter).toHaveBeenCalledTimes(2));
+            current = false;
+            retire();
+            expect(transportSignals[1]?.aborted).toBe(true);
+            completeHttp();
+            await retracted;
+            expect(adapter).toHaveBeenCalledTimes(2);
+        } finally {
+            current = false;
+            retire();
+            foregroundInvocation.abort();
+            channelsInvocation.abort();
+            completeHttp?.();
+        }
     });
 
     it('prepares an immutable read without HTTP and keeps its transport independent of the preparing invocation', async () => {

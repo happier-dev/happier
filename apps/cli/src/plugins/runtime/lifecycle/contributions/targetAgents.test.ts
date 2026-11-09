@@ -35,7 +35,6 @@ import type { ActivationTarget } from '../activation/targets';
 import type { ContributionRuntimeRegistration } from '../../api/registrationRightsHost';
 import {
     createContributionRegistrationHost,
-    recordValidatedAgentSessionRunnerFactory,
 } from '../../api/registrationRightsHost';
 import {
     createDeclarativeAcpAgentRuntimeRegistry,
@@ -1768,12 +1767,6 @@ describe('target Agent runtime registry', () => {
         if (!locator) {
             throw new Error('Expected a session runner factory locator');
         }
-        recordValidatedAgentSessionRunnerFactory(committed.value, {
-            locator,
-            normalizedModulePath: 'agent/runtime.js',
-            loadMode: 'immutable-js',
-        });
-
         const registry = await createTargetAgentRuntimeRegistry({
             agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
@@ -1816,7 +1809,7 @@ describe('target Agent runtime registry', () => {
         expect(lease).not.toHaveProperty('manifestDigest');
     });
 
-    it('takes a bundled factory binding from the published manifest when registration drifts', async () => {
+    it('takes a bundled factory binding from the published manifest without attesting trusted callback identity', async () => {
         // Package-boundary input, not a release build or checkout-custody override.
         const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-target-agent-bundled-'));
         let activation: Awaited<ReturnType<typeof activateContributionModule>> | undefined;
@@ -1835,7 +1828,6 @@ describe('target Agent runtime registry', () => {
             };
             const rawManifest = createPluginManifestV2Fixture({
                 id: pluginId,
-                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1, agentFactories: [publishedFactory] },
                 entrypoints: { daemon: './.happier-plugin/daemon.mjs' },
                 contributes: { agents: [{
@@ -1865,7 +1857,7 @@ describe('target Agent runtime registry', () => {
             await writeFile(join(packageRoot, '.happier-plugin', 'daemon.mjs'), `
                 import { createB } from './agent/b.mjs';
                 export function activate(api) {
-                    api.agents.register('assistant', createB, { sessionRunnerFactory: ${JSON.stringify(registeredLocator)} });
+                    api.agents.register('assistant', (...args) => createB(...args), { sessionRunnerFactory: ${JSON.stringify(registeredLocator)} });
                 }
             `);
             const packaged = resolvePackagedBundledActivationPaths({
@@ -1888,7 +1880,7 @@ describe('target Agent runtime registry', () => {
                 moduleNamespace: await source.load(), resolveRelativeModule: source.resolveRelativeModule,
                 isOccurrenceCurrent: () => true,
             });
-            expect(activation.status).toBe('active');
+            expect(activation.status, JSON.stringify(activation.diagnostics)).toBe('active');
             expect(activation.validatedAgentSessionRunnerFactories).toEqual([{
                 localAgentId: 'assistant', locator: registeredLocator,
                 normalizedModulePath: '.happier-plugin/agent/b.mjs', loadMode: 'immutable-js',
@@ -1896,7 +1888,12 @@ describe('target Agent runtime registry', () => {
             const lease = createTargetAgentRuntimeRegistryProduction({
                 agents: [{ id: 'assistant', pluginId }],
                 activationTargets: [publishedTarget],
-                targetRegistrations: activation.registrations.map((registration) => ({ pluginId, occurrenceId, registration })),
+                targetRegistrations: activation.registrations.map((registration) => ({
+                    pluginId, occurrenceId, registration,
+                    ...(registration.family === 'agents'
+                        ? { agentSessionRunnerFactory: activation!.validatedAgentSessionRunnerFactories.find((fact) => fact.localAgentId === registration.localId) }
+                        : {}),
+                })),
                 readPluginOccurrenceId: (id) => id === pluginId ? occurrenceId : null,
                 readPluginSourceCustody: (id) => id === pluginId ? custody : null,
                 isOccurrenceCurrent: () => true,
@@ -3527,7 +3524,7 @@ describe('target Agent runtime registry', () => {
         }
     });
 
-    it('carries the immutable registration-ingress Provider binding snapshot into the generation lease', async () => {
+    it('carries the trusted live Provider binding into the generation lease', async () => {
         const originalPrepare = providerBinding.prepare;
         const originalMaterialize = providerBinding.materialize;
         const mutableProviderBinding = { ...providerBinding };
@@ -3580,7 +3577,7 @@ describe('target Agent runtime registry', () => {
         expect(binding).toBe(readAdmittedAgentRegistration(registry, 'acme.agent.fixture').providerBinding);
         expect(binding).toMatchObject({
             v: 1,
-            adapterVersion: 1,
+            adapterVersion: 2,
             prepare: expect.any(Function),
             materialize: expect.any(Function),
         });
@@ -3590,7 +3587,7 @@ describe('target Agent runtime registry', () => {
             v: 1,
             agentTargetKey: 'assistant',
             connectionId: 'connection-1',
-        })).toEqual({ v: 1, materialization: 'spawnEnv' });
+        })).toEqual({ v: 1, materialization: 'configFile' });
         await expect(binding.materialize({
             v: 1,
             binding: {
@@ -3612,8 +3609,7 @@ describe('target Agent runtime registry', () => {
             },
             prepared: { v: 1, materialization: 'spawnEnv' },
             credential: { kind: 'none' },
-        })).resolves.toEqual({ v: 1, kind: 'spawnEnv', env: [] });
-        expect(Object.isFrozen(binding)).toBe(true);
+        })).resolves.toEqual({ v: 1, kind: 'configFile', env: [], files: [] });
     });
 
     it('carries the selected normalized startup-instructions capability into the runtime lease', async () => {

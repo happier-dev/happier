@@ -1,4 +1,5 @@
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
+import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
 import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import type { PluginLanguageServerContributionV1 } from '@happier-dev/protocol/plugins/contributions/languageServers';
 import type {
@@ -44,7 +45,6 @@ import type {
   PluginSystemToolContributionV1,
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
-  PluginEventContributionV1,
   PluginSourceSpecV1,
   PluginContributionIdentityV1,
   ProviderContributionV1,
@@ -577,7 +577,7 @@ export type ResolvedNotificationChannelContribution = Readonly<{
     definition: PluginNotificationChannelContributionV2;
 }>;
 
-export type ResolvedEventDefinition = Readonly<PluginEventContributionV1 & {
+export type ResolvedEventDefinition = Readonly<ParsedPluginEventContributionV1 & {
     id: string;
     localId: string;
 }>;
@@ -799,12 +799,14 @@ export type ResolvedPluginEnablement = Readonly<{
     accountEnabled?: boolean;
     machineEnabled: boolean;
     enabled: boolean;
-    unavailableCode?: 'plugin_account_execution_unavailable';
+    unavailableCode?: 'plugin_account_execution_unavailable' | 'plugin_account_census_failed';
+    unavailableCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
+    unavailableRequestId?: string;
 }>;
 
 export type UnavailableAgentPlugin = ResolvedPluginEnablement & Readonly<{
     pluginId: string;
-    code: 'plugin_disabled' | 'plugin_account_execution_unavailable';
+    code: 'plugin_disabled' | NonNullable<ResolvedPluginEnablement['unavailableCode']>;
 }>;
 
 export type ResolvedContributionInputs = Readonly<{

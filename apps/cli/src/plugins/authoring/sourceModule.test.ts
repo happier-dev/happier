@@ -96,6 +96,7 @@ describe('plugin author source module owner', () => {
     const root = fileURLToPath(new URL(`../../../../../packages/plugins/${name}/`, import.meta.url));
     const aliasStart = performance.now();
     const aliases = await resolvePluginAuthorWorkspaceAliases(root);
+    console.info('DEVPLUG alias measurement', JSON.stringify({ name, elapsedMs: performance.now() - aliasStart, aliases: Object.keys(aliases).length }));
     if (name === 'channels') {
       const paths = workspaceSourceCompilerPaths(await readWorkspacePackages(fileURLToPath(new URL('../../../../../', import.meta.url))));
       const fullAliases = Object.fromEntries(Object.entries(paths).map(([specifier, targets]) => [specifier, targets[0]]));
@@ -107,6 +108,7 @@ describe('plugin author source module owner', () => {
           createJiti(import.meta.url, { alias: table, fsCache: false });
           constructions.push({ elapsedMs: performance.now() - start, cpu: process.cpuUsage(cpuStart) });
         }
+        console.info('DEVPLUG construction measurement', JSON.stringify({ mode, aliases: Object.keys(table).length, constructions }));
       }
     }
     for (const observedRevision of [1, 2]) {
@@ -129,6 +131,7 @@ describe('plugin author source module owner', () => {
       } finally {
         maxLagMs = Math.max(maxLagMs, performance.now() - lastTick);
         clearInterval(heartbeat);
+        console.info('DEVPLUG candidate measurement', JSON.stringify({ name, observedRevision, elapsedMs: performance.now() - start, maxLagMs, cpu: process.cpuUsage(cpuStart) }));
       }
     }
   }, 120_000);

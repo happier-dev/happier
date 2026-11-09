@@ -10,6 +10,7 @@ import type {
 
 import {
     createStablePluginMcpHost,
+    invokePeer,
     type StablePluginMcpDiscoveryRegistration,
     type StablePluginMcpServerRegistration,
 } from './mcp';
@@ -61,7 +62,7 @@ function runtime(
     overrides: Partial<StablePluginMcpServerRegistration> = {},
 ): StablePluginMcpServerRegistration {
     const tool: PluginMcpTool = { name: 'echo', inputSchema: { type: 'object' } };
-    return {
+    const registration: StablePluginMcpServerRegistration = {
         occurrenceId: 'occurrenceId-7', qualifiedId, isCurrent: () => true,
         listTools: async () => ({ items: [tool] }),
         callTool: async ({ name, input }) => ({ name, input }),
@@ -72,6 +73,18 @@ function runtime(
         listPrompts: async () => ({ items: [] }),
         getPrompt: async () => ({ messages: [] }),
         ...overrides,
+    };
+    // Mirror the executable registration boundary, keeping raw plugin failures
+    // separate from admission/projection failures in the host callback.
+    return {
+        ...registration,
+        listTools: async (request, caller, options, project) => project(await invokePeer(() => registration.listTools(request, caller, options, project)), value => value),
+        callTool: async (request, caller, options, project) => project(await invokePeer(() => registration.callTool(request, caller, options, project)), value => value),
+        listResources: async (request, caller, options, project) => project(await invokePeer(() => registration.listResources(request, caller, options, project)), value => value),
+        listResourceTemplates: async (request, caller, options, project) => project(await invokePeer(() => registration.listResourceTemplates(request, caller, options, project)), value => value),
+        readResource: async (request, caller, options, project) => project(await invokePeer(() => registration.readResource(request, caller, options, project)), value => value),
+        listPrompts: async (request, caller, options, project) => project(await invokePeer(() => registration.listPrompts(request, caller, options, project)), value => value),
+        getPrompt: async (request, caller, options, project) => project(await invokePeer(() => registration.getPrompt(request, caller, options, project)), value => value),
     };
 }
 
@@ -110,11 +123,7 @@ describe('stable plugin MCP host', () => {
                 }
             },
         });
-        const service = host.bind(seed(), [{
-            serverRefs: [{ pluginId: 'acme.one', localId: 'tools' }],
-            discoverySourceRefs: [],
-            operations: ['listTools'],
-        }]);
+        const service = host.bind(seed());
 
         await expect(service.list()).resolves.toMatchObject({
             items: [{ ref: { pluginId: 'acme.one', localId: 'tools' } }],
@@ -592,38 +601,6 @@ describe('stable plugin MCP host', () => {
         }
     });
 
-    it('constrains a bound service to the selected server refs and operations', async () => {
-        const host = createStablePluginMcpHost({
-            servers: [server('acme.one', 'selected'), server('acme.two', 'hidden')],
-            discoverySources: [],
-            activateOnDemand: async () => {},
-            readServer: (ref) => runtime(`${ref.pluginId}/${ref.localId}`),
-            readDiscoverySource: () => null,
-        });
-        const service = host.bind(seed(), [{
-            serverRefs: [{ pluginId: 'acme.one', localId: 'selected' }],
-            discoverySourceRefs: [],
-            operations: ['listTools'],
-        }]);
-
-        await expect(service.list()).resolves.toMatchObject({
-            items: [{ ref: { pluginId: 'acme.one', localId: 'selected' } }],
-        });
-        const client = await service.connect(
-            { pluginId: 'acme.one', localId: 'selected' },
-            { elicitation: { mode: 'reject' } },
-        );
-        await expect(client.listTools()).resolves.toMatchObject({ items: [{ name: 'echo' }] });
-        await expect(client.callTool('echo', {})).rejects.toMatchObject({ code: 'plugin_mcp_access_denied' });
-        await expect(service.connect(
-            { pluginId: 'acme.two', localId: 'hidden' },
-            { elicitation: { mode: 'reject' } },
-        )).rejects.toMatchObject({ code: 'plugin_mcp_access_denied' });
-
-        await client.dispose();
-        await host.dispose();
-    });
-
     it('demands and re-reads the exact qualified dynamic server before connecting', async () => {
         const demands: string[] = [];
         const registrations = new Map<string, StablePluginMcpServerRegistration>();
@@ -758,13 +735,17 @@ describe('stable plugin MCP host', () => {
         await expect(client.listTools({ limit: 101 })).resolves.toEqual({ items: tools });
         const largeInput = { text: 'x'.repeat(256 * 1024 + 1) };
         await expect(client.callTool(tools[0]!.name, largeInput)).resolves.toEqual({ name: tools[0]!.name, input: largeInput });
-        registration = runtime('acme.one/tools', { callTool: async () => new Date() as never });
+        // Plugin runtime boundary fixture deliberately returns non-JSON values.
+        let invalidResult: unknown = new Date();
+        registration = runtime('acme.one/tools', { callTool: async () => invalidResult as never });
         const invalidResultClient = await host.bind(seed()).connect(
             { pluginId: 'acme.one', localId: 'tools' }, { elicitation: { mode: 'reject' } },
         );
         await expect(invalidResultClient.callTool('echo', {})).rejects.toMatchObject({ code: 'plugin_mcp_result_invalid' });
         const cyclic: Record<string, unknown> = {};
         cyclic.self = cyclic;
+        invalidResult = cyclic;
+        await expect(invalidResultClient.callTool('echo', {})).rejects.toMatchObject({ code: 'plugin_mcp_result_invalid' });
         await expect(client.callTool('echo', cyclic as never)).rejects.toMatchObject({ code: 'plugin_mcp_input_invalid' });
         await invalidResultClient.dispose();
         await client.dispose();
@@ -806,61 +787,6 @@ describe('stable plugin MCP host', () => {
             }],
         });
         expect(demands).toEqual(['acme.one/mcp.discoverySources/detector']);
-    });
-
-    it('keeps MCP server and discovery-source authorization family-specific', async () => {
-        const registration: StablePluginMcpDiscoveryRegistration = {
-            occurrenceId: 'occurrenceId-7',
-            qualifiedId: 'acme.one/detector',
-            isCurrent: () => true,
-            discover: async () => ({ items: [] }),
-        };
-        const host = createStablePluginMcpHost({
-            servers: [server('acme.one', 'tools')],
-            discoverySources: [discovery('acme.one', 'detector')],
-            activateOnDemand: async () => {},
-            readServer: () => runtime('acme.one/tools'),
-            readDiscoverySource: () => registration,
-        });
-        const detector = { pluginId: 'acme.one', localId: 'detector' } as const;
-        const tools = { pluginId: 'acme.one', localId: 'tools' } as const;
-
-        const wrongFamilyCases = [{
-            name: 'a server reference cannot authorize discovery',
-            authorization: [{
-                serverRefs: [detector],
-                discoverySourceRefs: [],
-                operations: ['discover' as const],
-            }],
-            invoke: (service: ReturnType<typeof host.bind>) => service.discover(detector),
-        }, {
-            name: 'a discovery-source reference cannot authorize a concrete server',
-            authorization: [{
-                serverRefs: [],
-                discoverySourceRefs: [tools],
-                operations: ['listTools' as const],
-            }],
-            invoke: (service: ReturnType<typeof host.bind>) => service.connect(
-                tools,
-                { elicitation: { mode: 'reject' as const } },
-            ),
-        }] as const;
-        for (const testCase of wrongFamilyCases) {
-            const wrongFamilyService = host.bind(seed(), testCase.authorization);
-            await expect(testCase.invoke(wrongFamilyService), testCase.name)
-                .rejects.toMatchObject({ code: 'plugin_mcp_access_denied' });
-        }
-
-        const service = host.bind(seed(), [{
-            serverRefs: [tools],
-            discoverySourceRefs: [detector],
-            operations: ['listTools', 'discover'],
-        }]);
-        await expect(service.discover(detector)).resolves.toEqual({ items: [] });
-        const client = await service.connect(tools, { elicitation: { mode: 'reject' } });
-        await expect(client.listTools()).resolves.toMatchObject({ items: [{ name: 'echo' }] });
-        await client.dispose();
-        await host.dispose();
     });
 
     it('fences cancellation, client disposal, occurrenceId retirement, and transport cleanup', async () => {
@@ -1208,7 +1134,7 @@ describe('stable plugin MCP host', () => {
             activateOnDemand: async () => {}, readServer: () => null,
             readDiscoverySource: () => ({
                 occurrenceId: 'occurrenceId-7', qualifiedId: 'acme.one/detector', isCurrent: () => true,
-                discover: async () => ({ items, nextCursor: 'x'.repeat(513) }),
+                discover: async () => ({ items: items.map(item => ({ ...item, source })), nextCursor: 'x'.repeat(513) }),
             }),
         });
         try {

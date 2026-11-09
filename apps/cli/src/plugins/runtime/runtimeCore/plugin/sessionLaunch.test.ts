@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { StoredCredentials } from '@/persistence';
+import * as persistence from '@/persistence';
+import { bindRequesterSessionCredentialScope, decodeStoredCredentials } from '@/persistence';
+import { readMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 
 import {
   buildPluginHostSessionRuntimeOptions,
@@ -15,7 +18,37 @@ const credentials = {
   },
 } satisfies StoredCredentials;
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('plugin session launch binding', () => {
+  it.each(['child', 'local', 'server-only', 'authored-scope', 'authored-getter'])('preserves only actual host credential context through Session normalization (%s)', async kind => {
+    let sourceCredentials = decodeStoredCredentials({ token: 'normalizer-fixture' });
+    if (!sourceCredentials) throw new Error('Invalid stored credential fixture');
+    const scope = { serverId: 'profile-normalizer', serverHttpBaseUrl: 'https://normalizer.example.test',
+      requesterSession: { sessionId: 'session-1', homeServerIdentityId: 'srv_normalizer', attribution: {
+        serverId: 'profile-normalizer', accountId: 'member', machineId: 'm1', installationId: 'install',
+      } } };
+    // Device settings I/O is the boundary; retained Home and exact profile
+    // qualification still pass through their actual canonical owners.
+    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true,
+      servers: { 'profile-normalizer': { id: 'profile-normalizer', name: 'Normalizer',
+        serverUrl: scope.serverHttpBaseUrl, webappUrl: scope.serverHttpBaseUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_normalizer', canonicalServerUrl: scope.serverHttpBaseUrl,
+          revision: 1, endpoints: [{ kind: 'https', url: scope.serverHttpBaseUrl }] },
+      } } });
+    if (kind === 'child') sourceCredentials = bindRequesterSessionCredentialScope(sourceCredentials, scope);
+    if (kind === 'server-only') sourceCredentials = bindRequesterSessionCredentialScope(sourceCredentials, {
+      serverId: scope.serverId, serverHttpBaseUrl: scope.serverHttpBaseUrl,
+    });
+    if (kind === 'authored-scope') sourceCredentials = { ...sourceCredentials, requesterSessionCredentialScope: scope };
+    if (kind === 'authored-getter') Object.defineProperty(sourceCredentials, 'requesterSessionCredentialScope', { get: () => scope });
+    const options = buildPluginHostSessionRuntimeOptions(buildPluginSessionBindingInput({ credentials: sourceCredentials }));
+    const selected = readMcpExecutionSource({ credentials: options.credentials, localWorkflow: kind !== 'child',
+      sessionId: 'session-1', machineId: 'm1', serverHttpBaseUrl: scope.serverHttpBaseUrl });
+    if (kind !== 'child' && kind !== 'local') await expect(selected).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+    else if (kind === 'child') await expect(selected).resolves.toMatchObject({ kind: 'requester', identity: { kind: 'isolated' } });
+    else await expect(selected).resolves.toEqual({ kind: 'local_user' });
+  });
   it('rejects Pool origin containing private definition fields', () => {
     expect(() => buildPluginSessionBindingInput({
       credentials,

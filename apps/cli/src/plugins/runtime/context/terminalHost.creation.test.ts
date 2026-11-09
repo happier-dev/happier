@@ -9,7 +9,18 @@ import axios from 'axios';
 import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 
 const inventory = vi.hoisted(() => ({ socketPath: '', inheritedSpawns: 0, startedServers: [] as string[],
-    tmuxEnabled: false, tmuxSessions: new Map<string, string>() }));
+    tmuxEnabled: false, tmuxSessions: new Map<string, string>(), tmuxLaunchScripts: [] as string[] }));
+// Observe the actual one-shot file handed to the external tmux server. The
+// prepared owner, native finalizer, adapter and shell-command producer stay real.
+vi.mock('node:fs/promises', async original => {
+    const fs = await original<typeof import('node:fs/promises')>();
+    return { ...fs, writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+        await fs.writeFile(...args);
+        if (/[/\\]tmux-window-[^/\\]+[/\\]launch\.sh$/.test(String(args[0])) && typeof args[1] === 'string') {
+            inventory.tmuxLaunchScripts.push(args[1]);
+        }
+    } };
+});
 const sessionTransport = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', async original => ({ ...await original<typeof import('socket.io-client')>(), io: sessionTransport.io }));
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
@@ -41,11 +52,18 @@ vi.mock('node:child_process', async (importOriginal) => {
                     else if (command === 'capture-pane') output = '> ';
                     else if (command === 'kill-session') {
                         const target = args[args.indexOf('-t') + 1];
-                        if (target) inventory.tmuxSessions.delete(target);
+                        // tmux's '=' selects an exact Session; it is not part
+                        // of the Session name passed to new-session -s.
+                        if (target) inventory.tmuxSessions.delete(parseTmuxSessionIdentifier(target).session);
                     }
                     else if (command === 'kill-window') {
                         const target = args[args.indexOf('-t') + 1];
-                        for (const [name, id] of inventory.tmuxSessions) if (id === target) inventory.tmuxSessions.delete(name);
+                        const exactTarget = target?.startsWith('=') ? parseTmuxSessionIdentifier(target) : null;
+                        for (const [name, id] of inventory.tmuxSessions) {
+                            if (id === target || (exactTarget?.session === name && exactTarget.window === id)) {
+                                inventory.tmuxSessions.delete(name);
+                            }
+                        }
                     }
                     if (output) child.stdout.write(output);
                     if (error) child.stderr.write(error);
@@ -142,9 +160,49 @@ import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executio
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 
 import { createDefaultPluginTerminalHostService, createDefaultPreparedTerminalHostOwner, createPluginTerminalHostService, installAgentChildLaunchEnvironmentTransformerForTerminalHost } from './terminalHost';
-import { createStablePluginExecService } from '../invocation/services/exec';
+import { createStablePluginExecService, authorizeResolvedAgentNativeExecLaunchForHost } from '../invocation/services/exec';
+import { buildPosixShellCommand } from '@happier-dev/agents/process/shellCommand';
+import { parseTmuxSessionIdentifier } from '@/integrations/tmux/identifiers';
 
 describe('plugin terminal-host creation rollback', () => {
+    it.skipIf(process.platform === 'win32')('retains the startup wrapper when a prepared tmux host finalizes native material', async () => {
+        await withTempDir('prepared-tmux-wrapper-', async happyHomeDir => {
+            inventory.tmuxEnabled = true;
+            inventory.tmuxSessions.clear();
+            inventory.tmuxLaunchScripts.length = 0;
+            const owner = createDefaultPreparedTerminalHostOwner({ happyHomeDir, readSessionId: () => 'prepared-tmux' });
+            // Closed-host Exec finalization is real. Requester admission is
+            // independently composed by the original-Session attach tests.
+            const exec = createStablePluginExecService({ signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true, resolvePath: async () => happyHomeDir,
+                resolveExecutable: async () => { throw new Error('Already resolved native executable'); } });
+            const tuple = { command: process.execPath, args: ['--version'], cwd: happyHomeDir, env: { NATIVE_SELECTED: 'active' } };
+            let finalizations = 0;
+            let created: Awaited<ReturnType<typeof owner.createPreparedHost>> | undefined;
+            try {
+                created = await owner.createPreparedHost({ preference: 'tmux', sessionName: 'prepared',
+                    workingDirectory: happyHomeDir, spawnArgv: [tuple.command, ...tuple.args], spawnEnv: tuple.env,
+                    finalizeNativeLaunch: async () => {
+                        finalizations++;
+                        return await authorizeResolvedAgentNativeExecLaunchForHost(exec, tuple, undefined, undefined, 'attach');
+                    } });
+                const native: unknown = JSON.parse(await readFile(created.launch.specPath, 'utf8'));
+                expect(native).toMatchObject({ command: tuple.command, args: tuple.args, cwd: happyHomeDir,
+                    env: { NATIVE_SELECTED: 'active' }, spawnResultPath: expect.any(String) });
+                expect(finalizations).toBe(1);
+                // Replacing spawnArgv with the native tuple loses the launcher
+                // receipt even though material and tmux creation both succeed.
+                expect(inventory.tmuxLaunchScripts).toHaveLength(1);
+                expect(inventory.tmuxLaunchScripts[0]).toContain(`exec ${buildPosixShellCommand(created.launch.argv)}`);
+            } finally {
+                if (created) await owner.dispose(created.handle, { kind: 'destroy_owned_host', reason: 'session_closed' });
+                inventory.tmuxEnabled = false;
+                inventory.tmuxSessions.clear();
+                inventory.tmuxLaunchScripts.length = 0;
+            }
+        });
+    });
+
     it.skipIf(process.platform === 'win32')('opens explicit-model Claude child tmux hosts without colliding with their parent or sibling Run', async () => {
         await withTempDir('plugin-run-tmux-', async happyHomeDir => {
             inventory.tmuxEnabled = true;

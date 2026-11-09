@@ -20,7 +20,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     createExecutionRunHostBackendFromSessionRuntime,
-} from '@happier-dev/plugin-sdk/host/registration';
+} from '@/agent/runtime/bridges/executionRun/sessionAdapter';
 import type {
     JsonValue,
 } from '@happier-dev/plugin-sdk';
@@ -299,6 +299,7 @@ function createAcpBoundaryContext(
     const owners = Object.freeze({
         features: Object.freeze({ isEnabled: () => false }),
         sessionHooks: Object.freeze({
+            observeSessionHook: async () => undefined,
             startServer: async () => Object.freeze({
                 port: 4312,
                 stop: () => undefined,
@@ -749,6 +750,7 @@ function createClaudeExecBoundaryContext(input: Readonly<{
                     bind: () => ({ dispose: () => undefined }),
                 },
                 sessionHooks: {
+                    observeSessionHook: async () => undefined,
                     startServer: async () => ({
                         port: 43123,
                         sessionHookSecretFile:

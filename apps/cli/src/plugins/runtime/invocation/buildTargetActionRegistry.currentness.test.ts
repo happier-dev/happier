@@ -21,6 +21,8 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
 import type {
     ResolvedActionContribution,
     ResolvedContributionRegistry,
@@ -85,46 +87,23 @@ function resolvedAction(params: Readonly<{
     localId: string;
     surfaces: readonly ('cli' | 'plugin')[];
 }>): ResolvedActionContribution {
+    const target = activationTarget({ pluginId: params.pluginId,
+        manifest: actionManifest(params.pluginId, params.localId, params.surfaces) });
+    const loadedPlugin = {
+        pluginId: target.pluginId,
+        pluginRootPath: target.sourceSpec.locator,
+        manifestPath: target.manifestPath,
+        daemonEntryPath: target.daemonEntryPath,
+        devDaemonEntryPath: null,
+        sourceSpec: target.sourceSpec,
+        manifest: target.manifest,
+    } satisfies LoadedPlugin;
+    const action = buildPluginContributionRegistry({ loadedPlugins: [loadedPlugin] }).actions[0];
+    if (!action) throw new Error(`Expected admitted Action fixture for '${params.pluginId}'`);
     return {
         provenance: 'external',
         source: { kind: 'path' },
-        pluginId: params.pluginId,
-        manifestPath: `/fixtures/${params.pluginId}/plugin.json`,
-        daemonEntryPath: `/fixtures/${params.pluginId}/daemon.mjs`,
-        sourceSpec: {
-            kind: 'path',
-            locator: `/fixtures/${params.pluginId}`,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-        },
-        definition: {
-            kindVersion: 1,
-            id: params.localId,
-            title: `${params.pluginId} ${params.localId}`,
-            description: null,
-            safety: 'safe',
-            placements: [],
-            slash: null,
-            bindings: null,
-            examples: null,
-            surfaces: {
-                ui: false,
-                voice: false,
-                agent: false,
-                mcp: false,
-                cli: params.surfaces.includes('cli'),
-                rpc: false,
-                api: true,
-                plugin: params.surfaces.includes('plugin'),
-            },
-            inputHints: null,
-            inputSchema: {},
-            scopes: ['global'],
-            contributionSurfaces: [...params.surfaces],
-            placementBindings: ['commandPalette'],
-            dangerLevel: 'safe',
-            execution: { target: 'daemon' },
-        },
+        ...action,
     };
 }
 
@@ -240,7 +219,7 @@ function registration(
 }
 
 describe('buildTargetActionInvocationRegistry caller currentness', () => {
-    it('uses the immediate host-stamped caller through demand activation and withholds a stale caller result', async () => {
+    it('uses the immediate host-stamped caller through demand activation and lets admitted work finish', async () => {
         const alphaManifest = actionManifest('acme.alpha', 'start', ['cli']);
         const betaManifest = actionManifest('acme.beta', 'continue', ['plugin']);
         const gammaManifest = actionManifest('acme.gamma', 'finish', ['plugin']);
@@ -499,7 +478,7 @@ describe('buildTargetActionInvocationRegistry caller currentness', () => {
             pluginId: 'acme.gamma', family: 'actions', localId: 'finish',
         }]);
 
-        const staleCallerAttempt = executeContributedAction({
+        const admittedCallerAttempt = executeContributedAction({
             runtimeRegistry: committedRuntimeRegistry,
             actionId: 'acme.alpha/start',
             input: 'hold',
@@ -509,19 +488,11 @@ describe('buildTargetActionInvocationRegistry caller currentness', () => {
         materializations.set('acme.alpha', materialization('acme.alpha', 'alpha-after'));
         releaseHeldBeta();
 
-        // The withheld outcome is itself a canonical PluginError, so it carries
-        // the same projected `retryable` and payload as any other failure.
-        await expect(staleCallerAttempt).resolves.toMatchObject({
+        // Admission owns caller currentness. Replacing the caller while its
+        // finite work is running does not revoke that already admitted work.
+        await expect(admittedCallerAttempt).resolves.toEqual({
             matched: true,
-            result: {
-                ok: false,
-                errorCode: 'plugin_action_caller_unavailable',
-                retryable: false,
-                data: {
-                    name: 'PluginError',
-                    code: 'plugin_action_caller_unavailable',
-                },
-            },
+            result: { ok: true, result: { started: true } },
         });
         expect(betaCaller).toEqual(expect.objectContaining({
             pluginId: 'acme.alpha',

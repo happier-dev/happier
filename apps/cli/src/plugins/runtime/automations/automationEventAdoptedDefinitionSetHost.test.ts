@@ -25,7 +25,10 @@ const transportMocks = vi.hoisted(() => ({
   createPublisherHeader: vi.fn(),
 }));
 
-vi.mock('axios', () => ({ default: { get: transportMocks.get, post: transportMocks.post } }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, get: transportMocks.get, post: transportMocks.post } };
+});
 vi.mock('@/plugins/installations/publisherProof', () => ({
   createDefaultPluginInstallationPublisherHeader: transportMocks.createPublisherHeader,
 }));
@@ -34,6 +37,7 @@ import {
   createAutomationEventAdoptedDefinitionSetHostV1,
   createAutomationEventStoredDefinitionsHttpTransportV1,
 } from './automationEventAdoptedDefinitionSetHost';
+import { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
 
 const credentials = {
   token: 'token_test',
@@ -196,6 +200,39 @@ async function collectPreparedAdmissionRequests(
 }
 
 describe('Automation Event adopted-definition host factory', () => {
+  it('lends one admitted saved health batch without another stored-source scan', async () => {
+    const sourceConfig = { v: 1, subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-a' },
+      checks: ['first', 'second'].map(checkId => ({ checkId,
+        kind: { pluginId: caller.pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+        config: { endpoint: 'http://127.0.0.1/health', expectStatus: 200 },
+        periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 })) } as const;
+    const initial = storedDefinition();
+    const stored = { ...initial, storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, automationId: initial.automationId, triggerId: initial.triggerId,
+        triggerRevision: initial.triggerRevision, triggerKind: 'pluginEvent', eventRef: initial.eventRef,
+        sourceSelectorId: initial.sourceSelectorId },
+      definition: { v: 1, sourceInstanceId: 'health:service-a', sourceConfig, displayLabel: 'Service checks',
+        filter: null, maximumObservationAgeMs: null },
+    }) };
+    const readStoredDefinitions = vi.fn(async () => ({ kind: 'page' as const, revision: '7',
+      eventDeclarationRelease, definitions: [stored, storedDefinition({ automationId: 'automation-2',
+        triggerId: AutomationTriggerIdSchema.parse('trigger-unrelated'), sourceSelectorId: secondSourceSelectorId })], nextCursor: null }));
+    const signal = new AbortController().signal;
+    const owner = createAutomationEventAdoptedDefinitionSetHostV1({ credentials, caller, occurrenceId, sourceCustody,
+      transport: { kind: 'checkpointedPull' }, occurrenceSignal: signal, isOccurrenceCurrent: () => true,
+      revalidateCallerMaterialization: async () => true, revalidateCallerOccurrence: async () => true,
+      readStoredDefinitions, resolveAccountEncryptionCurrentness: plainCurrentness,
+      resolveAccountEncryptionMaterial: async () => null });
+    expect(readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: () => owner, caller, occurrenceId,
+      sourceInstanceId: 'health:service-a', signal })).toEqual({ kind: 'unavailable', reason: 'source_unavailable' });
+    await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '7' });
+    expect(readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: () => owner, caller, occurrenceId,
+      sourceInstanceId: 'health:service-a', signal })).toEqual({ kind: 'available', revision: '7', source: sourceConfig });
+    expect(readStoredDefinitions).toHaveBeenCalledTimes(1);
+    expect(readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: () => owner,
+      caller: { ...caller, machineId: 'another-machine' }, occurrenceId,
+      sourceInstanceId: 'health:service-a', signal })).toEqual({ kind: 'unavailable', reason: 'source_unavailable' });
+  });
   it('uses the incumbent private Event route and rejects malformed response bytes at the HTTP boundary', async () => {
     const immutableGenerationId = 'github-generation-current';
     const stampedCaller = {
@@ -372,7 +409,7 @@ describe('Automation Event adopted-definition host factory', () => {
         kind: 'page' as const,
         revision: '7',
         eventDeclarationRelease,
-        definitions: [storedDefinition()],
+        definitions: [{ ...storedDefinition(), observationOnly: { kind: 'observationOnly' as const } }],
         nextCursor: null,
       };
     });
@@ -405,6 +442,7 @@ describe('Automation Event adopted-definition host factory', () => {
       triggerRevision,
       sourceSelectorId,
       sourceConfig: { repositoryId: 42 },
+      observationOnly: { kind: 'observationOnly' },
       observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: caller },
     });
     expect(readStoredDefinitions).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -483,20 +521,13 @@ describe('Automation Event adopted-definition host factory', () => {
       input,
       randomBytes: (length) => new Uint8Array(length),
     });
-    const withoutSuccessor = await prepare();
-    if (withoutSuccessor === null) throw new Error('plain admission sequence was unavailable');
-    const withoutSuccessorFirst = await withoutSuccessor.next();
-    if (withoutSuccessorFirst.done) throw new Error('plain admission sequence ended before its first request');
-    expect((await withoutSuccessor.next()).done).toBe(true);
-
     const sequence = await prepare();
     if (sequence === null) throw new Error('plain admission sequence was unavailable');
     const first = await sequence.next();
     if (first.done) throw new Error('plain admission sequence ended before its first request');
-    const successor = { mode: 'plain' as const, version: 8, contentKeyFingerprint: null };
     const requests = [first.value];
     while (true) {
-      const next = await sequence.next(successor);
+      const next = await sequence.next();
       if (next.done) break;
       requests.push(next.value);
     }
@@ -548,6 +579,14 @@ describe('Automation Event adopted-definition host factory', () => {
     });
 
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '9' });
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: { transport: { kind: 'durablePush' }, pageSize: 500 },
+    })).resolves.toMatchObject({
+      kind: 'page', revision: '9',
+      definitions: [expect.objectContaining({ observationTransport: expect.objectContaining({ kind: 'durablePush' }) })],
+      nextCursor: null,
+    });
     expect(owner.readPublicProjection()).toEqual({
       kind: 'available',
       revision: '9',
@@ -575,7 +614,10 @@ describe('Automation Event adopted-definition host factory', () => {
         revision: '9',
         eventDeclarationRelease,
         scope: endpointTargetsCaller ? durableScopeCurrent : durableScopeMoved,
-        definitions: endpointTargetsCaller ? [durablePushStoredDefinition()] : [],
+        definitions: endpointTargetsCaller ? [durablePushStoredDefinition(), durablePushStoredDefinition({
+          automationId: 'automation-2', triggerId: AutomationTriggerIdSchema.parse('trigger-durable-2'),
+          sourceSelectorId: secondSourceSelectorId,
+        })] : [],
         nextCursor: null,
       };
     });
@@ -595,9 +637,28 @@ describe('Automation Event adopted-definition host factory', () => {
     });
 
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '9' });
+    const firstPage = await owner.listPublicProjection({
+      accountId: 'account-1', input: { transport: { kind: 'durablePush' }, pageSize: 1 },
+    });
+    expect(firstPage).toMatchObject({ kind: 'page', nextCursor: expect.any(String) });
+    if (firstPage.kind !== 'page' || firstPage.nextCursor === null) throw new Error('Expected monitoring cursor');
     endpointTargetsCaller = false;
 
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: { transport: { kind: 'durablePush' }, pageSize: 1, cursor: firstPage.nextCursor },
+    })).resolves.toEqual({ kind: 'cursorStale', currentRevision: '9' });
+    endpointTargetsCaller = true;
     await expect(owner.refresh()).resolves.toEqual({ kind: 'adopted', revision: '9' });
+    endpointTargetsCaller = false;
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: { transport: { kind: 'durablePush' }, pageSize: 500, knownRevision: '9' },
+    })).resolves.toEqual({ kind: 'page', revision: '9', definitions: [], nextCursor: null });
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: { transport: { kind: 'durablePush' }, pageSize: 500, knownRevision: '9' },
+    })).resolves.toEqual({ kind: 'unchanged', revision: '9' });
     expect(owner.readPublicProjection()).toEqual({
       kind: 'available',
       revision: '9',
@@ -605,7 +666,7 @@ describe('Automation Event adopted-definition host factory', () => {
     });
     expect(readStoredDefinitions).toHaveBeenLastCalledWith(expect.objectContaining({
       caller: actionCaller,
-      input: { transport: { kind: 'durablePush' }, pageSize: 500 },
+      input: { transport: { kind: 'durablePush' }, pageSize: 500, knownRevision: '9' },
     }));
   });
 
@@ -776,27 +837,16 @@ describe('Automation Event adopted-definition host factory', () => {
       input,
       randomBytes: (length) => new Uint8Array(length),
     });
-    const withoutSuccessor = await prepare();
-    if (withoutSuccessor === null) throw new Error('encrypted admission sequence was unavailable');
-    const withoutSuccessorFirst = await withoutSuccessor.next();
-    if (withoutSuccessorFirst.done) throw new Error('encrypted admission sequence ended before its first request');
-    expect((await withoutSuccessor.next()).done).toBe(true);
-
     const sequence = await prepare();
     if (sequence === null) throw new Error('encrypted admission sequence was unavailable');
     const first = await sequence.next();
     if (first.done) throw new Error('encrypted admission sequence ended before its first request');
-    const successor = {
-      mode: 'e2ee' as const,
-      version: 9,
-      contentKeyFingerprint:
-        convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-          snapshot.contentPublicKeyFingerprint,
-        ),
-    };
+    const contentKeyFingerprint = convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+      snapshot.contentPublicKeyFingerprint,
+    );
     const requests = [first.value];
     while (true) {
-      const next = await sequence.next(successor);
+      const next = await sequence.next();
       if (next.done) break;
       requests.push(next.value);
     }
@@ -809,7 +859,7 @@ describe('Automation Event adopted-definition host factory', () => {
       {
         mode: 'e2ee',
         version: 8,
-        contentKeyFingerprint: successor.contentKeyFingerprint,
+        contentKeyFingerprint,
       },
     ]);
     expect(requests.flatMap((request) => (
@@ -824,7 +874,7 @@ describe('Automation Event adopted-definition host factory', () => {
     ))).toEqual(input.definitions);
   });
 
-  it('splits a multi-page adopted snapshot at the server transport ceiling, in order, with chained witnesses', async () => {
+  it('splits a multi-page adopted snapshot at the server transport ceiling without successor witnesses', async () => {
     const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
       accountEncryptionMode: 'e2ee',
       material: { type: 'legacy', secret: credentials.encryption.secret },
@@ -943,24 +993,15 @@ describe('Automation Event adopted-definition host factory', () => {
       randomBytes: (length) => new Uint8Array(length),
     });
     if (sequence === null) throw new Error('encrypted admission sequence was unavailable');
-    const successor = {
-      mode: 'e2ee' as const,
-      version: 9,
-      contentKeyFingerprint:
-        convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-          snapshot.contentPublicKeyFingerprint,
-        ),
-    };
     // Each request is summarized and released so the assertions never retain
     // the whole catalog's sealed evidence at once.
     const observed: Array<Readonly<{
       bodyBytes: number;
       firstDefinitionBytes: number;
-      accountCurrentnessVersion: number;
       selectors: readonly unknown[];
     }>> = [];
-    for (let call = 0; ; call += 1) {
-      const next = call === 0 ? await sequence.next() : await sequence.next(successor);
+    while (true) {
+      const next = await sequence.next();
       if (next.done) break;
       const request = next.value;
       if ('input' in request) throw new Error('an E2EE snapshot must not yield a plain request');
@@ -968,7 +1009,6 @@ describe('Automation Event adopted-definition host factory', () => {
       observed.push({
         bodyBytes: readServerHttpRequestBodyUtf8ByteLengthV1(request),
         firstDefinitionBytes: readServerHttpRequestBodyUtf8ByteLengthV1(definitionEvidence[0]),
-        accountCurrentnessVersion: request.hostEvidence.accountCurrentness.version,
         selectors: definitionEvidence.map((definition) => ({
           automationId: definition.automationId,
           triggerId: definition.triggerId,
@@ -986,8 +1026,6 @@ describe('Automation Event adopted-definition host factory', () => {
     // the following request could not have been carried by its predecessor.
     expect(observed[0]!.bodyBytes + observed[1]!.firstDefinitionBytes + 1)
       .toBeGreaterThan(SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1);
-    expect(observed.map((request) => request.accountCurrentnessVersion))
-      .toEqual([8, ...observed.slice(1).map(() => 9)]);
     expect(observed.flatMap((request) => request.selectors)).toEqual(input.definitions);
   });
 
@@ -1131,6 +1169,8 @@ describe('adopted definition set Account-currentness cost', () => {
   });
 
   it('reads fresh Account authority only at unchanged refresh and public disclosure boundaries', async () => {
+    // This path exercises credential-aware HTTP admission for a Plain Account.
+    const plainCredentials = { token: credentials.token, encryption: null };
     let currentness = await plainCurrentness();
     transportMocks.get.mockReset().mockImplementation(async () => ({ status: 200, data: currentness }));
     transportMocks.createPublisherHeader.mockResolvedValue('publisher-proof');
@@ -1148,7 +1188,7 @@ describe('adopted definition set Account-currentness cost', () => {
         definitions: [storedDefinition()], nextCursor: null } };
     });
     const owner = createAutomationEventAdoptedDefinitionSetHostV1({
-      credentials, caller, occurrenceId, sourceCustody,
+      credentials: plainCredentials, caller, occurrenceId, sourceCustody,
       transport: { kind: 'checkpointedPull' }, occurrenceSignal: new AbortController().signal,
       isOccurrenceCurrent: () => true, revalidateCallerMaterialization: async () => true,
       revalidateCallerOccurrence: async () => true,

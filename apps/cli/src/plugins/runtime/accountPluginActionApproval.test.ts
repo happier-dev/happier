@@ -22,6 +22,7 @@ it.each([
     { scenario: 'approve', surface: 'cli' },
     { scenario: 'approve', surface: 'agent' },
     { scenario: 'approve', surface: 'mcp' },
+    { scenario: 'machine_provenance', surface: 'cli' },
     { scenario: 'reject', surface: 'cli' },
     { scenario: 'disable', surface: 'cli' },
     { scenario: 'uncertain', surface: 'cli' },
@@ -37,6 +38,7 @@ it.each([
         const rotatesCredentials = scenario === 'credential_rotate' || scenario === 'credential_rotate_read';
         const nested = scenario === 'caller_retire' || scenario === 'callee_retire_during_caller_read';
         const serverId = rotatesCredentials ? 'account-approval-rotation' : 'account-approval';
+        const serverIdentityId = `srv_${serverId}`;
         const accountId = `account-owner-${surface}-${scenario}`;
         const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
             encryption: null, credentialProvenance: 'stored_session' as const };
@@ -46,7 +48,7 @@ it.each([
             { includeAccountProvider: nested });
         const effectPluginId = nested ? providerPluginId : pluginId;
         if (!effectPluginId) throw new Error('Missing separately authored Account provider');
-        const features = registerAccountHomeHttp(app, { accountId, serverId,
+        const features = registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId,
             ...(nested ? { settings: { actionsSettingsV1: setActionApprovalOverride({
                 settings: normalizeActionsSettingsV1(undefined), actionId: formatQualifiedPluginActionId({ pluginId: effectPluginId, localId: 'record' }),
                 surface: 'plugin', approvalRequired: true,
@@ -123,17 +125,19 @@ it.each([
             await writeStoredCredentialsForServerId(serverId, credentials);
             expect(await readStoredCredentialsForServerId(serverId)).toEqual(credentials);
         }
-        const original = createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId: serverId,
+        const original = createCliActionExecutorFromCredentials({ credentials, serverId, serverIdentityId,
             serverApiUrl: endpoint,
             ...(rotatesCredentials ? { readCredentials: () => readStoredCredentialsForServerId(serverId) } : {}) });
         let settled = false;
         const invoking = original.execute('action.invoke', { action: { pluginId, localId: nested ? 'record-source' : 'write' },
             input: nested ? { key: 'approved' } : { key: 'approved', value: 'written once' } }, { surface, signal: controller.signal,
-            runtimeAccountId: accountId, serverId, serverIdentityId: serverId }).then(result => { settled = true; return result; });
+            runtimeAccountId: accountId, serverId, serverIdentityId,
+            ...(scenario === 'machine_provenance' ? { defaultSessionMachineId: 'contextual-machine' } : {}),
+        }).then(result => { settled = true; return result; });
         const deciding = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: endpoint,
-            serverIdentityId: serverId });
+            serverIdentityId });
         const decisionContext = { surface: 'cli' as const, authority: 'present_user' as const,
-            runtimeAccountId: accountId, serverId, serverIdentityId: serverId };
+            runtimeAccountId: accountId, serverId, serverIdentityId };
         const waitForApproval = async () => {
             const artifactId = await Promise.race([nextApprovalArtifact(), invoking.then(result => {
                 throw new Error(`Account write settled before approval: ${JSON.stringify(result)}`);
@@ -153,6 +157,11 @@ it.each([
             expect(writes).toBe(0);
             expect(readApproval()).toMatchObject({ status: 'open', approvalInputCustody: 'live_only',
                 qualifiedActionId: `${effectPluginId}/actions/${nested ? 'record' : 'write'}` });
+            // Provenance survives Machine-free Account custody and must not
+            // turn a standalone decision into an attempted Machine replay.
+            expect(readApproval().executionOriginV1).toMatchObject({ actionId: 'action.invoke', serverIdentityId });
+            if (scenario === 'machine_provenance') expect(readApproval().executionOriginV1?.machineId).toBe('contextual-machine');
+            expect(readApproval().replayPlacement).toBeUndefined();
             if (scenario === 'disable') setEnabled(false);
             if (scenario === 'caller_retire') {
                 setPluginEnabled(pluginId, false);
@@ -184,6 +193,7 @@ it.each([
                 : scenario === 'reject' ? 'reject' as const : 'approve' as const };
             const decision = await deciding.execute('approval.request.decide', decisionInput, decisionContext);
             expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+            expect(readApproval().executionOriginV1).toMatchObject({ actionId: 'action.invoke', serverIdentityId });
             const result = await invoking;
             if (scenario === 'callee_retire_during_caller_read') {
                 expect(retiredCalleeDuringCallerRead).toBe(true);

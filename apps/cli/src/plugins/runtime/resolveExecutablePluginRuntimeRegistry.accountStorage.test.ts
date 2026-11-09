@@ -25,6 +25,7 @@ import { registerDaemonContributionRegistryProjectionHandler, invalidateDaemonCo
 import type { StoredCredentials } from '@/persistence';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readAccountNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { notificationSettingsFixture, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
 
 import {
     type AccountPluginDataStorageHostDependencies,
@@ -68,6 +69,15 @@ const accountDataBoundary = vi.hoisted(() => ({
     get: vi.fn(),
     post: vi.fn(),
 }));
+const nativePushBoundary = vi.hoisted(() => ({ messages: [] as Readonly<Record<string, unknown>>[] }));
+vi.mock('expo-server-sdk', () => ({ Expo: class {
+    static isExpoPushToken() { return true; }
+    chunkPushNotifications(messages: Readonly<Record<string, unknown>>[]) { return [messages]; }
+    async sendPushNotificationsAsync(messages: Readonly<Record<string, unknown>>[]) {
+        nativePushBoundary.messages.push(...messages);
+        return messages.map(() => ({ status: 'ok' as const }));
+    }
+} }));
 
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
@@ -524,7 +534,7 @@ async function seedAccountNotificationChannelFixture(params: Readonly<{
                 clientRequestId: input.clientRequestId,
                 categoryId: '${NOTIFICATION_CATEGORY_ID}',
                 title: 'Account state',
-                ...(input.itemId ? { itemId: input.itemId, type: 'update', channelIds: [] } : {}),
+                ...(input.itemId ? { itemId: input.itemId, type: input.type ?? 'update', ...(input.native ? {} : { channelIds: [] }) } : {}),
             })
         ));
         api.notifications.registerChannel('${NOTIFICATION_CHANNEL_ID}', async (request, context) => {
@@ -1011,8 +1021,11 @@ describe('executable plugin Account Collections binding', () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-notice-plugin-'));
         const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'notice-owner' })).toString('base64url')}.signature`, encryption: null };
         accountDataBoundary.readStoredCredentials.mockResolvedValue(credentials);
+        nativePushBoundary.messages.length = 0;
         const written: Array<{ header: unknown; body: unknown }> = [];
         accountDataBoundary.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/v1/push-tokens')) return { status: 200, data: { tokens: [{ id: 'device', token: 'ExponentPushToken[installed]' }] } };
+            if (url.endsWith('/v1/account/activity/badge-snapshot')) return { status: 200, data: { badgeCount: 1 } };
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
                 mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -1025,8 +1038,10 @@ describe('executable plugin Account Collections binding', () => {
             written.push({ header: decodePlainArtifactStoredContent(input.header), body: decodePlainArtifactStoredContent(input.body) });
             return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
         });
-        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
-            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const settings = notificationSettingsFixture({});
+        setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
+            notificationChannelCatalog: notificationCatalogFixture(settings).notificationChannelCatalog });
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
         try {
             await seedAccountNotificationChannelFixture({ happyHomeDir, pluginRoot, hostAccess: 'optional' });
@@ -1040,6 +1055,14 @@ describe('executable plugin Account Collections binding', () => {
             expect(readAccountNoticeArtifactV1({ header: value.header,
                 body: value.body && typeof value.body === 'object' && 'body' in value.body ? value.body.body : null }))
                 .toMatchObject({ source: { kind: 'plugin', pluginId: PLUGIN_ID, itemId: 'work-1' }, type: 'update', status: 'open' });
+            await expect(runtime.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: NOTIFICATION_ACTION_ID,
+                input: { clientRequestId: 'native-notice-request', itemId: 'work-native', type: 'blocked', native: true }, surface: 'cli' }))
+                .resolves.toMatchObject({ status: 'executed', value: { deliveries: expect.arrayContaining([
+                    expect.objectContaining({ channelId: 'expo_push', status: 'accepted' }),
+                ]) } });
+            expect(nativePushBoundary.messages).toEqual([expect.objectContaining({ categoryId: undefined,
+                data: expect.objectContaining({ topic: 'account_notice', accountId: 'notice-owner',
+                    source: { kind: 'plugin', pluginId: PLUGIN_ID, itemId: 'work-native' } }) })]);
         } finally {
             await runtime?.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });

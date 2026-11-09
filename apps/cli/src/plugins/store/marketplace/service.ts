@@ -6,8 +6,6 @@ import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { readStoredCredentials } from '@/persistence';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
-import { createExactMarketplaceIndex } from './index';
-import { loadMarketplaceIndexSource, type LoadedMarketplaceIndexSource } from './indexSourceLoader';
 
 type MarketplaceArtifactAccessProfile = Readonly<{
   profileId: string;
@@ -104,6 +102,7 @@ export type MarketplaceIndexSourceConfig = Readonly<{
 
 /** Marketplace install sources are a projection of the one Account source owner. */
 export type MarketplaceRegistrySourcesReaderV1 = () => Promise<readonly RegistrySourceDescriptorV1[]>;
+export type MarketplaceRegistryHostV1 = Pick<ReturnType<typeof createCliRegistryHostV1>, 'withSource'>;
 
 async function createAccountSourceReader(): Promise<MarketplaceRegistrySourcesReaderV1> {
   const credentials = await readStoredCredentials();
@@ -112,86 +111,81 @@ async function createAccountSourceReader(): Promise<MarketplaceRegistrySourcesRe
 
 export async function readMarketplaceInstallSources(input: Readonly<{ readRegistrySources?: MarketplaceRegistrySourcesReaderV1 }> = {}): Promise<readonly MarketplaceIndexSourceConfig[]> {
   const readSources = input.readRegistrySources ?? await createAccountSourceReader();
-  return (await readSources()).filter(source => (source.kinds.includes('plugin') || source.kinds.includes('agent'))
-    && (source.format === 'happier-catalog' || source.format === 'happier-npm')).map(source => {
-    const projected = registryMarketplaceSourceV1(source);
-    return { id: source.id, title: source.title, sourceUrl: source.url, enabled: source.enabled, registrySource: source,
-      origin: projected.kind, ...(source.npmRegistryProfileId ? { registryProfileId: source.npmRegistryProfileId } : {}) };
+  return (await readSources()).flatMap(source => {
+    const projected = projectMarketplaceInstallSource(source);
+    return projected ? [projected] : [];
   });
 }
 
-export async function resolveExactMarketplaceSourceBinding(params: Readonly<{
-  happyHomeDir?: string;
-  sourceId: string;
-  readRegistrySources?: MarketplaceRegistrySourcesReaderV1;
-}>): Promise<
-  | Readonly<{ ok: true; source: MarketplaceIndexSourceConfig }>
-  | Readonly<{ ok: false; code: 'install_unavailable'; message: string }>
-> {
-  let source: MarketplaceIndexSourceConfig | undefined;
-  try { source = (await readMarketplaceInstallSources(params)).find(entry => entry.id === params.sourceId.trim()); }
-  catch { return { ok: false, code: 'install_unavailable', message: 'Account marketplace sources are currently unavailable.' }; }
-  if (!source?.enabled) return { ok: false, code: 'install_unavailable',
-    message: 'No enabled Account marketplace source is configured for this Install and trust action.' };
-  return { ok: true, source };
+function projectMarketplaceInstallSource(source: RegistrySourceDescriptorV1): MarketplaceIndexSourceConfig | null {
+  if ('packageContent' in source || !(source.kinds.includes('plugin') || source.kinds.includes('agent'))
+    || !(source.format === 'happier-catalog' || source.format === 'happier-npm')) return null;
+  const projected = registryMarketplaceSourceV1(source);
+  return { id: source.id, title: source.title, sourceUrl: source.url, enabled: source.enabled, registrySource: source,
+    origin: projected.kind, ...(source.npmRegistryProfileId ? { registryProfileId: source.npmRegistryProfileId } : {}) };
 }
+
+type ExactMarketplaceQueryResult =
+  | Readonly<{ ok: true; source: MarketplaceIndexSourceConfig; result: MarketplaceIndexQueryResultV1 }>
+  | Readonly<{ ok: false; code: 'install_unavailable' | 'source_changed'; message: string }>;
 
 export function createMarketplaceIndexService(params?: Readonly<{
   happyHomeDir?: string;
+  registryHost?: MarketplaceRegistryHostV1;
   /** A Runner's admitted sealed commitment supplies one read-only source;
    *  ordinary CLI/daemon consumers use the captured Account catalog owner. */
   readRegistrySources?: MarketplaceRegistrySourcesReaderV1;
 }>): Readonly<{
-  queryExactListing: (params: Readonly<{ sourceId: string; pluginId: string; packageName?: string; version?: string }>) => Promise<
-    | Readonly<{ ok: true; source: MarketplaceIndexSourceConfig; result: MarketplaceIndexQueryResultV1 }>
-    | Readonly<{ ok: false; code: 'install_unavailable' | 'source_changed'; message: string }>
-  >;
+  queryExactListing: (params: Readonly<{ sourceId: string; pluginId: string; packageName?: string; version?: string }>) => Promise<ExactMarketplaceQueryResult>;
 }> {
   const registryProfiles = createNpmRegistryProfileService({ happyHomeDir: params?.happyHomeDir });
-  let accountReader: Promise<MarketplaceRegistrySourcesReaderV1> | undefined;
-  const readRegistrySources: MarketplaceRegistrySourcesReaderV1 = params?.readRegistrySources ?? (async () => {
-    accountReader ??= createAccountSourceReader();
-    return (await accountReader)();
-  });
+  let accountHost: Promise<ReturnType<typeof createCliRegistryHostV1>> | undefined;
+  const registryHost = async () => {
+    if (params?.registryHost) return params.registryHost;
+    accountHost ??= (async () => {
+      const credentials = params?.readRegistrySources ? null : await readStoredCredentials();
+      return createCliRegistryHostV1({ ...(credentials ? { credentials } : {}), readSources: params?.readRegistrySources });
+    })();
+    return await accountHost;
+  };
   return {
     async queryExactListing(exact) {
       const sourceId = exact.sourceId.trim(), pluginId = exact.pluginId.trim();
       if (!sourceId || !pluginId) return { ok: false, code: 'install_unavailable',
         message: 'An Account marketplace source identity and plugin ID are required.' };
-      const binding = await resolveExactMarketplaceSourceBinding({ sourceId, readRegistrySources });
-      if (!binding.ok) return binding;
-      const source = binding.source;
-      const profileStateBeforeFetch = await registryProfiles.snapshot().catch(() => ({ revision: -1, profiles: [] }));
-      // A source binding can reuse its registry's explicit network permission
-      // only for that same origin. Remote catalog fields never select it.
-      const allowPrivateNetwork = profileStateBeforeFetch.profiles.some(profile =>
-        profile.profileId === source.registryProfileId && profile.allowPrivateNetwork === true
-        && profile.origin === new URL(source.sourceUrl).origin);
-      let snapshot: LoadedMarketplaceIndexSource;
       try {
-        snapshot = await loadMarketplaceIndexSource({ happyHomeDir: params?.happyHomeDir,
-          registrySource: source.registrySource,
-          allowPrivateNetwork,
-          source: { id: source.id, title: source.title, sourceUrl: source.sourceUrl, kind: source.origin },
-          query: { text: source.origin === 'community-npm' && !exact.packageName ? pluginId : '',
-            ...(exact.packageName ? { exactPackageName: exact.packageName } : {}),
-            ...(source.origin === 'community-npm' && exact.version !== undefined ? { exactVersion: exact.version } : {}) } });
+        return await (await registryHost()).withSource(sourceId, async (descriptor, fetchRequest): Promise<ExactMarketplaceQueryResult> => {
+          const source = projectMarketplaceInstallSource(descriptor);
+          if (!source) return { ok: false, code: 'install_unavailable', message: 'No Account marketplace source is configured for this Install and trust action.' };
+          const kind = source.registrySource.kinds.includes('plugin') ? 'plugin' : 'agent';
+          let itemId = source.origin === 'community-npm' ? exact.packageName : pluginId;
+          // Plugin-id-only callers discover the package through the same
+          // admitted source. Clicked listings already carry the exact package.
+          if (!itemId) {
+            const listed = await fetchRequest({ op: 'list', kind, query: pluginId });
+            itemId = listed.op === 'list' ? listed.page.items.find(item => item.pluginListing?.pluginId === pluginId)?.itemId : undefined;
+          }
+          if (!itemId) return { ok: false, code: 'install_unavailable', message: 'No exact marketplace package was found.' };
+          const acquired = await fetchRequest({ op: 'read', kind, itemId,
+            ...(exact.version !== undefined ? { version: exact.version } : {}) });
+          if (acquired.op !== 'read' || acquired.item.payload.kind !== 'plugin') {
+            return { ok: false, code: 'install_unavailable', message: 'The exact marketplace source facts are currently unavailable.' };
+          }
+          const profileState = await registryProfiles.snapshot().catch(() => ({ revision: -1, profiles: [] }));
+          const { listing, source: listingSource } = acquired.item.payload;
+          const freshness = { state: 'fresh' as const, fetchedAtMs: acquired.item.fetchedAt };
+          return { ok: true, source, result: MarketplaceIndexQueryResultV1Schema.parse({
+            revision: 0, nextCursor: null, diagnostics: [],
+            sources: [{ source: listingSource, freshness, diagnostics: [] }],
+            items: [projectMarketplaceArtifactAccess({ ...listing, source: listingSource, freshness,
+              admission: { install: 'full-review', mutatesInstalledTrust: false, disablesInstalledCode: false, directNpmRequiresFullReview: true },
+              artifactAccess: listing.distribution.registryProfileId
+                ? { state: 'unverified-profile', registryProfileId: listing.distribution.registryProfileId }
+                : { state: 'public', registryProfileId: null },
+            }, profileState.profiles, source)],
+          }) };
+        });
       } catch { return { ok: false, code: 'install_unavailable', message: 'The exact marketplace source facts are currently unavailable.' }; }
-      const current = await resolveExactMarketplaceSourceBinding({ sourceId, readRegistrySources });
-      if (!current.ok || current.source.origin !== source.origin || current.source.sourceUrl !== source.sourceUrl
-        || (current.source.registryProfileId ?? null) !== (source.registryProfileId ?? null)
-        || current.source.registrySource.origin.kind !== source.registrySource.origin.kind
-        || source.registrySource.origin.kind === 'plugin' && (current.source.registrySource.origin.kind !== 'plugin'
-          || current.source.registrySource.origin.pluginId !== source.registrySource.origin.pluginId
-          || current.source.registrySource.origin.localId !== source.registrySource.origin.localId)) {
-        return { ok: false, code: 'source_changed', message: 'The Account marketplace source binding changed while exact facts were loading.' };
-      }
-      const profileState = await registryProfiles.snapshot().catch(() => ({ revision: -1, profiles: [] }));
-      const { communityNpmPage: _page, ...cleanSnapshot } = snapshot;
-      const result = createExactMarketplaceIndex({ source: cleanSnapshot, pluginId, version: exact.version });
-      return { ok: true, source, result: MarketplaceIndexQueryResultV1Schema.parse({
-        ...result, items: result.items.map(item => projectMarketplaceArtifactAccess(item, profileState.profiles, source)),
-      }) };
     },
   };
 }

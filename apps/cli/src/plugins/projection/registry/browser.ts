@@ -1,14 +1,11 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildPluginBrowserProjectionEntryId, type PluginBrowserActionProjectionEntry, type PluginBrowserTargetProjection } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { ResolvedContributionRegistry } from './types';
 
-type PluginBrowserProjectedEntry = Readonly<Record<string, unknown> & {
-    id: string;
-    pluginId?: string;
-    contributionKind: 'browserTarget' | 'browserAction';
-}>;
+type PluginBrowserProjectedEntry = PluginBrowserTargetProjection | PluginBrowserActionProjectionEntry;
 
 function readPluginId(entry: Readonly<{ pluginId?: string }>): string | null {
     const pluginId = entry.pluginId?.trim();
@@ -43,7 +40,7 @@ function projectBrowserTargets(
         if (!pluginId) {
             continue;
         }
-        const id = `browserTarget:${pluginId}:${contribution.definition.id}`;
+        const id = buildPluginBrowserProjectionEntryId('browserTarget', { pluginId, localId: contribution.definition.id });
         addEntry(entriesById, {
             id,
             pluginId,
@@ -77,7 +74,7 @@ function projectBrowserActions(
         if (!pluginId) {
             continue;
         }
-        const id = `browserAction:${pluginId}:${contribution.definition.id}`;
+        const id = buildPluginBrowserProjectionEntryId('browserAction', { pluginId, localId: contribution.definition.id });
         const actionReference = resolveReference(pluginId, contribution.definition.action);
         const targetReference = resolveReference(pluginId, contribution.definition.target);
         addEntry(entriesById, {
@@ -86,7 +83,7 @@ function projectBrowserActions(
             contributionKind: 'browserAction',
             contributionId: contribution.definition.id,
             qualifiedActionId: buildQualifiedPluginContributionKey(actionReference),
-            targetId: `browserTarget:${targetReference.pluginId}:${targetReference.localId}`,
+            targetId: buildPluginBrowserProjectionEntryId('browserTarget', targetReference),
             placement: contribution.definition.placement,
             display: Object.freeze({
                 title: contribution.definition.title,

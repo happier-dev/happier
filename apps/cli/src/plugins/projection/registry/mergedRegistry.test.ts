@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
-import { getResolvedContributionRegistry } from './builtIn/snapshot';
 import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 
 function createTestAgentContribution(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -31,7 +31,6 @@ function createTestAgentContribution(overrides: Record<string, unknown> = {}): R
 
 function createResolvePrerequisitesHook(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-        hookApiVersion: 1,
         id: 'resolve-prerequisites',
         on: 'agent.resolvePrerequisites',
         category: 'decision',

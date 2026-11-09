@@ -12,6 +12,7 @@ import type {
     ResolvedManagedProviderRuntime,
     ResolvedProviderCatalogParsers,
     ResolvedProviderUsageParsers,
+    ResolvedProviderRequestCostParser,
     ResolvedProviderContribution,
 } from '@/plugins/projection/registry/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -68,6 +69,7 @@ export function projectTargetProviderRuntimes(input: Readonly<{
     const runtimesByKey = new Map<string, ResolvedManagedProviderRuntime>();
     const catalogParsersByKey = new Map<string, ResolvedProviderCatalogParsers>();
     const usageParsersByKey = new Map<string, ResolvedProviderUsageParsers>();
+    const costParsersByKey = new Map<string, ResolvedProviderRequestCostParser>();
     const refusedKeys = new Set<string>();
     const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
 
@@ -129,6 +131,20 @@ export function projectTargetProviderRuntimes(input: Readonly<{
             continue;
         }
         const registered = entry.registration.value;
+        if (registered.requestCostParser !== undefined || provider.definition.requestCost !== undefined) {
+            if (!registered.requestCostParser || !provider.definition.requestCost
+                || !isDeepStrictEqual(provider.definition.requestCost, targetProvider.requestCost)
+                || costParsersByKey.has(key)) {
+                refuse(key, identity, `Provider request cost parser registration '${key}' does not match its current declaration`);
+                continue;
+            }
+            costParsersByKey.set(key, Object.freeze({
+                parse: registered.requestCostParser,
+                endpointTemplateIds: provider.definition.requestCost.endpointTemplateIds,
+                activationOccurrenceId: entry.occurrenceId, sourceCustody,
+                isCurrent: () => input.isRegistrationCurrent(entry),
+            }));
+        }
 
         if (registered.managedRuntime !== undefined) {
             if (provider.definition.managedRuntime?.kind !== 'managed') {
@@ -212,10 +228,11 @@ export function projectTargetProviderRuntimes(input: Readonly<{
         runtimesByKey.delete(key);
         catalogParsersByKey.delete(key);
         usageParsersByKey.delete(key);
+        costParsersByKey.delete(key);
     }
 
     const diagnostics = Object.freeze({ ...diagnosticsByPluginId });
-    if (runtimesByKey.size === 0 && catalogParsersByKey.size === 0 && usageParsersByKey.size === 0) {
+    if (runtimesByKey.size === 0 && catalogParsersByKey.size === 0 && usageParsersByKey.size === 0 && costParsersByKey.size === 0) {
         return Object.freeze({ providers: input.providers, diagnosticsByPluginId: diagnostics });
     }
 
@@ -225,12 +242,14 @@ export function projectTargetProviderRuntimes(input: Readonly<{
             const managedRuntime = runtimesByKey.get(key);
             const catalogParsers = catalogParsersByKey.get(key);
             const usageParsers = usageParsersByKey.get(key);
-            if (!managedRuntime && !catalogParsers && !usageParsers) return provider;
+            const requestCostParser = costParsersByKey.get(key);
+            if (!managedRuntime && !catalogParsers && !usageParsers && !requestCostParser) return provider;
             return Object.freeze({
                 ...provider,
                 ...(managedRuntime ? { managedRuntime } : {}),
                 ...(catalogParsers ? { catalogParsers } : {}),
                 ...(usageParsers ? { usageParsers } : {}),
+                ...(requestCostParser ? { requestCostParser } : {}),
             });
         })),
         diagnosticsByPluginId: diagnostics,

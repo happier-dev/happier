@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import type { ActivationTarget } from './targets';
-import { activationTargetMatchesContributionDemand, shouldActivateTargetAtStartup } from './targets';
+import { activationTargetMatchesContributionDemand, addActivationTarget, shouldActivateTargetAtStartup } from './targets';
 
 function target(contributes: Record<string, unknown>, activationEvents: readonly string[] = []): ActivationTarget {
     const result = ingestCanonicalPluginManifest({
@@ -18,17 +18,56 @@ function target(contributes: Record<string, unknown>, activationEvents: readonly
             : {}),
     }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) throw new Error(result.diagnostics.map((entry) => entry.message).join('\n'));
-    return {
+    const targets = new Map<string, ActivationTarget>();
+    addActivationTarget(targets, {
         provenance: 'external', source: { kind: 'path' }, pluginId: result.manifest.id,
         manifestPath: '/tmp/plugin/happier.plugin.json',
         daemonEntryPath: '/tmp/plugin/daemon.js',
         sourceSpec: { kind: 'path', locator: '/tmp/plugin', trustPolicy: 'local_trusted', installPolicy: 'link' },
         activationEvents,
         manifest: result.manifest,
-    };
+    });
+    const admitted = targets.values().next().value;
+    if (!admitted) throw new Error('Expected an admitted activation target');
+    return admitted;
 }
 
 describe('activation target demand', () => {
+    it('derives declaration rights only when adding a distinct target, not for repeated startup or exact demand reads', () => {
+        const source = target({ actions: Array.from({ length: 128 }, (_, index) => ({
+            id: `run-${index}`, title: `Run ${index}`, scopes: ['session'], surfaces: ['cli'],
+            execution: { target: 'daemon' }, dangerLevel: 'safe',
+        })) });
+        let actionReads = 0;
+        const observed = { ...source, manifest: { ...source.manifest,
+            contributes: new Proxy({ ...source.manifest.contributes }, {
+                get(target, key, receiver) {
+                    if (key === 'actions') actionReads += 1;
+                    return Reflect.get(target, key, receiver);
+                },
+            }),
+        } };
+        const targets = new Map<string, ActivationTarget>();
+        addActivationTarget(targets, observed);
+        const admitted = targets.values().next().value;
+        if (!admitted) throw new Error('Expected an admitted activation target');
+        const admissionReads = actionReads;
+        expect(admissionReads).toBeGreaterThan(0);
+        expect(admitted.registrationRights).toHaveLength(128);
+        addActivationTarget(targets, observed);
+        expect(targets.size).toBe(1);
+        for (let index = 0; index < 20; index += 1) {
+            expect(shouldActivateTargetAtStartup(admitted)).toBe(false);
+            expect(activationTargetMatchesContributionDemand(admitted, {
+                pluginId: admitted.pluginId, family: 'actions', localId: 'run-0',
+            })).toBe(true);
+            expect(activationTargetMatchesContributionDemand(admitted, {
+                pluginId: admitted.pluginId, family: 'actions', localId: 'undeclared',
+            })).toBe(false);
+        }
+        expect(actionReads).toBe(admissionReads);
+    });
+
     it('routes speech demand through the unified Voice registration family', () => {
         const speech = target({
             voiceProviders: [{

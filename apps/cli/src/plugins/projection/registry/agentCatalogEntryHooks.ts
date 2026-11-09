@@ -13,6 +13,7 @@ import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import type {
     AgentCliAuthContributionV1,
+    AgentAccountSettingsContributionV1,
     AgentCliSessionCommandBuildOptionsResultV1,
     AgentCliSessionCommandDeclarationV1,
     AgentCliSessionCommandOptionsV1,
@@ -1814,3 +1815,5 @@ function createProviderScopedSystemToolResolver(params: Readonly<{
         })
         : unboundSystemTools;
 }
+
+export { projectAgentAccountSettingsCatalogEntry } from './agentAccountSettingsCatalogEntry';

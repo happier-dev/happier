@@ -112,7 +112,6 @@ const channelsDeliveryInput = {
     content: 'A realistic bounded Channels delivery payload.',
     deliveryKey: 'binding-42:reply-42',
     replyContext: { replyToMessageId: 'message-42' },
-    mentionPolicy: 'suppress',
     linkPreviewPolicy: 'suppress',
 } as const;
 

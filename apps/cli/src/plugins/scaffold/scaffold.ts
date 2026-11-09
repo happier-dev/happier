@@ -142,7 +142,7 @@ function createPackageJson(params: Readonly<{
     // real source artifact, so preserve that exact path (not unrelated author
     // files) in packed scaffolds through the same deliberate file inventory.
     // Selecting a path that never exists in the source tree makes every pack fail.
-    files: ['.agents/skills/happier-plugin-authoring', 'dist'],
+    files: ['.agents/skills/happier-plugin-authoring', 'dist', ...(params.ui === undefined ? [] : ['assets'])],
     ...(params.ui === 'reactNative'
       ? { exports: { [`./happier-plugin-ui/${MAIN_SURFACE_ID}-renderer`]: `./${REACT_NATIVE_WEB_SOURCE_ENTRY}` } }
       : {}),
@@ -211,7 +211,7 @@ function createPluginAuthoringSkillSource(invokerName: string, ui?: PluginScaffo
     '## Public API source of truth',
     '',
     `Before choosing an SDK import, read \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/API.md\`. That generated inventory is the current public API contract; do not guess names or copy a versioned export list into this skill.`,
-    `Before adopting a contribution or service family, read \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/capability-matrix.json\`. It is the sole product-availability authority: a \`deferred\` row is conformance-only reference material, not a supported product lifecycle. Its source API and consumer fields do not by themselves establish loaded-platform or release availability.`,
+    `Before adopting a contribution or service family, read \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/capability-matrix.json\`. It is the sole product-availability authority: a \`deferred\` row is conformance-only reference material, not a supported product lifecycle. A \`preview\` row retains an implemented API while awaiting a production consumer; external plugins may use it without an additional registration restriction. This 0.3 development-source reference does not establish loaded-runtime or released availability.`,
     'Use only the package entrypoints documented there. Do not reach into host source, private aliases, or another installed plugin artifact.',
     ...(ui === 'reactNative'
       ? [`For React Native UI exports, read \`node_modules/@happier-dev/plugin-ui/API.md\` before choosing a component or hook; it is the shipped Plugin UI API inventory for this package.`]
@@ -227,7 +227,7 @@ function createPluginAuthoringSkillSource(invokerName: string, ui?: PluginScaffo
     '',
     '## Cross-plugin integrations',
     '',
-    `For broader public composition patterns, use the maintained repository examples linked from the [public quickstart](https://docs.happier.dev/plugins/quickstart), including public-authoring and advanced-package-root. Installed copies at \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/public-authoring/\` and \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/advanced-package-root/\` are release-owned snapshots. Use only contribution and service families marked available in the capability matrix; an example demonstrates public package boundaries but does not create product availability. This beginner scaffold does not declare a feature integration.`,
+    `For broader public composition patterns, use the maintained repository examples linked from the [public quickstart](https://docs.happier.dev/plugins/quickstart), including public-authoring and advanced-package-root. Installed copies at \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/public-authoring/\` and \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/advanced-package-root/\` are release-owned snapshots. Use contribution and service families marked available or preview in the capability matrix; an example demonstrates public package boundaries but does not create product availability. This beginner scaffold does not declare a feature integration.`,
     '',
     '## Normal author loop',
     '',
@@ -371,48 +371,14 @@ function createPluginSource(params: Readonly<{
   ];
 
   if (params.ui !== undefined) {
-    // The status vocabulary belongs to the executable bootstraps, which own a
-    // connecting/ready/failed lifecycle. A declarative surface has none — the
-    // host renders the declared nodes — so it would ship five keys nothing
-    // reads.
-    const statusMessages = params.ui === 'declarative'
-      ? { en: [], fr: [] }
-      : {
-        en: [
-          "        'scaffold.status.connecting': 'Connecting to Happier…',",
-          "        'scaffold.status.ready': 'Ready',",
-          "        'scaffold.status.saved': 'Saved',",
-          "        'scaffold.status.actionFailed': 'Action failed',",
-          "        'scaffold.status.startFailed': 'Failed to start',",
-        ],
-        fr: [
-          "        'scaffold.status.connecting': 'Connexion à Happier…',",
-          "        'scaffold.status.ready': 'Prêt',",
-          "        'scaffold.status.saved': 'Enregistré',",
-          "        'scaffold.status.actionFailed': 'L’action a échoué',",
-          "        'scaffold.status.startFailed': 'Le démarrage a échoué',",
-        ],
-      };
     lines.push(
+      '  resources: {',
+      "    'i18n-en': { kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' },",
+      "    'i18n-fr': { kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json' },",
+      '  },',
       '  ui: {',
       '    surfaces: [mainSurface],',
-      '    translations: [{',
-      "      locale: 'en',",
-      '      messages: {',
-      `        'scaffold.main.title': ${JSON.stringify(params.displayName)},`,
-      `        'scaffold.main.greeting': ${JSON.stringify(`Hello from ${params.displayName}`)},`,
-      "        'scaffold.action.saveNote': 'Save note',",
-      ...statusMessages.en,
-      '      },',
-      '    }, {',
-      "      locale: 'fr',",
-      '      messages: {',
-      `        'scaffold.main.title': ${JSON.stringify(params.displayName)},`,
-      `        'scaffold.main.greeting': ${JSON.stringify(`Bonjour de ${params.displayName}`)},`,
-      "        'scaffold.action.saveNote': 'Enregistrer la note',",
-      ...statusMessages.fr,
-      '      },',
-      '    }],',
+      "    translations: [{ locale: 'en', resourceId: 'i18n-en' }, { locale: 'fr', resourceId: 'i18n-fr' }],",
       '  },',
     );
   }
@@ -422,6 +388,23 @@ function createPluginSource(params: Readonly<{
     '',
   );
   return lines.join('\n');
+}
+
+function createPluginLocaleMessages(displayName: string, ui: PluginScaffoldUiMode, locale: 'en' | 'fr'): Record<string, string> {
+  const french = locale === 'fr';
+  return {
+    'scaffold.main.title': displayName,
+    'scaffold.main.greeting': `${french ? 'Bonjour de' : 'Hello from'} ${displayName}`,
+    'scaffold.action.saveNote': french ? 'Enregistrer la note' : 'Save note',
+    // Declarative surfaces have no executable connecting/ready/failed lifecycle.
+    ...(ui === 'declarative' ? {} : {
+      'scaffold.status.connecting': french ? 'Connexion à Happier…' : 'Connecting to Happier…',
+      'scaffold.status.ready': french ? 'Prêt' : 'Ready',
+      'scaffold.status.saved': french ? 'Enregistré' : 'Saved',
+      'scaffold.status.actionFailed': french ? 'L’action a échoué' : 'Action failed',
+      'scaffold.status.startFailed': french ? 'Le démarrage a échoué' : 'Failed to start',
+    }),
+  };
 }
 
 function createPluginTestSource(params: Readonly<{
@@ -1000,6 +983,11 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     await writeFile(tsconfigPath, createTypeScriptConfig(), 'utf8');
     await writeFile(authoringSkillPath, createPluginAuthoringSkillSource(invokerName, ui), 'utf8');
     if (ui !== undefined) {
+      await mkdir(join(targetDir, 'assets', 'i18n'), { recursive: true });
+      for (const locale of ['en', 'fr'] as const) {
+        await writeFile(join(targetDir, 'assets', 'i18n', `${locale}.json`),
+          `${JSON.stringify(createPluginLocaleMessages(displayName, ui, locale), null, 2)}\n`, 'utf8');
+      }
       await writeFile(
         uiSurfaceModulePath,
         createPluginUiSurfaceModuleSource({ pluginId, displayName, ui }),

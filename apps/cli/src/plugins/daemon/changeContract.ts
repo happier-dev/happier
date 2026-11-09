@@ -21,6 +21,7 @@ import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeR
 import type { PluginTrustRecord } from '@/plugins/store/install/trustIdentity';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import type { PluginAuthorityExpansionCategory } from './updateReviewPolicy';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 
 export type PluginChangeRequest =
   | Readonly<{
@@ -30,6 +31,13 @@ export type PluginChangeRequest =
       development?: false;
     }>
   | Readonly<{ kind: 'installArchive'; locator: string; expectedIntegrity?: string }>
+  | Readonly<{
+      kind: 'installMarketplace';
+      sourceId: string;
+      pluginId: string;
+      packageName?: string;
+      version?: string;
+    }>
   | Readonly<{
       kind: 'installNpm';
       packageName: string;
@@ -114,7 +122,7 @@ export type PluginChangeApplyResult =
   | PluginDataRemovalPartial
   | Readonly<{ kind: 'unavailable'; code: string }>
   | Readonly<{ kind: 'conflict'; pluginId: string }>
-  | Readonly<{ kind: 'failed'; code: string; message?: string }>
+  | Readonly<{ kind: 'failed'; code: string; message?: string; details?: PluginCompatibilityDiagnostic['details'] }>
   | Readonly<{ kind: 'outcomeUnknown'; pluginId: string; expectedCandidate?: string }>;
 
 /**

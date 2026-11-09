@@ -234,7 +234,7 @@ it('compares a load-pruned approval without engine checks and asks once for with
     await writeFile(path, JSON.stringify(revision));
     const baseline = (await createPluginRegistryStateStore({ happyHomeDir }).readSnapshot())
       .approvedAuthorityManifestsByPluginId[pluginId]!;
-    expect(baseline.engines.happier).toBe('<0.0.1');
+    expect(baseline.engines?.happier).toBe('<0.0.1');
     expect(baseline.contributes.requestInterceptors).toEqual([]);
     const result = evaluatePluginAuthorityReview({ previous: baseline, candidate,
       selectedOptionalAccess: [], readAccountSettings: () => null });

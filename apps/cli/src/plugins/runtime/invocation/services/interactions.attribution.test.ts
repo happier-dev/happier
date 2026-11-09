@@ -10,10 +10,7 @@ import { createNativeAgentCurrentSessionUiServices } from '@/agent/runtime/regis
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
 import { createStablePluginEventsBroker } from './events';
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createPluginInvocationServicesFactory,
-} from './factory';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from './factory';
 
 class FakeSession {
     readonly sessionId = 'session-1';
@@ -80,7 +77,7 @@ describe('plugin interaction caller attribution', () => {
             },
         });
         const occurrenceId = createPluginRuntimeOccurrenceId('acme.ordinary');
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(occurrenceId, 'binding');
+        const binding = createPluginInvocationServiceBinding(occurrenceId, 'binding');
         const seed = Object.freeze({
             plugin: Object.freeze({ id: 'acme.ordinary', version: '1.0.0' }),
             contribution: Object.freeze({ id: 'run', qualifiedId: 'acme.ordinary/actions/run' }),
@@ -261,10 +258,7 @@ describe('plugin interaction caller attribution', () => {
                 }),
             }),
             isOccurrenceCurrent: () => true,
-        }), createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            occurrenceId,
-            'opencode-binding-1',
-        )).interactions;
+        }), createPluginInvocationServiceBinding(occurrenceId, 'opencode-binding-1')).interactions;
 
         const pending = interaction.requestApproval({
             kind: 'approval',
@@ -343,10 +337,7 @@ describe('plugin interaction caller attribution', () => {
                 userMessageSeqs: Object.freeze([2]),
             }),
             isOccurrenceCurrent: () => true,
-        }), createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            occurrenceId,
-            'opencode-binding-2',
-        )).interactions;
+        }), createPluginInvocationServiceBinding(occurrenceId, 'opencode-binding-2')).interactions;
 
         await expect(interaction.requestApproval({
             kind: 'approval',

@@ -144,6 +144,26 @@ function registration(pluginId: string, occurrenceId = '9') {
 }
 
 describe('projectTargetProviderRuntimes', () => {
+    it('withdraws request-cost parsing when the activation endpoint declaration differs', () => {
+        const original = provider({ pluginId: 'acme.cost', provenance: 'first_party', source: 'bundled' });
+        const declaration = { ...original, definition: { ...original.definition, requestCost: { endpointTemplateIds: ['chat'] } } };
+        const entry = { pluginId: declaration.pluginId, occurrenceId: '9', registration: {
+            family: 'providers' as const, localId: 'gateway', value: { requestCostParser: () => 0.12 },
+        } };
+        let current = true;
+        const project = (desired: ResolvedProviderContribution) => projectTargetProviderRuntimes({
+            providers: [desired], activationTargets: [activationTarget(declaration)], targetRegistrations: [entry],
+            sourceCustodiesByPluginId: new Map([[declaration.pluginId, createBundledFirstPartyPluginSourceCustody('fixture-version-root:cost')]]),
+            isRegistrationCurrent: () => current,
+        });
+        const parsed = project(declaration).providers[0]!.requestCostParser!;
+        expect(parsed.parse({ cost: 0.12 })).toBe(0.12);
+        expect(parsed.endpointTemplateIds).toEqual(['chat']);
+        expect(project({ ...declaration, definition: { ...declaration.definition,
+            requestCost: { endpointTemplateIds: ['api'] } } }).providers[0]!.requestCostParser).toBeUndefined();
+        current = false;
+        expect(parsed.isCurrent()).toBe(false);
+    });
     it('projects usage parsers only for the matching current source declaration', () => {
         const original = provider({ pluginId: 'acme.usage', provenance: 'first_party', source: 'bundled' });
         const declaration = { ...original, definition: { ...original.definition, usageSources: [{ id: 'credits', endpointTemplateId: 'api', path: '/v1/credits', parser: 'credits-v1' }] } };

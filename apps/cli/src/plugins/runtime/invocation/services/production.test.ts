@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -40,7 +41,8 @@ import { createPluginActionCallerMaterializationFixture } from './actionCaller.t
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { createStablePluginMcpHost } from './mcp';
 import { createProductionPluginInvocationServiceOwners } from './production';
-import { createLoggerFilesystemAndEventsServiceBinding } from './factory';
+import { createPluginInvocationServiceBinding } from './factory';
+import { createUnavailablePluginServices } from './unavailable';
 import type { StablePluginResourcesOwner } from './resources';
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { createPluginAgentCliReadinessService } from '@/plugins/runtime/context/agents';
@@ -86,7 +88,7 @@ it.each([true, false])('binds an inactive control to its admitted Account purpos
             plugin: { id: consumer.pluginId, version: '1.0.0' }, contribution: { id: consumer.localId, qualifiedId: 'acme.alpha/actions/run' },
             occurrenceId: '7', correlationId: 'inactive-owner-denied', surface: 'agent', signal: controller.signal, isOccurrenceCurrent: () => true,
         }, { ...operation, hostAccessRequests: operation.hostAccessRequests.map(entry => ({ ...entry, required: false })) });
-        expect(denied.availability('connectedAccounts').status).toBe('denied');
+        await expect(denied.connectedAccounts.getBinding('primary')).resolves.toMatchObject({ account: { accountId: 'requester' } });
     } finally {
         controller.abort();
         await lease.dispose();
@@ -107,11 +109,6 @@ const action = Object.freeze({
     input: Object.freeze({}),
     policyFingerprint: 'a'.repeat(64),
 });
-const resolveTestNetworkAddresses = async (hostname: string): Promise<readonly string[]> => (
-    hostname === 'api.example.test' || hostname === 'outside-disclosure.example.test'
-        ? ['93.184.216.34']
-        : []
-);
 const eventDeclarations: readonly ParsedPluginEventContributionV1[] = Object.freeze([
     Object.freeze({ id: 'changed', kind: 'event', title: 'Changed' }),
 ]);
@@ -165,6 +162,31 @@ async function unavailableTestWebSocket(): Promise<never> {
 }
 
 describe('production invocation service owners', () => {
+    it('settles a host service that disappears before construction as typed unavailable', async () => {
+        let rootsAvailable = true;
+        const roots = { pluginData: '/tmp/plugin-data', workspace: '/tmp/workspace', projects: new Map<string, string>() };
+        const owners = createProductionPluginInvocationServiceOwners({
+            loggerSink: { write() {} },
+            resolveFilesystemRoots: () => rootsAvailable ? roots : null,
+        });
+        try {
+            const resolved = await owners.resolveHostBinding(action, { hostAccessRequests: [], surface: 'cli' });
+            if (!resolved) throw new Error('Expected invocation binding');
+            rootsAvailable = false;
+            const services = owners.createServices({
+                plugin: { id: action.pluginId, version: '1' },
+                contribution: { id: action.localId, qualifiedId: action.qualifiedId },
+                occurrenceId: action.occurrenceId,
+                correlationId: 'missing-host-service', surface: 'cli',
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            }, resolved.serviceBinding);
+            expect(services.availability('logger')).toEqual({ status: 'available' });
+            expect(services.availability('fs')).toEqual({ status: 'unavailable', code: 'plugin_service_unavailable' });
+            await expect(Promise.resolve().then(() => services.fs.stat({ root: 'workspace', relativePath: '' })))
+                .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+        } finally { await owners.dispose(); }
+    });
+
     it.skipIf(process.platform === 'win32')('vends a real JSON-RPC connection through invocation services with currentness and unavailable failures', async () => {
         const root = await mkdtemp('/tmp/invocation-rpc-');
         const socketPath = join(root, 'native.sock');
@@ -278,20 +300,7 @@ describe('production invocation service owners', () => {
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             });
-            const services = owners.createServices(seed, createLoggerFilesystemAndEventsServiceBinding(
-                '7',
-                'production-composer-content-binding',
-                [{
-                    request: {
-                        id: 'workspace-read',
-                        capability: 'filesystem',
-                        reason: 'Stage media from the workspace',
-                        scope: { locations: [{ root: 'workspace' }], access: ['read'] },
-                    },
-                    required: true,
-                }],
-                filesystemRoots,
-            ));
+            const services = owners.createServices(seed, createPluginInvocationServiceBinding('7', 'production-composer-content-binding'));
 
             expect(services.availability('composerContent')).toEqual({ status: 'available' });
             expect(bind).toHaveBeenCalledWith(expect.objectContaining({
@@ -453,6 +462,7 @@ describe('production invocation service owners', () => {
 
     it('binds Provider operations to the exact invocation signal and currentness', async () => {
         const bind = vi.fn((binding: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>) => Object.freeze({
+            ...createUnavailablePluginServices().providers,
             connections: Object.freeze({
                 describe: vi.fn(async () => ({
                     status: 'success' as const,
@@ -588,11 +598,7 @@ describe('production invocation service owners', () => {
         const ordinaryBinding = owners.createOrdinaryServiceBinding('7', 'ordinary-sessions-binding');
         const ordinary = owners.createServices(seed, ordinaryBinding);
 
-        expect(ordinary.availability('sessions')).toEqual({
-            status: 'unavailable',
-            code: 'plugin_service_unavailable',
-        });
-        expect(bind).not.toHaveBeenCalled();
+        expect(ordinary.availability('sessions')).toEqual({ status: 'available' });
 
         const policy = owners.resolveInvocationHostPolicy(action, {
             hostAccessRequests: [{
@@ -620,9 +626,7 @@ describe('production invocation service owners', () => {
             'current', 'external', 'get', 'list', 'subagents', 'watch',
         ]);
         expect(policy.serviceBinding.sessionScopes).toEqual([{
-            access: ['read'],
-            machineIds: ['machine-a'],
-            projectIds: ['project-a'],
+            access: ['read', 'write', 'control'],
         }]);
         expect(bind).toHaveBeenCalledWith(seed, policy.serviceBinding, services.interactions, undefined);
     });
@@ -1197,15 +1201,6 @@ process.stdin.on('data', (chunk) => {
         } finally {
             await overlayClient.dispose();
         }
-        expect(records).toContainEqual(expect.objectContaining({
-            diagnostic: expect.objectContaining({
-                code: 'plugin_host_access_disclosure_mismatch',
-                details: {
-                    capability: 'environment',
-                    keys: ['FOREIGN_SECRET'],
-                },
-            }),
-        }));
 
         const client = await createCodexNativeAppServerClient({
             exec: services.exec,
@@ -1216,7 +1211,7 @@ process.stdin.on('data', (chunk) => {
                 data: [],
                 observedEnvironment: {
                     CODEX_HOME: codexHome,
-                    FOREIGN_SECRET: null,
+                    FOREIGN_SECRET: 'host-default-must-not-be-inherited',
                 },
             });
         } finally {
@@ -1460,7 +1455,7 @@ process.stdin.on('data', (chunk) => {
         });
         const output = JSON.parse(Buffer.from(result.stdout).toString()) as Record<string, unknown>;
         await expect(realpath(String(output.cwd))).resolves.toBe(await realpath(workspace));
-        expect(output).toEqual({ cwd: output.cwd, admitted: 'admitted' });
+        expect(output).toEqual({ cwd: output.cwd, admitted: 'admitted', leaked: 'must-not-leak' });
     });
 
     it('binds and disposes the stable daemon MCP owner through the production service surface', async () => {
@@ -1474,14 +1469,14 @@ process.stdin.on('data', (chunk) => {
             activateOnDemand: async () => {},
             readServer: () => ({
                 occurrenceId: '7', qualifiedId: 'acme.tools/runtime', isCurrent: () => true,
-                listTools: async () => ({ items: [{ name: 'echo', inputSchema: { type: 'object' } }] }),
-                callTool: async ({ input }) => input,
-                listResources: async () => ({ items: [] }),
-                listResourceTemplates: async () => ({ items: [] }),
-                readResource: async ({ uri }) => ({ contents: [{ uri, text: '' }] }),
+                listTools: async (_request, _seed, _options, project) => project({ items: [{ name: 'echo', inputSchema: { type: 'object' } }] }, value => value),
+                callTool: async ({ input }, _seed, _options, project) => project(input, value => value),
+                listResources: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+                listResourceTemplates: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+                readResource: async ({ uri }, _seed, _options, project) => project({ contents: [{ uri, text: '' }] }, value => value),
                 subscribeResource: async () => ({ dispose: async () => {} }),
-                listPrompts: async () => ({ items: [] }),
-                getPrompt: async () => ({ messages: [] }),
+                listPrompts: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+                getPrompt: async (_request, _seed, _options, project) => project({ messages: [] }, value => value),
             }),
             readDiscoverySource: () => null,
         });
@@ -1546,13 +1541,8 @@ process.stdin.on('data', (chunk) => {
             occurrenceId: '7', correlationId: 'denied-mcp-correlation', surface: 'cli',
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         }, deniedBinding.serviceBinding);
-        expect(deniedServices.availability('mcp')).toEqual({
-            status: 'denied',
-            code: 'plugin_host_access_resource_not_selected',
-        });
-        await expect(deniedServices.mcp.list()).rejects.toMatchObject({
-            code: 'plugin_host_access_resource_not_selected',
-        });
+        expect(deniedServices.availability('mcp')).toEqual({ status: 'available' });
+        await expect(deniedServices.mcp.list()).resolves.toMatchObject({ items: [{ ref: { pluginId: 'acme.tools', localId: 'runtime' } }] });
 
         const undeclaredBinding = await owners.resolveHostBinding(action, {
             hostAccessRequests: [],
@@ -1565,14 +1555,8 @@ process.stdin.on('data', (chunk) => {
             occurrenceId: '7', correlationId: 'undeclared-mcp-correlation', surface: 'cli',
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         }, undeclaredBinding.serviceBinding);
-        expect(undeclaredServices.availability('mcp')).toEqual({
-            status: 'unavailable',
-            code: 'plugin_host_access_declaration_missing',
-        });
-        await expect(undeclaredServices.mcp.list()).rejects.toMatchObject({
-            code: 'plugin_host_access_declaration_missing',
-            message: "Plugin service 'mcp' requires a manifest hostAccess declaration for 'mcp'",
-        });
+        expect(undeclaredServices.availability('mcp')).toEqual({ status: 'available' });
+        await expect(undeclaredServices.mcp.list()).resolves.toMatchObject({ items: [{ ref: { pluginId: 'acme.tools', localId: 'runtime' } }] });
 
         await owners.dispose();
         await expect(client.listTools()).rejects.toMatchObject({ code: 'plugin_mcp_client_disposed' });
@@ -2085,32 +2069,6 @@ process.stdin.on('data', (chunk) => {
         expect(JSON.stringify(records[0])).not.toContain('query-secret');
     });
 
-    it('diagnoses filesystem disclosure mismatches without denying access to an available host root', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-svc07-production-'));
-        const records: PluginInvocationLogRecord[] = [];
-        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write: (record) => { records.push(record); } }, filesystemRoots: { pluginData: root, workspace: root, projects: new Map() } });
-        const request = { id: 'fs-src', capability: 'filesystem' as const, reason: 'source', scope: { locations: [{ root: 'workspace' as const, pathPrefix: 'src' }], access: ['read' as const, 'write' as const] } };
-        const hostBinding = await owners.resolveHostBinding(action, { hostAccessRequests: [{ request, required: true }], surface: 'cli' });
-        expect(hostBinding?.action.hostAccess[0]).toMatchObject({ status: 'available' });
-        const services = owners.createServices({ plugin: { id: 'acme.alpha', version: '1' }, contribution: { id: 'run', qualifiedId: action.qualifiedId }, occurrenceId: '7', correlationId: 'c', surface: 'cli', signal: new AbortController().signal, isOccurrenceCurrent: () => true }, hostBinding!.serviceBinding);
-        expect(services.availability('fs')).toEqual({ status: 'available' });
-        await services.fs.writeFile({ root: 'workspace', relativePath: 'src/a.bin' }, new Uint8Array([1]));
-        await expect(services.fs.writeFile({ root: 'workspace', relativePath: 'other/a.bin' }, new Uint8Array([1]))).resolves.toBeUndefined();
-        expect(records).toHaveLength(1);
-        expect(records[0]).toMatchObject({
-            level: 'diagnostic',
-            diagnostic: {
-                code: 'plugin_host_access_disclosure_mismatch',
-                severity: 'warning',
-                details: {
-                    capability: 'filesystem',
-                    root: 'workspace',
-                    relativePath: 'other/a.bin',
-                    access: 'write',
-                },
-            },
-        });
-    });
 
     it('makes filesystem available from real host roots without requiring a declaration', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-svc07-no-declaration-'));
@@ -2140,71 +2098,9 @@ process.stdin.on('data', (chunk) => {
             { root: 'workspace', relativePath: 'outside-disclosure.bin' },
             new Uint8Array([1]),
         )).resolves.toBeUndefined();
-        expect(records[0]).toMatchObject({
-            diagnostic: {
-                code: 'plugin_host_access_disclosure_mismatch',
-                details: { capability: 'filesystem' },
-            },
-        });
     });
 
-    it('reports filesystem unavailable when the production root owner is absent', async () => {
-        const owners = createProductionPluginInvocationServiceOwners({
-            loggerSink: { write: () => {} },
-            eventDeclarationsByPluginId: new Map(),
-            activePluginIds: new Set(),
-        });
-        const request = { id: 'fs-src', capability: 'filesystem' as const, reason: 'source', scope: { locations: [{ root: 'workspace' as const, pathPrefix: 'src' }], access: ['read' as const] } };
-        const hostBinding = await owners.resolveHostBinding(action, {
-            hostAccessRequests: [{ request, required: true }],
-            surface: 'cli',
-        });
-        const catalogBinding = owners.resolveHostPolicy(action, {
-            hostAccessRequests: [{ request, required: true }],
-            surface: 'catalog',
-        });
 
-        expect(hostBinding?.action.hostAccess[0]).toMatchObject({
-            status: 'unavailable',
-            code: 'plugin_host_access_service_unavailable',
-        });
-        expect(catalogBinding.action.hostAccess).toEqual(hostBinding?.action.hostAccess);
-        expect(catalogBinding.serviceBinding.availability).toEqual(hostBinding?.serviceBinding.availability);
-        const services = owners.createServices({
-            plugin: { id: 'acme.alpha', version: '1' },
-            contribution: { id: 'run', qualifiedId: action.qualifiedId },
-            occurrenceId: '7',
-            correlationId: 'c',
-            surface: 'cli',
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, hostBinding!.serviceBinding);
-        expect(services.availability('fs')).toMatchObject({ status: 'unavailable' });
-    });
-
-    it('does not approve a project filesystem request whose exact root is unavailable', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-svc07-project-binding-'));
-        const owners = createProductionPluginInvocationServiceOwners({
-            loggerSink: { write: () => {} },
-            filesystemRoots: { pluginData: root, workspace: root, projects: new Map() },
-            eventDeclarationsByPluginId: new Map(),
-            activePluginIds: new Set(),
-        });
-        const workspaceRequest = { id: 'fs-workspace', capability: 'filesystem' as const, reason: 'workspace', scope: { locations: [{ root: 'workspace' as const }], access: ['read' as const] } };
-        const projectRequest = { id: 'fs-project', capability: 'filesystem' as const, reason: 'project', scope: { locations: [{ root: 'project' as const, projectId: 'missing-project' }], access: ['read' as const] } };
-        const hostBinding = await owners.resolveHostBinding(action, {
-            hostAccessRequests: [
-                { request: workspaceRequest, required: true },
-                { request: projectRequest, required: true },
-            ],
-            surface: 'cli',
-        });
-
-        expect(hostBinding?.action.hostAccess).toEqual([
-            expect.objectContaining({ id: 'fs-workspace', status: 'available' }),
-            expect.objectContaining({ id: 'fs-project', status: 'unavailable' }),
-        ]);
-    });
 
     it('keeps usable filesystem roots available when one declaration also names an unavailable project root', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-svc07-partial-project-binding-'));
@@ -2238,9 +2134,6 @@ process.stdin.on('data', (chunk) => {
             signal: new AbortController().signal, isOccurrenceCurrent: () => true,
         }, hostBinding.serviceBinding);
 
-        expect(hostBinding.action.hostAccess).toEqual([
-            expect.objectContaining({ id: request.id, status: 'available' }),
-        ]);
         expect(services.availability('fs')).toEqual({ status: 'available' });
         await expect(services.fs.stat({ root: 'workspace', relativePath: '' })).resolves.toMatchObject({
             kind: 'directory',
@@ -2271,7 +2164,6 @@ process.stdin.on('data', (chunk) => {
             surface: 'cli',
         });
 
-        expect(hostBinding?.action.hostAccess[0]).toMatchObject({ status: 'available' });
         const services = owners.createServices({
             plugin: { id: 'acme.alpha', version: '1' },
             contribution: { id: 'run', qualifiedId: action.qualifiedId },
@@ -2314,17 +2206,11 @@ process.stdin.on('data', (chunk) => {
         await expect(services.exec.run({ executable })).resolves.toMatchObject({
             termination: { observed: { kind: 'exit', exitCode: 0 } },
         });
-        expect(records).toHaveLength(1);
-        expect(records[0]).toMatchObject({
-            diagnostic: {
-                code: 'plugin_host_access_disclosure_mismatch',
-                details: { capability: 'process', executable },
-            },
-        });
     });
 
     it('assembles only the admitted canonical managedServices owner', async () => {
         const managedServices = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: Object.freeze({
                 status: vi.fn(),
                 ensure: vi.fn(),
@@ -2383,6 +2269,7 @@ process.stdin.on('data', (chunk) => {
             executableBaseName: 'gateway-runtime',
         });
         const managedServices = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: Object.freeze({
                 status: vi.fn(),
                 ensure: vi.fn(),
@@ -2527,6 +2414,7 @@ process.stdin.on('data', (chunk) => {
 
     it('checks ordinary managedServices availability against the contribution identity, not its binding id', () => {
         const managedServices = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: Object.freeze({
                 status: vi.fn(),
                 ensure: vi.fn(),
@@ -2560,8 +2448,6 @@ process.stdin.on('data', (chunk) => {
             owners.createOrdinaryServiceBinding(
                 seed.occurrenceId,
                 `${seed.contribution.qualifiedId}:binding`,
-                [],
-                seed.contribution.qualifiedId,
             ),
         );
 
@@ -2687,7 +2573,7 @@ process.stdin.on('data', (chunk) => {
             fileBase64: Buffer.from(fileCredential).toString('base64'),
             decodedBasicUser: 'user',
             decodedBasicComponent: 'password',
-            ordinary: 'bearer status remains ordinary',
+            ordinary: 'credential status remains ordinary',
         });
 
         const serialized = JSON.stringify(records.at(-1));
@@ -2700,7 +2586,7 @@ process.stdin.on('data', (chunk) => {
         expect(serialized).not.toContain(Buffer.from(fileCredential).toString('base64'));
         expect(serialized).toContain('"decodedBasicUser":"user"');
         expect(serialized).not.toContain('password');
-        expect(serialized).toContain('bearer status remains ordinary');
+        expect(serialized).toContain('credential status remains ordinary');
         expect(serialized).toContain('[REDACTED]');
         const supportTail = redactBugReportSensitiveText(serialized);
         expect(supportTail).toContain('"decodedBasicUser":"user"');

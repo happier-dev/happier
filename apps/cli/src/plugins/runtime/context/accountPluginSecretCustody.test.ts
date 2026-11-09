@@ -135,6 +135,49 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         await expect(service.get('first')).rejects.toMatchObject({ code: 'plugin_secret_missing' });
         await expect(service.get('second')).resolves.toBe('second-value');
     });
+    it('does not sweep another plugin standalone save while cleaning up a removed binding', async () => {
+        const removedRef = 'happier:shared-secret:v1:removed-binding-b';
+        const standaloneRef = 'happier:shared-secret:v1:standalone-save-a';
+        let snapshot: ActiveAccountSettingsSnapshot = { source: 'network', scopeKey: 'account:cleanup',
+            settings: accountSettingsParse(applyAccountSettingsSavedSecretMutation({}, { kind: 'replacePluginSecret',
+                target: { pluginId: 'acme.second', localId: 'token' }, expectedSecretId: null,
+                expectedSecretUpdatedAt: null, secretId: removedRef }).settings), settingsVersion: 4,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready' };
+        const candidates: Array<NonNullable<Parameters<typeof listUnreferencedPluginCreatedSecretResources>[2]>['resources'][number]> = [
+            { ref: removedRef, deploymentReferenceState: 'unreferenced' },
+        ];
+        const deleted: string[] = [];
+        const router = createRouter({ owner: {
+            readSnapshot: () => snapshot,
+            async updateOnce(input) {
+                input.assertCurrent();
+                snapshot = { ...snapshot, settings: accountSettingsParse(input.mutate(snapshot.settings)),
+                    settingsVersion: snapshot.settingsVersion + 1 };
+                return { status: 'applied', settings: snapshot.settings, version: snapshot.settingsVersion };
+            },
+        }, resources: {
+            async create() { throw new Error('Personal create is not part of this operation'); },
+            async createShared(input) {
+                input.assertCurrent();
+                candidates.push({ ref: standaloneRef, createdByPlugin: input.createdByPlugin, deploymentReferenceState: 'unreferenced' });
+                return { ref: standaloneRef, resourceRevision: 1 };
+            },
+            async readCensus(assertCurrent, references?: readonly string[]) {
+                expect.soft(references, 'automatic cleanup requests only its retired resource set').toEqual([removedRef]);
+                assertCurrent(); return { resources: candidates };
+            },
+            async delete(input) { input.assertCurrent(); deleted.push(input.ref); },
+        } });
+        const service = createDeclaredPluginSecretsService({ pluginId: 'acme.first',
+            declarations: [{ id: 'database', custody: 'account', saveShared: true }], resolveCustody: router.resolve,
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true, registerRawForRedaction: () => {},
+            sharedSaveAdmission: { id: 'database', purpose: 'data.connection', audience: {}, assertCurrent: () => {} } });
+        await expect(service.saveShared('database', { label: 'Database', bytes: new TextEncoder().encode('generated-private'), audience: {} }))
+            .resolves.toEqual({ ref: standaloneRef, resourceRevision: 1 });
+        expect(listUnreferencedPluginCreatedSecretResources({}, {}, { resources: candidates })).toEqual([standaloneRef]);
+        await router.unbind({ pluginId: 'acme.second', secretId: 'token' });
+        expect(deleted).toEqual([removedRef]);
+    });
     it('saves without declaration opt-in with separately reviewed audiences and no cross-id write', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-shared-save-custody-'));
         onTestFinished(async () => { await rm(happyHomeDir, { recursive: true, force: true }); });
@@ -1301,6 +1344,4 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         else await expect(read).resolves.toBe('owner-vault-field');
         expect(nativeReads).toBe(expectedReads);
     });
-
-
 });

@@ -107,8 +107,9 @@ export type DownloadedNpmArtifactCandidate = Readonly<{
   artifactPath: string;
   byteLength: number;
   /**
-   * SHA-256 of the exact tarball stream after the registry SRI verifier has
-   * accepted it. This is acquisition evidence, not an extracted-tree digest.
+   * SHA-256 of the acquired tarball stream, not an extracted-tree digest.
+   * Archive staging admits the selected registry SRI before these bytes can
+   * supply installation or published release facts.
    */
   archiveDigestSha256: `sha256:${string}`;
   registrySignature:

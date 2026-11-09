@@ -68,7 +68,7 @@ export type AutomationEventAdoptedDefinitionPublicProjectionResultV1 =
 export type AutomationEventAdmitPreparedRequestSequenceV1 = AsyncIterableIterator<
   AutomationEventAdmitHttpRequestV1,
   void,
-  AutomationAccountCurrentnessWitnessV1 | undefined
+  void
 >;
 
 export type AutomationEventAdoptedDefinitionSetV1 = Readonly<{
@@ -966,27 +966,29 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         || !sameTransport(request.input.transport, params.transport)
       ) return { kind: 'unavailable' };
       let snapshot: AdoptedSnapshot | null;
+      let sourceSetReadopted = false;
       if (
-        params.transport.kind === 'checkpointedPull'
-        && request.input.cursor === undefined
-        && request.input.knownRevision !== undefined
+        (params.transport.kind === 'checkpointedPull'
+          && request.input.cursor === undefined
+          && request.input.knownRevision !== undefined)
+        || (params.transport.kind === 'durablePush' && request.webhookInvocationReference === undefined)
       ) {
-        // A revision-confirming observer read must refresh the one adopted
-        // owner before it can publish an unchanged result. Cursor pages stay
-        // bound to their already-adopted snapshot.
+        // Pull revision confirmation and every background durable disclosure
+        // use the same adopted owner. Endpoint target moves can change durable
+        // membership without a catalog revision, including between cursor pages.
         const refreshed = await joinAdoptedSnapshotRefresh(signal);
         if (refreshed.kind === 'discarded' || !await isCallerCurrent(signal)) {
           return { kind: 'unavailable' };
         }
         snapshot = adopted;
+        sourceSetReadopted = refreshed.kind === 'adopted';
       } else {
         snapshot = await requireAdoptedSnapshot(signal);
       }
       if (snapshot === null) return { kind: 'unavailable' };
 
-      if (params.transport.kind === 'durablePush') {
+      if (params.transport.kind === 'durablePush' && request.webhookInvocationReference !== undefined) {
         const reference = request.webhookInvocationReference;
-        if (reference === undefined) return { kind: 'unavailable' };
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const currentness = await validateDurableWebhookInvocation({
             snapshot,
@@ -1013,7 +1015,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         await isCurrent(signal, accountCurrentness) ? projection : { kind: 'unavailable' }
       );
 
-      const projectionDefinitions = params.transport.kind === 'durablePush'
+      const projectionDefinitions = params.transport.kind === 'durablePush' && request.webhookInvocationReference !== undefined
         ? snapshot.definitions.filter((definition) => matchesDurableWebhookInvocation({
           definition,
           reference: request.webhookInvocationReference!,
@@ -1031,7 +1033,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
           currentRevision: snapshot.revision,
         });
       }
-      if (request.input.cursor === undefined && request.input.knownRevision === snapshot.revision) {
+      if (request.input.cursor === undefined && request.input.knownRevision === snapshot.revision && !sourceSetReadopted) {
         if (request.input.checkpointRetirementCandidates !== undefined) {
           const classification = await classifyCheckpointRetirements({
             snapshot,
@@ -1061,7 +1063,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         ...(snapshot.storedDefinitionScope === undefined
           ? {}
           : { storedDefinitionScope: snapshot.storedDefinitionScope }),
-        ...(params.transport.kind === 'durablePush'
+        ...(params.transport.kind === 'durablePush' && request.webhookInvocationReference !== undefined
           ? {
             webhookInvocationScope: {
               webhookEndpointId: request.webhookInvocationReference!.endpoint.webhookEndpointId,
@@ -1155,7 +1157,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         : null;
       if (params.transport.kind === 'durablePush' && webhookInvocationReference === null) return null;
 
-      // A fresh exact server witness for this admission request, admitted only
+      // A fresh mode/key identity for this admission request, admitted only
       // while it still names the Account content identity this snapshot's
       // definitions were adopted under.
       const accountEncryption = await readCurrentAccountEncryption(
@@ -1165,7 +1167,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       if (accountEncryption === null) return null;
 
       if (accountEncryption.witness.mode === 'plain') {
-        const initialAccountCurrentness = accountEncryption.witness;
+        const accountCurrentness = accountEncryption.witness;
         const hostEvidenceBase = {
           v: 1 as const,
           t: 'plain' as const,
@@ -1173,7 +1175,6 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         };
         async function* preparePlainRequests(): AutomationEventAdmitPreparedRequestSequenceV1 {
           let definitionIndex = 0;
-          let accountCurrentness = initialAccountCurrentness;
           while (definitionIndex < admissionInput.definitions.length) {
             signal.throwIfAborted();
             if (!await isCurrent(signal)) return;
@@ -1209,21 +1210,8 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             if (!candidate.success) return;
             signal.throwIfAborted();
             if (!await isCurrent(signal)) return;
-            const successorAccountCurrentness = yield candidate.data;
+            yield candidate.data;
             definitionIndex += run.items.length;
-            // A following request is safe only after E2 returns the
-            // server-owned successor from this request's ready continuation.
-            if (definitionIndex >= admissionInput.definitions.length) return;
-            if (
-              successorAccountCurrentness === undefined
-              || successorAccountCurrentness.mode !== 'plain'
-              || successorAccountCurrentness.contentKeyFingerprint !== null
-            ) return;
-            accountCurrentness = {
-              mode: 'plain',
-              version: successorAccountCurrentness.version,
-              contentKeyFingerprint: null,
-            };
           }
         }
         return preparePlainRequests();
@@ -1232,7 +1220,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       const accountMaterial = accountEncryption.material.material;
 
       try {
-        const initialAccountCurrentness = accountEncryption.witness;
+        const accountCurrentness = accountEncryption.witness;
         const encryptedHostEvidenceBase = {
           v: 1,
           t: 'encrypted',
@@ -1324,7 +1312,6 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
         async function* prepareEncryptedRequests(): AutomationEventAdmitPreparedRequestSequenceV1 {
           let definitionIndex = 0;
           let carriedEvidence: AutomationEventAdmitEncryptedDefinitionEvidenceV1 | null = null;
-          let accountCurrentness = initialAccountCurrentness;
           while (definitionIndex < selected.length || carriedEvidence !== null) {
             signal.throwIfAborted();
             if (!await isCurrent(signal)) return;
@@ -1369,21 +1356,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             if (!parsed.success) return;
             signal.throwIfAborted();
             if (!await isCurrent(signal)) return;
-            const successorAccountCurrentness = yield parsed.data;
-            // Do not let iterator advancement substitute for the server's
-            // successor witness; preserve the frozen E2EE key identity too.
-            if (definitionIndex >= selected.length && carriedEvidence === null) return;
-            if (
-              successorAccountCurrentness === undefined
-              || successorAccountCurrentness.mode !== 'e2ee'
-              || successorAccountCurrentness.contentKeyFingerprint
-                !== initialAccountCurrentness.contentKeyFingerprint
-            ) return;
-            accountCurrentness = {
-              mode: 'e2ee',
-              version: successorAccountCurrentness.version,
-              contentKeyFingerprint: initialAccountCurrentness.contentKeyFingerprint,
-            };
+            yield parsed.data;
           }
         }
         return prepareEncryptedRequests();

@@ -1,4 +1,4 @@
-import { isPluginUiHostApiVersionCompatibleWithVersionV1 } from '@happier-dev/protocol/plugins/ui/hostApi';
+import { isPluginUiHostApiVersionCompatibleV1, isPluginUiHostApiVersionCompatibleWithVersionV1 } from '@happier-dev/protocol/plugins/ui/hostApi';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
 import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
 
@@ -25,10 +25,6 @@ export function generatedUiArtifactCompatibilityFailure(params: Readonly<{
 export function generatedUiArtifactDefaultHostCompatibilityFailure(
     entry: PluginUiArtifactsManifestEntryV2,
 ): string | null {
-    return generatedUiArtifactCompatibilityFailure({
-        entry,
-        hostRuntime: {
-            hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION,
-        },
-    });
+    return isPluginUiHostApiVersionCompatibleV1(entry.hostUiApiRange)
+        ? null : 'generated_ui_host_api_mismatch';
 }

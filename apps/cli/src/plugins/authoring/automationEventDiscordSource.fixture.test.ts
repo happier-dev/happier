@@ -545,7 +545,6 @@ describe('Discord Channels as a first-class Automation Event source', () => {
         endpoint: { kind: 'shared', audience: 'shared', id: `discord:channel:${CHANNEL_ID}` },
         content: { text: DELIVERED_RESULT_TEXT },
         deliveryKey: 'automation-result-delivery-1',
-        mentionPolicy: 'suppress',
         linkPreviewPolicy: 'providerDefault',
       }, {
         plugin: { id: PLUGIN_ID, version: '0.0.0' },

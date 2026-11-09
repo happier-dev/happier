@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1, AutomationEventStoredDefinitionsReadHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '@happier-dev/protocol/automations/event';
@@ -221,7 +221,7 @@ export function createAutomationEventAdoptedDefinitionSetHostV1(params: Readonly
     }).read;
   const resolveAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
     ?? (async (signal?: AbortSignal) => await fetchAccountEncryptionCurrentness({
-      token: params.credentials.token,
+      credentials: params.credentials, token: params.credentials.token,
       ...(signal ? { signal } : {}),
     }));
   const resolveAccountEncryptionMaterial = params.resolveAccountEncryptionMaterial

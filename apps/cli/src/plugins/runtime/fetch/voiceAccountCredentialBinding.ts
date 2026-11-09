@@ -1,8 +1,9 @@
-import { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from '@happier-dev/cli-common/plugins/http';
 import { deriveVoiceCredentialBindingIdentityV1, resolveVoiceCredentialOperationAuthorization } from '@happier-dev/protocol/plugins/contributions/voice';
-import { materializeRecipientOperationRequestV1FromOperation, resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { materializeRecipientOperationRequestV1FromOperation } from '@happier-dev/protocol/plugins/recipientContractV1';
 import type { RecipientOperationV1, VoiceCredentialAccessPhase, VoiceCredentialBindingIdentityV1, VoiceCredentialOperationAuthorization, VoiceCredentialOperationSelectedSource, VoiceProviderContribution } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import { acceptsRecipientOperationResponseContentType, hasExactPluginHttpCredentialScope, projectRecipientOperationResponseBody } from '@happier-dev/cli-common/plugins/http';
 import type {
     PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type {
@@ -16,7 +17,6 @@ import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServ
 import type {
     StablePluginHttpCredentialBindingHost,
 } from './service';
-import { createVoiceProviderRecipientContract } from '@/plugins/voiceProviderRecipientContract';
 
 type VoiceProviderDeclaration = Readonly<{
     pluginId: string;
@@ -188,24 +188,6 @@ function selectedOperationSource(
     });
 }
 
-function hasExactNetworkScope(input: Readonly<{
-    serviceBinding: Parameters<StablePluginHttpCredentialBindingHost['request']>[0]['serviceBinding'];
-    url: string;
-    method: string;
-}>): boolean {
-    let origin: string;
-    try {
-        origin = new URL(input.url).origin;
-    } catch {
-        return false;
-    }
-    return input.serviceBinding.availability.http === 'available'
-        && (input.serviceBinding.networkScopes ?? []).some((scope) => (
-            scope.origins.includes(origin)
-            && (scope.methods === undefined || scope.methods.includes(input.method as never))
-        ));
-}
-
 function hasHeader(
     headers: Readonly<Record<string, string>> | undefined,
     name: string,
@@ -228,19 +210,6 @@ function hasExactBody(actual: Uint8Array | undefined, expected: Uint8Array | nul
     if (expected === null) return actual === undefined || actual.byteLength === 0;
     if (!actual || actual.byteLength !== expected.byteLength) return false;
     return expected.every((byte, index) => actual[index] === byte);
-}
-
-export function hasExactPluginHttpCredentialScope(input: Readonly<{
-    url: string;
-    method: string;
-    issued: Readonly<{ origin: string; method: string }>;
-}>): boolean {
-    try {
-        return new URL(input.url).origin === input.issued.origin
-            && input.method === input.issued.method;
-    } catch {
-        return false;
-    }
 }
 
 function normalizedContentType(headers: Readonly<Record<string, string>>): string | null {
@@ -303,11 +272,13 @@ function recordResponseDiagnosticBestEffort(
     }
 }
 
-function sanitizeFailure(error: unknown, authority: VoiceAccountOperationAuthority): PluginError {
+function sanitizeFailure(error: unknown, authority: VoiceAccountOperationAuthority): PluginError | CredentialRequestRedirectError {
     if (!authority.isCurrent()) return retired();
     if (authority.isCancelled()) return cancelled();
     if (!authority.isCredentialCurrent()) return credentialUnavailable();
+    if (error instanceof CredentialRequestRedirectError) return error;
     const code = error instanceof Error ? (error as Error & { code?: unknown }).code : null;
+    if (isPluginError(error) && error.code === 'plugin_voice_credential_access_unavailable') return error;
     if (code === 'credential_unavailable'
         || code === 'plugin_voice_credential_unavailable'
         || code === 'plugin_host_access_resource_not_selected'
@@ -327,12 +298,7 @@ type AuthorizedVoiceAccountOperation = Readonly<{
     credentialIdentity: VoiceCredentialBindingIdentityV1;
     selectedSource: ReturnType<typeof selectedOperationSource>;
     credentialAuthorization: VoiceCredentialOperationAuthorization;
-    /**
-     * The stored approval this call must still match, or `null` when the
-     * recipient carries no re-approval fence (a first-party bundled
-     * publisher — see the protocol owner).
-     */
-    requiredRecipientApprovalDigest: string | null;
+    phase: VoiceCredentialAccessPhase;
 }>;
 
 /**
@@ -340,7 +306,7 @@ type AuthorizedVoiceAccountOperation = Readonly<{
  *
  * It resolves the exact declaration, the declared operation, the phase that
  * contribution kind may use it in, the declared origin, the persisted
- * selection identity and the approved recipient contract digest. Both the
+ * selection identity. Both the
  * plugin-fetch seam and the daemon speech seam consume this decision; neither
  * re-derives any part of it.
  */
@@ -371,10 +337,6 @@ function authorizeVoiceAccountOperation(input: Readonly<{
     }
     if (!hasExactPluginHttpCredentialScope({ url: materialized.url, method: materialized.method,
         issued: operation.request })) throw unauthorized();
-    const recipientContract = createVoiceProviderRecipientContract(declaration);
-    if (!recipientContract) throw unauthorized();
-    const requiredRecipientApprovalDigest =
-        resolveRequiredRecipientContractApprovalDigestV1(recipientContract);
     // The persisted selection identity (contribution, slot and purpose)
     // is projected from manifest truth so the credential resolver can
     // consult the Account-owned source selection for this exact target.
@@ -407,7 +369,7 @@ function authorizeVoiceAccountOperation(input: Readonly<{
         credentialIdentity,
         selectedSource,
         credentialAuthorization,
-        requiredRecipientApprovalDigest,
+        phase: input.phase,
     });
 }
 
@@ -423,6 +385,7 @@ async function executeVoiceAccountOperation(input: Readonly<{
     credentialResolver: VoiceCredentialResolver;
     connectedAccounts?: Pick<ConnectedAccountPurposeBindingOwner, 'materialize'>;
     signal: AbortSignal;
+    realm?: 'web' | 'ios' | 'android' | 'daemon';
     execute: VoiceAccountOperationExecute;
     recordResponseDiagnostic?: (diagnostic: VoiceAccountOperationResponseDiagnostic) => void;
 }>): Promise<VoiceAccountOperationResponse> {
@@ -432,7 +395,6 @@ async function executeVoiceAccountOperation(input: Readonly<{
         credentialIdentity,
         selectedSource,
         credentialAuthorization,
-        requiredRecipientApprovalDigest,
     } = input.authorized;
     try {
         const executeWithCredentialHeaders = async (
@@ -500,9 +462,13 @@ async function executeVoiceAccountOperation(input: Readonly<{
             if (selectedSource.selection.kind !== 'savedSecret') throw unauthorized();
             return await input.credentialResolver.withSecret({
                 identity: credentialIdentity,
-                ...(requiredRecipientApprovalDigest
-                    ? { recipientContractDigest: requiredRecipientApprovalDigest }
-                    : {}),
+                operationPurpose: operation.purpose,
+                admission: { contribution: input.authorized.declaration.definition,
+                    // CLI-hosted speech executes in the daemon. Client RPCs
+                    // supply their admitted platform explicitly.
+                    operation, phase: input.authorized.phase,
+                    realm: input.realm ?? (input.authorized.declaration.definition.kind === 'speech' ? 'daemon' : undefined),
+                    signal: input.signal },
                 use: async (sourceCredential) => {
                     const credentialValue = operation.request.credential.format === 'bearer'
                         ? `Bearer ${sourceCredential}`
@@ -557,6 +523,7 @@ async function executeVoiceAccountOperation(input: Readonly<{
             || error.code === 'plugin_fetch_voice_client_auth_artifact_invalid'
             || error.code === 'plugin_fetch_voice_catalog_artifact_invalid'
             || error.code === 'plugin_fetch_voice_account_operation_failed'
+            || error.code === 'plugin_fetch_redirect_refused'
         )) {
             throw error;
         }
@@ -572,6 +539,7 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
      * have no truthful phase and therefore fail closed below.
      */
     phase?: Exclude<VoiceCredentialAccessPhase, 'speech'>;
+    realm?: 'web' | 'ios' | 'android' | 'daemon';
     recordResponseDiagnostic?: VoiceAccountResponseDiagnosticRecorder;
 }>): StablePluginHttpCredentialBindingHost {
     return Object.freeze({
@@ -611,11 +579,6 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
                 || !hasExactHeaders(input.request.headers, materialized.headers)
                 || !hasExactBody(input.request.body, materialized.body)
                 || hasHeader(input.request.headers, operation.request.credential.name)
-                || !hasExactNetworkScope({
-                    serviceBinding: input.serviceBinding,
-                    url: materialized.url,
-                    method: materialized.method,
-                })
             ) {
                 throw unauthorized();
             }
@@ -624,6 +587,7 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
                 authority,
                 credentialResolver: params.credentialResolver,
                 signal: input.seed.signal,
+                realm: params.realm,
                 execute: input.execute,
                 ...(params.recordResponseDiagnostic
                     ? {
@@ -653,6 +617,7 @@ export function createVoiceAccountOperationService(params: Readonly<{
     kind: VoiceProviderContribution['kind'];
     /** Exact lifecycle phase owned by the host calling this operation service. */
     phase: VoiceCredentialAccessPhase;
+    realm?: 'web' | 'ios' | 'android' | 'daemon';
     credentialResolver: VoiceCredentialResolver;
     connectedAccounts?: Pick<ConnectedAccountPurposeBindingOwner, 'materialize'>;
     isCurrent(): boolean;
@@ -695,6 +660,7 @@ export function createVoiceAccountOperationService(params: Readonly<{
                 credentialResolver: params.credentialResolver,
                 ...(params.connectedAccounts ? { connectedAccounts: params.connectedAccounts } : {}),
                 signal: request.signal,
+                realm: params.realm,
                 execute: async (injection) => await params.transport.request(
                     Object.freeze({
                         url: materialized.url,

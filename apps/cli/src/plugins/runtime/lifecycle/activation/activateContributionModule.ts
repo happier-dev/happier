@@ -6,17 +6,14 @@ import type { PluginCompatibilityDiagnostic } from '../../../validation/diagnost
 import {
     createContributionRegistrationHost,
     deriveContributionRegistrationRightsForManifest,
-    recordValidatedAgentSessionRunnerFactory,
-    type ContributionRegistrationRight,
     type ContributionRuntimeRegistration,
 } from '../../api/registrationRightsHost';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import {
-    normalizePositiveTimeoutMs,
     projectPluginFailureDiagnostic,
-    runWithOptionalTimeout,
 } from '../utils';
 import { resolveActivationExport } from './source';
+import type { PluginModuleFailureCause } from '../../moduleFailure';
 
 type ContributionModuleActivationResult = Readonly<{
     status: 'active' | 'dormant' | 'unavailable';
@@ -26,17 +23,6 @@ type ContributionModuleActivationResult = Readonly<{
     ).ValidatedAgentSessionRunnerFactoryFactV1[];
     diagnostics: readonly PluginCompatibilityDiagnostic[];
     dispose(): Promise<void>;
-}>;
-
-/**
- * The publication atom of one activation transaction. It becomes observable
- * only after the whole transaction settles under current occurrence authority.
- */
-type ContributionActivationPublication = Readonly<{
-    registrations: readonly ContributionRuntimeRegistration[];
-    validatedAgentSessionRunnerFactories: readonly import(
-        '../../activationSources'
-    ).ValidatedAgentSessionRunnerFactoryFactV1[];
 }>;
 
 const EMPTY_REGISTRATIONS: readonly ContributionRuntimeRegistration[] = Object.freeze([]);
@@ -53,141 +39,46 @@ class ActivationTransactionSupersededError extends Error {
     }
 }
 
-function unavailable(message: string): ContributionModuleActivationResult {
+function unavailable(message: string, code: Extract<PluginModuleFailureCause['code'], 'PLUGIN_ACTIVATION_EXPORT_MISSING' | 'PLUGIN_ACTIVATION_EXPORT_INVALID'>): ContributionModuleActivationResult {
     return Object.freeze({
         status: 'unavailable',
         registrations: EMPTY_REGISTRATIONS,
         validatedAgentSessionRunnerFactories: EMPTY_VALIDATED_AGENT_FACTORIES,
-        diagnostics: Object.freeze([{ code: 'plugin_activation_failed' as const, message }]),
+        diagnostics: Object.freeze([{ code: 'plugin_activation_failed' as const, message,
+            details: { cause: { phase: 'activate', code, retryable: false } },
+        }]),
         dispose: NOOP_DISPOSE,
     });
 }
 
-async function validateSessionRunnerFactoryRegistrations(params: Readonly<{
+async function collectSessionRunnerFactoryRegistrations(params: Readonly<{
     pluginId: string;
-    manifestAuthority: 'external' | 'bundled_first_party';
-    registrationRights: readonly ContributionRegistrationRight[];
     registrations: readonly ContributionRuntimeRegistration[];
-    registeredExternalSessionsByAgent: ReadonlyMap<string, unknown>;
     resolveRelativeModule?: NonNullable<
         import('../../activationSources').PluginActivationSource<
             PluginDaemonModuleNamespace
         >['resolveRelativeModule']
     >;
-}>): Promise<readonly import(
-    '../../activationSources'
-).ValidatedAgentSessionRunnerFactoryFactV1[]> {
-    const validatedFacts: import(
-        '../../activationSources'
-    ).ValidatedAgentSessionRunnerFactoryFactV1[] = [];
-    const agentRegistrationRights = new Map(
-        params.registrationRights.flatMap((right) => (
-            right.family === 'agents'
-                ? [[right.localId, right] as const]
-                : []
-        )),
-    );
-    const agentRegistrations = new Map(
-        params.registrations.flatMap((registration) => (
-            registration.family === 'agents'
-                ? [[registration.localId, registration.value] as const]
-                : []
-        )),
-    );
-    for (const [agentId, right] of agentRegistrationRights) {
-        if (!right.requiredFields?.includes('sessionRunnerFactory')) {
-            continue;
-        }
-        const registration = agentRegistrations.get(agentId);
-        if (!registration?.factory) {
-            throw new Error(
-                `Session-capable Agent '${agentId}' must register one primary Agent runtime factory`,
-            );
-        }
-    }
+}>): Promise<readonly import('../../activationSources').ValidatedAgentSessionRunnerFactoryFactV1[]> {
+    const facts: import('../../activationSources').ValidatedAgentSessionRunnerFactoryFactV1[] = [];
     for (const registration of params.registrations) {
         if (registration.family !== 'agents') continue;
-        const right = agentRegistrationRights.get(registration.localId);
-        const ownsPrimaryFactory =
-            right?.requiredFields?.includes('factory') === true;
-        const requiresLocator =
-            right?.requiredFields?.includes('sessionRunnerFactory') === true;
-        if (!ownsPrimaryFactory && registration.value.factory) {
-            throw new Error(
-                `Agent '${registration.localId}' must not register a competing primary Agent runtime factory`,
-            );
-        }
         const locator = registration.value.sessionRunnerFactory;
-        if (!requiresLocator) {
-            if (locator) {
-                throw new Error(
-                    `Execution-run-only Agent '${registration.localId}' must not register a session runner factory locator`,
-                );
-            }
-            continue;
-        }
-        if (!registration.value.factory) {
-            throw new Error(
-                `Session-capable Agent '${registration.localId}' must register one primary Agent runtime factory`,
-            );
-        }
-        if (!locator) {
-            throw new Error(
-                `Session-capable Agent '${registration.localId}' must register a session runner factory locator`,
-            );
-        }
+        if (!locator) continue;
         if (!params.resolveRelativeModule) {
             throw new Error(
                 `Plugin '${params.pluginId}' has no immutable-generation module resolver for Agent '${registration.localId}'`,
             );
         }
         const resolved = await params.resolveRelativeModule(locator.module);
-        const selectedExport = Object.prototype.hasOwnProperty.call(
-            resolved.module,
-            locator.export,
-        )
-            ? resolved.module[locator.export]
-            : undefined;
-        if (selectedExport !== registration.value.factory) {
-            throw new Error(
-                `Session runner factory export '${locator.export}' does not match the factory registered for Agent '${registration.localId}'`,
-            );
-        }
-        const hasRegisteredExternalSessions =
-            params.registeredExternalSessionsByAgent.has(registration.localId);
-        const registeredExternalSessions =
-            params.registeredExternalSessionsByAgent.get(registration.localId);
-        if (locator.externalSessionsExport === undefined) {
-            if (hasRegisteredExternalSessions) {
-                throw new Error(
-                    `Agent '${registration.localId}' registered an External Sessions contribution but its session runner factory locator must declare externalSessionsExport`,
-                );
-            }
-        } else {
-            const selectedExternalSessions = Object.prototype.hasOwnProperty.call(
-                resolved.module,
-                locator.externalSessionsExport,
-            )
-                ? resolved.module[locator.externalSessionsExport]
-                : undefined;
-            if (
-                selectedExternalSessions === undefined
-                || !hasRegisteredExternalSessions
-                || selectedExternalSessions !== registeredExternalSessions
-            ) {
-                throw new Error(
-                    `External Sessions companion export '${locator.externalSessionsExport}' does not match the contribution registered for Agent '${registration.localId}'`,
-                );
-            }
-        }
-        validatedFacts.push(Object.freeze({
+        facts.push({
             localAgentId: registration.localId,
             locator,
             normalizedModulePath: resolved.normalizedModulePath,
             loadMode: resolved.loadMode,
-        }));
+        });
     }
-    return Object.freeze(validatedFacts);
+    return facts;
 }
 
 export async function activateContributionModule(params: Readonly<{
@@ -199,7 +90,6 @@ export async function activateContributionModule(params: Readonly<{
     target?: Readonly<{ realm: 'account'; artifactId: string; exportName: string }>;
     isOccurrenceCurrent(): boolean;
     forceActivation?: boolean;
-    cleanupTimeoutMs?: number;
     /**
      * The author's authenticated project root, supplied by the activation
      * owner ONLY for a locally trusted development plugin. Its presence is
@@ -224,11 +114,11 @@ export async function activateContributionModule(params: Readonly<{
         : deriveContributionRegistrationRightsForManifest(params.manifest);
     const activationExport = resolveActivationExport(params.moduleNamespace, params.target?.exportName);
     if (activationExport.status === 'invalid') {
-        return unavailable(`Plugin '${params.pluginId}' named activation export is not a function`);
+        return unavailable(`Plugin '${params.pluginId}' named activation export is not a function`, 'PLUGIN_ACTIVATION_EXPORT_INVALID');
     }
     if (activationExport.status === 'missing') {
         return rights.length > 0
-            ? unavailable(`Plugin '${params.pluginId}' has required runtime registrations but no named activate export`)
+            ? unavailable(`Plugin '${params.pluginId}' has required runtime registrations but no named activate export`, 'PLUGIN_ACTIVATION_EXPORT_MISSING')
             : Object.freeze({
                 status: 'dormant', registrations: EMPTY_REGISTRATIONS,
                 validatedAgentSessionRunnerFactories: EMPTY_VALIDATED_AGENT_FACTORIES,
@@ -242,17 +132,11 @@ export async function activateContributionModule(params: Readonly<{
             diagnostics: Object.freeze([]), dispose: NOOP_DISPOSE,
         });
     }
-    const registeredExternalSessionsByAgent = new Map<string, unknown>();
-    const cleanupTimeoutMs = normalizePositiveTimeoutMs(params.cleanupTimeoutMs);
     const hostParams = {
         pluginId: params.pluginId,
         occurrenceId: params.occurrenceId,
         rights,
         isOccurrenceCurrent: params.isOccurrenceCurrent,
-        ...(cleanupTimeoutMs === null ? {} : { cleanupTimeoutMs }),
-        onAgentExternalSessionsRegistration(localAgentId: string, contribution: unknown) {
-            registeredExternalSessionsByAgent.set(localAgentId, contribution);
-        },
     };
     const host = params.target
         ? createContributionRegistrationHost({ ...hostParams, target: params.target })
@@ -271,28 +155,11 @@ export async function activateContributionModule(params: Readonly<{
         if (disposalPromise) return disposalPromise;
         disposalPromise = (async () => {
             const errors: unknown[] = [];
-            // Dependency order is intentional: host-captured resources unwind
-            // before the author's own cleanup. Only an explicit host cleanup
-            // budget bounds an attempt; otherwise retirement observes actual
-            // settlement. Rejections remain part of the aggregate outcome.
-            for (const step of [
-                {
-                    label: 'registration host',
-                    run: (): Promise<void> => host.dispose(),
-                },
-                {
-                    label: 'activation cleanup',
-                    run: disposePluginCleanup,
-                },
-            ] as const) {
+            // Each activation keeps its dependency order. Peer activations own
+            // independent cleanup sequences; no subordinate deadline is added.
+            for (const step of [() => host.dispose(), disposePluginCleanup]) {
                 try {
-                    await runWithOptionalTimeout(
-                        cleanupTimeoutMs,
-                        step.run,
-                        () => new Error(
-                            `Plugin '${params.pluginId}' ${step.label} cleanup timed out after ${cleanupTimeoutMs}ms`,
-                        ),
-                    );
+                    await step();
                 } catch (error) {
                     errors.push(error);
                 }
@@ -306,7 +173,9 @@ export async function activateContributionModule(params: Readonly<{
     };
     let activationPromise: Promise<void | PluginCleanup>;
     try {
-        activationPromise = Promise.resolve(Reflect.apply(activationExport.activate, undefined, [host.api]));
+        activationPromise = Promise.resolve(Reflect.apply(activationExport.activate, undefined, params.target
+            ? [host.api, { artifactId: params.target.artifactId, exportName: params.target.exportName }]
+            : [host.api]));
     } catch (error) {
         activationPromise = Promise.reject(error);
     }
@@ -326,73 +195,27 @@ export async function activateContributionModule(params: Readonly<{
             throw new Error(`Plugin '${params.pluginId}' activate export must return void or one cleanup function`);
         }
         pluginCleanup = typeof result === 'function' ? result as PluginCleanup : null;
-        const transaction = (async (): Promise<ContributionActivationPublication> => {
-            const registrations = host.commit();
-            const sourceValidatedAgentSessionRunnerFactories =
-                await validateSessionRunnerFactoryRegistrations({
-                    pluginId: params.pluginId,
-                    manifestAuthority: params.manifestAuthority ?? 'external',
-                    registrationRights: rights,
-                    registrations,
-                    registeredExternalSessionsByAgent,
-                    ...(params.resolveRelativeModule
-                        ? { resolveRelativeModule: params.resolveRelativeModule }
-                        : {}),
-                });
-            assertActivationTransactionCurrent();
-            const validatedAgentSessionRunnerFactories = Object.freeze(
-                await params.persistValidatedAgentSessionRunnerFactories?.(
-                    sourceValidatedAgentSessionRunnerFactories,
-                    Object.freeze({ assertCurrent: assertActivationTransactionCurrent }),
-                ) ?? sourceValidatedAgentSessionRunnerFactories,
-            );
-            const factsByLocalAgentId = new Map(
-                validatedAgentSessionRunnerFactories.map((fact) => [
-                    fact.localAgentId,
-                    fact,
-                ]),
-            );
-            if (
-                factsByLocalAgentId.size !== sourceValidatedAgentSessionRunnerFactories.length
-                || validatedAgentSessionRunnerFactories.length
-                    !== sourceValidatedAgentSessionRunnerFactories.length
-            ) {
-                throw new Error(
-                    `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
-                );
-            }
-            assertActivationTransactionCurrent();
-            for (const registration of registrations) {
-                if (registration.family !== 'agents') continue;
-                const sourceFact = sourceValidatedAgentSessionRunnerFactories.find(
-                    (fact) => fact.localAgentId === registration.localId,
-                );
-                if (!sourceFact) continue;
-                const retainedFact = factsByLocalAgentId.get(registration.localId);
-                if (!retainedFact || retainedFact.locator !== sourceFact.locator) {
-                    throw new Error(
-                        `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
-                    );
-                }
-                recordValidatedAgentSessionRunnerFactory(
-                    registration.value,
-                    Object.freeze({
-                        locator: retainedFact.locator,
-                        normalizedModulePath: retainedFact.normalizedModulePath,
-                        loadMode: retainedFact.loadMode,
-                    }),
-                );
-            }
-            return Object.freeze({
+        const registrations = host.commit();
+        const sourceValidatedAgentSessionRunnerFactories =
+            await collectSessionRunnerFactoryRegistrations({
+                pluginId: params.pluginId,
                 registrations,
-                validatedAgentSessionRunnerFactories,
+                ...(params.resolveRelativeModule
+                    ? { resolveRelativeModule: params.resolveRelativeModule }
+                    : {}),
             });
-        })();
-        const published = await transaction;
+        assertActivationTransactionCurrent();
+        const validatedAgentSessionRunnerFactories = Object.freeze(
+            await params.persistValidatedAgentSessionRunnerFactories?.(
+                sourceValidatedAgentSessionRunnerFactories,
+                Object.freeze({ assertCurrent: assertActivationTransactionCurrent }),
+            ) ?? sourceValidatedAgentSessionRunnerFactories,
+        );
+        assertActivationTransactionCurrent();
         return Object.freeze({
             status: 'active',
-            registrations: published.registrations,
-            validatedAgentSessionRunnerFactories: published.validatedAgentSessionRunnerFactories,
+            registrations,
+            validatedAgentSessionRunnerFactories,
             diagnostics: host.diagnostics(),
             dispose: disposeActivation,
         });
@@ -405,16 +228,15 @@ export async function activateContributionModule(params: Readonly<{
             ? [...hostDiagnostics]
             : [{
                 code: 'plugin_activation_failed',
-                ...projectPluginFailureDiagnostic(error, realm),
+                ...projectPluginFailureDiagnostic(error, realm, 'activate'),
             }];
         try {
-            // Retirement stays pending until the captured cleanup settles,
-            // unless the host supplied an explicit cleanup budget.
+            // Retirement observes this activation's actual cleanup settlement.
             await disposeActivation();
         } catch (cleanupError) {
             diagnostics.push({
                 code: 'plugin_activation_failed',
-                ...projectPluginFailureDiagnostic(cleanupError, realm),
+                ...projectPluginFailureDiagnostic(cleanupError, realm, 'activate'),
             });
         }
         return Object.freeze({

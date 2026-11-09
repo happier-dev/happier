@@ -2,6 +2,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     ConnectedAccountRequestAuthUseV1,
     QualifiedConnectedAccountRequestAuthUseV1,
+    QualifiedConnectedAccountPurposeV1,
 } from '@happier-dev/protocol';
 import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -88,6 +89,13 @@ export type ResolveSharedManagedProviderGatewayBinding = ((input: Readonly<{
     readIdentity?(input: Readonly<{ connectionId: string; signal?: AbortSignal }>): Promise<SharedManagedProviderGatewayIdentity>;
 }>;
 
+/** Host-private admitted source observation; never populated by the wrapper. */
+export type ManagedProviderSourceModelCatalog = Readonly<{
+    purpose: QualifiedConnectedAccountPurposeV1;
+    sourceRevision: string;
+    models: readonly Readonly<{ id: string; name?: string }>[];
+}>;
+
 export type ManagedProviderRuntimeInvocationBinding = Readonly<{
     realm: 'managedProviderStart';
     providerLocalId: string;
@@ -95,6 +103,7 @@ export type ManagedProviderRuntimeInvocationBinding = Readonly<{
      * repeated explicit-start requests reuse one machine+Provider claim. */
     operationClaimId?: string;
     sharedGateway?: SharedManagedProviderGatewayBinding;
+    modelCatalogs?: readonly ManagedProviderSourceModelCatalog[];
     /** Exact plugin source/occurrence authority, independent of consumer lifetime. */
     isPhysicalOccurrenceCurrent?(): boolean;
     isCurrent(): boolean;
@@ -128,21 +137,23 @@ export type ManagedProviderEndpointHttpAccess = Readonly<{
 }>;
 
 export type ManagedProviderEndpointAccessProjection = Readonly<{
+    /** Exact admitted Provider's terminal decoder; never an independent usage publisher. */
+    requestCostParser?: import('@happier-dev/plugin-sdk/providers').ProviderRequestCostParser;
     access: ManagedProviderEndpointHttpAccess;
     isCurrent(): boolean;
     cleanup(): void | Promise<void>;
 }>;
 
 export type ManagedServicesInvocationBindingContext = Readonly<{
+    workloads?: PluginServices['managedServices']['observeWorkload'];
+    /** Original daemon invocation finalizes locally validated managed Agent tuples. */
+    authorizePreparedLaunch?: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
     connectedAccounts: ConnectedAccountsService | null;
     credentialFiles: ManagedServiceCredentialFileOwner | null;
     /** Exact caller-occurrenceId secret declaration/custody, if one was admitted. */
     declaredSecretReadPort: DeclaredPluginSecretReadPort | null;
     managedProvider: ManagedProviderRuntimeInvocationBinding | null;
     requestAuth: ManagedProviderRequestAuthCapabilityPathBinding | null;
-
-
-authorizePreparedLaunch?: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
 }>;
 
 export type ManagedServicesInvocationOwner = Readonly<{
@@ -183,53 +194,6 @@ export function createUnavailableManagedServices(): PluginServices['managedServi
             remove: unavailable,
         }),
         supervise: unavailable,
-    });
-}
-
-export function createManagedServicesInvocationAdapter(
-    owner?: ManagedServicesInvocationOwner,
-): ManagedServicesInvocationOwner {
-    const unavailable = createUnavailableManagedServices();
-    const bindWithExec = owner?.bindWithExec;
-    const retireGeneration = owner?.retireGeneration;
-    const projectManagedProviderEndpointAccess =
-        owner?.projectManagedProviderEndpointAccess;
-    return Object.freeze({
-        isAvailable(input) {
-            return owner?.isAvailable(input) === true;
-        },
-        bind(seed) {
-            return owner?.bind(seed) ?? unavailable;
-        },
-        ...(bindWithExec
-            ? {
-                bindWithExec(
-                    seed: PluginInvocationServicesSeed,
-                    exec: ExecService,
-                    context: ManagedServicesInvocationBindingContext,
-                ) {
-                    return bindWithExec(seed, exec, context);
-                },
-            }
-            : {}),
-        ...(retireGeneration
-            ? {
-                async retireGeneration(
-                    occurrenceId: string,
-                    pluginId: string,
-                ) {
-                    await retireGeneration(occurrenceId, pluginId);
-                },
-            }
-            : {}),
-        ...(projectManagedProviderEndpointAccess
-            ? {
-                async projectManagedProviderEndpointAccess(input: Parameters<
-                    NonNullable<ManagedServicesInvocationOwner['projectManagedProviderEndpointAccess']>
-                >[0]) {
-                    return await projectManagedProviderEndpointAccess(input);
-                },
-            }
-            : {}),
+        observeWorkload: async () => ({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const }),
     });
 }

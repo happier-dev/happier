@@ -20,6 +20,7 @@ import {
   createTargetComposerAttachmentRegistry,
   type TargetComposerAttachmentInvocationContextFactory,
 } from './targetComposerAttachments';
+import { createContributionRegistrationHost } from '../../api/registrationRightsHost';
 
 const ATTACHMENT = { pluginId: 'acme.issues', localId: 'issue-context' } as const;
 
@@ -116,14 +117,19 @@ function fixture(
     afterMessageAccepted: vi.fn(async () => {}),
     ...overrides,
   };
+  const registrationHost = createContributionRegistrationHost({
+    pluginId: ATTACHMENT.pluginId,
+    occurrenceId: '7',
+    rights: [{ family: 'composerAttachments', localId: ATTACHMENT.localId, target: { realm: 'daemon' } }],
+    isOccurrenceCurrent: () => current,
+  });
+  registrationHost.api.composerAttachments.register(ATTACHMENT.localId, runtime);
+  const registration = registrationHost.commit()[0];
+  if (registration?.family !== 'composerAttachments') throw new Error('Expected Composer attachment registration');
   const entry = Object.freeze({
     pluginId: ATTACHMENT.pluginId,
     occurrenceId: '7',
-    registration: Object.freeze({
-      family: 'composerAttachments' as const,
-      localId: ATTACHMENT.localId,
-      value: runtime,
-    }),
+    registration,
   });
   const registry = createTargetComposerAttachmentRegistry({
     activateAttachmentOnDemand: async () => {},
@@ -169,6 +175,43 @@ const acceptedEvent = {
 } satisfies ComposerAttachmentMessageAcceptedV1;
 
 describe('target composer attachment registry', () => {
+  it('preserves original runtime receivers through registration and every attachment phase', async () => {
+    const receiver: ComposerAttachmentRuntime & { phase: string } = {
+      phase: 'initial',
+      async prepareForSend(request) {
+        this.phase = 'prepared';
+        return { attachments: request.attachments.map(attachment => ({
+          instanceId: attachment.instanceId, status: 'ready', value: { phase: this.phase },
+        })) };
+      },
+      async resolveForDispatch(request) {
+        return { attachments: request.attachments.map(attachment => ({
+          instanceId: attachment.instanceId, status: 'ready', context: `legacy:${this.phase}`,
+        })) };
+      },
+      async resolveForDispatchV2(request) {
+        return { attachments: request.attachments.map(attachment => ({
+          instanceId: attachment.instanceId, status: 'ready', context: `scoped:${this.phase}`,
+        })) };
+      },
+      async afterMessageAccepted() { this.phase = 'accepted'; },
+    };
+    const subject = fixture(receiver);
+    const signal = new AbortController().signal;
+    await expect(subject.registry.prepareForSend({ attachment: ATTACHMENT, request: prepareRequest, signal }))
+      .resolves.toMatchObject({ attachments: prepareRequest.attachments.map(() => ({ value: { phase: 'prepared' } })) });
+    await expect(subject.registry.resolveForDispatch({ attachment: ATTACHMENT, request: resolveRequest, signal }))
+      .resolves.toMatchObject({ attachments: resolveRequest.attachments.map(() => ({ context: 'legacy:prepared' })) });
+    const scopedRequest = { scope: { kind: 'execution_run', executionRunId: 'run-1' },
+      localId: resolveRequest.localId, attachments: resolveRequest.attachments,
+    } as const satisfies ComposerAttachmentResolveRequestV2;
+    await expect(subject.registry.resolveForDispatch({ attachment: ATTACHMENT, request: scopedRequest, signal }))
+      .resolves.toMatchObject({ attachments: resolveRequest.attachments.map(() => ({ context: 'scoped:prepared' })) });
+    await subject.registry.afterMessageAccepted({ attachment: ATTACHMENT, event: acceptedEvent, signal });
+    await expect(subject.registry.resolveForDispatch({ attachment: ATTACHMENT, request: resolveRequest, signal }))
+      .resolves.toMatchObject({ attachments: resolveRequest.attachments.map(() => ({ context: 'legacy:accepted' })) });
+  });
+
   it('keeps a retained attachment registration while still rejecting duplicate registrations', async () => {
     const runtime: ComposerAttachmentRuntime = {
       prepareForSend: async () => ({ attachments: [] }),

@@ -52,6 +52,19 @@ function expectPluginError(operation: () => unknown, code: string): void {
 }
 
 describe('stable declarative plugin model', () => {
+    it('resolves scalar label data in portable Settings descriptors', () => {
+        const model = createStablePluginSettingsModel({
+            pluginId: 'com.acme.forms',
+            contribution: { ...settingsContribution, fields: [{
+                id: 'enabled',
+                title: { key: 'review.enabled', fallback: 'Enable {feature}', params: { feature: 'reviews' } },
+                description: { key: 'review.count', fallback: 'Use {count} rounds', params: { count: 7 } },
+                schema: { type: 'boolean' }, default: false,
+            }] },
+        });
+        expect(model.descriptors).toMatchObject([{ title: 'Enable reviews', description: 'Use 7 rounds' }]);
+    });
+
     it('projects declared drag nodes with occurrence-qualified inventories', () => {
         const model = createStablePluginDeclarativeModel({
             pluginId: 'com.acme.forms', occurrenceId: 'occurrenceId-7', actions: [], settings: [],

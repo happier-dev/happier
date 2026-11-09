@@ -1,13 +1,9 @@
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError,
     type MachineNativeEffectKey, type MachineNativeEffectOperation, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
+import type { ManagedWorkloadControlResultV1 } from '@happier-dev/plugin-sdk/managed-services';
 
 /** Native settlement is separate from the caller's current snapshot/read authority. */
-export type ManagedServiceNativeControlResult =
-    | Readonly<{ kind: 'observed'; state: ManagedServiceSnapshot['state'] }>
-    | Readonly<{ kind: 'accepted' }>
-    | Readonly<{ kind: 'unsupported'; reason: 'unsupported' }>
-    | Readonly<{ kind: 'outcome_unknown' }>;
+export type ManagedServiceNativeControlResult = ManagedWorkloadControlResultV1;
 
 export type ManagedServiceNativeControl = Readonly<{
     operation: MachineNativeEffectOperation;

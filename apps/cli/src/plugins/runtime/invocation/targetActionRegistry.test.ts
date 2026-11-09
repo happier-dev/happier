@@ -1,5 +1,5 @@
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it, vi } from 'vitest';
-
 import axios from 'axios';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
@@ -36,6 +36,18 @@ import { StoredTargetActionApprovalRequestV1Schema, type TargetActionApprovalReq
 import type { TargetActionCurrentIntentRequest } from './actionExecutor';
 import { TriageStartEntrySessionInputV1Schema, TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/entrySessionProtocol';
 import { createTriageSelectedPrStartApprovalInput } from '../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
+import { PLUGIN_MANIFEST as TRIAGE_MANIFEST, TRIAGE_PLUGIN } from '../../../../../../packages/plugins/triage/src/manifest';
+import { PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../../../../../packages/plugins/channels/src/manifest';
+import { createTestkitCorpusCollections } from '../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support';
+import { testkitEntryRef, testkitLocator, TESTKIT_SOURCE_INSTANCE_ID } from '../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support';
+import { TriageSessionHandoffInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import { testkitReadOnlySourceSnapshot } from '../../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
+import { CORPUS_SESSION_LINKS_INDEX_ID } from '../../../../../../packages/plugins/triage/src/corpus/collections/ids';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionDefinitionSummaryV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { createTargetActionHostBindingResolver } from '../hostAccess/resolve';
 import {
@@ -185,6 +197,305 @@ describe('target action invocation registry', () => {
             expect(http).toHaveBeenCalledTimes(3);
             expect(handler).toHaveBeenCalledTimes(2);
         } finally { http.mockRestore(); registry.dispose(); }
+    });
+
+    it('observes only the declared Channels binding read arms for an external plugin caller', async () => {
+        const manifest = normalizePluginManifestV2(CHANNELS_MANIFEST);
+        const declaration = manifest.contributes.actions.find(candidate => candidate.id === 'session-pull-request-binding-v1');
+        if (!declaration) throw new Error('Missing Channels binding Action');
+        const observed: unknown[] = [];
+        let invalidations = 0;
+        let publish = () => {};
+        let disposed = 0;
+        const subscriptions: Array<import('@happier-dev/plugin-sdk').Disposable> = [];
+        const caller = { kind: 'plugin', pluginId: 'example.external-reader',
+            contribution: { id: 'relations', qualifiedId: 'example.external-reader/resources/relations' },
+            occurrenceId: 'external-reader-current',
+            sourceCustody: createManagedPluginSourceCustody('external-reader-current'),
+        } as const;
+        const registry = createRegistry({
+            actions: [{ ...action(), pluginId: manifest.id, localId: declaration.id,
+                definition: { ...declaration, inputSchema: declaration.inputSchema ?? undefined },
+                handler: async () => { throw new Error('Dependency observation must not run the Action'); },
+                // The plugin-owned dependency source is the genuine boundary;
+                // canonical input/read-only admission above it remains real.
+                observeRead: (input, invalidate, context) => {
+                    observed.push({ input, caller: context.caller });
+                    publish = invalidate;
+                    return { dispose() { disposed++; } };
+                },
+            }],
+            readCurrentPluginOccurrenceId: pluginId => pluginId === caller.pluginId ? caller.occurrenceId : '7',
+        });
+        const observe = (input: unknown) => registry.invoke({ pluginId: manifest.id, localId: declaration.id,
+            surface: 'plugin', invocationAuthority: 'account_automation', caller, input, requiredReadOnly: true,
+            readObservation: { invalidate() { invalidations++; }, accept(subscription) { subscriptions.push(subscription); } },
+        });
+        try {
+            for (const input of [
+                { kind: 'attach', sessionId: 'session-a', pullRequestUrl: 'https://github.com/example/repository/pull/1' },
+                { kind: 'unlink', sessionId: 'session-a', bindingId: 'binding-one', expectedRevision: 1 },
+                { kind: 'removeTrigger', sessionId: 'session-a', triggerId: 'trigger-one' },
+            ]) {
+                expect(await observe(input)).toMatchObject({ status: 'unavailable', code: 'plugin_action_read_only_required' });
+            }
+            expect(observed).toEqual([]);
+            expect(subscriptions).toEqual([]);
+            for (const input of [{ kind: 'list', sessionId: 'session-a' }, { kind: 'readRelations', credentialRef: null }]) {
+                const result = await observe(input);
+                expect(result, JSON.stringify(result)).toMatchObject({ status: 'executed', value: null });
+            }
+            expect(observed).toEqual([
+                { input: { kind: 'list', sessionId: 'session-a' }, caller },
+                { input: { kind: 'readRelations', credentialRef: null }, caller },
+            ]);
+            expect(subscriptions).toHaveLength(2);
+            publish();
+            expect(invalidations).toBe(1);
+            await Promise.all(subscriptions.map(subscription => subscription.dispose()));
+            expect(disposed).toBe(2);
+        } finally { await Promise.all(subscriptions.map(subscription => subscription.dispose())); registry.dispose(); }
+    });
+
+    it('executes reversible Triage link and unlink from UI and CLI while agent, MCP and Ask remain held', async () => {
+        const plugin = await createPluginTestkit({ manifest: TRIAGE_MANIFEST, module: TRIAGE_PLUGIN });
+        const { collections } = createTestkitCorpusCollections();
+        const manifest = normalizePluginManifestV2(TRIAGE_MANIFEST);
+        const channelsManifest = normalizePluginManifestV2(CHANNELS_MANIFEST);
+        const localIds = ['sessions/link-entry-v1', 'sessions/unlink-entry-v1'];
+        const targetDeclarations = [
+            ...manifest.contributes.actions.filter(declaration => [...localIds, 'sessions/run-configured-v1'].includes(declaration.id))
+                .map(declaration => ({ pluginId: manifest.id, declaration })),
+            ...channelsManifest.contributes.actions.filter(declaration => declaration.id === 'session-pull-request-binding-v1')
+                .map(declaration => ({ pluginId: channelsManifest.id, declaration })),
+        ];
+        const services = createUnavailablePluginServicesFactory();
+        const registry = createRegistry({
+            createServices: (seed, binding) => ({ ...services(seed, binding),
+                // Account persistence and the admitted contribution transport are
+                // boundaries; relation selection and the actual writers stay real.
+                storage: { account: { collection: (definition: { id: string }) => {
+                    if (definition.id === 'session-links') return collections.sessionLinks;
+                    if (definition.id === 'source-instances') return collections.sourceInstances;
+                    return collections.userMarks;
+                } } },
+                targetedContributions: { observeForSelf: () => ({
+                    readCurrent: async () => testkitReadOnlySourceSnapshot(), dispose: () => {},
+                }) },
+            } as unknown as import('@happier-dev/plugin-sdk').PluginServices),
+            actions: localIds.map(localId => {
+                const declaration = manifest.contributes.actions.find(candidate => candidate.id === localId);
+                const handler = plugin.registration('actions', localId);
+                if (!declaration || !handler) throw new Error(`Missing Triage Action ${localId}`);
+                return { ...action(), pluginId: manifest.id, localId,
+                    definition: { ...declaration, inputSchema: declaration.inputSchema ?? undefined },
+                    handler: (input, context) => handler(input, context),
+                };
+            }),
+        });
+        const linkInput = { v: 1, sessionId: 'session-a', entryRef: testkitEntryRef(),
+            display: { locator: testkitLocator(), scopeLabel: 'example/repository' } };
+        let workers = ['session-a', 'session-b'];
+        let dispatches = 0;
+        const dispatchedTargets: unknown[] = [];
+        let requireApproval = false;
+        let originCurrent = true;
+        let approval: ApprovalRequest | null = null;
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            listContributedActionDefinitions: () => targetDeclarations
+                .map(({ pluginId, declaration }) => ActionDefinitionSummaryV1Schema.parse({
+                    id: `${pluginId}/actions/${declaration.id}`, title: declaration.title,
+                    description: declaration.description ?? null, safety: 'danger', sideEffectClass: 'write',
+                    placements: [], slash: null, bindings: null, examples: null, inputHints: null,
+                    sessionTarget: declaration.sessionTarget,
+                    surfaces: Object.fromEntries(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin']
+                        .map(surface => [surface, declaration.surfaces.some(candidate => candidate === surface)])),
+                })),
+            resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
+            sessionList: async () => markSessionListQueryResultV1({
+                sessions: workers.map(id => ({ id, active: false, presence: 'offline', updatedAt: 1, manager: { sessionId: 'parent' } })),
+                nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+            }),
+            isActionApprovalRequired: id => requireApproval && id === 'action.invoke',
+            isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
+                if (!originCurrent) reportStale?.('origin_not_current');
+                return originCurrent;
+            },
+            approvalsCreate: async ({ request }) => {
+                approval = ApprovalRequestV2Schema.parse(request);
+                return { artifactId: 'triage-link-approval' };
+            },
+            approvalsGet: async () => approval,
+            approvalsUpdate: async ({ request }) => {
+                if (!approval) throw new Error('Missing link approval');
+                const transition = decideApprovalRequestTransition(approval, request);
+                if (!transition.ok) return transition;
+                approval = ApprovalRequestV2Schema.parse(request);
+                return { ok: true };
+            },
+            invokeContributedAction: async request => {
+                dispatches++;
+                dispatchedTargets.push(request.context.sessionTargetsV1);
+                const result = await registry.invoke({ pluginId: request.action.pluginId, localId: request.action.localId,
+                    input: request.input, surface: 'ui', invocationAuthority: 'present_user' });
+                if (result.status === 'deferred') throw new Error('This immediate Action fixture must settle without deferred approval');
+                return result.status === 'executed' ? { ok: true, result: result.value }
+                    : { ok: false, errorCode: result.code, error: result.message };
+            },
+        });
+        const rows = async () => (await collections.sessionLinks.query({
+            index: CORPUS_SESSION_LINKS_INDEX_ID.bySession, prefix: ['session-a'], order: 'asc', limit: 1,
+        })).rows;
+        const invoke = (localId: string, surface: 'ui' | 'agent' | 'mcp' | 'cli', ask = false) => registry.invoke({
+            pluginId: manifest.id, localId, surface,
+            invocationAuthority: surface === 'ui' ? 'present_user' : 'account_automation',
+            input: localId === localIds[0] ? linkInput : { v: 1, sessionId: 'session-a', entryRef: linkInput.entryRef },
+            ...(ask ? { isApprovalRequiredByActionSettings: () => true } : {}),
+        });
+        try {
+            for (const surface of ['agent', 'mcp'] as const) {
+                expect(await invoke(localIds[0]!, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+                expect(await rows()).toHaveLength(0);
+            }
+            expect(await invoke(localIds[0]!, 'ui', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+            expect(await rows()).toHaveLength(0);
+            // No current-intent presenter exists in this registry. Execution
+            // therefore proves that default person confirmation was not requested.
+            expect(await invoke(localIds[0]!, 'ui')).toMatchObject({ status: 'executed', value: { status: 'linked' } });
+            expect(await rows()).toHaveLength(1);
+            for (const surface of ['agent', 'mcp'] as const) {
+                expect(await invoke(localIds[1]!, surface)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+                expect(await rows()).toHaveLength(1);
+            }
+            expect(await invoke(localIds[1]!, 'ui', true)).toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+            expect(await rows()).toHaveLength(1);
+            expect(await invoke(localIds[1]!, 'ui')).toMatchObject({ status: 'executed', value: { status: 'unlinked' } });
+            expect(await rows()).toHaveLength(0);
+            // CLI is the authenticated host surface, not a present-person claim.
+            // Reversible own-Account links settle directly under its default.
+            expect(await invoke(localIds[0]!, 'cli')).toMatchObject({ status: 'executed', value: { status: 'linked' } });
+            expect(await rows()).toHaveLength(1);
+            expect(await invoke(localIds[1]!, 'cli')).toMatchObject({ status: 'executed', value: { status: 'unlinked' } });
+            expect(await rows()).toHaveLength(0);
+            for (const localId of localIds) {
+                if (localId === localIds[1]) await invoke(localIds[0]!, 'cli');
+                const cancellation = new AbortController();
+                let stored: TargetActionApprovalRequestV1 | null = null;
+                const adapter = createTargetActionCurrentIntentAdapter({
+                    create: async request => {
+                        stored = StoredTargetActionApprovalRequestV1Schema.parse(request);
+                        cancellation.abort();
+                        return { artifactId: 'cli-link-ask' };
+                    },
+                    read: async () => stored,
+                    update: async ({ request }) => {
+                        stored = StoredTargetActionApprovalRequestV1Schema.parse(request);
+                        return { ok: true };
+                    },
+                });
+                const settings = normalizeActionsSettingsV1({ v: 1, actions: {
+                    [`${manifest.id}/actions/${localId}`]: { approvalRequiredSurfaces: ['cli'] },
+                } });
+                const held = await registry.invoke({ pluginId: manifest.id, localId, surface: 'cli',
+                    invocationAuthority: 'account_automation', signal: cancellation.signal,
+                    input: localId === localIds[0] ? linkInput : { v: 1, sessionId: 'session-a', entryRef: linkInput.entryRef },
+                    isApprovalRequiredByActionSettings: manifestDefault => isApprovalRequiredByActionsSettings(
+                        `${manifest.id}/actions/${localId}`, settings, { surface: 'cli' }, undefined, manifestDefault,
+                    ),
+                    // Account execution keeps approval operands in the invoking
+                    // host. Exercise its real wait, ending at user cancellation.
+                    requestCurrentIntent: request => adapter({ ...request, approvalInputCustody: 'live_only' }),
+                });
+                expect(stored).toMatchObject({ qualifiedActionId: `${manifest.id}/actions/${localId}`,
+                    approvalInputCustody: 'live_only', requestedSurface: 'cli', status: 'open' });
+                expect(held).toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' });
+                expect(await rows()).toHaveLength(localId === localIds[0] ? 0 : 1);
+                if (localId === localIds[1]) await invoke(localId, 'cli');
+            }
+            expect(await registry.invoke({ pluginId: manifest.id, localId: localIds[0]!, surface: 'ui',
+                invocationAuthority: 'present_user', input: { ...linkInput, sessionId: { selector: 'self' } },
+            })).toMatchObject({ status: 'failed' });
+            expect(await rows()).toHaveLength(0);
+            const targetInput = { action: { pluginId: manifest.id, localId: localIds[0]! },
+                input: { ...linkInput, sessionId: { selector: 'workers' } } };
+            const context = { surface: 'ui', authority: 'present_user', serverId: 'home', defaultSessionId: 'parent',
+                // Durable generic action.invoke approval retains its originating
+                // Machine custody, even when the contributed leaf is Account-owned.
+                defaultSessionMachineId: 'origin-machine',
+                actionCaller: { kind: 'host' }, actionRequestId: 'triage-link-selector' } as const;
+            for (const localId of localIds) {
+                expect(await executor.execute('action.invoke', { ...targetInput, action: { pluginId: manifest.id, localId },
+                    input: localId === localIds[0] ? targetInput.input
+                        : { v: 1, sessionId: { selector: 'workers' }, entryRef: linkInput.entryRef },
+                }, context)).toMatchObject({ ok: false, errorCode: 'session_target_cardinality_mismatch' });
+            }
+            const selectedEntry = { entryRef: linkInput.entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID };
+            for (const request of [{ action: { pluginId: manifest.id, localId: 'sessions/run-configured-v1' },
+                input: { v: 1, handoff: TriageSessionHandoffInputV1Schema.parse({ task: 'fix', configuredActionId: 'fix',
+                    context: { kind: 'entry', entry: selectedEntry }, evidence: [{ kind: 'entry', entry: selectedEntry }],
+                    sessionChoice: { kind: 'existing', session: { selector: 'workers' } },
+                    agentChoice: { kind: 'configured' }, delivery: 'compose',
+                }) } },
+            { action: { pluginId: channelsManifest.id, localId: 'session-pull-request-binding-v1' },
+                input: { kind: 'list', sessionId: { selector: 'workers' } } }]) {
+                expect(await executor.execute('action.invoke', request, context))
+                    .toMatchObject({ ok: false, errorCode: 'session_target_cardinality_mismatch' });
+            }
+            expect(dispatches).toBe(0);
+            expect(await rows()).toHaveLength(0);
+            workers = ['session-a'];
+            const prepared = await executor.prepare('action.invoke', targetInput, context);
+            expect(prepared.kind).toBe('ready');
+            if (prepared.kind !== 'ready') throw new Error('Expected a prepared single-target link');
+            workers = ['session-b'];
+            expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: { status: 'linked' } });
+            expect(dispatches).toBe(1);
+            expect(dispatchedTargets).toEqual([expect.objectContaining({
+                actionId: 'action.invoke', field: 'input.sessionId', targets: [{ serverId: 'home', sessionId: 'session-a' }],
+            })]);
+            expect(await rows()).toHaveLength(1);
+            expect((await collections.sessionLinks.query({ index: CORPUS_SESSION_LINKS_INDEX_ID.bySession,
+                prefix: ['session-b'], order: 'asc', limit: 1 })).rows).toHaveLength(0);
+            expect(await invoke(localIds[1]!, 'ui')).toMatchObject({ status: 'executed' });
+            workers = ['session-a'];
+            requireApproval = true;
+            const proposal = await executor.execute('action.invoke', targetInput, { ...context, serverIdentityId: 'home-identity' });
+            expect(proposal, JSON.stringify(proposal))
+                .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            expect(approval).toMatchObject({ executionOriginV1: { sessionTargetsV1: {
+                field: 'input.sessionId', targets: [{ serverId: 'home', sessionId: 'session-a' }],
+            } } });
+            expect(dispatches).toBe(1);
+            workers = ['session-b'];
+            const replay = await executor.execute('approval.request.decide', { artifactId: 'triage-link-approval', decision: 'approve' },
+                { ...context, serverIdentityId: 'home-identity' });
+            expect(replay, JSON.stringify(replay))
+                .toMatchObject({ ok: true, result: { status: 'executed' } });
+            expect(dispatches).toBe(2);
+            expect(dispatchedTargets[1]).toMatchObject({ field: 'input.sessionId',
+                targets: [{ serverId: 'home', sessionId: 'session-a' }] });
+            expect(await rows()).toHaveLength(1);
+            expect((await collections.sessionLinks.query({ index: CORPUS_SESSION_LINKS_INDEX_ID.bySession,
+                prefix: ['session-b'], order: 'asc', limit: 1 })).rows).toHaveLength(0);
+            requireApproval = false;
+            expect(await invoke(localIds[1]!, 'ui')).toMatchObject({ status: 'executed' });
+            expect(await executor.execute('action.invoke', { ...targetInput, input: linkInput }, context))
+                .toMatchObject({ ok: true, result: { status: 'linked' } });
+            expect(dispatchedTargets[2]).toMatchObject({ field: 'input.sessionId',
+                targets: [{ serverId: 'home', sessionId: 'session-a' }] });
+            expect(await rows()).toHaveLength(1);
+            requireApproval = true;
+            expect(await executor.execute('action.invoke', { ...targetInput, input: linkInput },
+                { ...context, serverIdentityId: 'home-identity' }))
+                .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            originCurrent = false;
+            const staleReplay = await executor.execute('approval.request.decide', { artifactId: 'triage-link-approval', decision: 'approve' },
+                { ...context, serverIdentityId: 'home-identity' });
+            expect(staleReplay, JSON.stringify(staleReplay))
+                .toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false,
+                    details: { reason: 'origin_not_current' } });
+            expect(dispatches).toBe(3);
+        } finally { registry.dispose(); await plugin.dispose(); }
     });
 
     it('splits preparation, account binding and authored execution under the ingress request without content', async () => {
@@ -1545,16 +1856,16 @@ describe('target action invocation registry', () => {
                         status: 'unavailable',
                     });
                     const serviceShape = {
-                        logger: ['debug', 'diagnostic', 'error', 'info', 'warn'],
                         backgroundServices: ['demand'],
+                        logger: ['debug', 'diagnostic', 'error', 'info', 'warn'],
                         storage: ['ephemeral', 'daemonSession', 'daemon'],
                         settings: ['forScope'],
                         secrets: ['delete', 'get', 'set', 'status'],
                         events: ['host', 'plugin'],
                         http: ['openWebSocket', 'request'],
-                        fs: ['list', 'readFile', 'remove', 'stat', 'writeFile'],
+                        fs: ['list', 'prepareDownload', 'readFile', 'remove', 'stat', 'writeFile'],
                         exec: ['agentCli', 'clients', 'run', 'spawn', 'systemTools'],
-                        machineProvisioners: ['materializeBootstrapCredential', 'withBootstrapCredentialFile'],
+                machineProvisioners: ['materializeBootstrapCredential', 'materializeGuestHostCredential', 'withBootstrapCredentialFile'],
                         managedServices: ['dependencies', 'supervise'],
                         sessions: ['current', 'external', 'get', 'list', 'subagents', 'watch'],
                         resources: ['describe', 'read', 'watch'],
@@ -1784,7 +2095,7 @@ describe('target action invocation registry', () => {
         expect(beta).toHaveBeenCalledTimes(3);
     });
 
-    it('redacts materialized credential representations from failed action results without changing successful values', async () => {
+    it('redacts materialized credential representations from failed and successful action results before releasing custody', async () => {
         const authorizationHeader = 'Bearer synthetic-action-result-token';
         const token = 'synthetic-action-result-token';
         const encodedHeader = encodeURIComponent(authorizationHeader);
@@ -1898,7 +2209,7 @@ describe('target action invocation registry', () => {
             surface: 'cli',
         })).resolves.toEqual({
             status: 'executed',
-            value: { echoed: token },
+            value: { echoed: '[REDACTED]' },
         });
         lateLoggers.at(-1)?.info(`late ${token}`);
         expect(lateRecords).toEqual([]);

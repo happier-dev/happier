@@ -1,4 +1,6 @@
 import type { PluginChangePendingSurface } from '@/plugins/daemon/changeContract';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { describePluginModuleFailure } from '@/plugins/runtime/moduleFailure';
 import {
   formatPluginDiagnosticSourceLocation,
   type PluginDiagnosticSourceLocation,
@@ -7,6 +9,7 @@ import {
 export type PluginAuthoringDiagnostic = Readonly<{
   code: string;
   message: string;
+  details?: PluginCompatibilityDiagnostic['details'];
   /**
    * Where in the author's own project the failure is, relative to its root.
    * Present only when the producing stage resolved one for a locally trusted
@@ -150,7 +153,7 @@ export function describePluginAuthoringStageReport(
     lines.push(`  Retained previous generation: ${value.retainedGeneration}`);
   }
   for (const diagnostic of value.diagnostics) {
-    lines.push(`  ${diagnostic.code}: ${diagnostic.message}`);
+    lines.push(`  ${diagnostic.code}: ${describePluginModuleFailure(diagnostic.message, diagnostic.details) ?? diagnostic.message}`);
     if (diagnostic.source) {
       lines.push(`    at ${formatPluginDiagnosticSourceLocation(diagnostic.source)}`);
     }

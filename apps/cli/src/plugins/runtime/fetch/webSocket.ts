@@ -1,6 +1,4 @@
-import type { LookupFunction } from 'node:net';
-
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type {
     PluginDiagnosticData,
@@ -14,12 +12,11 @@ import type {
 } from '@happier-dev/plugin-sdk/http';
 import WebSocket from 'ws';
 import { createPluginAcquisitionLifetime } from '../../distribution/acquisitionLifetime';
+import { isNativeTlsErrorCode } from './tlsError';
 
 export type PluginWebSocketRuntimeOptions = PluginCancellationOptions & Readonly<{
     /** Host-owned lifecycle signal; never exposed through the public SDK. */
     lifecycleSignal?: AbortSignal;
-    /** Exact address set admitted for this socket open; never exposed through the public SDK. */
-    validatedAddresses?: readonly string[];
     /** Host-private loopback consumers may own message byte policy at the containing operation. */
     messageByteLimits?: null;
 }>;
@@ -50,36 +47,6 @@ const RESERVED_HANDSHAKE_HEADERS = new Set([
     'sec-websocket-protocol',
     'sec-websocket-version',
     'upgrade',
-]);
-const TLS_DRIVER_ERROR_CODES = new Set([
-    'CERT_CHAIN_TOO_LONG',
-    'CERT_HAS_EXPIRED',
-    'CERT_REJECTED',
-    'CERT_REVOKED',
-    'CERT_SIGNATURE_FAILURE',
-    'CERT_UNTRUSTED',
-    'CERT_NOT_YET_VALID',
-    'CRL_HAS_EXPIRED',
-    'CRL_NOT_YET_VALID',
-    'CRL_SIGNATURE_FAILURE',
-    'DEPTH_ZERO_SELF_SIGNED_CERT',
-    'ERROR_IN_CERT_NOT_AFTER_FIELD',
-    'ERROR_IN_CERT_NOT_BEFORE_FIELD',
-    'ERROR_IN_CRL_LAST_UPDATE_FIELD',
-    'ERROR_IN_CRL_NEXT_UPDATE_FIELD',
-    'ERR_TLS_CERT_ALTNAME_INVALID',
-    'HOSTNAME_MISMATCH',
-    'INVALID_CA',
-    'INVALID_PURPOSE',
-    'PATH_LENGTH_EXCEEDED',
-    'SELF_SIGNED_CERT_IN_CHAIN',
-    'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY',
-    'UNABLE_TO_DECRYPT_CERT_SIGNATURE',
-    'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
-    'UNABLE_TO_GET_CRL',
-    'UNABLE_TO_GET_ISSUER_CERT',
-    'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
 ]);
 
 type CloseIntent = Readonly<{
@@ -381,11 +348,7 @@ function readDriverErrorCode(error: unknown): string | undefined {
 
 function isTlsDriverError(error: unknown, url: URL): boolean {
     const code = readDriverErrorCode(error);
-    return code !== undefined && (
-        (code === 'EPROTO' && url.protocol === 'wss:')
-        || code.startsWith('ERR_TLS_')
-        || TLS_DRIVER_ERROR_CODES.has(code)
-    );
+    return code !== undefined && isNativeTlsErrorCode(code, url.protocol === 'wss:');
 }
 
 /**
@@ -444,14 +407,6 @@ export async function createPluginWebSocketConnection(
     assertNotAborted(options.signal);
     assertNotAborted(options.lifecycleSignal);
 
-    const pinnedAddress = options.validatedAddresses?.[0];
-    if (options.validatedAddresses !== undefined && pinnedAddress === undefined) {
-        throw pluginWebSocketError(
-            'plugin_websocket_connect_failed',
-            'Plugin WebSocket connection has no validated network address',
-        );
-    }
-
     const driverOptions: WebSocket.ClientOptions = Object.freeze({
         headers: normalized.headers,
         followRedirects: false,
@@ -466,22 +421,6 @@ export async function createPluginWebSocketConnection(
         // default a plugin connection can inherit.
         rejectUnauthorized: true,
         skipUTF8Validation: false,
-        ...(pinnedAddress === undefined ? {} : {
-            // The request retains the original URL hostname, so Host and TLS
-            // SNI/certificate verification remain name-based. Only socket
-            // resolution is constrained to the addresses the policy owner
-            // admitted immediately before this open.
-            lookup: ((_hostname, lookupOptions, callback) => {
-                if (typeof lookupOptions === 'object' && lookupOptions.all === true) {
-                    callback(null, options.validatedAddresses!.map((address) => ({
-                        address,
-                        family: address.includes(':') ? 6 as const : 4 as const,
-                    })));
-                    return;
-                }
-                callback(null, pinnedAddress, pinnedAddress.includes(':') ? 6 : 4);
-            }) satisfies LookupFunction,
-        }),
     });
     let socket: WebSocket;
     try {

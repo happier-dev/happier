@@ -34,8 +34,8 @@ function projectionWithIncompatibleUiArtifact(contributionId: string): Record<st
   };
 }
 
-function projectionWithCanonicalIngestionInvalidManifest(
-  duplicateContributionId: string,
+function projectionWithMissingDaemonEntrypoint(
+  contributionTitle: string,
 ): Record<string, unknown> {
   return {
     version: 1,
@@ -47,15 +47,9 @@ function projectionWithCanonicalIngestionInvalidManifest(
       engines: { happier: '>=0.0.0' },
       runtime: { apiVersion: 1 },
       contributes: {
-        resources: [{
-          id: duplicateContributionId,
-          kind: 'asset',
-          path: 'shared.txt',
-          contentType: 'text/plain',
-        }],
         actions: [{
-          id: duplicateContributionId,
-          title: 'Shared',
+          id: 'run',
+          title: contributionTitle,
           scopes: ['session'],
           surfaces: ['cli'],
           placementBindings: ['primary'],
@@ -69,17 +63,23 @@ function projectionWithCanonicalIngestionInvalidManifest(
 }
 
 describe('evaluatePluginCompatibilityProjection', () => {
-  it('preserves safe typed Settings attribution during published-candidate preflight', () => {
+  it('keeps healthy declarations selectable when a published sibling is unknown', () => {
+    const result = evaluatePluginCompatibilityProjection({ version: 1,
+      manifest: createPluginManifestV2Fixture({ contributes: { actions: [
+        { id: 'healthy', title: 'Healthy', scopes: ['session'], surfaces: ['cli'],
+          execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' },
+        { id: 'future', title: 'Future', futureRestriction: true },
+      ] } }), uiArtifacts: { version: 2, entries: [] } });
+    expect(result).toMatchObject({ kind: 'compatible', projection: { manifest: { contributes: { actions: [{ id: 'healthy' }] } } } });
+  });
+  it('skips invalid Settings during published-candidate preflight', () => {
     const evaluation = evaluatePluginCompatibilityProjection({ version: 1,
       manifest: createPluginManifestV2Fixture({ id: 'acme.settings-preflight', contributes: {
         settings: [{ id: 'preferences', title: 'Preferences', scope: 'daemon', target: { kind: 'plugin' },
           fields: [{ id: 'enabled', title: 'Enabled', schema: { type: 'boolean' }, default: 'private-settings-value' }] }],
       } }), uiArtifacts: { version: 2, entries: [] } });
-    expect(evaluation).toMatchObject({ kind: 'incompatible', diagnostics: [{ code: 'plugin_manifest_invalid',
-      contribution: { pluginId: 'acme.settings-preflight', localId: 'preferences' },
-      details: { code: 'PLUGIN_SETTINGS_DEFAULT_INVALID', fieldId: 'enabled' },
-    }] });
-    expect(JSON.stringify(evaluation.kind === 'incompatible' ? evaluation.diagnostics : [])).not.toContain('private-settings-value');
+    expect(evaluation).toMatchObject({ kind: 'compatible', projection: { manifest: { contributes: { settings: [] } } } });
+    expect(JSON.stringify(evaluation)).not.toContain('private-settings-value');
   });
   it('refuses a described appPage requiring a newer engine through canonical compatibility admission', () => {
     const candidate = {
@@ -97,7 +97,7 @@ describe('evaluatePluginCompatibilityProjection', () => {
     };
     expect(evaluatePluginCompatibilityProjection(candidate)).toMatchObject({
       kind: 'incompatible',
-      diagnostics: [{ code: 'plugin_manifest_invalid', message: 'Plugin manifest requires a compatible Happier CLI version' }],
+      diagnostics: [{ code: 'plugin_manifest_engine_incompatible', message: 'Plugin manifest requires a compatible Happier CLI version' }],
     });
   });
 
@@ -115,19 +115,18 @@ describe('evaluatePluginCompatibilityProjection', () => {
   });
 
   it('reports a bounded non-echoing host diagnostic for a canonically invalid manifest', () => {
-    const duplicateContributionId = `duplicated-contribution-id-${'x'.repeat(200)}`;
+    const untrustedTitle = `untrusted-contribution-title-${'x'.repeat(200)}`;
     const evaluation = evaluatePluginCompatibilityProjection(
-      projectionWithCanonicalIngestionInvalidManifest(duplicateContributionId),
+      projectionWithMissingDaemonEntrypoint(untrustedTitle),
     );
 
     expect(evaluation.kind).toBe('incompatible');
     if (evaluation.kind !== 'incompatible') return;
-    expect(evaluation.projection.manifest.id).toBe('acme.compatibility-fixture');
     expect(evaluation.diagnostics).toEqual([{
       code: 'plugin_manifest_invalid',
-      message: 'Plugin manifest compatibility check failed: plugin_manifest_duplicate_contribution_id.',
+      message: 'Plugin manifest compatibility check failed: plugin_manifest_invalid.',
     }]);
-    expect(evaluation.diagnostics[0]?.message).not.toContain(duplicateContributionId);
+    expect(evaluation.diagnostics[0]?.message).not.toContain(untrustedTitle);
   });
 
   it('reports a bounded non-echoing reason for an incompatible generated UI artifact', () => {

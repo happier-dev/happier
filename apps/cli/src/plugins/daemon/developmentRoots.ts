@@ -64,6 +64,7 @@ type DevelopmentSubmissionResult = Readonly<{
   occurrenceId?: string;
   code?: string;
   message?: string;
+  details?: import('@/plugins/validation/diagnostics/types').PluginCompatibilityDiagnostic['details'];
   uiArtifactDigest?: string;
 }>;
 
@@ -395,54 +396,69 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       ...(prior?.occurrenceId ? { occurrenceId: prior.occurrenceId } : {}),
       ...(prior?.uiArtifactDigest ? { uiArtifactDigest: prior.uiArtifactDigest } : {}),
     }));
-    try {
-      const result = await params.submitObservation(Object.freeze({
-        ...observation,
-        request: Object.freeze({
-          ...observation.request,
+    while (true) {
+      try {
+        const result = await params.submitObservation(Object.freeze({
+          ...observation,
+          request: Object.freeze({
+            ...observation.request,
+            ...(prior?.pluginId ? { pluginId: prior.pluginId } : {}),
+            observedRevision,
+          }),
+        }));
+        if (observedRevisionBySource.get(sourceRootPath) !== observedRevision) return 'retained';
+        if (result.kind === 'failed' && result.code === 'plugin_dev_conflict') {
+          // This refusal proves a real registry commit advanced the prepared
+          // base. Re-enter the same preparation owner once for that refusal;
+          // an unchanged base cannot produce another stale-base refusal.
+          const current = pluginStatusBySource.get(sourceRootPath)!;
+          pluginStatusBySource.set(sourceRootPath, Object.freeze({
+            ...current,
+            phase: 'compiling',
+            diagnostic: Object.freeze({ code: result.code, message: result.message }),
+          }));
+          continue;
+        }
+        if (result.kind === 'committed') {
+          recordSourceCommit({ sourceRootPath, observedRevision,
+            ...(result.pluginId ? { pluginId: result.pluginId } : {}),
+            ...(result.occurrenceId ? { occurrenceId: result.occurrenceId } : {}),
+            ...(result.uiArtifactDigest ? { uiArtifactDigest: result.uiArtifactDigest } : {}),
+          });
+          return 'adopted';
+        }
+        pluginStatusBySource.set(sourceRootPath, Object.freeze({
+          sourceRootPath,
+          ...(result.pluginId ? { pluginId: result.pluginId } : prior?.pluginId ? { pluginId: prior.pluginId } : {}),
+          phase: prior?.phase === 'active' || prior?.phase === 'retained_incumbent'
+            ? 'retained_incumbent'
+            : 'unavailable',
+          ...(prior?.occurrenceId ? { occurrenceId: prior.occurrenceId } : {}),
+          ...(prior?.uiArtifactDigest ? { uiArtifactDigest: prior.uiArtifactDigest } : {}),
+          diagnostic: Object.freeze({
+            code: result.code ?? `plugin_dev_${result.kind}`,
+            ...(result.message ? { message: result.message } : {}),
+            ...(result.details === undefined ? {} : { details: result.details }),
+          }),
+        }));
+        return 'retained';
+      } catch (error) {
+        if (observedRevisionBySource.get(sourceRootPath) !== observedRevision) return 'retained';
+        pluginStatusBySource.set(sourceRootPath, Object.freeze({
+          sourceRootPath,
           ...(prior?.pluginId ? { pluginId: prior.pluginId } : {}),
-          observedRevision,
-        }),
-      }));
-      if (observedRevisionBySource.get(sourceRootPath) !== observedRevision) return 'retained';
-      if (result.kind === 'committed') {
-        recordSourceCommit({ sourceRootPath, observedRevision,
-          ...(result.pluginId ? { pluginId: result.pluginId } : {}),
-          ...(result.occurrenceId ? { occurrenceId: result.occurrenceId } : {}),
-          ...(result.uiArtifactDigest ? { uiArtifactDigest: result.uiArtifactDigest } : {}),
-        });
-        return 'adopted';
+          phase: prior?.phase === 'active' || prior?.phase === 'retained_incumbent'
+            ? 'retained_incumbent'
+            : 'unavailable',
+          ...(prior?.occurrenceId ? { occurrenceId: prior.occurrenceId } : {}),
+          ...(prior?.uiArtifactDigest ? { uiArtifactDigest: prior.uiArtifactDigest } : {}),
+          diagnostic: Object.freeze({
+            code: 'plugin_dev_observation_submission_failed',
+            message: error instanceof Error ? error.message : 'Development candidate submission failed',
+          }),
+        }));
+        return 'retained';
       }
-      pluginStatusBySource.set(sourceRootPath, Object.freeze({
-        sourceRootPath,
-        ...(result.pluginId ? { pluginId: result.pluginId } : prior?.pluginId ? { pluginId: prior.pluginId } : {}),
-        phase: prior?.phase === 'active' || prior?.phase === 'retained_incumbent'
-          ? 'retained_incumbent'
-          : 'unavailable',
-        ...(prior?.occurrenceId ? { occurrenceId: prior.occurrenceId } : {}),
-        ...(prior?.uiArtifactDigest ? { uiArtifactDigest: prior.uiArtifactDigest } : {}),
-        diagnostic: Object.freeze({
-          code: result.code ?? `plugin_dev_${result.kind}`,
-          ...(result.message ? { message: result.message } : {}),
-        }),
-      }));
-      return 'retained';
-    } catch (error) {
-      if (observedRevisionBySource.get(sourceRootPath) !== observedRevision) return 'retained';
-      pluginStatusBySource.set(sourceRootPath, Object.freeze({
-        sourceRootPath,
-        ...(prior?.pluginId ? { pluginId: prior.pluginId } : {}),
-        phase: prior?.phase === 'active' || prior?.phase === 'retained_incumbent'
-          ? 'retained_incumbent'
-          : 'unavailable',
-        ...(prior?.occurrenceId ? { occurrenceId: prior.occurrenceId } : {}),
-        ...(prior?.uiArtifactDigest ? { uiArtifactDigest: prior.uiArtifactDigest } : {}),
-        diagnostic: Object.freeze({
-          code: 'plugin_dev_observation_submission_failed',
-          message: error instanceof Error ? error.message : 'Development candidate submission failed',
-        }),
-      }));
-      return 'retained';
     }
   };
 
@@ -797,6 +813,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
               kind: 'failed',
               code: plugin.diagnostic.code,
               message: plugin.diagnostic.message ?? 'Plugin development preparation failed',
+              ...(plugin.diagnostic.details === undefined ? {} : { details: plugin.diagnostic.details }),
               status: readStatus(),
             };
           }

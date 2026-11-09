@@ -20,6 +20,10 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createTargetActionInvocationRegistry, type TargetActionInvocationRegistration } from '../targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createUnavailablePluginServicesFactory } from '../services/factory';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createCommittedContributedActionInvoker } from './createCommittedContributedActionDeps';
 
 function executeContributedAction(request: Parameters<typeof dispatchContributedAction>[0]) {
     const localId = String(request.actionId).split('/').at(-1)!;
@@ -27,6 +31,148 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
+    it.each(['selected', 'foreign', 'absent'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
+        const service = { pluginId: 'acme.accounts', localId: 'cloud' };
+        const disclosed: string[] = [];
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+            selectTarget: async () => ({ kind: 'account', account: { service, accountId: 'mutable-default' } }),
+            resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: target.account.accountId } : null,
+            materializeAccount: async ({ account }) => { disclosed.push(account.accountId); return { kind: 'environment', env: { TOKEN: account.accountId } }; },
+            projectTargetAccounts: async () => { throw new Error('No account listing'); },
+            assertTargetAccountMaterializable: async () => { throw new Error('No listed account use'); },
+        });
+        const base = fixture({ credentialOwner: owner });
+        const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
+            actions: base.manifest.contributes.actions.map(action => ({ ...action,
+                execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
+        } });
+        const reference = normalizePluginManifestV2({ schemaVersion: 2, id: service.pluginId, version: '1.0.0', displayName: 'Cloud', runtime: { apiVersion: 1 },
+            contributes: { connectedAccountDescriptors: [{ id: service.localId, title: 'Cloud', authentication: { defaultModeId: 'token', modes: [{
+                id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+            }] } }] } });
+        const f = fixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
+            nativeRoleResults: { inspect: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' } } });
+        const provider = { pluginId, localId: 'vm' };
+        const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
+            purpose: { consumer: { pluginId, localId: 'power' }, purpose: 'upstream' }, account: { service, accountId: 'selected-account' },
+        }] };
+        const machine: ManagedMachineV1 = { id: 'managed-1', homeId: 'home-1', custodianAccountId: 'owner', launch,
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            resource: { contributionRef: provider, schemaVersion: 1, value: {} }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
+        const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', actionRequestId: 'original',
+            operationAcceptance: { operationId: 'original-operation', accept() {} } };
+        const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: f.runtimeRegistry,
+            source: 'ephemeral', durableRevision: -1, release: async () => {} }), connectedAccountPurposeBindingOwner: owner });
+        const port = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: { homeId: machine.homeId, managedId: machine.id,
+            expectedRevision: 2, intent: 'start', when: 'now' }, context, reviewAdmitted: true,
+            plan: { children: ['power', 'inspect'].map(role => ({ action: { pluginId, localId: role }, role })) },
+            policies: ['power', 'inspect'].map(role => ({ action: { pluginId, localId: role }, role, surface: 'cli' })),
+            execute: async (body, childContext) => {
+                if (!body || typeof body !== 'object' || !('action' in body) || !('input' in body)) throw new Error('Expected provider envelope');
+                return invoke({ action: { pluginId, localId: 'power' }, input: body.input, context: childContext });
+            } });
+        const identity = { pluginId, localId: 'power' };
+        const purpose = { consumer: identity, purpose: 'upstream' };
+        const binding = { identity, operationId: 'original-operation', purposes: [purpose],
+            purposeBindings: { v: 1 as const, bindings: [{ purpose, target: { kind: 'account' as const,
+                account: { service, accountId: scenario === 'foreign' ? 'foreign-account' : 'selected-account' } } }] },
+            isCurrent: () => true, managedOperation: { role: 'power' as const, isCurrent: () => true } };
+        const result = await port.invoke({ action: identity, role: 'power', input: { resource: {}, intent: 'start' },
+            invocationServices: { managedMachine: machine, ...(scenario === 'absent' ? {} : { connectedAccountPurposeBinding: binding }) } });
+        expect(result).toMatchObject(scenario === 'selected' ? { ok: true, result: { kind: 'confirmed' } }
+            : { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid' });
+        expect(disclosed).toEqual(scenario === 'selected' ? ['selected-account'] : []);
+        expect(f.effects()).toBe(scenario === 'selected' ? 1 : 0);
+    });
+    it('delivers only the admitted acquire guest-host key through real dispatch and redacts its log echoes', async () => {
+        const guestKey = 'invocation-private-generated-guest-host-key';
+        const guestBytes = new TextEncoder().encode(guestKey);
+        const bootstrapBytes = new TextEncoder().encode('separate-bootstrap-user-key');
+        const logs: string[] = [];
+        let opened: Uint8Array | undefined;
+        let bootstrapReads = 0;
+        const f = fixture({ bootstrapCredential: 'ssh', nativeCredentialService: true,
+            invocationLogSink: { write(entry) { logs.push(JSON.stringify(entry)); } },
+            async onNativeRole(role, _input, context) {
+                if (role !== 'acquire') return;
+                const lease = await context.services.machineProvisioners.materializeGuestHostCredential();
+                opened = lease.bytes.slice();
+                context.services.logger.info(new TextDecoder().decode(lease.bytes));
+                // Invocation settlement, rather than the handler, owns forgotten disposal.
+            },
+        });
+        const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry, actionId: `${pluginId}/acquire`,
+            context: { surface: 'plugin' }, admittedManagedProviderOperation: { ...f.custody, role: 'acquire',
+                readBootstrapCredential: async () => { bootstrapReads++; return bootstrapBytes; },
+                readGuestHostCredential: async () => guestBytes },
+        });
+        expect(result).toMatchObject({ result: { ok: true, result: roleResult('acquire') } });
+        expect(opened).toEqual(new TextEncoder().encode(guestKey));
+        expect(bootstrapReads).toBe(0);
+        expect(bootstrapBytes).toEqual(new TextEncoder().encode('separate-bootstrap-user-key'));
+        expect(guestBytes).toEqual(new Uint8Array(guestBytes.length));
+        expect(logs.join('\n')).toContain('[REDACTED]');
+        expect(logs.join('\n')).not.toContain(guestKey);
+        expect(JSON.stringify(result)).not.toContain(guestKey);
+    });
+
+    it('delivers the selected bootstrap credential to a trusted power role through real dispatch', async () => {
+        let opened: Uint8Array | undefined;
+        const material = new Uint8Array([7, 8, 9]);
+        const f = fixture({ bootstrapCredential: 'native-token', nativeCredentialService: true,
+            async onNativeRole(role, _input, context) {
+                if (role !== 'power') return;
+                const lease = await context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' });
+                if (lease.kind !== 'bytes') throw new Error('Expected private credential bytes');
+                opened = lease.bytes.slice();
+                await lease.dispose();
+            },
+        });
+        const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
+            actionId: `${pluginId}/power`, context: { surface: 'plugin' },
+            admittedManagedProviderOperation: { ...f.custody, role: 'power',
+                readBootstrapCredential: async () => material },
+        });
+        const failure = result.matched && !result.result.ok ? {
+            errorCode: result.result.errorCode, actionHandlerInvocation: result.result.actionHandlerInvocation,
+        } : undefined;
+        expect(result, JSON.stringify(failure)).toMatchObject({ result: { ok: true, result: { kind: 'confirmed' } } });
+        expect(opened).toEqual(new Uint8Array([7, 8, 9]));
+        expect(material).toEqual(new Uint8Array(3));
+    });
+
+    it('opens inference headers only for the admitted exact native apply binding and refuses ordinary empty replacements', async () => {
+        let opened: unknown;
+        const f = fixture({ nativeCredentialDelivery: true, nativeCredentialService: true,
+            onNativeCredentialApply: async context => {
+                opened = await context.services.machineProvisioners.materializeNativeCredentialHeaders({ bindingKey: 'binding' });
+            } });
+        const input = { resource: { contributionRef: { pluginId, localId: 'vm' }, schemaVersion: 1, value: {} },
+            baseline: { kind: 'allow-all' }, bindings: [] };
+        const request = { runtimeRegistry: f.runtimeRegistry, actionId: `${pluginId}/native-credential-apply`,
+            input, context: { surface: 'plugin' as const } };
+        expect(await dispatchContributedAction(request)).toMatchObject({ result: { ok: false,
+            errorCode: 'plugin_managed_provider_operation_custody_invalid', actionHandlerInvocation: 'notStarted' } });
+        expect(await dispatchContributedAction({ ...request, input: { ...input, bindings: [{ bindingKey: 'binding',
+            destination: { host: 'example.test', port: 443 }, requests: [{ path: '/v1/responses', methods: ['POST'] }],
+            placeholder: { header: 'Authorization', value: 'placeholder-test' } }] } }))
+            .toMatchObject({ result: { ok: false, actionHandlerInvocation: 'notStarted' } });
+        expect(f.effects()).toBe(0);
+        const managedNativeCredentials = { role: 'nativeCredentialApply' as const, isCurrent: async () => true,
+            bindings: new Map([['binding', { isCurrent: async () => true,
+                readRenderedHeaders: async () => ({ ok: true as const, headers: { Authorization: 'native-test-material' } }) }]]) };
+        expect(await dispatchContributedAction({ ...request,
+            admittedManagedProviderOperation: { ...f.custody, role: 'nativeCredentialApply', managedNativeCredentials },
+        })).toMatchObject({ result: { ok: true, result: { kind: 'confirmed' } } });
+        expect(opened).toEqual({ ok: true, headers: { Authorization: 'native-test-material' } });
+        expect(f.effects()).toBe(1);
+        expect(await dispatchContributedAction({ ...request,
+            admittedManagedProviderOperation: { ...f.custody, role: 'nativeCredentialApply', managedNativeCredentials,
+                isCurrent: () => false },
+        })).toMatchObject({ result: { ok: false, actionHandlerInvocation: 'notStarted' } });
+        expect(f.effects()).toBe(1);
+    });
     it('keeps a host read-only ceiling independent from input-sensitive confirmation defaults', async () => {
         const f = fixture({ dangerous: true });
         const registry = createResolvedContributionRegistry({ actions: f.runtimeRegistry.contributes.actions.map(action => ({
@@ -338,6 +484,26 @@ describe('managed native-role custody at contributed dispatch', () => {
         expect(readFixture.effects()).toBe(4);
     });
 
+    it('admits managed custody once, then reads only its local currentness before the handler', async () => {
+        const f = fixture({ cold: true });
+        let currentnessReads = 0;
+        let roleAdmissions = 0;
+        const contributes = new Proxy(f.runtimeRegistry.contributes, { get(target, key, receiver) {
+            if (key === 'machineProvisioners') roleAdmissions += 1;
+            return Reflect.get(target, key, receiver);
+        } });
+        const runtimeRegistry = new Proxy(f.runtimeRegistry, { get(target, key, receiver) {
+            return key === 'contributes' ? contributes : Reflect.get(target, key, receiver);
+        } });
+        const result = await executeContributedAction({
+            runtimeRegistry, actionId: `${pluginId}/acquire`,
+            admittedManagedProviderOperation: { ...f.custody, isCurrent: () => { currentnessReads += 1; return true; } },
+            context: { surface: 'cli', beforeHandlerInvocation: async () => {} },
+        });
+        expect(result).toEqual({ matched: true, result: { ok: true, result: roleResult('acquire') } });
+        expect({ roleAdmissions, currentnessReads }).toEqual({ roleAdmissions: 1, currentnessReads: 2 });
+    });
+
     it('refuses custody retired while the native module loads', async () => {
         let current = true;
         const f = fixture({ cold: true, afterActivation: () => { current = false; } });
@@ -371,7 +537,7 @@ describe('managed native-role custody at contributed dispatch', () => {
         expect(f.effects()).toBe(0);
     });
 
-    it('rechecks custody after approval and after a host custody transition awaits', async () => {
+    it('rechecks prepared custody after approval and after a host custody transition awaits', async () => {
         for (const phase of ['approval', 'transition'] as const) {
             const f = fixture({ dangerous: true });
             let current = true;
@@ -387,14 +553,5 @@ describe('managed native-role custody at contributed dispatch', () => {
         }
     });
 
-    it('rejects a prepared operation when its managed row or occurrence retires before running', async () => {
-        const f = fixture();
-        let current = true;
-        let prepared: Parameters<NonNullable<Parameters<typeof executeContributedAction>[0]['context']['capturePreparedInvocation']>>[0] | undefined;
-        await executeContributedAction({ runtimeRegistry: f.runtimeRegistry, actionId: `${pluginId}/acquire`, admittedManagedProviderOperation: { ...f.custody, isCurrent: () => current }, context: { surface: 'cli', capturePreparedInvocation: (value) => { prepared = value; } } });
-        expect(prepared).toBeDefined();
-        current = false;
-        expect(await prepared!.run()).toMatchObject({ ok: false, actionHandlerInvocation: 'notStarted' });
-        expect(f.effects()).toBe(0);
-    });
+
 });

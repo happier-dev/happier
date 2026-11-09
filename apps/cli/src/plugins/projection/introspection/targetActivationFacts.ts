@@ -1,11 +1,11 @@
 import type { PluginDiagnosticRecordV1 } from '@happier-dev/protocol';
 
 import type { PluginTargetActivationFact } from '@/plugins/runtime/lifecycle/activation/facts';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import {
   buildPluginContributionIntrospectionQualifiedId,
   enrichPluginDiagnosticRecord,
-  readPluginContributionIntrospectionIdentityValue,
 } from './project';
 import type { PluginContributionIntrospectionCandidate, PluginContributionRuntimeFacts } from './types';
 
@@ -23,28 +23,6 @@ export type PluginTargetActivationCatalogPlugin = Readonly<{
   pluginVersion: string;
   source: PluginDiagnosticRecordV1['plugin']['source'];
 }>;
-
-function targetRefKey(ref: Readonly<{ family: string; localId: string }>): string {
-  return `${ref.family}/${ref.localId}`;
-}
-
-function assertUniqueRefs(
-  refs: readonly Readonly<{ family: string; localId: string }>[],
-  label: string,
-  pluginId: string,
-): ReadonlySet<string> {
-  const keys = new Set<string>();
-  for (const ref of refs) {
-    const key = targetRefKey(ref);
-    if (keys.has(key)) throw new Error(`Duplicate ${label} contribution '${pluginId}/${key}'`);
-    keys.add(key);
-  }
-  return keys;
-}
-
-function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-  return left.size === right.size && [...left].every((key) => right.has(key));
-}
 
 function mapActivationHostToRegistrationHost(host: PluginTargetActivationFact['host']): 'daemon' | 'client' {
   return host === 'web' || host === 'ios' || host === 'android' ? 'client' : 'daemon';
@@ -74,63 +52,16 @@ export function adaptTargetActivationFacts(params: Readonly<{
 
   const runtimeFactsByQualifiedId = new Map<string, PluginContributionRuntimeFacts>();
   const diagnosticRecords: PluginDiagnosticRecordV1[] = [];
-  const seenPluginIds = new Set<string>();
-
   for (const fact of params.targetActivationFacts) {
-    if (seenPluginIds.has(fact.pluginId)) {
-      throw new Error(`Duplicate target activation fact for plugin '${fact.pluginId}'`);
-    }
-    seenPluginIds.add(fact.pluginId);
-
     const currentPlugin = currentPluginsById.get(fact.pluginId);
-    if (!currentPlugin) {
-      throw new Error(`Target activation facts reference unknown plugin '${fact.pluginId}'`);
-    }
+    if (!currentPlugin) continue;
     const pluginCandidates = candidatesByPluginId.get(fact.pluginId) ?? [];
-    const pluginMetadata = pluginCandidates[0];
-    if (pluginMetadata && pluginCandidates.some((candidate) => (
-      candidate.pluginVersion !== pluginMetadata.pluginVersion || candidate.source !== pluginMetadata.source
-    ))) {
-      throw new Error(`Target activation facts have contradictory plugin metadata for '${fact.pluginId}'`);
-    }
-    if (pluginMetadata && (
-      pluginMetadata.pluginVersion !== currentPlugin.pluginVersion || pluginMetadata.source !== currentPlugin.source
-    )) {
-      throw new Error(`Target activation catalog metadata contradicts contribution metadata for '${fact.pluginId}'`);
-    }
 
     const activationRegistrationHost = mapActivationHostToRegistrationHost(fact.host);
     const requiredCandidates = pluginCandidates.filter((candidate) => (
       candidate.registration === 'required'
       && (candidate.runtimeRegistrationHost ?? 'daemon') === activationRegistrationHost
     ));
-    // Registration demand is keyed by the canonical identity value the catalog
-    // derives from the family's identity field — the same string the daemon's
-    // registration rights carry. The introspection identity kind only records
-    // how that value is presented, so a delegated-domain family such as
-    // `providers` registers exactly like a local-id one.
-    const expectedRequired = new Set(requiredCandidates.map((candidate) => targetRefKey({
-      family: candidate.runtimeRegistrationFamily ?? candidate.family,
-      localId: readPluginContributionIntrospectionIdentityValue(candidate.identity),
-    })));
-    const reportedRequired = assertUniqueRefs(fact.required, 'required', fact.pluginId);
-    const reportedBound = assertUniqueRefs(fact.bound, 'bound', fact.pluginId);
-    for (const ref of reportedRequired) {
-      if (!expectedRequired.has(ref)) throw new Error(`Target activation fact references unknown required contribution '${fact.pluginId}/${ref}'`);
-    }
-    if (!setsEqual(expectedRequired, reportedRequired)) {
-      throw new Error(`Target activation required contributions for '${fact.pluginId}' do not exactly match catalog demand`);
-    }
-    for (const ref of reportedBound) {
-      if (!reportedRequired.has(ref)) throw new Error(`Target activation fact binds undeclared contribution '${fact.pluginId}/${ref}'`);
-    }
-    if (fact.status === 'active' && !setsEqual(reportedRequired, reportedBound)) {
-      throw new Error(`Active target bindings for '${fact.pluginId}' must exactly match required contributions`);
-    }
-    if (fact.status !== 'active' && reportedBound.size > 0) {
-      throw new Error(`Inactive target '${fact.pluginId}' cannot publish bound contributions`);
-    }
-
     const currentMetadata = (
       fact.pluginVersion === currentPlugin.pluginVersion && fact.source === currentPlugin.source
     );
@@ -174,7 +105,7 @@ export function adaptTargetActivationFacts(params: Readonly<{
           ? { code: 'plugin_activation_unavailable', message: unavailableReason }
           : null;
     const diagnostics: readonly Readonly<{
-      diagnostic: Readonly<{ code: string; message: string }>;
+      diagnostic: Readonly<{ code: string; message: string; details?: PluginCompatibilityDiagnostic['details'] }>;
       ordinal: number;
     }>[] = [
       ...(stateDiagnostic ? [{ diagnostic: stateDiagnostic, ordinal: fact.diagnostics.length }] : []),
@@ -185,6 +116,7 @@ export function adaptTargetActivationFacts(params: Readonly<{
         code: diagnostic.code,
         severity: 'error',
         message: diagnostic.message,
+        ...(diagnostic.details === undefined ? {} : { details: diagnostic.details }),
       }, {
         ordinal,
         plugin: {

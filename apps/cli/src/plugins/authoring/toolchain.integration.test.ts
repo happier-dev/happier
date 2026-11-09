@@ -89,12 +89,16 @@ describe('runPluginAuthorToolchain', () => {
         name: 'external-happier-plugin',
         version: '0.1.0',
         type: 'module',
+        exports: {
+          './happier-plugin-ui/ci': './forge-ci-ui.mjs',
+        },
         dependencies: {
           '@happier-dev/plugin-sdk': '0.0.0',
           '@happier-dev/plugin-ui': '0.0.0',
           '@happier-dev/channels-protocol': '0.0.0',
           '@happier-dev/triage-protocol': '0.0.0',
           '@happier-dev/triage-sources': '0.0.0',
+          '@happier-dev/forge-ci': '0.0.0',
         },
       }), 'utf8');
 
@@ -125,6 +129,7 @@ describe('runPluginAuthorToolchain', () => {
       const installedChannelsProtocolRoot = join(projectRoot, 'node_modules', '@happier-dev', 'channels-protocol');
       const installedTriageProtocolRoot = join(projectRoot, 'node_modules', '@happier-dev', 'triage-protocol');
       const installedTriageSourcesRoot = join(projectRoot, 'node_modules', '@happier-dev', 'triage-sources');
+      const installedForgeCiRoot = join(projectRoot, 'node_modules', '@happier-dev', 'forge-ci');
       await expect(readFile(join(installedSdkRoot, 'package.json'), 'utf8'))
         .resolves.toContain('"@happier-dev/plugin-sdk"');
       await expect(readFile(join(installedUiRoot, 'package.json'), 'utf8'))
@@ -135,6 +140,8 @@ describe('runPluginAuthorToolchain', () => {
         .resolves.toContain('"@happier-dev/triage-protocol"');
       await expect(readFile(join(installedTriageSourcesRoot, 'package.json'), 'utf8'))
         .resolves.toContain('"@happier-dev/triage-sources"');
+      await expect(readFile(join(installedForgeCiRoot, 'package.json'), 'utf8'))
+        .resolves.toContain('"@happier-dev/forge-ci"');
 
       const authorRequire = createRequire(join(projectRoot, 'package.json'));
       const triageSourcesRequire = createRequire(join(installedTriageSourcesRoot, 'package.json'));
@@ -146,6 +153,12 @@ describe('runPluginAuthorToolchain', () => {
           .toBe(await realpath(authorRequire.resolve(specifier)));
       }
       expect((await lstat(authorRequire.resolve('@happier-dev/triage-sources/ui'))).isFile()).toBe(true);
+      const forgeCiRequire = createRequire(join(installedForgeCiRoot, 'package.json'));
+      for (const packageName of ['plugin-sdk', 'plugin-ui', 'triage-protocol']) {
+        const specifier = `@happier-dev/${packageName}`;
+        expect(await realpath(forgeCiRequire.resolve(specifier)))
+          .toBe(await realpath(authorRequire.resolve(specifier)));
+      }
       const installedSdkRequire = createRequire(join(installedSdkRoot, 'package.json'));
       const composer = await import(pathToFileURL(authorRequire.resolve('@happier-dev/plugin-sdk/ui')).href);
       const protocolUiClient = await import(pathToFileURL(
@@ -159,10 +172,20 @@ describe('runPluginAuthorToolchain', () => {
         "import { TriageSourcesContributionPointV1 } from '@happier-dev/triage-protocol';",
         "import { TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';",
         "import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';",
+        "import { ForgeCiRunV1Schema } from '@happier-dev/triage-protocol/ci/v1';",
+        "import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';",
+        "import { ForgeReleaseV1Schema } from '@happier-dev/triage-protocol/releases/v1';",
+        "import { createForgeReleaseV1Fixture } from '@happier-dev/triage-protocol/releases/testing/v1';",
+        "import { createForgeCiAdapterV1 } from '@happier-dev/forge-ci/runtime';",
         'export {',
         '  TriageSourcesContributionPointV1,',
         '  TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,',
         '  createTriageSourceV1Fixture,',
+        '  ForgeCiRunV1Schema,',
+        '  createForgeCiConformanceVectorsV1,',
+        '  ForgeReleaseV1Schema,',
+        '  createForgeReleaseV1Fixture,',
+        '  createForgeCiAdapterV1,',
         '};',
         '',
       ].join('\n'), 'utf8');
@@ -172,6 +195,11 @@ describe('runPluginAuthorToolchain', () => {
       expect(triageSourceEntrypoints.TriageSourcesContributionPointV1).toEqual(expect.any(Object));
       expect(triageSourceEntrypoints.TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1).toEqual(expect.any(Object));
       expect(triageSourceEntrypoints.createTriageSourceV1Fixture).toEqual(expect.any(Function));
+      const ciVectors = triageSourceEntrypoints.createForgeCiConformanceVectorsV1();
+      expect(triageSourceEntrypoints.ForgeCiRunV1Schema.safeParse(ciVectors.github.run).success).toBe(true);
+      expect(triageSourceEntrypoints.ForgeCiRunV1Schema.safeParse(ciVectors.gitlab.run).success).toBe(true);
+      expect(triageSourceEntrypoints.ForgeReleaseV1Schema.safeParse(triageSourceEntrypoints.createForgeReleaseV1Fixture()).success).toBe(true);
+      expect(triageSourceEntrypoints.createForgeCiAdapterV1).toEqual(expect.any(Function));
 
       // The installed manifest must keep `bin`: it is the only declaration that
       // makes the conventional UI compiler discoverable during author builds.
@@ -196,6 +224,34 @@ describe('runPluginAuthorToolchain', () => {
       });
       expect(builderResult.stdout).toContain('happier-plugin-build-ui');
       expect(builderResult.stderr).toBe('');
+
+      // UI exports are executable portable artifacts, not Node modules. Compile
+      // the author's public import through the same installed SDK UI builder.
+      await writeFile(join(projectRoot, 'forge-ci-ui.mjs'),
+        "export { ForgeCiRunDetail as renderSurface } from '@happier-dev/forge-ci/ui';\n", 'utf8');
+      const uiManifestPath = join(projectRoot, 'forge-ci-ui-manifest.json');
+      await writeFile(uiManifestPath, JSON.stringify({
+        contributes: { ui: { renderers: [{ kind: 'reactNative', artifact: 'ci' }] } },
+      }), 'utf8');
+      const uiBuildInvocation = resolvePluginAuthorToolchainSpawnInvocation({
+        command: managedRuntimeCommand!,
+        args: [builderPath!, '--project-root', projectRoot, '--manifest-path', uiManifestPath],
+        cwd: projectRoot,
+        env: process.env,
+      });
+      const uiBuildResult = await execFileAsync(uiBuildInvocation.command, [...uiBuildInvocation.args], {
+        cwd: uiBuildInvocation.cwd,
+        env: uiBuildInvocation.env,
+      });
+      expect(uiBuildResult.stderr).toBe('');
+      const uiManifest = JSON.parse(await readFile(
+        join(projectRoot, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), 'utf8',
+      )) as { entries: readonly { artifactId: string; executable: { exports: readonly string[] } }[] };
+      expect(uiManifest.entries).toEqual([
+        expect.objectContaining({
+          artifactId: 'ci', executable: { exports: expect.arrayContaining(['renderSurface']) },
+        }),
+      ]);
     } finally {
       vi.unstubAllEnvs();
       await rm(projectRoot, { recursive: true, force: true });

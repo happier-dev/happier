@@ -1,8 +1,12 @@
 import fastify from 'fastify';
+import axios from 'axios';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
+import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
+import { projectBundledPluginCatalogEntries } from '@/plugins/projection/catalog/installed';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
@@ -11,6 +15,7 @@ import { resolvePluginContributes } from '../resolvePluginContributions';
 import { resolveMergedContributionRegistry } from '../merged';
 import { loadCurrentBundledPluginLocatorResult } from './locators';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from './snapshot';
+import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundledPluginManifests';
 
 describe('bundled admission Account boundary', () => {
     it('withdraws an installed development replacement under the same bundled Account identity and restores it', async () => {
@@ -92,7 +97,8 @@ describe('bundled admission Account boundary', () => {
     it('settles unavailable Account intent without enabling contributions or failing the host', async () => {
         const app = fastify();
         app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async (_request, reply) => (
-            reply.code(503).send({ error: 'unavailable' })
+            reply.code(503).send({ error: 'unavailable', errorCode: 'database_connection_unavailable',
+                requestId: 'census-read-503' })
         ));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://bundled-intent-unavailable.test' });
@@ -103,14 +109,52 @@ describe('bundled admission Account boundary', () => {
                     resolveBaseUrl: () => 'http://bundled-intent-unavailable.test',
                 } });
             expect(facts['happier.agent.pi']).toMatchObject({ enabled: false, machineEnabled: true,
-                unavailableCode: 'plugin_account_execution_unavailable' });
+                unavailableCode: 'plugin_account_census_failed',
+                unavailableCause: { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+                unavailableRequestId: 'census-read-503' });
             expect(facts['happier.agent.pi']?.accountEnabled).toBeUndefined();
             const registry = getResolvedContributionRegistry({ pluginEnablementById: facts });
             expect(registry.agents).toEqual([]);
-            expect(registry.unavailableAgentPluginsByBackendId?.pi?.code).toBe('plugin_account_execution_unavailable');
+            expect(registry.unavailableAgentPluginsByBackendId?.pi?.code).toBe('plugin_account_census_failed');
         } finally {
             restore();
             await app.close();
         }
+    });
+
+    it('exposes a failed census cause for every bundled row and recovers on the next admission without retrying', async () => {
+        const requestId = '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616';
+        const failure = Object.assign(new axios.AxiosError('private payload must not escape', 'ECONNRESET'), { requestId });
+        const post = vi.spyOn(axios, 'post').mockRejectedValueOnce(failure).mockImplementation(async (_url, body) => {
+            const pluginIds = PluginAvailabilityIntentsListActionInputV1Schema.parse(body).knownPluginIds ?? [];
+            return { data: { availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
+                response: { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [] },
+            })) } };
+        });
+        const warn = vi.spyOn(logger, 'warn');
+        const read = () => readCurrentBundledPluginEnablement({ machineEnabledById: {}, accountStorageDependencies: {
+            readCredentials: async () => ({ token: 'fixture', encryption: null }), resolveBaseUrl: () => 'http://census.test',
+        } });
+        try {
+            const failed = await read();
+            const cause = { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: 'ECONNRESET', httpStatus: null };
+            expect(Object.keys(failed).length).toBeGreaterThanOrEqual(87);
+            for (const fact of Object.values(failed)) expect(fact).toMatchObject({ enabled: false,
+                unavailableCode: 'plugin_account_census_failed', unavailableCause: cause, unavailableRequestId: requestId });
+            const rows = projectBundledPluginCatalogEntries({ ...loadCurrentBundledPluginLocatorResult({ pluginEnablementById: failed }),
+                pluginEnablementById: failed, bundledPluginMetadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA });
+            const row = projectPluginCatalogEntrySnapshot(rows.find(row => row.pluginId === 'happier.agent.pi')!);
+            expect(row.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({
+                details: { reason: 'plugin_account_census_failed', failureCause: cause, requestId },
+            }) })]));
+            expect(warn).toHaveBeenCalledWith('[PLUGIN RUNTIME] Account plugin census failed', {
+                failureCause: cause, requestId,
+            });
+            expect(JSON.stringify(failed)).not.toContain('private payload');
+            expect(post).toHaveBeenCalledTimes(1);
+            const recovered = await read();
+            expect(Object.values(recovered).every(fact => fact.enabled && !fact.unavailableCode)).toBe(true);
+            expect(post).toHaveBeenCalledTimes(2);
+        } finally { post.mockRestore(); warn.mockRestore(); }
     });
 });

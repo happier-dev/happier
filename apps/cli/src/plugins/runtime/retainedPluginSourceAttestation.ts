@@ -19,7 +19,7 @@ import { resolvePublishedPinnedRunnerSnapshotById } from '@happier-dev/cli-commo
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../projection/registry/sources/generatedBundledPluginManifests';
 import { readPluginManifest } from '../manifest/read';
 import { ingestCanonicalPluginManifest } from '../manifest/ingest';
-import { readBundledPluginManifest } from '../projection/registry/builtIn/locators';
+import { readBundledPluginManifestInput } from '../projection/registry/builtIn/manifestFile';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import type { CanonicalPluginManifest } from '../manifest/types';
 import type { PluginStorePaths } from '../store/paths';
@@ -40,7 +40,7 @@ export type RetainedBundledPluginRoot = Readonly<{
 export function readRetainedFirstPartyDevelopmentManifest(params: Readonly<{ pluginId: string; runtimeRoot?: string }>): CanonicalPluginManifest {
     const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(candidate => candidate.pluginId === params.pluginId);
     if (!locator) throw new Error('Retained first-party development declaration is unavailable');
-    const ingestion = ingestCanonicalPluginManifest(readBundledPluginManifest(locator, params.runtimeRoot), {
+    const ingestion = ingestCanonicalPluginManifest(readBundledPluginManifestInput(locator, params.runtimeRoot), {
         purpose: 'installedRead',
         manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
     });

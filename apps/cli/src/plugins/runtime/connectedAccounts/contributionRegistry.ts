@@ -98,6 +98,8 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
     isPluginOccurrenceCurrent(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): boolean;
+    /** The activation owner distinguishes an unavailable plugin from a retired occurrence. */
+    isPluginActivationUnavailable?(pluginId: string): boolean;
     resolveRetirementSignal?(pluginId: string): AbortSignal;
     /**
      * Reports a descriptor this generation could not admit, so the host can tell
@@ -124,10 +126,12 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
      * after on-demand activation. All are the same caller-visible fact: this
      * generation has no usable runtime for the service.
      *
+     * Throws `connected_account_service_unavailable` when the activation owner
+     * reports that the occurrence was fenced by an activation failure.
      * Throws `ConnectedAccountRuntimeInvocationNotStartedError` when the
      * occurrence is retired or disposed. That is a currentness fact, not
      * unavailability: the caller must reload rather than conclude the service
-     * does not exist. Genuine faults (activation failure, duplicate
+     * does not exist. Other genuine faults (duplicate
      * registration, descriptor/runtime mismatch) keep throwing as themselves.
      */
     resolve(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null>;
@@ -191,6 +195,18 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         return !disposed && params.isPluginOccurrenceCurrent(pluginId, occurrenceId);
     }
 
+    function assertCurrentOccurrence(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): void {
+        if (isCurrentOccurrence(pluginId, occurrenceId)) return;
+        // Failed activation fences this occurrence too, but restarting it cannot
+        // supply missing executable artifacts. Keep the owner's availability fact.
+        if (!disposed && params.isPluginActivationUnavailable?.(pluginId)) {
+            throw Object.assign(new Error('Connected account service is unavailable'), {
+                code: 'connected_account_service_unavailable',
+            });
+        }
+        throw new ConnectedAccountRuntimeInvocationNotStartedError();
+    }
+
     function readRegistration(ref: PluginContributionRef): ConnectedAccountRuntimeRegistration | null {
         // Registration-scope commit already validated this runtime against the
         // canonical descriptor declaration before the target became current.
@@ -218,15 +234,11 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
 
     async function resolvePluginRegistration(qualifiedRef: PluginContributionRef,
         declared: Exclude<Declared, ConnectedAccountHostRuntimeLease>) {
-        if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
-            throw new ConnectedAccountRuntimeInvocationNotStartedError();
-        }
+        assertCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId);
         let registration = readRegistration(qualifiedRef);
         if (!registration) {
             await params.activateOnDemand(qualifiedRef);
-            if (!isCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId)) {
-                throw new ConnectedAccountRuntimeInvocationNotStartedError();
-            }
+            assertCurrentOccurrence(qualifiedRef.pluginId, declared.occurrenceId);
             registration = readRegistration(qualifiedRef);
         }
         if (!registration) return null;

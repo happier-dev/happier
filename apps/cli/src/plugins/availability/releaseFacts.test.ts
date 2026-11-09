@@ -17,7 +17,8 @@ describe('verified portable Plugin Availability facts', () => {
       id: 'com.acme.account-only', contributes: { actions: [{
         id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',
         placementBindings: ['commandPalette'], execution: { target: 'account', account: { artifactId: 'account', exportName: 'activate' } },
-      }] },
+      }], resources: [{ id: 'read', source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global',
+        execution: { target: 'account', account: { artifactId: 'account', exportName: 'activate' } } }] },
     }));
     const generatedUiArtifacts = PluginUiArtifactsManifestV2Schema.parse({ version: 2, entries: [{
       artifactId: 'account', tier: 'reactNative', entry: 'react-native/account/entry.cjs.bundle',
@@ -26,8 +27,9 @@ describe('verified portable Plugin Availability facts', () => {
       executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0',
     }] });
     expect(projectVerifiedPluginUiReleaseSlotsV2({ manifest, generatedUiArtifacts })).toEqual(
-      ['web', 'ios', 'android'].map(platform => ({ contributionId: 'read', artifactId: 'account', tier: 'reactNative',
-        platform, artifactDigest: digest('c'), hostUiApiRange: '^1.0.0', artifactGraph: generatedUiArtifacts.entries[0] })),
+      ['read', 'resources/read'].flatMap(contributionId => ['web', 'ios', 'android'].map(platform => ({
+        contributionId, artifactId: 'account', tier: 'reactNative',
+        platform, artifactDigest: digest('c'), hostUiApiRange: '^1.0.0', artifactGraph: generatedUiArtifacts.entries[0] }))),
     );
     const uiArtifacts = projectVerifiedPluginUiReleaseSlotsV2({ manifest, generatedUiArtifacts });
     const snapshot = { serverIdentityId: 'srv_availability', machineId: 'machine', materializations: [

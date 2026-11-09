@@ -9,7 +9,6 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import {
     PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST,
 } from '@happier-dev/plugins-opencode/manifest';
@@ -40,6 +39,7 @@ import {
 } from '@/plugins/store/registry/generationStore';
 
 import { createRunnerManagedServiceInvocationOwner } from './createRunnerManagedServiceInvocationOwner';
+import { authorizeResolvedAgentNativeExecLaunchForHost } from './exec';
 import {
     createManagedServiceEndpointProjectionV1,
 } from './managedServiceEndpointProjection';
@@ -62,7 +62,6 @@ const RUNNER = Object.freeze({
     snapshotIdentity: 'snapshot:runner-declared-secret',
 });
 
-const exec = Object.freeze({}) as ExecService;
 const connectedAccounts = Object.freeze({}) as ConnectedAccountsService;
 
 type Cleanup = () => Promise<void>;
@@ -224,7 +223,7 @@ function createAttachedService() {
     return { server, requests };
 }
 
-async function prepareRetainedAgentFixture() {
+async function prepareRetainedAgentFixture(withSecretDeclarations = true) {
     const happyHomeDir = await mkdtemp(join(
         tmpdir(),
         'happier-declared-secret-home-',
@@ -242,7 +241,16 @@ async function prepareRetainedAgentFixture() {
     await mkdir(join(sourceRootPath, 'agent'), { recursive: true });
     await writeFile(
         join(sourceRootPath, '.happier-plugin', 'plugin.json'),
-        JSON.stringify(EXTERNAL_OPENCODE_PLUGIN_MANIFEST),
+        JSON.stringify(withSecretDeclarations ? EXTERNAL_OPENCODE_PLUGIN_MANIFEST : {
+            ...EXTERNAL_OPENCODE_PLUGIN_MANIFEST,
+            secrets: [],
+            contributes: {
+                ...EXTERNAL_OPENCODE_PLUGIN_MANIFEST.contributes,
+                settings: (EXTERNAL_OPENCODE_PLUGIN_MANIFEST.contributes.settings ?? []).map(settings => ({
+                    ...settings, fields: settings.fields.map(field => ({ ...field, secret: undefined })),
+                })),
+            },
+        }),
         'utf8',
     );
     await writeFile(
@@ -358,6 +366,35 @@ function basic(password: string): string {
     ).toString('base64')}`;
 }
 
+function bindAttachedManagedServices(
+    owner: Awaited<ReturnType<typeof createRunnerManagedServiceInvocationOwner>>,
+    fixture: Awaited<ReturnType<typeof prepareRetainedAgentFixture>>,
+) {
+    const seed = invocationSeed(fixture);
+    const local = owner.owners.createOperationServices(seed, {
+        filesystemRoots: {
+            pluginData: join(fixture.happyHomeDir, 'plugin-data'),
+            workspace: fixture.happyHomeDir,
+            projects: new Map(),
+        },
+        hostAccessRequests: owner.hostAccessRequests,
+    });
+    return owner.bindManagedServices({
+        seed,
+        agent: {
+            exec: local.exec,
+            connectedAccounts,
+            // Attach needs no native launch. Keep the canonical finalizer so
+            // this declaration-only fixture cannot authorize one accidentally.
+            authorizePreparedLaunch: (launch, signal) =>
+                authorizeResolvedAgentNativeExecLaunchForHost(
+                    local.exec, launch, signal, undefined, 'managedService',
+                ),
+        },
+        managedProvider: null,
+    });
+}
+
 describe('runner managed-service declared-secret authority', () => {
     it('resolves the credential only from the current daemon and never locally', async () => {
         const fixture = await prepareRetainedAgentFixture();
@@ -416,11 +453,7 @@ describe('runner managed-service declared-secret authority', () => {
         cleanups.push(async () => {
             await owner.owners.dispose();
         });
-        const managedServices = owner.bindManagedServices({
-            seed: invocationSeed(fixture),
-            agent: { exec, connectedAccounts },
-            managedProvider: null,
-        });
+        const managedServices = bindAttachedManagedServices(owner, fixture);
         const handle = await managedServices.supervise({
             id: 'opencode-server',
             mode: { kind: 'attach', baseUrl: attachBaseUrl },
@@ -530,11 +563,7 @@ describe('runner managed-service declared-secret authority', () => {
         cleanups.push(async () => {
             await owner.owners.dispose();
         });
-        const handle = await owner.bindManagedServices({
-            seed: invocationSeed(fixture),
-            agent: { exec, connectedAccounts },
-            managedProvider: null,
-        }).supervise({
+        const handle = await bindAttachedManagedServices(owner, fixture).supervise({
             id: 'opencode-server',
             mode: { kind: 'attach', baseUrl: attachBaseUrl },
             clientAccess: {
@@ -563,8 +592,8 @@ describe('runner managed-service declared-secret authority', () => {
         expect(attached.requests).toHaveLength(attachedRequestsBeforeStale);
     });
 
-    it('refuses an undeclared id, a foreign origin, and a stale revision', async () => {
-        const fixture = await prepareRetainedAgentFixture();
+    it.each([true, false])('reads daemon origin slots with declarations=%s while separating foreign origins and stale revisions', async declared => {
+        const fixture = await prepareRetainedAgentFixture(declared);
         const custody = daemonSecretCustody(fixture);
         const origin = 'http://127.0.0.1:4312';
         await custody.set({
@@ -600,7 +629,7 @@ describe('runner managed-service declared-secret authority', () => {
             phase: 'read',
             secretId: 'notDeclared',
             canonicalOrigin: origin,
-        })).resolves.toEqual({ status: 'unavailable' });
+        })).resolves.toMatchObject({ status: 'resolved', value: null });
         await expect(resolve({
             phase: 'read',
             secretId: SECRET_ID,

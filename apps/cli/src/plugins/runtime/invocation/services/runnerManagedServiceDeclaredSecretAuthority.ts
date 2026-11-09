@@ -38,8 +38,8 @@ const UNAVAILABLE: RunnerManagedServiceDeclaredSecretResult =
  *
  * The runner is not a secret-custody authority: it holds no device-local key
  * material and cannot decrypt a managed-service credential. The current daemon
- * resolves the declaration from the exact retained occurrenceId's manifest and
- * reads the value through the one canonical daemon custody owner, so a runner
+ * reads custody metadata from the exact retained occurrenceId's manifest and
+ * resolves the origin slot through the canonical daemon owner, so a runner
  * whose daemon authority is gone, rotated, or refusing gets no credential at
  * all rather than a locally decrypted one.
  */
@@ -61,7 +61,6 @@ export async function resolveRunnerManagedServiceDeclaredSecret(
         pluginId: input.attested.binding.pluginId,
         manifest: input.attested.manifest,
     }]);
-    if (declarations.length === 0) return UNAVAILABLE;
     const secretsHost = createStableDeclaredPluginSecretsHost({
         declarations,
         resolveCustody: createPluginSecretCustodyRouter({

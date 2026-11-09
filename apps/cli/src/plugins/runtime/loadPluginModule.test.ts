@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest';
 import type { PluginModuleNamespace } from './loadPluginModule';
 import {
     loadPluginModule,
+    createPluginTypeScriptCandidateScope,
+    createPluginTypeScriptGenerationScope,
+    loadPluginAuthorSourceModule,
     resolveNativePluginModuleUrl,
     resolvePluginModuleCandidatePaths,
     resolvePluginModuleLoadMode,
@@ -34,18 +37,40 @@ function createCommittedAuthorization(
 }
 
 describe('loadPluginModule', () => {
-    it('loads the portable CommonJS artifact through the existing admitted module loader', async () => {
-        const entryPath = await writeDaemonModule({
-            extension: 'cjs.bundle',
-            contents: 'exports.activateAccount = (api) => api.actions.register("read", async () => ({ value: 7 }));',
-        });
+    it.each(['author', 'generation', 'candidate'] as const)('preserves native CommonJS dynamic-import namespaces through the %s loader', async (kind) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-cjs-import-'));
+        const entryPath = join(root, 'plugin.ts');
         try {
-            const loaded = await loadPluginModule({ source: {
-                kind: 'file_backed', entryPath, committedAuthorization: createCommittedAuthorization(entryPath),
-            } });
-            expect(loaded.activateAccount).toEqual(expect.any(Function));
+            await writeFile(join(root, 'dependency.cjs'), [
+                'module.exports = class Mailbox {};',
+                'module.exports.marker = "mailbox";',
+            ].join('\n'));
+            await writeFile(join(root, 'object.cjs'), 'exports.parse = text => JSON.parse(text);');
+            await writeFile(entryPath, [
+                'import Mailbox from "./dependency.cjs";',
+                'export async function read() {',
+                '  const first = await import("./dependency.cjs");',
+                '  const second = await import("./dependency.cjs");',
+                '  const parser = await import("./object.cjs");',
+                '  return { defaultType: typeof first.default, marker: first.marker,',
+                '    sameDefault: first.default === Mailbox, sameNamespace: first === second,',
+                '    parsed: parser.default.parse("{\\"connected\\":true}") };',
+                '}',
+            ].join('\n'));
+            const loaded = kind === 'author'
+                ? await loadPluginAuthorSourceModule(entryPath)
+                : await loadPluginModule({ source: {
+                    kind: 'file_backed', entryPath, devEntryPath: entryPath,
+                    useDevelopmentEntry: true, sourceAuthority: { kind: 'development', registeredRootId: 'cjs-import', canonicalRoot: root, observedRevision: 1 },
+                    generationScope: kind === 'candidate'
+                        ? await createPluginTypeScriptCandidateScope({ rootPath: root })
+                        : createPluginTypeScriptGenerationScope(),
+                } });
+            const read = loaded.read;
+            if (typeof read !== 'function') throw new Error('Fixture read export is missing');
+            await expect(read()).resolves.toEqual({ defaultType: 'function', marker: 'mailbox', sameDefault: true, sameNamespace: true, parsed: { connected: true } });
         } finally {
-            await rm(entryPath, { force: true });
+            await rm(root, { recursive: true, force: true });
         }
     });
 

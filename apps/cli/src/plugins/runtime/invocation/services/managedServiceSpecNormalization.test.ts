@@ -19,6 +19,15 @@ describe('managed-service specification normalization', () => {
         expect(normalizeManagedServiceSpec(attachedSpec('gateway')).startupTimeoutMs).toBeUndefined();
         expect(normalizeManagedServiceSpec({ ...attachedSpec('gateway'), startupTimeoutMs: 600_000 }).startupTimeoutMs).toBe(600_000);
     });
+    it('retains authored health values beyond the former policy ranges', () => {
+        const normalized = normalizeManagedServiceSpec({
+            ...attachedSpec('gateway'),
+            healthCheck: { kind: 'http', timeoutMs: 120_000 },
+            healthPolicy: { intervalMs: 100, consecutiveFailures: 30 },
+        });
+        expect(normalized.healthCheck).toMatchObject({ timeoutMs: 120_000 });
+        expect(normalized.healthPolicy).toEqual({ intervalMs: 100, consecutiveFailures: 30 });
+    });
     it('refuses an HTTP health check for an explicitly URL-less owned process', () => {
         expect(() => normalizeManagedServiceSpec({
             id: 'worker',

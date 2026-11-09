@@ -89,6 +89,8 @@ export const PluginAccessSelectionSchema = z.strictObject({
 
 export type PluginAccessScopeRegistry = Readonly<{
   compare: (capability: string, candidateScope: unknown, previousScope: unknown) => PluginAccessScopeComparison;
+  /** Whether `candidateScope` reaches no further than `grantedScope` (exact or provably narrower). */
+  isWithinGrantedScope: (capability: string, candidateScope: unknown, grantedScope: unknown) => boolean;
   createSelection: (params: Readonly<{
     pluginId: string;
     accessId: string;
@@ -293,6 +295,10 @@ export function createPluginAccessScopeRegistry(
 
   return Object.freeze({
     compare,
+    isWithinGrantedScope(capability: string, candidateScope: unknown, grantedScope: unknown): boolean {
+      const relation = compare(capability, candidateScope, grantedScope).relation;
+      return relation === 'exact' || relation === 'narrower';
+    },
     createSelection(params): PluginAccessSelection {
       const pluginId = params.pluginId.trim();
       const accessId = params.accessId.trim();

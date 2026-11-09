@@ -6,6 +6,36 @@ import { performance } from 'node:perf_hooks';
 import { expect, it } from 'vitest';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
+function measureProjectionPayload(value: unknown) {
+    const bytes = (item: unknown) => Buffer.byteLength(JSON.stringify(item));
+    const record = (item: unknown): Readonly<Record<string, unknown>> => item && typeof item === 'object' && !Array.isArray(item)
+        ? item as Readonly<Record<string, unknown>> : {};
+    const root = record(value);
+    const projection = record(root.projection ?? root);
+    const entries = (item: unknown) => Object.entries(record(item)).map(([key, entry]) => ({ key, bytes: bytes(entry) }));
+    const fields = (item: unknown) => {
+        const totals: Record<string, number> = {};
+        for (const entry of Object.values(record(item))) for (const [key, field] of Object.entries(record(entry))) {
+            if (field !== undefined) totals[key] = (totals[key] ?? 0) + bytes(field);
+        }
+        return totals;
+    };
+    const families = record(projection.familiesById);
+    return {
+        responseFields: Object.fromEntries(entries(root).map(entry => [entry.key, entry.bytes])),
+        sections: Object.fromEntries(entries(projection).map(entry => [entry.key, entry.bytes])),
+        families: Object.fromEntries(entries(families).map(entry => [entry.key, entry.bytes])),
+        entryFields: Object.fromEntries(Object.entries(projection).filter(([key]) => key.endsWith('ById') && key !== 'familiesById')
+            .map(([key, section]) => [key, fields(section)])),
+        familyEntryFields: Object.fromEntries(Object.entries(families).map(([key, family]) => [key, fields(record(family).entriesById)])),
+        largestEntries: Object.entries(projection).filter(([key]) => key.endsWith('ById') && key !== 'familiesById')
+            .flatMap(([section, item]) => entries(item).map(entry => ({ section, ...entry })))
+            .concat(Object.entries(families).flatMap(([family, item]) => entries(record(item).entriesById)
+                .map(entry => ({ section: `familiesById.${family}`, ...entry }))))
+            .sort((a, b) => b.bytes - a.bytes).slice(0, 30),
+    };
+}
+
 // Opt-in offline measurement: no executable plugin activation, native probes or Account reads.
 it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== '1')('profiles the real bundled contribution projection', async () => {
     // Ordinary unit-suite collection must not load the entire first-party graph.
@@ -80,7 +110,8 @@ it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== '1')('profiles the real b
         const top = (entries: Map<string, number>) => [...entries].sort((a, b) => b[1] - a[1]).slice(0, 25);
         const measurement = { artifactDir, environment: { node: process.version, platform: process.platform, arch: process.arch },
             setupMs, contributionsMs, registryMs, modelsMs, buildMs, coreMs, failures, models: Object.keys(modelsByRendererKey).length, payloadBytes: bytes(response), plugins: BUNDLED_FIRST_PARTY_PLUGIN_METADATA.length,
-            agents: registry.agents.length, actions: registry.actions.length, sections, families, uiKinds, uiPlugins };
+            agents: registry.agents.length, actions: registry.actions.length, sections, families, uiKinds, uiPlugins,
+            composition: measureProjectionPayload(response) };
         await writeFile(join(artifactDir, 'build.cpuprofile'), JSON.stringify(profile));
         await writeFile(join(artifactDir, 'measurement.json'), JSON.stringify(measurement, null, 2));
         await writeFile(join(artifactDir, 'profile-summary.json'), JSON.stringify({ self: top(self), inclusive: top(inclusive) }, null, 2));
@@ -107,7 +138,13 @@ it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== 'handler')('profiles the 
         await session.post('Profiler.enable');
         await session.post('Profiler.start');
         const started = performance.now();
-        runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: configuration.happyHomeDir, generation: 1 });
+        runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: configuration.happyHomeDir, generation: 1,
+            resolveServerFeaturesSnapshot: () => undefined,
+            // Source registration is the environment boundary. Admission and
+            // custody propagation stay real, as in the bundled cost contract.
+            resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({ kind: 'development',
+                registeredRootId: `projection-benchmark:${pluginId}`, canonicalRoot: rootPath, observedRevision: 1 }),
+        });
         const runtimeMs = performance.now() - started;
         const currentRuntime = runtime;
         const handlers = new Map<string, (input: unknown) => unknown>();
@@ -125,18 +162,20 @@ it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== 'handler')('profiles the 
             },
             // This isolated home has no installed packages; bundled entries remain registry-owned.
             resolveInstalledPackages: async () => [],
+            resolvePluginProjectionExecutionOriginContext: async () => ({ serverIdentityId: 'srv_benchmark', machineId: 'benchmark-machine' }),
+            resolveServerFeaturesSnapshot: async () => undefined,
         });
         invalidateDaemonContributionRegistryProjectionCache();
         const describe = handlers.get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!;
         const buildStarted = performance.now();
-        const response = await describe({ locale: 'en' });
+        const response = await describe({ machineId: 'benchmark-machine', locale: 'en' });
         const coldDescribeMs = performance.now() - buildStarted;
         const warmStarted = performance.now();
-        const warmResponse = await describe({ locale: 'en' });
+        const warmResponse = await describe({ machineId: 'benchmark-machine', locale: 'en' });
         const warmDescribeMs = performance.now() - warmStarted;
         const measurement = { artifactDir, runtimeMs, coldDescribeMs, warmDescribeMs,
             payloadBytes: Buffer.byteLength(JSON.stringify(response)), sameCachedResponse: warmResponse === response,
-            activatedPluginIds: [...currentRuntime.activatedPluginIds] };
+            activatedPluginIds: [...currentRuntime.activatedPluginIds], composition: measureProjectionPayload(response) };
         await writeFile(join(artifactDir, 'measurement.json'), JSON.stringify(measurement, null, 2));
         console.log('PROJECTION_HANDLER_BENCHMARK', JSON.stringify(measurement));
         expect(warmResponse).toBe(response);
@@ -147,4 +186,4 @@ it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== 'handler')('profiles the 
         session.disconnect();
         await runtime?.dispose();
     }
-});
+}, 120_000);

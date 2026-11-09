@@ -1,4 +1,4 @@
-import { projectPluginReactNativeArtifactEntryV1, projectPluginUiPresentationEntriesV1, projectPluginUiTranslationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
+import { projectPluginHostedWebArtifactEntryV1, projectPluginReactNativeArtifactEntryV1, projectPluginUiPresentationEntriesV1, projectPluginUiTranslationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
 export {
     projectPluginUiRendererRef,
     projectPluginUiRendererAvailability,
@@ -221,42 +221,6 @@ function projectSessionHeaderActions(
 }
 
 /**
- * Projects the one declarative Universal Search provider descriptor.
- *
- * It carries identity and the resolved qualified query Action, and nothing
- * else. Title, icon, availability, execution target and currentness are the
- * referenced Action's own projected facts, which the host already holds — a
- * second copy here would be a second answer to the same question.
- */
-function projectSearchProviders(
-    registry: ResolvedContributionRegistry,
-    entriesById: Record<string, PluginUiProjectedEntryCandidate>,
-): void {
-    for (const contribution of registry.searchProviders ?? []) {
-        const pluginId = readPluginId(contribution);
-        if (!pluginId
-            || contribution.identity.pluginId !== pluginId
-            || contribution.identity.localId !== contribution.definition.id) {
-            continue;
-        }
-        const definition = contribution.definition;
-        addEntry(entriesById, {
-            id: `searchProvider:${pluginId}:${definition.id}`,
-            pluginId,
-            contributionKind: 'searchProvider',
-            descriptorId: definition.id,
-            identity: Object.freeze({
-                pluginId: contribution.identity.pluginId,
-                localId: contribution.identity.localId,
-            }),
-            // The descriptor spells a same-plugin local id; the qualified
-            // identity is resolved here, once, so no consumer re-qualifies it.
-            action: Object.freeze({ pluginId, localId: definition.action }),
-        });
-    }
-}
-
-/**
  * Projects the declared, same-plugin transcript-tail Resource binding. The
  * generic UI Resource consumer retains snapshot validation and lifecycle;
  * this cold projection only preserves the manifest-qualified descriptor.
@@ -432,41 +396,17 @@ function projectGeneratedHostedWebRenderers(
                     diagnostics: [],
                     ...(artifactReadIdentity ? { artifactReadIdentity } : {}),
                 });
-        // Generated V2 hosted web carries every Host API call in the one
-        // canonical `hostApi` wire wrapper.
-        const allowedMessages = Object.freeze(['ready' as const, 'hostApi' as const]);
-        addEntry(entriesById, {
-            id: `hostedWeb:${pluginId}:${contributionId}`,
+        addEntry(entriesById, projectPluginHostedWebArtifactEntryV1({
             pluginId,
             pluginVersion: owner.pluginVersion ?? '0.0.0',
-            contributionKind: 'hostedWeb',
             contributionId,
             artifactSelectionOwner: artifactSelectionOwnerForPluginSource(owner.pluginSource),
-            generatedV2: true,
             requiredHostMethods: owner.requiredHostMethods,
             source: owner.source,
-            ...(hostedWebPolicy
-                ? {
-                    service: Object.freeze({
-                        kind: 'staticAssets' as const,
-                        assetRootId: hostedWebPolicy.assetRootId,
-                    }),
-                    entry: Object.freeze({ routeMode: hostedWebPolicy.routeMode, path: '/' }),
-                    security: hostedWebPolicy.security,
-                }
-                : {}),
-            bridge: Object.freeze({ allowedMessages }),
-            sandbox: Object.freeze({
-                scripts: true,
-                sameOrigin: false,
-                popups: false,
-                topNavigation: false,
-                mixedContent: false,
-            }),
-            runtimeDiagnostics: runtime.diagnostics,
-            ...(artifact ? { artifactGraph: artifact } : {}),
+            hostedWebPolicy,
+            ...(artifact ? { artifact } : {}),
             runtime,
-        });
+        }));
     }
     return ownedContributionKeys;
 }
@@ -579,7 +519,6 @@ function projectPluginUiEntries(input: Readonly<{
         const entriesById: Record<string, PluginUiProjectedEntryCandidate> = {};
         projectPluginUiTranslationsV1(registry, entriesById, requestedLocale);
         projectSessionHeaderActions(registry, entriesById);
-        projectSearchProviders(registry, entriesById);
         projectTranscriptActivities(registry, entriesById);
         projectSessionInfoSections(registry, entriesById, hostRuntime?.declarative, hostRuntime);
         projectGeneratedHostedWebRenderers(
@@ -610,10 +549,10 @@ export function projectPluginUiDeclarationEntries(registry: ResolvedContribution
     const entries = projectPluginUiEntries({ registry, generation: 0, hostRuntime: {
         declarative: { modelsByRendererKey },
     } });
-    // Search, Transcript and Session header/info execution remain Session/runtime-owned.
+    // Descriptive Search identities are portable; their query Action owns execution.
+    // Transcript and Session header/info execution remain Session/runtime-owned.
     const descriptive = Object.fromEntries(Object.entries(entries).filter(([, entry]) => (
-        entry.contributionKind !== 'searchProvider'
-        && entry.contributionKind !== 'transcriptActivity'
+        entry.contributionKind !== 'transcriptActivity'
         && entry.contributionKind !== 'sessionHeaderAction'
         && entry.contributionKind !== 'sessionInfoSection'
     )));

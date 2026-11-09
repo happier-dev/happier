@@ -1,12 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { decideMarketplaceListingInstallV1, decideMarketplaceListingReviewV1, readMarketplaceListingRegistryProfileRequirementV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
-import type { MarketplaceIndexItemV1, MarketplaceIndexQueryResultV1, MarketplaceListingInstallBlockV1 } from '@happier-dev/protocol';
+import type { MarketplaceIndexItemV1, MarketplaceListingInstallBlockV1 } from '@happier-dev/protocol';
 
 import { projectExpectedMarketplaceListing } from '@happier-dev/protocol/marketplace/internal';
 import type { ExpectedMarketplaceListingV1 } from '@happier-dev/protocol/marketplace/internal';
 
-import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
 import type { PluginRegistryProfileRequirement } from '@/plugins/daemon/changeContract';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 
@@ -85,6 +84,8 @@ export async function resolveExactMarketplaceListingForInstall(
     packageName?: string;
     /** The already reviewed release; omitted for latest-listing discovery. */
     version?: string;
+    /** A sealed caller commitment uses this operation's admitted source facts. */
+    expectedSourceBinding?: Pick<ExpectedMarketplaceListingV1, 'source' | 'registryProfileId'>;
   }>,
   serviceOverride?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'queryExactListing'>,
 ): Promise<
@@ -114,6 +115,12 @@ export async function resolveExactMarketplaceListingForInstall(
     return exact;
   }
   const source = exact.source;
+  const expectedSource = params.expectedSourceBinding;
+  if (expectedSource && (source.origin !== expectedSource.source.kind
+    || source.sourceUrl !== expectedSource.source.sourceUrl
+    || (source.registryProfileId ?? undefined) !== expectedSource.registryProfileId)) {
+    return { ok: false, code: 'source_changed', message: 'The exact marketplace source binding changed before installation.' };
+  }
   const result = exact.result;
 
   const listing = result.items.find((item) => (
@@ -146,61 +153,4 @@ export async function resolveExactMarketplaceListingForInstall(
     return { ok: false, code: 'source_changed', message: 'The exact private registry profile binding changed before installation.' };
   }
   return { ok: true, resolution: { source, listing: approvedListing, registryProfileId } };
-}
-
-export type ExactMarketplaceInstallResult =
-  | Readonly<{
-      ok: true;
-      listing: MarketplaceIndexItemV1;
-      change: UserPluginChangeResult;
-    }>
-  | Readonly<{
-      ok: false;
-      code: 'install_unavailable' | 'source_changed';
-      message: string;
-    }>
-  | Readonly<{
-      ok: false;
-      code: 'registry_profile_required';
-      message: string;
-      requirement: PluginRegistryProfileRequirement;
-    }>;
-
-export async function requestExactMarketplaceInstall(
-  params: Readonly<{
-    happyHomeDir: string;
-    sourceId: string;
-    pluginId: string;
-    /** The clicked listing's package name; see the resolver for why. */
-    packageName?: string;
-    version?: string;
-    approval?: 'prompt' | 'none';
-  }>,
-  dependencies: Readonly<{
-    marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'queryExactListing'>;
-    requestChange?: typeof requestUserPluginChange;
-  }> = {},
-): Promise<ExactMarketplaceInstallResult> {
-  const resolution = await resolveExactMarketplaceListingForInstall({
-    happyHomeDir: params.happyHomeDir,
-    sourceId: params.sourceId,
-    pluginId: params.pluginId,
-    ...(params.packageName ? { packageName: params.packageName } : {}),
-    ...(params.version !== undefined ? { version: params.version } : {}),
-  }, dependencies.marketplaceIndexService);
-  if (!resolution.ok) return resolution;
-  const { listing: approvedListing, registryProfileId } = resolution.resolution;
-
-  const change = await (dependencies.requestChange ?? requestUserPluginChange)({
-    request: {
-      kind: 'installNpm',
-      packageName: approvedListing.distribution.packageName,
-      selector: approvedListing.distribution.version,
-      registryOrigin: approvedListing.distribution.registryOrigin,
-      ...(registryProfileId ? { registryProfileId } : {}),
-      expectedMarketplaceListing: projectExpectedMarketplaceListing(approvedListing, registryProfileId),
-    },
-    approval: params.approval ?? 'none',
-  });
-  return { ok: true, listing: approvedListing, change };
 }

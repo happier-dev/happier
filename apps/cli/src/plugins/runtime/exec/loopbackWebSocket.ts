@@ -1,4 +1,4 @@
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { performance } from 'node:perf_hooks';
 import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type {

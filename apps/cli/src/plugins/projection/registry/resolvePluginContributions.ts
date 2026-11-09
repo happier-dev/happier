@@ -39,5 +39,3 @@ export async function resolvePluginContributes(
         admittedGraph,
     });
 }
-
-export { projectLoadedPluginContributes } from './fullProjection';

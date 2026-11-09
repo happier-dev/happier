@@ -15,8 +15,6 @@ import {
     createStablePluginEventsBroker,
     createPluginInvocationHostEventsService,
     createPluginInvocationPluginEventsService,
-    measureStablePluginEventPublicationBytes,
-    STABLE_PLUGIN_EVENT_QUEUE_LIMITS,
 } from './events';
 
 const publisherDeclarations: readonly ParsedPluginEventContributionV1[] = Object.freeze([
@@ -62,6 +60,25 @@ function services(params: Readonly<{
 }
 
 describe('stable invocation events service', () => {
+    it('binds an active subscriber before its declared publisher activates without granting cold emission authority', async () => {
+        const broker = createStablePluginEventsBroker();
+        const activePluginIds = new Set(['acme.subscriber']);
+        const host = { broker, activePluginIds, declarationsByPluginId: new Map([
+            ['acme.publisher', publisherDeclarations], ['acme.subscriber', subscriberDeclarations],
+        ]) };
+        const publisher = createPluginInvocationPluginEventsService({ ...host, seed: seed('acme.publisher') });
+        const subscriber = createPluginInvocationPluginEventsService({ ...host, seed: seed('acme.subscriber') });
+        const received: unknown[] = [];
+        const binding = subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, event => { received.push(event.payload); });
+        try {
+            await expect(publisher.emit('changed', { value: 1 })).rejects.toMatchObject({ code: 'plugin_events_generation_retired' });
+            activePluginIds.add('acme.publisher');
+            await publisher.emit('changed', { value: 2 });
+            await vi.waitFor(() => expect(received).toEqual([{ value: 2 }]));
+        } finally {
+            binding.dispose();
+        }
+    });
     it('delivers the Account Discussion invalidation through the public SDK Host Events service and retires it with the occurrence', async () => {
         const broker = createStablePluginEventsBroker();
         const controller = new AbortController();
@@ -106,74 +123,6 @@ describe('stable invocation events service', () => {
         expect(resolvePluginActionCaller(subscriberSeed)?.initiatingCaller).toBeUndefined();
         subscription.dispose();
     });
-    it('measures the selected queue limits against representative settings, notification, and runtime publications', () => {
-        const identity = {
-            pluginId: 'acme.notifications',
-            pluginVersion: '1.0.0',
-            contributionId: 'deliver',
-            contributionQualifiedId: 'acme.notifications/actions/deliver',
-            occurrenceId: 'current-occurrenceId-00000042',
-            correlationId: '01JZQQQQQQQQQQQQQQQQQQQQQQ',
-            surface: 'cli' as const,
-        };
-        const ref = { pluginId: 'acme.notifications', localId: 'changed' };
-        const measuredBytes = Object.freeze({
-            settingsChanged: measureStablePluginEventPublicationBytes({
-                ref,
-                identity,
-                payload: {
-                    contributionId: 'notification-channel/webhook',
-                    revision: 42,
-                    changedFieldIds: ['webhook.endpoint', 'webhook.enabled'],
-                },
-            }),
-            notificationDelivered: measureStablePluginEventPublicationBytes({
-                ref: { pluginId: 'acme.notifications', localId: 'delivery-result' },
-                identity,
-                payload: {
-                    channelId: 'webhook',
-                    categoryId: 'activity',
-                    deliveryId: '01JZQQQQQQQQQQQQQQQQQQQQQQ',
-                    status: 'delivered',
-                    attemptedAt: '2026-07-23T07:00:00.000Z',
-                    completedAt: '2026-07-23T07:00:00.250Z',
-                },
-            }),
-            runtimeLifecycle: measureStablePluginEventPublicationBytes({
-                ref: { pluginId: 'acme.runtime-observer', localId: 'session-state' },
-                identity: {
-                    ...identity,
-                    pluginId: 'acme.runtime-observer',
-                    contributionId: 'observe',
-                    contributionQualifiedId: 'acme.runtime-observer/subscriptions/observe',
-                    surface: 'cli',
-                },
-                payload: {
-                    sessionId: 'session_01JZQQQQQQQQQQQQQQQQQQQQQQ',
-                    agentId: 'claude',
-                    state: 'active',
-                    activity: 'thinking',
-                    sequence: 12_345,
-                    timestamp: '2026-07-23T07:00:00.000Z',
-                },
-            }),
-        });
-        const representativeMaximumBytes = Math.max(...Object.values(measuredBytes));
-
-        expect(measuredBytes).toEqual({
-            settingsChanged: 482,
-            notificationDelivered: 562,
-            runtimeLifecycle: 547,
-        });
-        expect(STABLE_PLUGIN_EVENT_QUEUE_LIMITS).toEqual({
-            pendingDeliveriesPerSubscription: 256,
-            pendingBytesPerSubscription: 1024 * 1024,
-        });
-        expect(
-            representativeMaximumBytes * STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription,
-        ).toBeLessThan(STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription);
-    });
-
     it('binds declared subscription registrations with schema filtering, priority order, and occurrenceId disposal', async () => {
         const broker = createStablePluginEventsBroker();
         const declarationsByPluginId = new Map<string, readonly ParsedPluginEventContributionV1[]>([
@@ -517,7 +466,7 @@ describe('stable invocation events service', () => {
         }));
     });
 
-    it('enforces the internal 256-delivery candidate and admits to all subscribers or none', async () => {
+    it('delivers a burst beyond the old queue count to every current subscriber in order', async () => {
         const queueSamples: Array<{
             family: 'plugin-event-broker';
             queuedItems: number;
@@ -534,32 +483,26 @@ describe('stable invocation events service', () => {
         const subscriber = services({ broker, pluginId: 'acme.subscriber' });
         let release!: () => void;
         const blocked = new Promise<void>((resolve) => { release = resolve; });
-        subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, async () => await blocked);
-        for (let index = 0; index < 256; index += 1) {
-            await expect(publisher.emit('changed', { index })).resolves.toMatchObject({ status: 'admitted' });
-        }
-        const lateListener = vi.fn();
-        subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, lateListener);
-
-        await expect(publisher.emit('changed', { index: 256 })).rejects.toMatchObject({
-            code: 'plugin_event_backpressure',
+        const received: unknown[] = [];
+        const slow = subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, async event => {
+            await blocked;
+            received.push(event.payload);
         });
-        expect(queueSamples.at(-2)).toMatchObject({
-            family: 'plugin-event-broker',
-            queuedItems: 256,
-            backpressured: false,
-            sequence: 256,
-        });
-        expect(queueSamples.at(-1)).toMatchObject({
-            family: 'plugin-event-broker',
-            queuedItems: 257,
-            backpressured: true,
-        });
-        expect(lateListener).not.toHaveBeenCalled();
-        release();
+        const peer = vi.fn();
+        const fast = subscriber.subscribe({ pluginId: 'acme.publisher', localId: 'changed' }, peer);
+        try {
+            for (let index = 0; index < 300; index += 1) {
+                await expect(publisher.emit('changed', { index })).resolves.toMatchObject({ status: 'admitted', sequence: index + 1, subscriberCount: 2 });
+            }
+            expect(queueSamples.at(-1)).toMatchObject({ queuedItems: 300, backpressured: false });
+            release();
+            await vi.waitFor(() => expect(received).toHaveLength(300));
+            expect(received).toEqual(Array.from({ length: 300 }, (_, index) => ({ index })));
+            expect(peer.mock.calls.map(([event]) => event.payload)).toEqual(received);
+        } finally { release(); slow.dispose(); fast.dispose(); }
     });
 
-    it('enforces the internal one-MiB encoded delivery candidate at exact and plus-one bytes', async () => {
+    it('delivers a valid payload beyond the old encoded byte ceiling without truncation', async () => {
         const ref: PluginContributionRef = { pluginId: 'acme.publisher', localId: 'changed' };
         const baseBytes = Buffer.byteLength(JSON.stringify({
             event: { ref, payload: '', sequence: 1 },
@@ -575,21 +518,6 @@ describe('stable invocation events service', () => {
         }), 'utf8');
         const exactPayload = 'x'.repeat((1024 * 1024) - baseBytes);
 
-        const exactSamples: Array<{ queuedBytes: number; backpressured: boolean }> = [];
-        const exactBroker = createStablePluginEventsBroker({
-            recordRuntimeLimitMeasurement: (sample) => {
-                if (sample.family === 'plugin-event-broker') exactSamples.push(sample);
-            },
-        });
-        const exactPublisher = services({ broker: exactBroker, pluginId: 'acme.publisher' });
-        const exactSubscriber = services({ broker: exactBroker, pluginId: 'acme.subscriber' });
-        exactSubscriber.subscribe(ref, async () => await new Promise<void>(() => {}));
-        await expect(exactPublisher.emit('changed', exactPayload)).resolves.toMatchObject({ status: 'admitted' });
-        expect(exactSamples.at(-1)).toMatchObject({
-            queuedBytes: 1024 * 1024,
-            backpressured: false,
-        });
-
         const overflowSamples: Array<{ queuedBytes: number; backpressured: boolean }> = [];
         const overflowBroker = createStablePluginEventsBroker({
             recordRuntimeLimitMeasurement: (sample) => {
@@ -598,15 +526,17 @@ describe('stable invocation events service', () => {
         });
         const overflowPublisher = services({ broker: overflowBroker, pluginId: 'acme.publisher' });
         const overflowSubscriber = services({ broker: overflowBroker, pluginId: 'acme.subscriber' });
-        overflowSubscriber.subscribe(ref, async () => {});
-        await expect(overflowPublisher.emit('changed', `${exactPayload}x`)).rejects.toMatchObject({
-            code: 'plugin_event_backpressure',
-        });
+        const listener = vi.fn();
+        const subscription = overflowSubscriber.subscribe(ref, listener);
+        await expect(overflowPublisher.emit('changed', `${exactPayload}x`)).resolves.toMatchObject({ status: 'admitted' });
+        await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+        expect(listener.mock.calls[0]?.[0].payload.length).toBe(exactPayload.length + 1);
         expect(overflowSamples.at(-1)).toMatchObject({
             queuedItems: 1,
             queuedBytes: (1024 * 1024) + 1,
-            backpressured: true,
+            backpressured: false,
         });
+        subscription.dispose();
     });
 
     it('admits an oversized event when there are no subscriber queues to allocate', async () => {
@@ -765,11 +695,9 @@ describe('stable invocation events service', () => {
         }));
     });
 
-    it('drops bounded Host Event overflow, isolates listener failure, and stops after retirement or disposal', async () => {
-        const dropped = vi.fn();
+    it('delivers a host-event burst, isolates listener failure, and stops after retirement or disposal', async () => {
         const failed = vi.fn();
         const broker = createStablePluginEventsBroker({
-            onHostDeliveryDropped: dropped,
             onHostListenerError: failed,
         });
         let current = true;
@@ -777,9 +705,10 @@ describe('stable invocation events service', () => {
         const blocked = new Promise<void>((resolve) => { release = resolve; });
         const subscription = broker.subscribeHost({
             target: { eventId: '@happier/runtime/turn-complete', scope: { kind: 'session', sessionId: 'session-1' } },
-            listener: async () => await blocked,
+            listener: async () => { await blocked; delivered += 1; },
             isCurrent: () => current,
         });
+        let delivered = 0;
         const event = {
             sequence: 1,
             sessionId: 'session-1',
@@ -787,17 +716,14 @@ describe('stable invocation events service', () => {
             kind: 'turn-complete',
             turnId: 'turn-1',
         } as const;
-        for (let index = 0; index < STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription; index += 1) {
+        for (let index = 0; index < 300; index += 1) {
             expect(() => broker.publishHostEvent({ ...event, sequence: index + 1 })).not.toThrow();
         }
-        expect(() => broker.publishHostEvent({ ...event, sequence: 257 })).not.toThrow();
-        expect(dropped).toHaveBeenCalledWith({
-            eventId: '@happier/runtime/turn-complete',
-            reason: 'delivery_limit',
-        });
         release();
+        await vi.waitFor(() => expect(delivered).toBe(300));
         current = false;
         broker.publishHostEvent({ ...event, sequence: 258 });
+        expect(delivered).toBe(300);
         await subscription.dispose();
 
         const throwing = broker.subscribeHost({

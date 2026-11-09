@@ -6,7 +6,7 @@ import type {
   PluginActionPresentUserAuthorizationFacts,
   PluginActionPresentUserGatePolicy,
 } from '@happier-dev/protocol';
-import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { pluginActionRequiresPresentUserIntent, pluginActionRequiresSessionContext } from '@happier-dev/protocol/plugins/actions/invocation';
 import { evaluateContributionAvailability } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { ContributionPolicyFacts, PluginAvailabilityDescriptorV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 
@@ -165,7 +165,7 @@ export function evaluateTargetActionPolicy(params: Readonly<{
   if (!params.action.surfaces.includes(params.surface)) {
     return Object.freeze({ outcome: 'unavailable', code: 'plugin_action_surface_unavailable', requiresCurrentIntent: requiresIntent });
   }
-  if (params.action.scopes.includes('session') && !params.sessionId) {
+  if (pluginActionRequiresSessionContext(params.action.scopes) && !params.sessionId) {
     return Object.freeze({ outcome: 'unavailable', code: 'plugin_action_session_required', requiresCurrentIntent: requiresIntent });
   }
   return evaluateTargetActionCatalogPolicy({

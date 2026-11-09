@@ -130,6 +130,7 @@ function confirmationUnavailable(requestId: string): InteractionTransientConfirm
 }
 
 type InvocationInteractionParams = Readonly<{
+    reviewedParent?: PluginInvocationServicesSeed['reviewedParent'];
     currentSession: CurrentSessionUiBinding | null;
     signal: AbortSignal;
     isOccurrenceCurrent: () => boolean;
@@ -184,7 +185,7 @@ export function readActiveTurnPermissionContext(
 
 export function createPluginInteractionsService(params: InvocationInteractionParams): InteractionsService {
     const createOperationId = params.createOperationId ?? randomUUID;
-    if (!params.currentSession) return createUnavailableInteractions(params.approvals, createOperationId);
+    if (!params.currentSession && !params.reviewedParent) return createUnavailableInteractions(params.approvals, createOperationId);
 
     const currentSession = params.currentSession;
     const isCurrent = (): boolean => {
@@ -237,7 +238,14 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
             interactionOptions?: InteractionOptions,
         ): Promise<InteractionTransientApprovalResultV1> {
             const fallbackRequestId = createOperationId();
-            if (!currentSession.interactions) {
+            if (params.reviewedParent) {
+                if (params.signal.aborted || interactionOptions?.signal?.aborted) {
+                    return Object.freeze({ requestId: fallbackRequestId, kind: 'approval', status: 'requesterAborted' });
+                }
+                if (!isCurrent()) return Object.freeze({ requestId: fallbackRequestId, kind: 'approval', status: 'occurrenceRetired' });
+                return Object.freeze({ requestId: fallbackRequestId, kind: 'approval', status: 'approved', persistence: 'once' });
+            }
+            if (!currentSession?.interactions) {
                 return approvalUnavailable(fallbackRequestId);
             }
             try {
@@ -260,7 +268,7 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
             questionOptions?: InteractionOptions,
         ): Promise<InteractionTransientQuestionsResultV1> {
             const fallbackRequestId = createOperationId();
-            if (!currentSession.interactions) {
+            if (!currentSession?.interactions) {
                 return questionsUnavailable(fallbackRequestId);
             }
             try {
@@ -283,7 +291,14 @@ export function createPluginInteractionsService(params: InvocationInteractionPar
             confirmOptions?: InteractionOptions,
         ): Promise<InteractionTransientConfirmationResultV1> {
             const fallbackRequestId = createOperationId();
-            if (!currentSession.interactions) return confirmationUnavailable(fallbackRequestId);
+            if (params.reviewedParent) {
+                if (params.signal.aborted || confirmOptions?.signal?.aborted) {
+                    return Object.freeze({ requestId: fallbackRequestId, kind: 'confirmation', status: 'requesterAborted' });
+                }
+                if (!isCurrent()) return Object.freeze({ requestId: fallbackRequestId, kind: 'confirmation', status: 'occurrenceRetired' });
+                return Object.freeze({ requestId: fallbackRequestId, kind: 'confirmation', status: 'approved' });
+            }
+            if (!currentSession?.interactions) return confirmationUnavailable(fallbackRequestId);
             try {
                 assertCurrent();
                 const result = await currentSession.interactions.request(request, operationOptions(confirmOptions));

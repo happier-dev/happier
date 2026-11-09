@@ -14,7 +14,7 @@ const { getResolvedContributionRegistry, getRuntimeRegistryState, isRuntimeRegis
   isRuntimeRegistryCurrent: vi.fn(() => true),
 }));
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', () => ({
   getResolvedContributionRegistry,
 }));
 vi.mock('@/plugins/runtime/reload/singleton', () => ({

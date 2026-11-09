@@ -425,7 +425,12 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
     await expect(owner.listPublicProjection({
       accountId: 'account-1',
       input: { transport: { kind: 'checkpointedPull' }, pageSize: 500, knownRevision: '7' },
-    })).resolves.toEqual({ kind: 'unchanged', revision: '7' });
+    })).resolves.toEqual({
+      kind: 'page',
+      revision: '7',
+      definitions: [expect.objectContaining({ automationId: definition.automationId })],
+      nextCursor: null,
+    });
 
     expect(readStoredDefinitions).toHaveBeenCalledTimes(3);
     expect(readStoredDefinitions).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -440,6 +445,16 @@ describe('createAutomationEventAdoptedDefinitionSetV1', () => {
     expect(projectPrivateDefinition).toHaveBeenNthCalledWith(2, expect.objectContaining({
       eventDeclarationRelease: releaseB,
     }));
+
+    // Once release B is adopted, an equal wake confirms the revision without
+    // re-reading or re-projecting the stored definition snapshot.
+    await expect(owner.listPublicProjection({
+      accountId: 'account-1',
+      input: { transport: { kind: 'checkpointedPull' }, pageSize: 500, knownRevision: '7' },
+    })).resolves.toEqual({ kind: 'unchanged', revision: '7' });
+    expect(readStoredDefinitions).toHaveBeenCalledTimes(4);
+    expect(fullReads).toBe(2);
+    expect(projectPrivateDefinition).toHaveBeenCalledTimes(2);
   });
 
   it('returns only the exact current durable webhook endpoint and private routing source for a host invocation', async () => {

@@ -5,7 +5,6 @@ import { addAbortSignal, type Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { once } from 'node:events';
 
-import { createStreamingIntegrityVerifier } from '../integrity';
 import { verifyNpmRegistrySignatures } from './signatures';
 import type { DownloadedNpmArtifactCandidate, NpmRegistrySigningKey, ResolvedNpmArtifact } from './types';
 
@@ -40,7 +39,6 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
     throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
   }
 
-  const integrity = createStreamingIntegrityVerifier(params.resolved.integrity);
   await mkdir(dirname(params.destinationPath), { recursive: true });
   const file = await open(params.destinationPath, 'wx').catch((error: unknown) => {
     response.body.destroy();
@@ -54,14 +52,12 @@ export async function downloadResolvedNpmArtifact(params: Readonly<{
       const chunk = typeof value === 'string' ? Buffer.from(value) : Buffer.from(value);
       byteLength += chunk.byteLength;
       if (params.maxBytes != null && byteLength > params.maxBytes) throw new Error(`Npm artifact exceeds the configured size limit (${params.maxBytes} bytes)`);
-      integrity.update(chunk);
       archiveSha256.update(chunk);
       if (!output.write(chunk)) await once(output, 'drain');
     }
     output.end();
     await finished(output);
     params.signal?.throwIfAborted();
-    if (!integrity.verify()) throw new Error('Npm artifact integrity verification failed');
     const archiveDigestSha256 = `sha256:${archiveSha256.digest('hex')}` as const;
     const registrySignature = verifyNpmRegistrySignatures({
       packageName: params.resolved.packageName,

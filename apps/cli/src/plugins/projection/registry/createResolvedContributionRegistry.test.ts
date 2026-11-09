@@ -9,9 +9,8 @@ import {
   getAllAgentDefinitionContracts,
 } from '@happier-dev/agents';
 
-import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
-import { getResolvedContributionRegistry } from './builtIn/snapshot';
-import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
+import { createResolvedContributionRegistry, resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
   PluginContributesV2Schema,
   createPluginContributionIdentity,
@@ -25,6 +24,7 @@ import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { ResolvedActivatedHookRegistration } from './types';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../../packages/plugins/deepseek/src/provider/contribution';
 
 async function writeInstalledSettingsPlugin(params: Readonly<{
   happyHomeDir: string;
@@ -461,7 +461,7 @@ describe('getResolvedContributionRegistry', () => {
     });
   });
 
-  it('derives only current, exact plugin Event setup Actions without activating a plugin', () => {
+  it('derives only current, exact plugin Event setup Actions and preserves localized presentation without activating a plugin', () => {
     const action = (
       pluginId: string,
       id: string,
@@ -512,6 +512,7 @@ describe('getResolvedContributionRegistry', () => {
       localId: string,
       setupActionLocalId: string,
       historyGapResetActionLocalId?: string,
+      localized = true,
     ) => ({
       provenance: 'external' as const,
       source: { kind: 'path' as const },
@@ -522,8 +523,8 @@ describe('getResolvedContributionRegistry', () => {
         id: `${pluginId}/${localId}`,
         localId,
         kind: 'event' as const,
-        title: `${pluginId} event`,
-        description: `${pluginId} description`,
+        title: localized ? { key: `${pluginId}.event.title`, fallback: `${pluginId} event ({count})`, params: { count: 2 } } : `${pluginId} event`,
+        description: localized ? { key: `${pluginId}.event.description`, fallback: `${pluginId} description` } : `${pluginId} description`,
         payloadSchema: { type: 'object', additionalProperties: false },
         automation: {
           v: 1 as const,
@@ -551,7 +552,7 @@ describe('getResolvedContributionRegistry', () => {
       ],
       events: [
         event('alpha.plugin', 'repository/updated', 'configure-source', 'baseline-history-gap'),
-        event('beta.plugin', 'repository/updated', 'configure-source'),
+        event('beta.plugin', 'repository/updated', 'configure-source', undefined, false),
       ],
       occurrenceIdsByPluginId: {
         'alpha.plugin': alphaOccurrenceId,
@@ -568,6 +569,9 @@ describe('getResolvedContributionRegistry', () => {
           id: 'alpha.plugin/repository/updated',
           identity: { pluginId: 'alpha.plugin', localId: 'repository/updated' },
           occurrenceId: alphaOccurrenceId,
+          title: 'alpha.plugin event ({count})',
+          description: 'alpha.plugin description',
+          localizedPresentation: { title: inputs.events[0].definition.title, description: inputs.events[0].definition.description },
         }),
         setupAction: expect.objectContaining({
           id: 'alpha.plugin/configure-source',
@@ -593,6 +597,8 @@ describe('getResolvedContributionRegistry', () => {
         }),
       }),
     ]);
+
+    expect(registry.automationEligibleEvents?.[1].event).not.toHaveProperty('localizedPresentation');
 
     const staleOccurrence = createResolvedContributionRegistry({
       ...inputs,
@@ -747,6 +753,35 @@ describe('getResolvedContributionRegistry', () => {
     }
   });
 
+  it('selects one Provider through the real merge and observes replacement, edits and withdrawal on later invocations', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-selection-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-provider-selection-plugin-'));
+    const pluginId = 'happier.provider.deepseek';
+    const contributionKey = `${pluginId}/deepseek`;
+    try {
+      const read = () => resolveMergedContributionRegistry({ happyHomeDir, providerContributionKeys: [contributionKey] });
+      const bundled = await read();
+      expect([...bundled.providersByContributionKey.keys()]).toEqual([contributionKey]);
+      expect(bundled.agents).toHaveLength(0);
+      expect(bundled.actions).toHaveLength(0);
+      await writeInstalledSettingsPlugin({ happyHomeDir, pluginRoot, pluginId, settingsId: 'replacement' });
+      expect((await read()).providersByContributionKey.size).toBe(0);
+      const writeDeclaration = async (name: string) => writeFile(join(pluginRoot, '.happier-plugin/plugin.json'),
+        JSON.stringify(createPluginManifestV2Fixture({ id: pluginId, contributes: {
+          providers: [{ ...DEEPSEEK_PROVIDER_CONTRIBUTION, name }],
+        } })), 'utf8');
+      await writeDeclaration('Installed Provider');
+      expect((await read()).providersByContributionKey.get(contributionKey)?.definition.name).toBe('Installed Provider');
+      await writeDeclaration('Changed Provider');
+      expect((await read()).providersByContributionKey.get(contributionKey)?.definition.name).toBe('Changed Provider');
+      await writeInstalledSettingsPlugin({ happyHomeDir, pluginRoot, pluginId, settingsId: 'withdrawn' });
+      expect((await read()).providersByContributionKey.size).toBe(0);
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(pluginRoot, { recursive: true, force: true });
+    }
+  });
+
   it('preserves bundled MCP contribution families through the merged registry', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-mcp-merge-home-'));
 
@@ -839,8 +874,6 @@ describe('getResolvedContributionRegistry', () => {
     })).toThrow("Duplicate action contribution 'acme.plugin/review-start'");
   });
 
-
-
   it('does not admit the retired static hook-registration input', () => {
     const validHook: ResolvedActivatedHookRegistration = {
       provenance: 'external',
@@ -855,7 +888,6 @@ describe('getResolvedContributionRegistry', () => {
         installPolicy: 'link',
       },
       definition: {
-        hookApiVersion: 1,
         id: 'session.spawned',
         category: 'lifecycle',
         scope: 'session',

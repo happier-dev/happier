@@ -2,7 +2,7 @@ import type { PluginAccountSettingsRecordAdapter } from './invocation/services/s
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { SettingsService } from '@happier-dev/plugin-sdk/settings';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { PluginSettingsContributionV2 } from '@happier-dev/protocol';
+import type { ResolvedSettingsContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { readPluginSettingsValuesWithDefaults } from './invocation/services/settings';
 
@@ -16,7 +16,7 @@ export type AgentPluginAccountSettingsSource = Readonly<{
 export async function resolveAgentPluginSettingsFromService(params: Readonly<{
     pluginId: string;
     localAgentId: string;
-    declarations: readonly Readonly<{ pluginId: string; definition: PluginSettingsContributionV2 }>[];
+    declarations: readonly Pick<ResolvedSettingsContribution, 'pluginId' | 'definition'>[];
     resolveSettingsService(): Pick<SettingsService, 'forScope'> | null;
     includeDefaults?: boolean;
     releasedAccountSettings?: NonNullable<Parameters<typeof readPluginSettingsValuesWithDefaults>[1]>['releasedAccountSettings'];

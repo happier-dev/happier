@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
+import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { getPluginHookDefinitionV1 } from '@happier-dev/protocol/plugins/hooks';
 
@@ -45,6 +46,7 @@ type TargetHookInvocationContext = PluginInvocationContext & Readonly<{
 
 export type TargetInvocationServiceOwner = Readonly<{
     createOrdinaryServiceBinding: CreatePluginInvocationServiceBinding;
+    resolveCurrentPluginMaterializationRef?(pluginId: string): PluginMachineMaterializationRefV1 | null;
     resolveInvocationHostPolicy?: ResolvePluginInvocationHostPolicy;
     createServices: CreatePluginInvocationServices;
     prepareBackgroundServiceProcessLocalPolicy?(
@@ -117,10 +119,9 @@ export type TargetHookHandlerRegistry = Readonly<{
 /**
  * Joins activation-owned hook handlers onto their manifest declarations.
  *
- * A declaration that contradicts the canonical hook contract is a defect in
- * exactly one plugin, so it fails that hook closed with the same
- * `plugin_activation_failed` diagnostic the activation owner uses to isolate a
- * throwing `activate()`. It must never take every other plugin's hooks down.
+ * Manifest ingestion derives hook facts from the canonical catalog. Projection
+ * retains the missing-definition refusal and isolates activation failures to
+ * the affected plugin.
  */
 export function createTargetHookHandlerRegistry(params: Readonly<{
     activationTargets: readonly ActivationTarget[];
@@ -161,19 +162,11 @@ export function createTargetHookHandlerRegistry(params: Readonly<{
             continue;
         }
         const canonicalDefinition = getPluginHookDefinitionV1(declaration.on);
-        if (!canonicalDefinition
-            || declaration.category !== canonicalDefinition.category
-            || declaration.scope !== canonicalDefinition.scope
-            || declaration.executionKind !== canonicalDefinition.executionKind) {
+        if (!canonicalDefinition) {
             refuse(
                 entry.pluginId,
                 localId,
-                `Target hook registration '${entry.pluginId}/hooks/${localId}' does not match the canonical hook contract`
-                + (canonicalDefinition
-                    ? `: hook '${declaration.on}' is `
-                      + `category '${canonicalDefinition.category}', scope '${canonicalDefinition.scope}', `
-                      + `executionKind '${canonicalDefinition.executionKind}'`
-                    : `: hook '${declaration.on}' has no canonical definition`),
+                `Target hook registration '${entry.pluginId}/hooks/${localId}': hook '${declaration.on}' has no canonical definition`,
             );
             continue;
         }
@@ -191,15 +184,12 @@ export function createTargetHookHandlerRegistry(params: Readonly<{
             devDaemonEntryPath: target.devDaemonEntryPath,
             sourceSpec: target.sourceSpec,
             definition: Object.freeze({
-                hookApiVersion: 1,
                 id: declaration.on,
-                category: declaration.category,
-                scope: declaration.scope,
+                category: canonicalDefinition.category,
+                scope: canonicalDefinition.scope,
                 ...(declaration.filters ? { filters: declaration.filters } : {}),
-                executionKind: declaration.executionKind,
+                executionKind: canonicalDefinition.executionKind,
                 priority: declaration.priority,
-                ...(declaration.compatibility ? { compatibility: declaration.compatibility } : {}),
-                ...(declaration.metadata ? { metadata: declaration.metadata } : {}),
             }),
         });
         const handler: HookHandler = entry.registration.value;

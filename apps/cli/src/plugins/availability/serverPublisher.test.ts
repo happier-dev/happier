@@ -136,6 +136,11 @@ describe('server plugin Availability publisher', () => {
     vi.mocked(axios.post).mockResolvedValueOnce({ data: normal });
     await expect(readServerPluginManagedResources(binding, 'com.acme.fixture')).rejects.toThrow('plugin_managed_resource_preflight_unavailable');
     vi.mocked(axios.post).mockResolvedValueOnce({ data: { ...normal, managedResources: [{
+      managedId: 'account-resource', homeId: binding.homeId, custodianAccountId: 'current-account', intentRevision: 1,
+      provider: { pluginId: 'com.acme.fixture', localId: 'compute' }, allocation: 'may-exist',
+    }], managedResourcesReviewed: true } });
+    await expect(readServerPluginManagedResources(binding, 'com.acme.fixture')).rejects.toThrow('plugin_managed_resource_preflight_unavailable');
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: { ...normal, managedResources: [{
       managedId: 'foreign-resource', homeId: 'home-b', custodianAccountId: 'current-account', intentRevision: 1,
       controller: binding.controller, provider: { pluginId: 'com.acme.fixture', localId: 'compute' }, allocation: 'may-exist',
     }], managedResourcesReviewed: true } });

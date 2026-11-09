@@ -26,6 +26,7 @@ type PluginRuntimeConsumerAssembly = Readonly<{
     fencePlugins(pluginIds: readonly string[]): void;
     retirePlugins(pluginIds: readonly string[]): Promise<void>;
     retireAll(reason: unknown): void;
+    dispose(reason: unknown): void;
 }>;
 
 export function assemblePluginRuntimeConsumers(input: Readonly<{
@@ -57,12 +58,11 @@ export function assemblePluginRuntimeConsumers(input: Readonly<{
         return lifecycle;
     };
     const isPluginCurrent = (pluginId: string): boolean => resolveLifecycle(pluginId).isCurrent();
-    const fencePlugins = (pluginIds: readonly string[]): void => {
+    const fenceLocalLifecycles = (pluginIds: readonly string[]): void => {
         const newlyRetired = [...new Set(pluginIds)].filter(
             (pluginId) => !retiredPluginIds.has(pluginId),
         );
         if (newlyRetired.length === 0) return;
-        input.activatedRegistry.retireBackgroundServices(newlyRetired);
         for (const pluginId of newlyRetired) {
             input.onFencePlugin(pluginId);
             retiredPluginIds.add(pluginId);
@@ -72,9 +72,26 @@ export function assemblePluginRuntimeConsumers(input: Readonly<{
             }
         }
     };
+    const fencePlugins = (pluginIds: readonly string[]): void => {
+        input.activatedRegistry.retireBackgroundServices(
+            [...new Set(pluginIds)].filter(pluginId => !retiredPluginIds.has(pluginId)),
+        );
+        fenceLocalLifecycles(pluginIds);
+    };
     const retirePlugins = async (pluginIds: readonly string[]): Promise<void> => {
         fencePlugins(pluginIds);
         await input.retirePluginDatabases(pluginIds);
+    };
+    const dispose = (reason: unknown): void => {
+        if (allRetired) return;
+        allRetired = true;
+        const pluginIds = [...lifecycles.keys()];
+        // These contexts belong to this registry. Retained activation
+        // components have their own reference-counted lifetime; disposing a
+        // composite must not retire their background services.
+        fenceLocalLifecycles(pluginIds);
+        void input.retirePluginDatabases(pluginIds).catch(() => undefined);
+        allRetirement.abort(reason);
     };
     return Object.freeze({
         allRetirementSignal: allRetirement.signal,
@@ -99,21 +116,18 @@ export function assemblePluginRuntimeConsumers(input: Readonly<{
                 ? input.activatedRegistry.readPluginSourceCustody(pluginId)
                 : null
         ),
-        composeSignal(pluginId: string, callerSignal?: AbortSignal): AbortSignal {
-            const retirementSignal = resolveLifecycle(pluginId).retirementSignal;
+        composeSignal(_pluginId: string, callerSignal?: AbortSignal): AbortSignal {
             return callerSignal
-                ? AbortSignal.any([callerSignal, retirementSignal])
-                : retirementSignal;
+                ? AbortSignal.any([callerSignal, allRetirement.signal])
+                : allRetirement.signal;
         },
         fencePlugins,
         retirePlugins,
         retireAll(reason: unknown): void {
             if (allRetired) return;
-            allRetired = true;
-            for (const pluginId of lifecycles.keys()) {
-                void retirePlugins([pluginId]).catch(() => undefined);
-            }
-            allRetirement.abort(reason);
+            fencePlugins([...lifecycles.keys()]);
+            dispose(reason);
         },
+        dispose,
     });
 }

@@ -61,6 +61,22 @@ async function materializePlugin(rootDir: string): Promise<void> {
 }
 
 describe('buildPluginInstallApprovalPreview', () => {
+  it('presents retained daemon rights as last-known without probing or claiming current authority', async () => {
+    const evaluation = daemonEvaluation({ kind: 'path', locator: '/unavailable-reviewed-source' });
+    const review = createPluginInstallationReviewFixture({ daemonRights: {
+      freshness: 'current', observation: {
+        version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
+        rootEquivalentGroups: ['docker'], passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
+        tailscaledOperator: { authorization: 'allowed' },
+      },
+    } });
+    expect(await buildPluginInstallApprovalPreview({ input: { path: '/unavailable-reviewed-source' },
+      defaultPreview: {}, daemonEvaluation: { ...evaluation, review } })).toMatchObject({
+        pluginInstall: { daemonAuthority: { hostAuthority: 'unknown', lastKnownHostAuthority: 'administrator', freshness: 'stale',
+          tailscaledOperator: { authorization: 'allowed', currentAuthorization: 'unknown' } } },
+      });
+  });
+
   it('previews the requested marketplace pin without presenting unverified permissions as empty', async () => {
     const source = { kind: 'marketplace', sourceId: 'marketplace:team', pluginId: 'acme.plugin', version: '1.2.3' };
     expect(await buildPluginInstallApprovalPreview({ input: { source, machineId: 'machine-1' },
@@ -115,6 +131,7 @@ describe('buildPluginInstallApprovalPreview', () => {
           },
           permissionsDisclosure: 'daemonEvaluated',
           pendingReview: evaluation,
+          daemonAuthority: expect.objectContaining({ hostAuthority: 'unknown' }),
         },
       });
     } finally {

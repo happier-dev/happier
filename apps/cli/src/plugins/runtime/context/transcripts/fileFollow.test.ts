@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,7 +29,8 @@ function createDeferred(): Readonly<{
 }
 
 describe('createPluginTranscriptFileFollowService', () => {
-    it('follows the exact SessionStart transcript when its file is created after the hook', async () => {
+    it.each(['sessionStartTranscriptPath', 'authenticatedStatuslineTranscriptPath'] as const)(
+        'follows the exact %s transcript when its file is created after the observation', async (kind) => {
         const root = await createTempRoot('happier-plugin-file-follow-late-');
         const filePath = join(root, 'provider-session.jsonl');
         const registry = createTranscriptFileFollowPathGrantRegistry();
@@ -42,7 +43,7 @@ describe('createPluginTranscriptFileFollowService', () => {
                 scope,
                 path: filePath,
                 reason: 'providerTranscriptSource',
-                evidence: { kind: 'sessionStartTranscriptPath', providerSessionId: 'provider-late' },
+                evidence: { kind, providerSessionId: 'provider-late' },
             });
             const service = createPluginTranscriptFileFollowService({
                 pluginId: 'acme.transcript',
@@ -100,7 +101,8 @@ describe('createPluginTranscriptFileFollowService', () => {
         }
     });
 
-    it('does not turn a pending SessionStart grant into a symlink or sibling grant', async () => {
+    it.each(['sessionStartTranscriptPath', 'authenticatedStatuslineTranscriptPath'] as const)(
+        'does not turn a pending %s grant into a symlink or sibling grant', async (kind) => {
         const root = await createTempRoot('happier-plugin-file-follow-late-boundary-');
         const outsideRoot = await createTempRoot('happier-plugin-file-follow-late-outside-');
         const filePath = join(root, 'provider-session.jsonl');
@@ -114,7 +116,7 @@ describe('createPluginTranscriptFileFollowService', () => {
                 scope,
                 path: filePath,
                 reason: 'providerTranscriptSource',
-                evidence: { kind: 'sessionStartTranscriptPath', providerSessionId: 'provider-late' },
+                evidence: { kind, providerSessionId: 'provider-late' },
             });
             await writeFile(outsidePath, '{"outside":true}\n', 'utf8');
             await symlink(outsidePath, filePath);
@@ -831,8 +833,4 @@ describe('createPluginTranscriptFileFollowService', () => {
         }
     });
 
-    it('keeps provider parsing out of the host file-follow service', async () => {
-        const source = await readFile(new URL('./fileFollow.ts', import.meta.url), 'utf8');
-        expect(source).not.toContain('JSON.parse');
-    });
 });

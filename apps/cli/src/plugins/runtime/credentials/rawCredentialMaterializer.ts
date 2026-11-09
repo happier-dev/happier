@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountMaterialization as PluginConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { VoiceRawCredentialAccess } from '@happier-dev/plugin-sdk/voice';
-import { CredentialAccessDeclarationDigestSchema, CredentialAccessSelectedAuthorityDigestSchema, CredentialAccessSelectedRawAccessDigestSchema, PluginCredentialAccessSlotIdSchema, PluginPermissionGrantListActionInputV1Schema, PluginPermissionGrantListActionOutputV1Schema, PluginPermissionSubjectV1Schema, pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import { CredentialAccessDeclarationDigestSchema, CredentialAccessSelectedAuthorityDigestSchema, CredentialAccessSelectedRawAccessDigestSchema, PluginCredentialAccessSlotIdSchema, PluginPermissionSubjectV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
+import { deriveVoiceCredentialBindingIdentityV1, resolveVoiceCredentialMediatedGrantDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/voice';
 import { resolveSavedSecretCatalogVoiceCredentialSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginMachineMaterializationRefV1, PluginPermissionGrantAuthoritySourceV1, PluginPermissionSubjectV1, QualifiedConnectedAccountRef, VoiceCredentialAccessPhase, VoiceCredentialSource, VoiceProviderContribution } from '@happier-dev/protocol';
 
@@ -23,15 +23,15 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
   createSavedSecretMaterializerFromSnapshotV1,
-  type SavedSecretResolutionFailureStatusV1,
   type SavedSecretMaterializerV1,
+  type SavedSecretResolutionFailureStatusV1,
   type SavedSecretResolutionV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { evaluatePluginPermissionGrant } from '@/plugins/runtime/lifecycle/permissions/evaluatePluginPermissionGrant';
+import { admitPluginCredentialGrant, savedSecretCredentialGrantRequirement } from './credentialGrantAdmission';
 import type { PluginPermissionGrantListReader } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantListReader';
 
 type VoiceRawCredentialMaterializationRequest = Parameters<
@@ -54,6 +54,11 @@ const DECLARATION_DIGEST_DOMAIN = 'happier.plugin.credential-access-disclosure.v
 const SELECTED_AUTHORITY_DIGEST_DOMAIN = 'happier.plugin.credential-access-selected-authority.v1\0';
 const SELECTED_RAW_ACCESS_DIGEST_DOMAIN = 'happier.plugin.credential-access-selected-raw-access.v1\0';
 const RAW_CREDENTIAL_CALLBACK_REVISION_DOMAIN = 'happier.plugin.raw-credential-callback-revision.v1\0';
+const CONNECTED_ACCOUNT_SELECTION_REFUSALS: ReadonlySet<string> = new Set([
+  'plugin_host_access_resource_not_selected',
+  'plugin_connected_account_binding_out_of_scope',
+  'plugin_connected_account_team_resource_unavailable',
+]);
 
 export type { PluginPermissionGrantListReader } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantListReader';
 
@@ -80,7 +85,7 @@ export type CurrentPluginPermissionGrantAuthoritySourceReader =
 
 export type PluginRawCredentialMaterializerBinding = Readonly<{
   /** Exact installed/admitted G manifest. Desired-H inequality alone does not retire this authority. */
-  manifest: CanonicalPluginManifest;
+  manifest: Pick<CanonicalPluginManifest, 'id' | 'contributes'>;
   contribution: PluginContributionIdentityV1;
   realm: 'web' | 'ios' | 'android' | 'daemon';
   phase: VoiceCredentialAccessPhase;
@@ -115,6 +120,8 @@ export type PluginRawCredentialAuthorizationInspection = Readonly<{
   subject: PluginPermissionSubjectV1;
   /** The machine installation this authorization is scoped to. */
   authoritySource: PluginPermissionGrantAuthoritySourceV1;
+  /** `linked`: the person's own selected Saved Secret; the link is the grant. */
+  grantRequirement: 'linked' | 'approval_required';
   disclosures: readonly PluginRawCredentialDisclosureRow[];
 }>;
 
@@ -157,6 +164,7 @@ type SelectedSource = Readonly<{
     snapshot: ActiveAccountSettingsSnapshot;
     secretRef: string;
     fingerprint: string;
+    ownedByRequester: boolean;
     /** Opaque, source-neutral callback receipt; never carries secret material. */
     callbackCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }> | null;
@@ -257,13 +265,17 @@ export function createInvocationVoiceRawCredentialAccess(input: Readonly<{
   // credential revisions. A rejected call is deliberately absorbed by the tail
   // so later calls can still prove the already-captured basis.
   let materializationTail: Promise<void> = Promise.resolve();
-  const assertInvocationCurrent = () => {
-    if (input.signal.aborted || !input.isCurrent()) throw unavailable();
-  };
   return Object.freeze({
     async materialize(request, options = {}) {
+      // Each acquisition is admitted once, here. A result already in flight is
+      // dropped only by cancellation, not by a later currentness change.
+      const throwIfCancelled = () => {
+        if (input.signal.aborted) throw unavailable();
+        options.signal?.throwIfAborted();
+      };
       const operation = materializationTail.then(async () => {
-        assertInvocationCurrent();
+        throwIfCancelled();
+        if (!input.isCurrent()) throw unavailable();
         const signal = options.signal && options.signal !== input.signal
           ? AbortSignal.any([input.signal, options.signal])
           : input.signal;
@@ -279,8 +291,7 @@ export function createInvocationVoiceRawCredentialAccess(input: Readonly<{
               },
             }),
           });
-          assertInvocationCurrent();
-          options.signal?.throwIfAborted();
+          throwIfCancelled();
           if (capturedCredentialRevision === null) throw unavailable();
           if (
             expectedCredentialRevision !== null
@@ -289,8 +300,7 @@ export function createInvocationVoiceRawCredentialAccess(input: Readonly<{
           expectedCredentialRevision = capturedCredentialRevision;
           return result;
         } catch (error) {
-          assertInvocationCurrent();
-          options.signal?.throwIfAborted();
+          throwIfCancelled();
           throw error;
         }
       });
@@ -421,11 +431,6 @@ function deriveDeclarationAuthorityUnsafe(
     contribution,
   });
   if (!identity) throw invalidRequest();
-  if (!contribution.credentials.sources.some((source) => source.rawGrants?.some((grant) => (
-    grant.realm === binding.realm && grant.phase === binding.phase
-  )))) {
-    throw invalidRequest();
-  }
   return Object.freeze({ contribution, identity });
 }
 
@@ -553,6 +558,7 @@ async function selectedSourceFromSnapshot(
         snapshot,
         secretRef: resolved.savedSecret.secretId,
         fingerprint: savedSecret.fingerprint,
+        ownedByRequester: savedSecret.relationship === 'owner',
         callbackCredentialRevision: savedSecretCallbackCredentialRevision({
           selectedAuthorityDigest: selectedAuthority,
           fingerprint: savedSecret.fingerprint,
@@ -652,13 +658,6 @@ function assertDeclaredTuple(
   if (!declared) throw new UndeclaredRawCredentialTuple();
 }
 
-function sameAuthorization(left: Authorization, right: Authorization): boolean {
-  return left.selected.fingerprint === right.selected.fingerprint
-    && pluginPermissionSubjectsEqualV1(left.subject, right.subject)
-    && left.authoritySource.machineId === right.authoritySource.machineId
-    && left.authoritySource.installationId === right.authoritySource.installationId;
-}
-
 function exactStringRecord(
   raw: unknown,
   expectedKeys: readonly string[],
@@ -744,7 +743,6 @@ function materializeSavedSecret(
 }
 
 async function materializeCurrentSavedSecret(input: Readonly<{
-  materializer: SavedSecretMaterializerV1;
   binding: PluginRawCredentialMaterializerBinding;
   authority: DeclarationAuthority;
   before: Authorization;
@@ -753,6 +751,7 @@ async function materializeCurrentSavedSecret(input: Readonly<{
   getAccountSettingsSnapshotLifetimeToken: () => number;
   connectedAccounts: Pick<StablePluginConnectedAccountsOwner, 'getBinding'> | undefined;
   signal: AbortSignal;
+  materializer: SavedSecretMaterializerV1;
 }>): Promise<VoiceRawCredentialMaterialization> {
   const snapshot = input.getSnapshot();
   const current = await selectedSourceFromSnapshot(
@@ -792,13 +791,11 @@ async function readSelectedSource(
   input: RawCredentialAuthorizationDependencies,
   authority: DeclarationAuthority,
   signal: AbortSignal,
-  allowWarm: boolean,
 ): Promise<SelectedSource> {
   let snapshot = input.getAccountSettingsSnapshot();
-  if ((!snapshot || snapshot.connectedPurposeCatalog?.status !== 'ready') && allowWarm && input.ensureAccountSettingsSnapshot) {
+  if ((!snapshot || snapshot.connectedPurposeCatalog?.status !== 'ready') && input.ensureAccountSettingsSnapshot) {
     await input.ensureAccountSettingsSnapshot();
     signal.throwIfAborted();
-    assertRuntimeCurrent(input.binding);
     snapshot = input.getAccountSettingsSnapshot();
   }
   const accountSettingsLifetimeToken = input.getAccountSettingsSnapshotLifetimeToken();
@@ -852,28 +849,28 @@ async function inspectCurrentAuthorization(
   input: RawCredentialAuthorizationDependencies,
   authority: DeclarationAuthority,
   signal: AbortSignal,
-  allowWarm: boolean,
   request: VoiceRawCredentialMaterializationRequest,
+  allowMediated = false,
 ): Promise<CurrentAuthorizationInspection> {
   signal.throwIfAborted();
-  assertRuntimeCurrent(input.binding);
-  // The selected source and the machine-installation authority come from two
-  // owners, so read the latter inside a selected-source bracket. Code custody,
-  // install review and the process-local occurrence are deliberately not part
-  // of the durable credential permission identity.
-  const firstSelected = await readSelectedSource(input, authority, signal, allowWarm);
-  assertDeclaredTuple(firstSelected, input.binding, request);
+  // One read of the selected source and one of this machine installation admit
+  // the acquisition. Code custody, install review and the process-local
+  // occurrence are deliberately not part of the durable credential permission
+  // identity; the admitted occurrence is checked once, after the reads.
+  const firstSelected = await readSelectedSource(input, authority, signal);
+  if (allowMediated && request.kind === 'httpHeaders' && firstSelected.source.kind === 'savedSecret') {
+    const mediated = resolveVoiceCredentialMediatedGrantDeclarationsV1({
+      pluginId: input.binding.manifest.id, contribution: authority.contribution,
+      realm: input.binding.realm, phase: input.binding.phase,
+    }).some(grant => requestKey(grant.request) === requestKey(request));
+    if (!mediated) assertDeclaredTuple(firstSelected, input.binding, request);
+  } else {
+    assertDeclaredTuple(firstSelected, input.binding, request);
+  }
   signal.throwIfAborted();
-  assertRuntimeCurrent(input.binding);
   const authoritySource = await input.readCurrentGrantAuthoritySource();
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
-  const currentSelected = await readSelectedSource(input, authority, signal, false);
-  signal.throwIfAborted();
-  assertRuntimeCurrent(input.binding);
-  if (currentSelected.fingerprint !== firstSelected.fingerprint) {
-    throw unavailable();
-  }
   if (authoritySource?.kind !== 'machine_installation') throw unavailable();
   const parsedSubject = permissionSubject(
     input.binding,
@@ -899,6 +896,7 @@ async function inspectCurrentAuthorization(
       targetScope: ACCOUNT_TARGET_SCOPE,
       subject,
       authoritySource: authorization.authoritySource,
+      grantRequirement: savedSecretCredentialGrantRequirement(firstSelected.savedSecretCustody?.ownedByRequester === true),
       disclosures: exactDisclosureRows(
         input.binding.manifest.id,
         firstSelected.source,
@@ -921,8 +919,8 @@ function createAuthorizationInspector(
           input,
           authority,
           signal,
-          true,
           canonicalRequest(request),
+          true,
         )).inspection;
       } catch (error) {
         signal.throwIfAborted();
@@ -1031,7 +1029,6 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
     signal: AbortSignal,
   ): Promise<Authorization> => {
     signal.throwIfAborted();
-    assertRuntimeCurrent(input.binding);
     const caller = PluginMachineMaterializationRefV1Schema.safeParse(
       input.binding.materialization,
     );
@@ -1049,49 +1046,12 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       authorizationDependencies,
       authority,
       signal,
-      true,
       request,
     );
-    const { subject } = inspected.authorization;
-    const currentAuthoritySource = inspected.authorization.authoritySource;
-    if (subject.kind !== 'credential_access_disclosure') throw unavailable();
-    const listInput = PluginPermissionGrantListActionInputV1Schema.parse({
-      pluginId: input.binding.manifest.id,
-      capability: RAW_CREDENTIAL_CAPABILITY,
-      targetScope: ACCOUNT_TARGET_SCOPE,
-      subject,
-      caller: caller.data,
-      includeRevoked: false,
-      includeResolvedRequests: false,
-      limit: 200,
-    });
-    const listed = PluginPermissionGrantListActionOutputV1Schema.parse(
-      await input.grants.list(listInput, { signal }),
-    );
-    signal.throwIfAborted();
-    assertRuntimeCurrent(input.binding);
-    const current = await inspectCurrentAuthorization(
-      authorizationDependencies,
-      authority,
-      signal,
-      false,
-      request,
-    );
-    if (
-      !sameAuthorization(inspected.authorization, current.authorization)
-    ) {
-      throw unavailable();
-    }
-    if (!listed.grants.some((grant) => evaluatePluginPermissionGrant({
-      grant,
-      pluginId: input.binding.manifest.id,
-      capability: RAW_CREDENTIAL_CAPABILITY,
-      targetScope: ACCOUNT_TARGET_SCOPE,
-      subject,
-      currentAuthoritySource,
-    }))) {
-      throw unavailable();
-    }
+    // Owner ruling 2026-10-31: selecting one's own Saved Secret is the approval,
+    // decided by the link read above. Someone else's secret keeps their approval.
+    await admitPluginCredentialGrant({ inspection: inspected.inspection,
+      caller: caller.data, grants: input.grants, signal });
     return inspected.authorization;
   };
 
@@ -1124,7 +1084,6 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
             && callbackCredentialRevision !== options.credentialRevisionBasis.expectedCredentialRevision
           ) throw unavailable();
           result = await materializeCurrentSavedSecret({
-            materializer,
             binding: input.binding,
             authority,
             before,
@@ -1133,6 +1092,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
             getAccountSettingsSnapshotLifetimeToken: getSnapshotLifetimeToken,
             connectedAccounts: input.connectedAccounts,
             signal,
+            materializer,
           });
         } catch (error) {
           signal.throwIfAborted();
@@ -1164,13 +1124,11 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
             request,
             signal,
           });
-        } catch {
+        } catch (error) {
           signal.throwIfAborted();
-          try {
-            const current = await authorize(request, signal);
-            if (!sameAuthorization(before, current)) throw unavailable();
-          } catch {
-            signal.throwIfAborted();
+          // The Connected Accounts owner refuses a moved or out-of-scope
+          // selection with its own typed error; anything else is the provider's.
+          if (error instanceof PluginError && CONNECTED_ACCOUNT_SELECTION_REFUSALS.has(error.code)) {
             throw unavailable();
           }
           throw providerOperationFailed();
@@ -1184,14 +1142,6 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
           connectedAccountResultInvalid = true;
         }
       }
-      let after: Authorization;
-      try {
-        after = await authorize(request, signal);
-      } catch (error) {
-        signal.throwIfAborted();
-        throw unavailableFrom(error);
-      }
-      if (!sameAuthorization(before, after)) throw unavailable();
       if (connectedAccountResultInvalid) throw invalidRequest();
       if (!result) throw providerOperationFailed();
       if (options.credentialRevisionBasis) {

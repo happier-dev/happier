@@ -11,7 +11,8 @@ import { createConnectedAccountPluginHttpPurposeHost } from './connectedAccountP
 import { logger } from '@/ui/logger';
 
 it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materialization-failure', 'invocation-withdrawal', 'cloudflare-expiry',
-    'cancelled-seed', 'cancelled-fragment', 'cancelled-stream-seed', 'cancelled-stream-fragment', 'request-failure', 'stream-request-failure'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
+    'cancelled-seed', 'cancelled-fragment', 'cancelled-stream-seed', 'cancelled-stream-fragment',
+    'request-failure', 'stream-request-failure', 'request-dispatcher-failure'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
     const pluginId = 'acme.purpose';
     const consumer = { pluginId, localId: 'read' };
     const purpose = { consumer, purpose: 'read-api' };
@@ -55,7 +56,7 @@ it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materializati
                         contribution: { id: service.localId, qualifiedId: `${service.pluginId}/${service.localId}` },
                         surface: 'cli', invokedAtMs: Date.now(), account,
                         signal: new AbortController().signal,
-                        configuration: { target: { kind: 'account', account, modeId: 'workers-oauth' }, revision: 'configuration-1', values: {},
+                        configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'configuration-1', values: {},
                             getSecret: async () => null },
                         credentials: { get: async key => key === 'token' ? 'synthetic-cloudflare-access-token' : String(2_000) },
                         // This read-only provider callback has only the external HTTP boundary; other services are unreachable.
@@ -86,10 +87,10 @@ it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materializati
     const serviceBinding: PluginInvocationServiceBinding = { ...base,
         connectedAccountScopes: [{ purpose: purpose.purpose, serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] }],
     };
-    if (scenario === 'request-failure' || scenario === 'stream-request-failure') {
+    if (scenario === 'request-failure' || scenario === 'stream-request-failure' || scenario === 'request-dispatcher-failure') {
         // The file-log sink and HTTP transport are system boundaries; custody remains real.
         const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
-        const causeCode = 'ECONNREFUSED';
+        const causeCode = scenario === 'request-dispatcher-failure' ? 'UND_ERR_INVALID_ARG' : 'ECONNREFUSED';
         const cause = Object.assign(new Error(secret), { code: causeCode });
         const failure = new TypeError(secret, { cause });
         const input = { seed, serviceBinding, signal: seed.signal,

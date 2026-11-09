@@ -29,7 +29,6 @@ function createBackendPrerequisiteHookRegistration(params: Readonly<{
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: 'agent.resolvePrerequisites',
       category: 'decision',
       scope: 'agent',
@@ -56,7 +55,6 @@ function createPrerequisiteHookActivationTarget(params: Readonly<{
       hooks: [{
         id: 'resolve-prerequisites',
         on: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
         category: 'decision',
         scope: 'agent',
         executionKind: 'decide',

@@ -77,6 +77,11 @@ describe('host plugin SDK resolution', () => {
       for (let index = 0; index < 10_000; index += 1) {
         expect(resolver.resolve('./profiles/profileRecordSchemaV1.js')).toBe(target);
       }
+      console.info('DEVPLUG resolution measurement', JSON.stringify({
+        mode, aliases: Object.keys(table).length, prefixes: Object.keys(table).filter(key => key.endsWith('/')).length,
+        declared: Object.keys(exact).length, resolutions: 10_000,
+        elapsedMs: performance.now() - start, cpu: process.cpuUsage(cpuStart),
+      }));
     }
     // Each removed entry would otherwise be scanned on every module import.
     expect(Object.keys(aliases).length).toBeLessThan(Object.keys(exact).length / 2);

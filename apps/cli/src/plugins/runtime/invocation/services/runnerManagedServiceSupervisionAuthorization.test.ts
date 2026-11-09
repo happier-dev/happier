@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -445,6 +446,7 @@ async function prepareOllamaProviderSupervisionFixture() {
     }, {
         connectedAccounts: {} as never,
         managedServices: {
+            ...createUnavailableManagedServices(),
             dependencies: {} as never,
             supervise: async (spec) => {
                 managedSpec = spec;

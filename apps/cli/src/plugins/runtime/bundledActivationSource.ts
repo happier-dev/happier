@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { projectPathFromModuleUrl } from '@/projectPath';
-import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { readBundledPluginManifest, loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { ingestBundledPluginManifest } from '@/plugins/projection/registry/builtIn/manifestFile';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -69,15 +69,6 @@ type SourceDevSharedDepsPreflightCacheEntry = {
     promise: Promise<SourceDevSharedDepsPreflightResult> | null;
     result: SourceDevSharedDepsPreflightResult | null;
 };
-
-type SourceDevSharedDepsBatchPreflightOutcome =
-    | Readonly<{
-        type: 'ready';
-        result: Extract<SourceDevSharedDepsPreflightResult, { type: 'ready' }>;
-    }>
-    | Readonly<{
-        type: 'targeted-fallback';
-    }>;
 
 type BundledExecutablePluginTarget = Readonly<{
     pluginId: string;
@@ -198,12 +189,6 @@ export function resolvePackagedBundledActivationPaths(params: Readonly<{
 
 function normalizePathSeparators(pathLike: string): string {
     return pathLike.replaceAll('\\', '/');
-}
-
-function compareCanonicalStrings(left: string, right: string): number {
-    if (left < right) return -1;
-    if (left > right) return 1;
-    return 0;
 }
 
 function parseFirstPartyPluginIdFromPackageName(packageName: string): string | null {
@@ -349,54 +334,10 @@ export function createBundledActivationSourceResolver(params: Readonly<{
         params.prepareSourceDevSharedDeps ?? prepareSourceDevSharedDepsForBundledPluginRuntimeLoad;
     const repoRoot = params.repoRoot ?? defaultRepoRoot();
     const sourceDevSharedDepsPreflightByPackageName = new Map<string, SourceDevSharedDepsPreflightCacheEntry>();
-    let sourceDevSharedDepsBatchTarget: Readonly<{
-        packageName: string;
-        workspaceNames: readonly string[];
-    }> | null | undefined;
-    let sourceDevSharedDepsBatchPreflight: Promise<SourceDevSharedDepsBatchPreflightOutcome> | null = null;
-    let sourceDevSharedDepsBatchFallbackReady = false;
 
     function resolveSourceDevWorkspaceNames(packageName: string): readonly string[] {
         const workspaceName = normalizeBundledWorkspaceNameFromPackageName(packageName);
         return workspaceName ? Object.freeze([workspaceName]) : Object.freeze([]);
-    }
-
-    function resolveSourceDevSharedDepsBatchTarget(): typeof sourceDevSharedDepsBatchTarget {
-        if (sourceDevSharedDepsBatchTarget !== undefined) {
-            return sourceDevSharedDepsBatchTarget;
-        }
-
-        const packageNamesByWorkspaceName = new Map<string, string>();
-        for (const packageName of bundledPackageNames) {
-            if (
-                immutableArtifactEntryPathsByPackageName.has(packageName)
-                || immutableArtifactPackageNames.has(packageName)
-            ) {
-                continue;
-            }
-            const pluginId = parseFirstPartyPluginIdFromPackageName(packageName);
-            const workspaceName = normalizeBundledWorkspaceNameFromPackageName(packageName);
-            if (!pluginId || !workspaceName) continue;
-            const srcCandidate = resolve(repoRoot, 'packages', 'plugins', pluginId, 'src', 'index.ts');
-            if (!existsSync(srcCandidate)) continue;
-
-            const existingPackageName = packageNamesByWorkspaceName.get(workspaceName);
-            if (!existingPackageName || compareCanonicalStrings(packageName, existingPackageName) < 0) {
-                packageNamesByWorkspaceName.set(workspaceName, packageName);
-            }
-        }
-
-        const workspaceNames = [...packageNamesByWorkspaceName.keys()].sort(compareCanonicalStrings);
-        const batchPackageName = workspaceNames[0]
-            ? packageNamesByWorkspaceName.get(workspaceNames[0])
-            : undefined;
-        sourceDevSharedDepsBatchTarget = workspaceNames.length > 1 && batchPackageName
-            ? Object.freeze({
-                packageName: batchPackageName,
-                workspaceNames: Object.freeze(workspaceNames),
-            })
-            : null;
-        return sourceDevSharedDepsBatchTarget;
     }
 
     async function runSourceDevSharedDepsPreflightForPackage(
@@ -443,44 +384,6 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             }
             throw error;
         }
-    }
-
-    async function runSourceDevSharedDepsPreflight(
-        packageName: string,
-        options?: Readonly<{ admittedCopyOnly?: boolean }>,
-    ): Promise<SourceDevSharedDepsPreflightResult> {
-        if (options?.admittedCopyOnly) {
-            return await runSourceDevSharedDepsPreflightForPackage(packageName, options);
-        }
-        const batchTarget = resolveSourceDevSharedDepsBatchTarget();
-        if (!batchTarget) {
-            return await runSourceDevSharedDepsPreflightForPackage(packageName);
-        }
-        if (sourceDevSharedDepsBatchFallbackReady) {
-            return await runSourceDevSharedDepsPreflightForPackage(packageName);
-        }
-
-        sourceDevSharedDepsBatchPreflight ??= Promise.resolve()
-            .then(() => prepareSourceDevSharedDeps({
-                ...batchTarget,
-                ...(params.signal ? { signal: params.signal } : {}),
-            }))
-            .then((result): SourceDevSharedDepsBatchPreflightOutcome => (
-                result.type === 'ready'
-                    ? { type: 'ready', result }
-                    : { type: 'targeted-fallback' }
-            ))
-            .catch((): SourceDevSharedDepsBatchPreflightOutcome => ({
-                type: 'targeted-fallback',
-            }));
-
-        const batchOutcome = await sourceDevSharedDepsBatchPreflight;
-        params.signal?.throwIfAborted();
-        if (batchOutcome.type === 'ready') {
-            return batchOutcome.result;
-        }
-        sourceDevSharedDepsBatchFallbackReady = true;
-        return await runSourceDevSharedDepsPreflightForPackage(packageName);
     }
 
     return function resolveBundledActivationSource(target: BundledActivationTarget,
@@ -531,7 +434,10 @@ export function createBundledActivationSourceResolver(params: Readonly<{
                         const manifestPath = join(packageRoot, '.happier-plugin', 'plugin.json');
                         const metadata = await lstat(manifestPath);
                         if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error('Bundled Account manifest must be a regular file');
-                        const manifest = readCanonicalPluginManifest(JSON.parse(await readFile(manifestPath, 'utf8')));
+                        const admission = ingestCanonicalPluginManifest(await readFile(manifestPath), {
+                            purpose: 'installedRead', manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+                        });
+                        const manifest = admission.ok ? admission.manifest : null;
                         if (!manifest || manifest.id !== declaration.manifest.id || manifest.version !== declaration.manifest.version) {
                             throw new Error('Bundled Account declaration mismatch');
                         }
@@ -573,85 +479,18 @@ export function createBundledActivationSourceResolver(params: Readonly<{
                 pluginId
                 && !immutableArtifactEntryPathsByPackageName.has(daemonEntryPath)
                 && canImportSource
-                && (
-                    sourceDevEntry
-                    || !immutableArtifactPackageNames.has(daemonEntryPath)
-                )
+                && !sourceDevEntry
+                && !immutableArtifactPackageNames.has(daemonEntryPath)
             ) {
-                const preflight = await runSourceDevSharedDepsPreflight(
+                // Authored source uses the registered workspace source loader,
+                // not dist. Only a retained flat copy needs copy admission here.
+                const preflight = await runSourceDevSharedDepsPreflightForPackage(
                     daemonEntryPath,
-                    sourceDevEntry ? undefined : { admittedCopyOnly: true },
+                    { admittedCopyOnly: true },
                 );
                 params.signal?.throwIfAborted();
                 if (preflight.type === 'error') {
                     throw new Error(preflight.errorMessage);
-                }
-            }
-            const packagedEntryPath =
-                immutableArtifactEntryPathsByPackageName.get(daemonEntryPath);
-            const packagedRootPath =
-                immutableArtifactRootPathsByPackageName.get(daemonEntryPath);
-            if (packagedEntryPath && packagedRootPath) {
-                const [entryMetadata, packageMetadataFile, manifestMetadata] =
-                    await Promise.all([
-                        lstat(packagedEntryPath),
-                        lstat(join(packagedRootPath, 'package.json')),
-                        lstat(join(
-                            packagedRootPath,
-                            '.happier-plugin',
-                            'plugin.json',
-                        )),
-                    ]);
-                if (
-                    entryMetadata.isSymbolicLink()
-                    || !entryMetadata.isFile()
-                    || packageMetadataFile.isSymbolicLink()
-                    || !packageMetadataFile.isFile()
-                    || manifestMetadata.isSymbolicLink()
-                    || !manifestMetadata.isFile()
-                ) {
-                    throw new Error(`Bundled plugin '${target.pluginId}' packaged files must be regular files`);
-                }
-                const canonicalRoot = realpathSync(packagedRootPath);
-                const canonicalEntry = realpathSync(packagedEntryPath);
-                if (
-                    !isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonicalEntry)
-                ) {
-                    throw new Error(`Bundled plugin '${target.pluginId}' packaged entry escapes its runtime root`);
-                }
-                const packageMetadata = JSON.parse(
-                    await readFile(join(canonicalRoot, 'package.json'), 'utf8'),
-                ) as unknown;
-                if (
-                    !packageMetadata
-                    || typeof packageMetadata !== 'object'
-                    || Array.isArray(packageMetadata)
-                    || !('name' in packageMetadata)
-                    || packageMetadata.name !== daemonEntryPath
-                ) {
-                    throw new Error(`Bundled plugin '${target.pluginId}' packaged metadata name mismatch`);
-                }
-                const manifest = readCanonicalPluginManifest(JSON.parse(
-                    await readFile(
-                        join(canonicalRoot, '.happier-plugin', 'plugin.json'),
-                        'utf8',
-                    ),
-                ) as unknown);
-                const daemonEntrypoint = manifest?.entrypoints?.daemon;
-                const expectedEntry = daemonEntrypoint
-                    ? realpathSync(resolve(
-                        canonicalRoot,
-                        ...parseContainedManifestModulePath(
-                            daemonEntrypoint,
-                        ),
-                    ))
-                    : null;
-                if (
-                    !manifest
-                    || manifest.id !== target.pluginId
-                    || expectedEntry !== canonicalEntry
-                ) {
-                    throw new Error(`Bundled plugin '${target.pluginId}' packaged manifest locator mismatch`);
                 }
             }
             prepared = true;

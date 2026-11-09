@@ -76,6 +76,27 @@ describe('spawnSupervisedPluginProcess', () => {
         } finally { await supervised.dispose(); }
     });
 
+    it.each(['finite', 'streaming'] as const)('writes the launch preamble before %s provider stdin without consuming provider bytes', async kind => {
+        const preamble = Buffer.from([0x48, 0x41, 0x50, 0x00, 0xff]);
+        const providerBytes = Buffer.from([0x00, 0x0a, 0xff, 0x80, 0x41]);
+        const input = {
+            command: process.execPath,
+            args: ['-e', 'process.stdin.pipe(process.stdout)'], env: {},
+            stdinPreamble: preamble,
+            ...(kind === 'finite' ? { stdin: providerBytes } : {}),
+        };
+        const supervised = spawnSupervisedPluginProcess(input);
+        try {
+            if (kind === 'streaming') {
+                await supervised.handle.write(providerBytes);
+                await supervised.handle.closeStdin();
+            }
+            const result = await supervised.handle.wait();
+            expect(Buffer.from(result.stdout)).toEqual(Buffer.concat([preamble, providerBytes]));
+            expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+        } finally { await supervised.dispose(); }
+    });
+
     it('bounds an unanswered graceful protocol stop inside the existing termination grace and removes the child', async () => {
         const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: ['-e', `
             process.on('SIGTERM', () => {});

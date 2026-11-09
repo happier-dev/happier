@@ -1,4 +1,4 @@
-/** Static state-sharing declarations and validated registrations share this projection. */
+/** Static Agent state-sharing declarations own the native-home environment keys. */
 export function readAgentNativeHomeEnvironmentKeys(descriptor: unknown): readonly string[] {
   if (descriptor === undefined) return [];
   if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {

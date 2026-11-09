@@ -111,7 +111,6 @@ describe('executable plugin hook activation ownership', () => {
                 kind: 'path', locator: root, trustPolicy: 'local_trusted', installPolicy: 'link',
             },
             definition: {
-                hookApiVersion: 1,
                 id: 'agent.resolvePrerequisites',
                 category: 'decision',
                 scope: 'agent',

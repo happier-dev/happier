@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
-import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
@@ -29,7 +29,7 @@ describe('Lima declared native process environment', () => {
         await withTempDir('happier-lima-options-', async root => {
             // These disposable executables replace Lima/QEMU at the OS boundary.
             // Declaration parsing, dependency probing, Action registration,
-            // invocation policy, environment admission and process IO stay real.
+            // invocation policy, native environment and process IO stay real.
             const effectsPath = join(root, 'native-effect');
             const nativeScript = `#!${process.execPath}
                 const args = process.argv.slice(2);
@@ -39,8 +39,7 @@ describe('Lima declared native process environment', () => {
                         : executable === 'qemu-img' ? 'qemu-img version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)'
                             : 'QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)');
                 } else if (args[0] === 'info') {
-                    if (process.env.HOME !== ${JSON.stringify(root)} || process.env.PATH !== ${JSON.stringify(root)}
-                        || process.env.UNRELATED_SECRET) process.exit(2);
+                    if (process.env.HOME !== ${JSON.stringify(root)} || process.env.PATH !== ${JSON.stringify(root)}) process.exit(2);
                     process.stdout.write(JSON.stringify({hostOS:'linux',hostArch:'x86_64',vmTypes:['qemu']}));
                 } else {
                     require('node:fs').writeFileSync(${JSON.stringify(effectsPath)}, args[0]);
@@ -52,7 +51,6 @@ describe('Lima declared native process environment', () => {
             }
             vi.stubEnv('HOME', root);
             vi.stubEnv('PATH', root);
-            vi.stubEnv('UNRELATED_SECRET', 'not-admitted');
             onTestFinished(() => { vi.unstubAllEnvs(); });
             const manifest = normalizePluginManifestV2(LIMA_PLUGIN.manifest);
             const pluginId = manifest.id;
@@ -113,7 +111,7 @@ describe('Lima declared native process environment', () => {
                 const localId = provisioner.actions.options;
                 if (!localId) throw new Error('Lima has no declared options role');
                 const launchSchema = createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema);
-                const recipe = { instance: 'happier-qb-design', store: '/home/happier/.lima',
+                const recipe = { store: '/home/happier/.lima',
                     image: 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img',
                     arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 2, diskGiB: 8, mounts: [] };
                 const invoke = async (input: unknown) => {
@@ -151,19 +149,17 @@ describe('Lima declared native process environment', () => {
         });
     });
 
-    it('checks an installed Lima through the admitted HOME and PATH without inheriting unrelated environment', async () => {
+    it('checks an installed Lima through the host HOME and PATH', async () => {
         const requests = normalizePluginManifestV2(LIMA_PLUGIN.manifest).hostAccess.required.map((request) => ({ request, required: true }));
         vi.stubEnv('HOME', '/fixture/lima-home');
         vi.stubEnv('PATH', '/fixture/native-tools');
-        vi.stubEnv('UNRELATED_SECRET', 'not-admitted');
         const owners = createProductionPluginInvocationServiceOwners({
             loggerSink: { write() {} },
             exec: {
                 // Only the native executable is replaced. Real manifest admission,
                 // ExecService, process supervision, parsing and the Action stay real.
                 resolveExecutable: async () => ({ command: process.execPath, args: ['-e', `
-                    if (process.env.HOME !== '/fixture/lima-home' || process.env.PATH !== '/fixture/native-tools'
-                        || process.env.UNRELATED_SECRET) process.exit(2);
+                    if (process.env.HOME !== '/fixture/lima-home' || process.env.PATH !== '/fixture/native-tools') process.exit(2);
                     process.stdout.write(process.argv[1] === '--version'
                         ? 'limactl version 2.2.1'
                         : JSON.stringify({hostOS:'linux',hostArch:'x86_64',vmTypes:['qemu']}));

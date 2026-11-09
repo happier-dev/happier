@@ -35,14 +35,17 @@ async function subscriptionFixture(revalidateFinalPolicy?: StablePluginMcpFinalP
         ...(revalidateFinalPolicy ? { revalidateFinalPolicy } : {}),
         readServer: () => ({
             occurrenceId: 'fixture-occurrence', qualifiedId: 'fixture.publisher/resources', isCurrent: () => true,
-            listTools: async () => ({ items: [] }), callTool: async () => null,
-            listResources: async () => ({ items: [] }), listResourceTemplates: async () => ({ items: [] }),
-            readResource: async ({ uri }) => ({ contents: [{ uri, text: '' }] }),
+            listTools: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+            callTool: async (_request, _seed, _options, project) => project(null, value => value),
+            listResources: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+            listResourceTemplates: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+            readResource: async ({ uri }, _seed, _options, project) => project({ contents: [{ uri, text: '' }] }, value => value),
             subscribeResource: async (_request, listener) => {
                 publish = listener;
                 return { dispose: async () => {} };
             },
-            listPrompts: async () => ({ items: [] }), getPrompt: async () => ({ messages: [] }),
+            listPrompts: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+            getPrompt: async (_request, _seed, _options, project) => project({ messages: [] }, value => value),
         }),
         readDiscoverySource: () => null,
     });
@@ -51,7 +54,7 @@ async function subscriptionFixture(revalidateFinalPolicy?: StablePluginMcpFinalP
         contribution: { id: 'read', qualifiedId: 'fixture.caller/actions/read' },
         occurrenceId: 'fixture-occurrence', correlationId: 'fixture-request', surface: 'agent',
         signal: new AbortController().signal, isOccurrenceCurrent: () => true,
-    }, [{ serverRefs: [ref], discoverySourceRefs: [], operations: ['listTools'] }]);
+    });
     const client = await service.connect(ref, { elicitation: { mode: 'reject' } });
     const listener = vi.fn();
     const subscription = await client.subscribeResource('file:///guide', listener);

@@ -555,7 +555,9 @@ describe('scaffoldLocalPlugin',
     expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(false);
     expect(source).toContain("locale: 'en'");
     expect(source).toContain("locale: 'fr'");
-    expect(source).toContain("'scaffold.main.greeting'");
+    expect(await readJsonFile(join(targetDir, 'assets/i18n/en.json'))).toMatchObject({
+      'scaffold.main.greeting': 'Hello from Acme Template',
+    });
 
     // The hosted-web arm must ship a real bridge application, not an inert
     // title-only stub: a client entry that negotiates the public host API and
@@ -684,14 +686,18 @@ describe('scaffoldLocalPlugin',
         title: { key: 'scaffold.main.title', fallback: 'Acme Template' },
       }),
     ]));
-    expect(hostedWebManifest.contributes.ui.translations).toEqual(expect.arrayContaining([
+    expect(hostedWebManifest.contributes.ui?.translations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         locale: 'fr',
-        messages: expect.objectContaining({
-          'scaffold.main.greeting': 'Bonjour de Acme Template',
-        }),
+        resourceId: 'i18n-fr',
       }),
     ]));
+    expect(hostedWebManifest.contributes.resources).toContainEqual({
+      id: 'i18n-fr', kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json',
+    });
+    expect(await readJsonFile(join(targetDir, 'assets/i18n/fr.json'))).toMatchObject({
+      'scaffold.main.greeting': 'Bonjour de Acme Template',
+    });
     expect(hostedWebManifest.contributes.ui.renderers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'main-renderer',
@@ -732,7 +738,9 @@ describe('scaffoldLocalPlugin',
     expect(generatedUiSurfaceUsesPublicDeclarationHelper(source, surfaceName)).toBe(false);
     expect(source).toContain("locale: 'en'");
     expect(source).toContain("locale: 'fr'");
-    expect(source).toContain("'scaffold.main.greeting'");
+    expect(await readJsonFile(join(targetDir, 'assets/i18n/en.json'))).toMatchObject({
+      'scaffold.main.greeting': 'Hello from Acme Template',
+    });
 
     expect(result.uiEntryPath).toBe(join(targetDir, 'src', 'ui', 'renderSurface.tsx'));
     const uiSource = await readFile(result.uiEntryPath as string, 'utf8');
@@ -780,14 +788,18 @@ describe('scaffoldLocalPlugin',
         title: { key: 'scaffold.main.title', fallback: 'Acme Template' },
       }),
     ]));
-    expect(reactNativeManifest.contributes.ui.translations).toEqual(expect.arrayContaining([
+    expect(reactNativeManifest.contributes.ui?.translations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         locale: 'fr',
-        messages: expect.objectContaining({
-          'scaffold.main.greeting': 'Bonjour de Acme Template',
-        }),
+        resourceId: 'i18n-fr',
       }),
     ]));
+    expect(reactNativeManifest.contributes.resources).toContainEqual({
+      id: 'i18n-fr', kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json',
+    });
+    expect(await readJsonFile(join(targetDir, 'assets/i18n/fr.json'))).toMatchObject({
+      'scaffold.main.greeting': 'Bonjour de Acme Template',
+    });
     expect(reactNativeManifest.contributes.ui.renderers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'main-renderer',

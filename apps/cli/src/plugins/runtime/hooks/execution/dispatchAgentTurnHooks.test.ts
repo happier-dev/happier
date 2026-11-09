@@ -1,5 +1,3 @@
-import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
-import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PromptBlockV1 } from '@happier-dev/protocol';
@@ -14,6 +12,8 @@ import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocati
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import { evaluateTargetActionCatalogPolicy } from '@/plugins/runtime/policy/evaluate';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
 
 import {
   resolveAgentCompositionThroughRuntimeRegistry,
@@ -83,7 +83,6 @@ function createAgentRequestRegistration(): ResolvedActivatedHookRegistration {
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: 'agent.request.before',
       category: 'augmentation',
       scope: 'agent',
@@ -109,7 +108,6 @@ function createAgentCompositionRegistration(params: Readonly<{
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: params.localId,
       category: 'augmentation',
       scope: 'agent',

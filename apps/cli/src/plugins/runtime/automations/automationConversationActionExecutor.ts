@@ -1,6 +1,6 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 
 import { AutomationConversationActionHttpPathsV1, AutomationConversationActionHttpRequestSchemasV1, AutomationConversationAdmitEncryptedHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
 import { AutomationConversationActionInputSchemasV1, AutomationConversationActionOutputSchemasV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
@@ -122,7 +122,7 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
     }));
   const resolveAccountEncryptionCurrentness = params.resolveAccountEncryptionCurrentness
     ?? (async (signal?: AbortSignal) => await fetchAccountEncryptionCurrentness({
-      token: params.credentials.token,
+      credentials: params.credentials, token: params.credentials.token,
       ...(signal ? { signal } : {}),
     }));
   const resolveAccountEncryptionMaterial = params.resolveAccountEncryptionMaterial
@@ -244,6 +244,7 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
               },
               sender: input.sender,
               text: input.text,
+              ...(input.prUpdate === undefined ? {} : { prUpdate: input.prUpdate }),
               resultDelivery: input.resultDelivery,
               hostEvidence: input.hostEvidence,
             }),
@@ -285,6 +286,7 @@ export function createAutomationConversationActionExecutor(params: Readonly<{
       },
       sender: input.sender,
       text: input.text,
+      ...(input.prUpdate === undefined ? {} : { prUpdate: input.prUpdate }),
       resultDelivery: input.resultDelivery,
       hostEvidence: input.hostEvidence,
     });

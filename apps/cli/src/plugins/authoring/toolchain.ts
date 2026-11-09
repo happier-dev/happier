@@ -248,10 +248,10 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
       if (!runtimeCommand) throw new Error('The Happier-managed JavaScript runtime is unavailable');
       const compilerPath = resolveNativeTypeScriptBin(params.sourceRuntimeRoot);
       await emitSourceAuthorDeclarations(materializedPackageNames.map(packageName =>
-        join(materializationRoot, 'node_modules', ...packageName.split('/'))), async projectPath => {
+        join(materializationRoot, 'node_modules', ...packageName.split('/'))), async (projectPath, workingDirectory) => {
         const result = await spawn({ command: runtimeCommand,
           args: [compilerPath, '-p', projectPath],
-          cwd: materializationRoot, env: process.env });
+          cwd: workingDirectory, env: process.env });
         if (result.exitCode !== 0 || result.signal !== null) {
           throw new Error(`Source Plugin SDK declaration compilation failed (exit ${result.exitCode}, signal ${result.signal})\n${result.stderr || result.stdout}`);
         }
@@ -932,7 +932,7 @@ export async function classifyPluginAuthorDaemonBuild(
   }
   const manifestPath = join(projectRoot, PLUGIN_MANIFEST_RELATIVE_PATH);
   const manifestAuthority = 'external' as const;
-  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance: 'localSource' });
+  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance: 'localSource', purpose: 'authoring' });
   if (!manifestRead.ok) {
     if (manifestRead.diagnostics.every((diagnostic) => diagnostic.code === 'plugin_manifest_missing')) {
       return 'required';

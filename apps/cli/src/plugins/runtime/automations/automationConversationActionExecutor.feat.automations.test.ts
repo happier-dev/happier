@@ -19,7 +19,7 @@ const transportMocks = vi.hoisted(() => ({
   post: vi.fn(),
   createPublisherHeader: vi.fn(),
 }));
-vi.mock('axios', () => ({ default: { post: transportMocks.post } }));
+vi.mock('axios', () => ({ default: { post: transportMocks.post, defaults: {} } }));
 vi.mock('@/plugins/installations/publisherProof', () => ({
   createDefaultPluginInstallationPublisherHeader: transportMocks.createPublisherHeader,
 }));
@@ -174,16 +174,23 @@ describe('createAutomationConversationActionExecutor', () => {
   });
 
   it.each(['prComment', 'ciFailed'] as const)('binds encrypted scoped %s permission evidence to the admitted occurrence', async (triggerKind) => {
+    const eventActors = ['123', '456'].map((principalId, index) => ({ occurrenceId: index === 0 ? input.occurrenceId : 'github:comment:2',
+      sender: { principalId }, observationActorPrincipalId: principalId, actor: { principalId, repositoryWriteAccess: true } }));
+    const sender = { principalId: '123', label: 'Private author label' };
+    const prUpdate = { v: 1, comments: ['First full comment', 'Second full comment'], log: 'Private CI failure details',
+      events: eventActors.map((entry, index) => triggerKind === 'ciFailed' && index === 0
+        ? { kind: 'check', author: { principalId: null, kind: 'process' } }
+        : { kind: 'review', author: { principalId: entry.actor.principalId, kind: 'person' } }) };
     const account = e2eeAccountFixture();
     const scopedTrigger = AutomationConversationScopedTriggerEvidenceV1Schema.parse({ bindingId: input.bindingId, sessionId: 'session-1', triggerId: AutomationTriggerIdSchema.parse('trigger-1'), triggerRevision: 0, triggerKind,
       pullRequest: { repository: 'acme/widgets', number: 1 }, observationActorPrincipalId: '123',
-      actor: { principalId: '123', repositoryWriteAccess: true } });
+      actor: { principalId: '123', repositoryWriteAccess: true }, eventActors });
     const execute = vi.fn(async (_actionId: string, _request: unknown) => ({ kind: 'admitted' as const,
       runId: 'run-1', checkpointSafe: true as const }));
     const executor = createAutomationConversationActionExecutor({ credentials, transport: { execute },
       ...currentCaller, ...account.deps });
     await executor({ actionId: 'automation.conversation.admit',
-      input: { ...input, sender: { principalId: '123' }, resultDelivery: { kind: 'none' }, hostEvidence: scopedTrigger },
+      input: { ...input, sender, resultDelivery: { kind: 'none' }, hostEvidence: scopedTrigger, prUpdate },
       caller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1',
         occurrenceId: callerOccurrenceId, sourceCustody: callerSourceCustody, materialization: callerMaterialization },
     });
@@ -192,16 +199,37 @@ describe('createAutomationConversationActionExecutor', () => {
     expect(request.hostEvidence.scopedTrigger).toEqual(correspondence);
     expect(request.hostEvidence.scopedTrigger).not.toHaveProperty('pullRequest');
     expect(JSON.stringify(request)).not.toContain(privateSelection.repository);
+    expect(JSON.stringify(request)).not.toContain(sender.label);
     const evidence = buildAutomationConversationOccurrenceEvidenceV1({ accountMode: 'e2ee',
       bindingId: input.bindingId, occurrenceId: input.occurrenceId, occurredAt: input.occurredAt,
       caller: { pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1', machineId: callerMaterialization.machineId },
-      sender: { principalId: '123' }, text: input.text, resultDelivery: { kind: 'none' }, hostEvidence: scopedTrigger });
+      sender, text: input.text, resultDelivery: { kind: 'none' }, hostEvidence: scopedTrigger, prUpdate });
     expect(request.hostEvidence.occurrenceEvidenceEqualityTag).toBe(deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1({
       material: account.snapshot.material, accountId: 'account-1', automationId: input.automationId, evidence }));
     const opened = openAccountScopedBlobCiphertext({ kind: 'automation_trigger_evidence', material: account.snapshot.material,
       ciphertext: request.hostEvidence.triggerEvidenceEnvelope.c });
-    expect(opened?.value).toMatchObject({ hostEvidence: scopedTrigger });
+    expect(opened?.value).toMatchObject({ hostEvidence: scopedTrigger, input: { sender, prUpdate } });
+    expect(JSON.stringify(request)).not.toContain('Private CI failure details');
     expect(JSON.stringify(request)).not.toContain(input.text);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('refuses substituted composite-event senders before %s native admission', async (mode) => {
+    const execute = vi.fn(async () => ({ kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const }));
+    const executor = createAutomationConversationActionExecutor({ credentials, transport: { execute },
+      ...currentCaller, ...(mode === 'plain' ? plainAccount : e2eeAccountFixture().deps) });
+    const eventActors = ['123', '456'].map((principalId, index) => ({ occurrenceId: index === 0 ? input.occurrenceId : 'github:comment:2',
+      sender: { principalId }, observationActorPrincipalId: principalId, actor: { principalId, repositoryWriteAccess: true } }));
+    await expect(executor({ actionId: 'automation.conversation.admit', input: { ...input,
+      sender: eventActors[0]!.sender, resultDelivery: { kind: 'none' },
+      prUpdate: { events: eventActors.map(entry => ({ author: { principalId: entry.actor.principalId } })) },
+      hostEvidence: { bindingId: input.bindingId, sessionId: 'session-1', triggerId: AutomationTriggerIdSchema.parse('trigger-1'),
+        triggerRevision: 0, triggerKind: 'prComment', pullRequest: { repository: 'acme/widgets', number: 1 },
+        observationActorPrincipalId: '123', actor: eventActors[0]!.actor,
+        eventActors: [eventActors[0]!, { ...eventActors[1]!, sender: { principalId: '123' } }],
+      } }, caller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'provider/observation-ingest-v1',
+        occurrenceId: callerOccurrenceId, sourceCustody: callerSourceCustody, materialization: callerMaterialization },
+    })).resolves.toEqual({ kind: 'refused', reason: 'scopedTriggerIdentityMismatch', checkpointSafe: true });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('keeps the private PR selector out of target verification wire', async () => {

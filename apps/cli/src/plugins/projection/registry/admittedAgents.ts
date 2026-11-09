@@ -7,16 +7,18 @@ import { readCurrentBundledPluginPublicationFailures } from './builtIn/publicati
 import { readBundledPluginManifest } from './builtIn/manifestFile';
 import { indexAgentBindings, manifestAgentKey, projectBuiltInAgentFields } from './builtIn/agentIdentity';
 import { projectManifestAgentFields } from './projectManifestAgentFields';
-import { assertUniquePluginIdentities } from './normalize/pluginIdentities';
+import { excludeReplacedPluginIdentities } from './normalize/pluginIdentities';
 import type { ResolvedAgentContribution } from './types';
 
 /** Selected Agent declaration fields for listing; no executable registry is built. */
 export async function resolveAdmittedAgentListingContributions(happyHomeDir: string): Promise<Readonly<{ agents: readonly ResolvedAgentContribution[] }>> {
     const failures = defaultCanImportFirstPartyPluginSource() ? [] : readCurrentBundledPluginPublicationFailures();
     const excluded = new Set(failures.map((failure) => failure.pluginId));
-    const bundled = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter((locator) => !excluded.has(locator.pluginId));
     const installed = await loadAdmittedInstalledPluginDeclarations(happyHomeDir);
-    assertUniquePluginIdentities([...bundled, ...installed.loadedPlugins]);
+    const bundled = excludeReplacedPluginIdentities(
+        BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter((locator) => !excluded.has(locator.pluginId)),
+        installed.loadedPlugins,
+    );
     const bindings = indexAgentBindings(BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS);
     const agents: ResolvedAgentContribution[] = [];
     for (const locator of bundled) {

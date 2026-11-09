@@ -1,10 +1,10 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { TargetedContributionSnapshot, TargetedContributionsService } from '@happier-dev/plugin-sdk';
-import { createTargetedContributionsService, projectAdmittedTargetedContributionSnapshot } from '@happier-dev/plugin-sdk/host/registration';
-import type { StableTargetedContributionsOwner, TargetedContributionsAdmissionSource } from '@happier-dev/plugin-sdk/host/registration';
+import { createTargetedContributionsService, projectAdmittedTargetedContributionSnapshot } from '@happier-dev/cli-common/plugins/registration';
+import type { StableTargetedContributionsOwner, TargetedContributionsAdmissionSource } from '@happier-dev/cli-common/plugins/registration';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
-export { createTargetedContributionsService } from '@happier-dev/plugin-sdk/host/registration';
-export type { StableTargetedContributionsOwner, TargetedContributionsAdmissionSource } from '@happier-dev/plugin-sdk/host/registration';
+export { createTargetedContributionsService } from '@happier-dev/cli-common/plugins/registration';
+export type { StableTargetedContributionsOwner, TargetedContributionsAdmissionSource } from '@happier-dev/cli-common/plugins/registration';
 export type ReloadControllerTargetedContributionsHost = Readonly<{ reloadController: PluginReloadController }>;
 
 function operationAborted(): PluginError {

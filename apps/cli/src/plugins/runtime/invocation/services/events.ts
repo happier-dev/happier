@@ -21,11 +21,6 @@ import { clonePluginPlainData } from '../../plainData';
 import type { PluginInvocationServicesSeed } from './types';
 import { resolvePluginActionCaller, withPluginEventActionOrigin } from './actionCaller';
 
-export const STABLE_PLUGIN_EVENT_QUEUE_LIMITS = Object.freeze({
-    pendingDeliveriesPerSubscription: 256,
-    pendingBytesPerSubscription: 1024 * 1024,
-});
-
 const RESERVED_RUNTIME_EVENT_IDS = new Set<string>(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1);
 
 type DeliveredPluginEvent = Readonly<{
@@ -77,9 +72,7 @@ type HostBrokerSubscription = {
     readonly listener: (event: HostEventEnvelopeV1) => void | Promise<void>;
     readonly isCurrent: () => boolean;
     readonly isEffectCapable: () => boolean;
-    readonly queue: Array<Readonly<{ event: HostEventEnvelopeV1; bytes: number }>>;
-    pendingDeliveries: number;
-    pendingBytes: number;
+    readonly queue: HostEventEnvelopeV1[];
     processing: boolean;
     disposed: boolean;
 };
@@ -170,23 +163,12 @@ function readAttemptedSubscriptionQueueHighWater(
     return { queuedItems, queuedBytes };
 }
 
-export function measureStablePluginEventPublicationBytes(sample: Readonly<{
-    ref: PluginContributionRef;
-    payload: JsonValue;
-    identity: EventPublicationIdentity;
-    sequence?: number;
-}>): number {
-    return encodedPublicationBytes({
-        event: {
-            ref: sample.ref,
-            payload: sample.payload,
-            sequence: sample.sequence ?? 1,
-        },
-        identity: sample.identity,
-    });
-}
-
 export function createStablePluginEventsBroker(params?: Readonly<{
+    /** Only a consumer with a real transport budget supplies queue limits. */
+    queueLimits?: Readonly<{
+        pendingDeliveriesPerSubscription: number;
+        pendingBytesPerSubscription: number;
+    }>;
     onListenerError?: (error: Readonly<{
         publication: BrokerPublication;
         subscriptionIdentity: EventPublicationIdentity;
@@ -197,14 +179,11 @@ export function createStablePluginEventsBroker(params?: Readonly<{
         event: HostEventEnvelopeV1;
         error: unknown;
     }>) => void;
-    onHostDeliveryDropped?: (diagnostic: Readonly<{
-        eventId: HostEventEnvelopeV1['eventId'];
-        reason: 'delivery_limit' | 'byte_limit';
-    }>) => void;
 }>): StablePluginEventsBroker {
     const subscriptions = new Set<BrokerSubscription>();
     const hostSubscriptions = new Set<HostBrokerSubscription>();
     const recordRuntimeLimitMeasurement = params?.recordRuntimeLimitMeasurement;
+    const queueLimits = params?.queueLimits;
     let sequence = 0;
 
     const disposeSubscription = (subscription: BrokerSubscription): void => {
@@ -264,8 +243,6 @@ export function createStablePluginEventsBroker(params?: Readonly<{
         if (subscription.disposed) return;
         subscription.disposed = true;
         subscription.queue.length = 0;
-        subscription.pendingDeliveries = 0;
-        subscription.pendingBytes = 0;
         hostSubscriptions.delete(subscription);
     };
 
@@ -281,23 +258,14 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                         disposeHostSubscription(subscription);
                         return;
                     }
-                    if (!subscription.isEffectCapable()) {
-                        subscription.pendingDeliveries -= 1;
-                        subscription.pendingBytes -= queued.bytes;
-                        continue;
-                    }
+                    if (!subscription.isEffectCapable()) continue;
                     try {
-                        await subscription.listener(queued.event);
+                        await subscription.listener(queued);
                     } catch (error) {
                         try {
-                            params?.onHostListenerError?.({ event: queued.event, error });
+                            params?.onHostListenerError?.({ event: queued, error });
                         } catch {
                             // Host Event diagnostics are failure-isolated from lifecycle producers.
-                        }
-                    } finally {
-                        if (!subscription.disposed) {
-                            subscription.pendingDeliveries -= 1;
-                            subscription.pendingBytes -= queued.bytes;
                         }
                     }
                 }
@@ -322,7 +290,6 @@ export function createStablePluginEventsBroker(params?: Readonly<{
             scope: Object.freeze({ ...input.scope }),
             payload,
         }) as HostEventEnvelopeV1;
-        const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
         for (const subscription of hostSubscriptions) {
             if (!subscription.isCurrent()) {
                 disposeHostSubscription(subscription);
@@ -341,23 +308,7 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                 subscription.target.scope.kind === 'account'
                 && event.scope.kind !== 'account'
             ) continue;
-            const reason = bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription
-                ? 'byte_limit' as const
-                : subscription.pendingDeliveries + 1 > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription
-                    || subscription.pendingBytes + bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription
-                    ? 'delivery_limit' as const
-                    : null;
-            if (reason) {
-                try {
-                    params?.onHostDeliveryDropped?.({ eventId: event.eventId, reason });
-                } catch {
-                    // Dropped-delivery diagnostics never affect the canonical producer.
-                }
-                continue;
-            }
-            subscription.queue.push(Object.freeze({ event, bytes }));
-            subscription.pendingDeliveries += 1;
-            subscription.pendingBytes += bytes;
+            subscription.queue.push(event);
             drainHost(subscription);
         }
     };
@@ -390,8 +341,9 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                 event,
                 identity: input.identity,
             });
-            const bytes = targets.length > 0 ? encodedPublicationBytes(publication) : 0;
-            if (bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription) {
+            const bytes = targets.length > 0 && (queueLimits || recordRuntimeLimitMeasurement)
+                ? encodedPublicationBytes(publication) : 0;
+            if (queueLimits && bytes > queueLimits.pendingBytesPerSubscription) {
                 if (recordRuntimeLimitMeasurement) {
                     const highWater = readAttemptedSubscriptionQueueHighWater(targets, bytes);
                     recordRuntimeLimitMeasurement(Object.freeze({
@@ -402,9 +354,9 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                 }
                 throw eventError('plugin_event_backpressure', 'Plugin event exceeds the per-subscription byte limit');
             }
-            const exceedsLimit = targets.some((subscription) => (
-                subscription.pendingDeliveries + 1 > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingDeliveriesPerSubscription
-                || subscription.pendingBytes + bytes > STABLE_PLUGIN_EVENT_QUEUE_LIMITS.pendingBytesPerSubscription
+            const exceedsLimit = queueLimits && targets.some((subscription) => (
+                subscription.pendingDeliveries + 1 > queueLimits.pendingDeliveriesPerSubscription
+                || subscription.pendingBytes + bytes > queueLimits.pendingBytesPerSubscription
             ));
             if (exceedsLimit) {
                 if (recordRuntimeLimitMeasurement) {
@@ -519,8 +471,6 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                     subscriptionParams.isEffectCapable
                     ?? (() => true),
                 queue: [],
-                pendingDeliveries: 0,
-                pendingBytes: 0,
                 processing: false,
                 disposed: false,
             };
@@ -539,7 +489,7 @@ type EventDeclarationMap = ReadonlyMap<string, readonly ParsedPluginEventContrib
 export type PluginInvocationEventsHost = Readonly<{
     broker: StablePluginEventsBroker;
     declarationsByPluginId: EventDeclarationMap;
-    activePluginIds: ReadonlySet<string>;
+    activePluginIds: Pick<ReadonlySet<string>, 'has'>;
 }>;
 
 function readPublishedEvent(
@@ -689,7 +639,7 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
                 continue;
             }
             const ref = resolveDeclaredSubscriptionRef(registration.pluginId, declaration);
-            if (!params.host.activePluginIds.has(ref.pluginId) || !readPublishedEvent(params.host.declarationsByPluginId, ref)) {
+            if (!readPublishedEvent(params.host.declarationsByPluginId, ref)) {
                 throw eventError(
                     'plugin_events_target_unavailable',
                     `Plugin event target '${ref.pluginId}/${ref.localId}' is unavailable`,
@@ -779,7 +729,8 @@ export function createPluginInvocationPluginEventsService(params: Readonly<{
     seed: PluginInvocationServicesSeed;
 }> & PluginInvocationEventsHost): PluginEvents {
     const ensureCurrent = (signal?: AbortSignal): void => {
-        if (signal?.aborted || params.seed.signal.aborted || !params.seed.isOccurrenceCurrent()) {
+        if (signal?.aborted || params.seed.signal.aborted || !params.seed.isOccurrenceCurrent()
+            || !params.activePluginIds.has(params.seed.plugin.id)) {
             throw eventError('plugin_events_generation_retired', 'Plugin event invocation occurrenceId is no longer current');
         }
     };
@@ -843,7 +794,7 @@ export function createPluginInvocationPluginEventsService(params: Readonly<{
             if (RESERVED_RUNTIME_EVENT_IDS.has(normalizedRef.localId)) {
                 throw eventError('plugin_events_reserved', `Plugin event '${normalizedRef.localId}' uses a reserved agent runtime event id`);
             }
-            if (!params.activePluginIds.has(normalizedRef.pluginId) || !readPublishedEvent(params.declarationsByPluginId, normalizedRef)) {
+            if (!readPublishedEvent(params.declarationsByPluginId, normalizedRef)) {
                 throw eventError('plugin_events_target_unavailable', `Plugin event target '${normalizedRef.pluginId}/${normalizedRef.localId}' is unavailable`);
             }
             if (!hasDeclaredSubscription(params.declarationsByPluginId, params.seed.plugin.id, normalizedRef)) {

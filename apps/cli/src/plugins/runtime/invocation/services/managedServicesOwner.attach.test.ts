@@ -1,13 +1,12 @@
-import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
 import { readManagedServiceResponseJson } from '@/plugins/testkit/managedServiceResponse';
-import { request as requestHttp } from 'node:http';
-import { SignedProviderBrokerRouteGrantV2Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
-import { createProviderBrokerRequestHandler } from '@/providers/broker/providerBrokerRequestHandler';
-import { createServer } from 'node:http';
+import { createServer, request as requestHttp } from 'node:http';
 
 import { describe, expect, it } from 'vitest';
 import type { ManagedServiceHandle, ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { SignedProviderBrokerRouteGrantV2Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import { createProviderBrokerRequestHandler } from '@/providers/broker/providerBrokerRequestHandler';
 
 import {
     createUnavailableManagedServices,

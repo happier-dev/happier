@@ -13,19 +13,26 @@ import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/
 import { createStablePluginEventsBroker, type StablePluginEventsBroker } from './events';
 import type { StablePluginResourcesOwner } from './resources';
 
+// App invalidation transport backpressure, not a cap on in-process listeners.
+export const UI_RESOURCE_WATCH_DELIVERY_LIMITS = Object.freeze({
+    pendingDeliveriesPerSubscription: 256,
+    pendingBytesPerSubscription: 1024 * 1024,
+});
+
 /**
  * The daemon half of the plugin UI live-resource transport (§3.6, EU-4b).
  *
  * It owns exactly one thing: turning the canonical producer's invalidation —
  * `ResourcesService.watch`, whose per-watcher delivery accounting, coalescing
  * and digest suppression already hold — into a signal one long-polling app
- * surface can take, with the same bounds the rest of the plugin runtime uses.
+ * surface can take, within this transport's delivery budget.
  *
  * **No second broker.** Delivery serialization, the per-subscription queue and
- * byte ceilings (`STABLE_PLUGIN_EVENT_QUEUE_LIMITS`), the runtime-limit
+ * byte accounting, the runtime-limit
  * measurement seam and `isCurrent()` disposal all come from
  * `createStablePluginEventsBroker`. It is its OWN instance of that canonical
- * factory rather than the plugin event-contribution instance: the broker matches
+ * factory, with `UI_RESOURCE_WATCH_DELIVERY_LIMITS`, rather than the plugin
+ * event-contribution instance: the broker matches
  * subscriptions on `{ pluginId, localId }` alone, so sharing the instance would
  * let a plugin's declared event deliver a fabricated invalidation to a
  * `watchResource` observer.
@@ -192,6 +199,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
 }>): PluginUiResourceWatchOwner {
     const nowMs = params.nowMs ?? (() => Date.now());
     const broker = params.broker ?? createStablePluginEventsBroker({
+        queueLimits: UI_RESOURCE_WATCH_DELIVERY_LIMITS,
         ...(params.recordRuntimeLimitMeasurement
             ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
             : {}),
@@ -410,6 +418,11 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     ),
                 });
             };
+            const endExpiredResourceWatch = (): void => {
+                const watch = boundWatch;
+                if (!watch) return;
+                releaseWatch(watch, { status: 'event', event: terminalErrorEvent(watch.subscriptionId, 'expired_resource', []) });
+            };
             let service: Awaited<ReturnType<StablePluginResourcesOwner['bindForResource']>>;
             try {
                 service = await resources.bindForResource({
@@ -417,8 +430,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     resourceId,
                     signal: bindingController.signal,
                     isOccurrenceCurrent: isBindingCurrent,
+                    onReadAuthorityRetired: endExpiredResourceWatch,
                     ...(openParams.context === undefined ? {} : { context: openParams.context }),
                     ...(openParams.context?.kind === 'session'
+                        || (openParams.context?.kind === 'surface' && openParams.context.target?.kind === 'session')
                         ? { onSessionResourceUnavailable: endUnavailableSessionResourceWatch }
                         : {}),
                 });

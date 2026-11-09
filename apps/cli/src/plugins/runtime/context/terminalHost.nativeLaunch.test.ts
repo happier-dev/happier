@@ -28,7 +28,7 @@ async function withNativeLaunchFixture(run: (fixture: Readonly<{
             resolvePath: async () => root,
             prepareAgentNativeLaunch: async () => ({ projectLaunch: {
                 status: 'ready', reviewedEffectDigest: 'reviewed-terminal-environment',
-                environment: { root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+                toolchain: { root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
                     platform: 'linux', io: {
                         resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
                         run: activate,
@@ -40,6 +40,33 @@ async function withNativeLaunchFixture(run: (fixture: Readonly<{
 }
 
 describe('terminal host final native launch', () => {
+    it('retains the terminal isolation refusal before reaching the PTY boundary', async () => {
+        const signal = new AbortController().signal;
+        const root = process.cwd();
+        const exec = createStablePluginExecService({ signal,
+            isOccurrenceCurrent: () => true, resolveExecutable: async () => { throw new Error('Resolved CLI only'); },
+            resolvePath: async () => root, prepareAgentNativeLaunch: async () => undefined,
+            agentIsolation: { read: () => ({ enabled: true, status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [root] }) },
+        });
+        const physical: PtySpawnParams[] = [];
+        const adapter = createPtyTerminalHostAdapter({ ptyProvider: {
+            spawn(input) { physical.push(input); throw new Error('Isolation refusal must precede PTY spawn'); },
+        } });
+        const service = createPluginTerminalHostService({ hasCapability: () => true,
+            resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'windows_console_forced' }),
+            resolveAgentCliLaunch: () => ({ command: process.execPath, args: ['--version'] }),
+            disposeHost: async ({ handle, adapter: owner }) => owner.dispose(handle),
+        });
+        const binding = installAgentChildLaunchEnvironmentTransformerForTerminalHost(service, env => env, { exec, signal });
+        try {
+            await expect(service.createOrAttachHost({ preference: 'windows_console', sessionName: 'isolation-refused',
+                workingDirectory: root, isolatedEnv: true, launch: { kind: 'agent-cli', agentId: 'claude' } }))
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted', retryable: false,
+                    data: { details: { reason: process.platform === 'linux' ? 'launch_probe_failed' : 'unsupported_platform', launchKind: 'terminal' } } });
+            expect(physical).toEqual([]);
+        } finally { binding.dispose(); }
+    });
+
     it.each(['failed', 'cancelled'] as const)('never starts a host process after native activation is %s', async outcome => {
         await withNativeLaunchFixture(async ({ root, exec, activate, controller }) => {
             activate.mockImplementationOnce(async () => {
@@ -60,7 +87,7 @@ describe('terminal host final native launch', () => {
             try {
                 await expect(service.createOrAttachHost({ preference: 'windows_console', sessionName: 'native-refused',
                     workingDirectory: root, isolatedEnv: true, launch: { kind: 'agent-cli', agentId: 'claude' } }))
-                    .rejects.toMatchObject({ code: outcome === 'failed' ? 'native_environment_failed' : 'plugin_exec_aborted' });
+                    .rejects.toMatchObject({ code: outcome === 'failed' ? 'native_toolchain_failed' : 'plugin_exec_aborted' });
                 expect(physical).toEqual([]);
             } finally { binding.dispose(); }
         });

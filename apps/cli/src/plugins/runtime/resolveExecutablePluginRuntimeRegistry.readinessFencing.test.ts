@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 import { describe, expect, it } from 'vitest';
 
@@ -21,6 +22,7 @@ import type { PluginRuntimeActivationRegistryLease } from './composition/activat
 const PLUGIN_ID = 'acme.readiness-fencing';
 
 async function seedFixture(options?: Readonly<{
+    finiteHookUrl?: string;
     /** Adds one finite background service and an independent Action. */
     settlingBackgroundService?: boolean;
     /** Makes activation cleanup observable outside the loaded module graph. */
@@ -42,7 +44,6 @@ async function seedFixture(options?: Readonly<{
         hostAccess: { required: [], optional: [] },
         contributes: {
             hooks: [{
-                hookApiVersion: 1,
                 id: 'resolve-prerequisites',
                 on: 'agent.resolvePrerequisites',
                 category: 'decision',
@@ -63,7 +64,11 @@ async function seedFixture(options?: Readonly<{
     }), 'utf8');
     await writeFile(
         join(pluginRoot, 'daemon.mjs'),
-        'let completed = false; export function activate(api) { api.hooks.register("resolve-prerequisites", async () => ({ decision: "abstain" }));'
+        'let completed = false; export function activate(api) { api.hooks.register("resolve-prerequisites", '
+        + (options?.finiteHookUrl
+            ? `async (_input, context) => { await (await fetch(${JSON.stringify(options.finiteHookUrl)})).text(); return { decision: "abstain", aborted: context.signal.aborted }; }`
+            : 'async () => ({ decision: "abstain" })')
+        + ');'
         + (options?.settlingBackgroundService
             ? ' api.backgroundServices.register("watcher", async () => { completed = true; }); api.actions.register("status", async () => ({ completed }));'
             : '')
@@ -102,6 +107,41 @@ async function resolveFixtureRuntimeInputs(happyHomeDir: string) {
 }
 
 describe('executable plugin readiness fencing', () => {
+    it('finishes an admitted finite hook after its occurrence is fenced', async () => {
+        let entered!: () => void;
+        const admitted = new Promise<void>(resolve => { entered = resolve; });
+        let release!: () => void;
+        const server = createServer((_request, response) => {
+            release = () => response.end('finished');
+            entered();
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a TCP fixture address');
+        const fixture = await seedFixture({ finiteHookUrl: `http://127.0.0.1:${address.port}/finite` });
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            const inputs = await resolveFixtureRuntimeInputs(fixture.happyHomeDir);
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: fixture.happyHomeDir,
+                contributes: inputs.contributes, generationAuthority: inputs.generationAuthority });
+            const handler = runtime.hookHandlersByHookId.get('agent.resolvePrerequisites')?.[0];
+            if (!handler) throw new Error('Expected the admitted hook');
+            const pending = handler.handler({}, {});
+            await admitted;
+            runtime.fencePluginConsumers?.([PLUGIN_ID]);
+            release();
+            await expect(pending).resolves.toMatchObject({ decision: 'abstain', aborted: false });
+            await expect(handler.handler({}, {})).rejects.toThrow('no longer active');
+        } finally {
+            release?.();
+            await runtime?.dispose();
+            server.closeAllConnections();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+            await rm(fixture.happyHomeDir, { recursive: true, force: true });
+            await rm(fixture.pluginRoot, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     // Cold startup isolates a readiness participant that rejects, but isolation
     // alone would leave the rejected plugin advertised as ready. The fence must
     // make every reader agree it is not: the activated set, the one activation

@@ -152,7 +152,7 @@ export function projectManifestAgentContribution(params: Readonly<{
 export function projectManifestAgentAcpCatalogPreflight(
     definition: PluginAgentContributionV2,
     pluginId: string,
-): Readonly<{ contribution: AgentPreflightSessionControlsContributionV1; environment?: Readonly<Record<string, string>> }> | null {
+): Readonly<{ contribution: AgentPreflightSessionControlsContributionV1; environment?: Readonly<Record<string, string>>; modelConfigOptionId?: string }> | null {
     if (!('runtime' in definition)) return null;
     const runtime = definition.runtime;
     if (runtime.kind !== 'acp' || runtime.transport.kind !== 'stdio') return null;
@@ -172,6 +172,7 @@ export function projectManifestAgentAcpCatalogPreflight(
     if (!command) return null;
     return Object.freeze({
         contribution: Object.freeze({ catalogs: Object.freeze({ kind: 'acp' as const, command: Object.freeze(command) }) }),
+        ...(runtime.definition?.modelConfigOptionId ? { modelConfigOptionId: runtime.definition.modelConfigOptionId } : {}),
         ...(transport.env ? { environment: transport.env } : {}),
     });
 }

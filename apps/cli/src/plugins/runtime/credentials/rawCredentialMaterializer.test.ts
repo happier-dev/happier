@@ -139,6 +139,7 @@ function snapshot(params: Readonly<{
   groupId?: string;
   unrelatedVoiceProvider?: boolean;
   sharedSecret?: boolean;
+  sharedRelationship?: 'owner' | 'recipient';
 }> = {}): ActiveAccountSettingsSnapshot {
   const accountId = params.accountId ?? 'account-a';
   const source = params.source ?? 'connectedAccount';
@@ -161,6 +162,7 @@ function snapshot(params: Readonly<{
     ...(sharedSecret ? {
       savedSecretResources: [{
         resourceId: 'resource_plugin_voice',
+        relationship: params.sharedRelationship ?? 'recipient',
         ownerAccountId: 'owner-account',
         displayName: 'Shared plugin Voice key',
         kind: 'apiKey',
@@ -445,9 +447,49 @@ describe('plugin raw credential materializer', () => {
     expect(harness.listInputs).toHaveLength(0);
   });
 
+  it('treats linking an own Saved Secret as the grant: N uses read no grant list, unlink applies to the next acquisition', async () => {
+    const personal = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret' }) });
+    personal.setGrantActive(false);
+    expect(await personal.materializer.inspectAuthorization(connectedHeaderRequest))
+      .toMatchObject({ grantRequirement: 'linked' });
+    for (let use = 0; use < 3; use += 1) {
+      await expect(personal.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+        kind: 'httpHeaders', headers: { authorization: 'saved-secret-raw' },
+      });
+    }
+    expect(personal.listInputs).toHaveLength(0);
+    personal.setSnapshot(snapshot());
+    await expect(personal.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+
+    const ownedResource = createHarness({
+      initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true, sharedRelationship: 'owner' }),
+    });
+    ownedResource.setGrantActive(false);
+    await expect(ownedResource.materializer.materialize({ kind: 'environment', keys: ['VOICE_TOKEN'] }))
+      .resolves.toEqual({ kind: 'environment', env: { VOICE_TOKEN: 'shared-plugin-raw' } });
+    expect(ownedResource.listInputs).toHaveLength(0);
+  });
+
+  it('keeps the custodian approval for a Saved Secret owned by another person', async () => {
+    const custodian = createHarness({
+      initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true, sharedRelationship: 'recipient' }),
+    });
+    custodian.setGrantActive(false);
+    expect(await custodian.materializer.inspectAuthorization({ kind: 'environment', keys: ['VOICE_TOKEN'] }))
+      .toMatchObject({ grantRequirement: 'approval_required' });
+    await expect(custodian.materializer.materialize({ kind: 'environment', keys: ['VOICE_TOKEN'] }))
+      .rejects.toMatchObject({ code: 'plugin_voice_credential_access_unavailable' });
+    expect(custodian.listInputs).toHaveLength(1);
+    custodian.setGrantActive(true);
+    await expect(custodian.materializer.materialize({ kind: 'environment', keys: ['VOICE_TOKEN'] }))
+      .resolves.toEqual({ kind: 'environment', env: { VOICE_TOKEN: 'shared-plugin-raw' } });
+  });
+
   it('grants and revokes each exact realm/phase/materialization tuple independently', async () => {
     const environmentRequest = { kind: 'environment' as const, keys: ['VOICE_TOKEN'] };
-    const saved = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret' }) });
+    const saved = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true }) });
     const headerInspection = await saved.materializer.inspectAuthorization(connectedHeaderRequest);
     const environmentInspection = await saved.materializer.inspectAuthorization(environmentRequest);
     expect(headerInspection.subject).not.toEqual(environmentInspection.subject);
@@ -461,7 +503,7 @@ describe('plugin raw credential materializer', () => {
     })]);
 
     const headerOnly = createHarness({
-      initialSnapshot: snapshot({ source: 'savedSecret' }),
+      initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true }),
       grantSubject: headerInspection.subject,
     });
     await expect(headerOnly.materializer.materialize(environmentRequest)).rejects.toMatchObject({
@@ -469,16 +511,16 @@ describe('plugin raw credential materializer', () => {
     });
     await expect(headerOnly.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
       kind: 'httpHeaders',
-      headers: { authorization: 'saved-secret-raw' },
+      headers: { authorization: 'shared-plugin-raw' },
     });
 
     const environmentOnly = createHarness({
-      initialSnapshot: snapshot({ source: 'savedSecret' }),
+      initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true }),
       grantSubject: environmentInspection.subject,
     });
     await expect(environmentOnly.materializer.materialize(environmentRequest)).resolves.toEqual({
       kind: 'environment',
-      env: { VOICE_TOKEN: 'saved-secret-raw' },
+      env: { VOICE_TOKEN: 'shared-plugin-raw' },
     });
     environmentOnly.setGrantActive(false);
     await expect(environmentOnly.materializer.materialize(environmentRequest)).rejects.toMatchObject({
@@ -486,7 +528,7 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
-  it('confines a raw-credential grant to the machine installation that approved it', async () => {
+  it('lets one approval cover every own Machine and installation of the Account without a new grant request', async () => {
     const approved = createHarness();
     const inspection = await approved.materializer.inspectAuthorization(connectedHeaderRequest);
     expect(inspection.authoritySource).toEqual(machineA);
@@ -495,15 +537,17 @@ describe('plugin raw credential materializer', () => {
       headers: { authorization: 'Bearer connected:account-a' },
     });
 
-    // Same Account, same plugin, same settings, same subject - another machine.
+    // Same Account, same plugin, same settings, same subject - another own Machine.
     const otherMachine = createHarness({
       grantSubject: inspection.subject,
       grantAuthoritySource: machineA,
       currentAuthoritySource: machineB,
     });
-    await expect(otherMachine.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
+    await expect(otherMachine.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: 'Bearer connected:account-a' },
     });
+    expect(otherMachine.listInputs).toHaveLength(1);
 
     // Same machine, the approved installation replaced by a new one.
     const replacedInstallation = createHarness({
@@ -511,21 +555,23 @@ describe('plugin raw credential materializer', () => {
       grantAuthoritySource: machineA,
       currentAuthoritySource: replacedInstallationOnMachineA,
     });
-    await expect(replacedInstallation.materializer.materialize(connectedHeaderRequest))
-      .rejects.toMatchObject({ code: 'plugin_voice_credential_access_unavailable' });
+    await expect(replacedInstallation.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: 'Bearer connected:account-a' },
+    });
 
-    // A grant recorded under another machine cannot be used from this one.
+    // A grant approved on another own Machine is used here too.
     const foreignGrant = createHarness({
       grantSubject: inspection.subject,
       grantAuthoritySource: machineB,
       currentAuthoritySource: machineA,
     });
-    await expect(foreignGrant.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
+    await expect(foreignGrant.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: 'Bearer connected:account-a' },
     });
 
-    // The authority gate belongs ahead of the source branch, not inside the
-    // connected-account leaf: a SavedSecret disclosure is confined identically.
+    // The same Account-wide rule holds for a SavedSecret disclosure.
     const savedApproved = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret' }) });
     const savedInspection = await savedApproved.materializer.inspectAuthorization(connectedHeaderRequest);
     await expect(savedApproved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
@@ -537,8 +583,8 @@ describe('plugin raw credential materializer', () => {
       grantAuthoritySource: machineA,
       currentAuthoritySource: machineB,
     });
-    await expect(savedOtherMachine.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
+    await expect(savedOtherMachine.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'saved-secret-raw' },
     });
   });
 
@@ -619,8 +665,9 @@ describe('plugin raw credential materializer', () => {
       }),
       grantSubject: savedInspection.subject,
     });
-    await expect(savedTurnover.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
+    // Selecting another of one's own Saved Secrets is a new link, so a new grant.
+    await expect(savedTurnover.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'new-value' },
     });
 
     const rotatedSavedCredential = createHarness({
@@ -743,6 +790,81 @@ describe('plugin raw credential materializer', () => {
       headers: { authorization: 'Bearer connected:account-a' },
     });
     expect(ensureAccountSettingsSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('admits each acquisition once: one selected-source read, one installation read and one grant list', async () => {
+    for (const source of ['connectedAccount', 'savedSecret'] as const) {
+      let snapshotReads = 0;
+      let authorityReads = 0;
+      let homeAdmissions = 0;
+      let current = snapshot({ source });
+      const harness = createHarness({
+        initialSnapshot: current,
+        afterSnapshotRead() { snapshotReads += 1; },
+        readCurrentAuthoritySource: async () => {
+          authorityReads += 1;
+          return machineA;
+        },
+        refreshSavedSecretCatalogForOperation: async () => {
+          homeAdmissions += 1;
+          return current;
+        },
+      });
+
+      await expect(harness.materializer.materialize(connectedHeaderRequest), source).resolves.toMatchObject({
+        kind: 'httpHeaders',
+      });
+
+      // An own Saved Secret's link is its grant; the list remains for other sources.
+      expect(harness.listInputs, source).toHaveLength(source === 'savedSecret' ? 0 : 1);
+      expect(authorityReads, source).toBe(1);
+      // A Saved Secret value is read once more, from the Home-admitted snapshot.
+      expect(snapshotReads, source).toBe(source === 'savedSecret' ? 2 : 1);
+      expect(homeAdmissions, source).toBe(source === 'savedSecret' ? 1 : 0);
+      current = snapshot({ source });
+    }
+  });
+
+  it('lets an admitted acquisition finish after revocation and refuses the next acquisition', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    let calls = 0;
+    const harness = createHarness({
+      materializeAccount: async ({ account, credentialRevisionBasis }) => {
+        calls += 1;
+        if (calls === 1) {
+          started.resolve();
+          await release.promise;
+        }
+        credentialRevisionBasis?.captureCredentialRevision('csr_0123456789ABCDEFGHJKMNPQRS');
+        return { kind: 'httpHeaders', headers: { authorization: `RAW:${account.accountId}` } };
+      },
+    });
+    let invocationCurrent = true;
+    const raw = createInvocationVoiceRawCredentialAccess({
+      materializer: harness.materializer,
+      signal: new AbortController().signal,
+      isCurrent: () => invocationCurrent,
+    });
+
+    const admitted = raw.materialize(connectedHeaderRequest);
+    await started.promise;
+    harness.setGrantActive(false);
+    harness.setGenerationCurrent(false);
+    invocationCurrent = false;
+    release.resolve();
+
+    await expect(admitted).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'RAW:account-a' },
+    });
+    await expect(raw.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    harness.setGenerationCurrent(true);
+    await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    expect(calls).toBe(1);
   });
 
   it('projects only materialize and cannot follow a later credential source after its invocation returns', async () => {
@@ -983,7 +1105,7 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
-  it('discards an in-flight Connected Account result when the selected account changes', async () => {
+  it('finishes an admitted Connected Account acquisition and uses the changed selection on the next acquisition', async () => {
     const started = deferred<void>();
     const release = deferred<void>();
     const harness = createHarness({
@@ -998,9 +1120,8 @@ describe('plugin raw credential materializer', () => {
     harness.setSnapshot(snapshot({ accountId: 'account-b' }));
     release.resolve();
 
-    await expect(operation).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
-      message: 'Voice credential access is unavailable',
+    await expect(operation).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'RAW:account-a' },
     });
     await expect(harness.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
       kind: 'httpHeaders', headers: { authorization: 'RAW:account-b' },
@@ -1025,104 +1146,6 @@ describe('plugin raw credential materializer', () => {
     await expect(operation).resolves.toEqual({
       kind: 'httpHeaders', headers: { authorization: 'RAW:account-a' },
     });
-  });
-
-  it('discards an in-flight result after grant revocation', async () => {
-    const started = deferred<void>();
-    const release = deferred<void>();
-    const harness = createHarness({
-      materializeAccount: async () => {
-        started.resolve();
-        await release.promise;
-        return { kind: 'httpHeaders', headers: { authorization: 'RAW:revoked' } };
-      },
-    });
-    const operation = harness.materializer.materialize(connectedHeaderRequest);
-    await started.promise;
-    harness.setGrantActive(false);
-    release.resolve();
-
-    await expect(operation).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
-    });
-  });
-
-  it('does not materialize bytes when approving machine identity changes during grant authorization', async () => {
-    for (const nextAuthoritySource of [machineB, replacedInstallationOnMachineA]) {
-      let currentAuthoritySource: PluginPermissionGrantAuthoritySourceV1 = machineA;
-      const materializeAccount = vi.fn(async () => ({
-        kind: 'httpHeaders' as const,
-        headers: { authorization: 'Bearer must-not-materialize' },
-      }));
-      const harness = createHarness({
-        materializeAccount,
-        readCurrentAuthoritySource: async () => currentAuthoritySource,
-        afterGrantListRead() {
-          currentAuthoritySource = nextAuthoritySource;
-        },
-      });
-
-      await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-        code: 'plugin_voice_credential_access_unavailable',
-      });
-      expect(materializeAccount).not.toHaveBeenCalled();
-    }
-  });
-
-  it('does not return materialized bytes when approving machine identity changes in the final authorization inspection', async () => {
-    for (const finalAuthoritySource of [
-      sameInstallationOnMachineB,
-      replacedInstallationOnMachineA,
-    ]) {
-      const authoritySources = [
-        machineA,
-        machineA,
-        machineA,
-        finalAuthoritySource,
-      ] as const;
-      const readCurrentAuthoritySource = vi.fn(async () => {
-        const authoritySource = authoritySources[readCurrentAuthoritySource.mock.calls.length - 1];
-        if (!authoritySource) throw new Error('unexpected authority-source inspection');
-        return authoritySource;
-      });
-      const materializeAccount = vi.fn(async () => ({
-        kind: 'httpHeaders' as const,
-        headers: { authorization: 'Bearer must-not-return' },
-      }));
-      const harness = createHarness({
-        materializeAccount,
-        readCurrentAuthoritySource,
-      });
-
-      await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-        code: 'plugin_voice_credential_access_unavailable',
-      });
-      expect(readCurrentAuthoritySource).toHaveBeenCalledTimes(4);
-      expect(materializeAccount).toHaveBeenCalledTimes(1);
-    }
-  });
-
-  it('discards results after the admitted occurrence retires', async () => {
-    for (const revoke of [
-      (harness: ReturnType<typeof createHarness>) => harness.setGenerationCurrent(false),
-    ]) {
-      const started = deferred<void>();
-      const release = deferred<void>();
-      const harness = createHarness({
-        materializeAccount: async () => {
-          started.resolve();
-          await release.promise;
-          return { kind: 'httpHeaders', headers: { authorization: 'RAW:stale' } };
-        },
-      });
-      const operation = harness.materializer.materialize(connectedHeaderRequest);
-      await started.promise;
-      revoke(harness);
-      release.resolve();
-      await expect(operation).rejects.toMatchObject({
-        code: 'plugin_voice_credential_access_unavailable',
-      });
-    }
   });
 
   it('rejects an undeclared tuple before reading grants or materializing credentials', async () => {
@@ -1280,8 +1303,10 @@ describe('plugin raw credential materializer', () => {
     for (const replacement of replacementCases) {
       const harness = createHarness({
         initialSnapshot: snapshot({ source: 'savedSecret' }),
+        // The admission read is the only Account Settings read; the selected
+        // source then changes underneath the rest of the acquisition.
         afterSnapshotRead(readNumber, replace) {
-          if (readNumber === 3) replace(replacement.next);
+          if (readNumber === 1) replace(replacement.next);
         },
       });
       const operation = harness.materializer.materialize(connectedHeaderRequest);
@@ -1297,7 +1322,9 @@ describe('plugin raw credential materializer', () => {
     }
   });
 
-  it('keeps Connected Account raw materialization current across unrelated Account Settings mutations', async () => {
+  it('keeps a Connected Account grant across unrelated Account Settings mutations and refuses moved selections at the next admission', async () => {
+    const approved = createHarness({ initialSnapshot: snapshot({ source: 'connectedAccount' }) });
+    const inspection = await approved.materializer.inspectAuthorization(connectedHeaderRequest);
     const replacementCases = [{
       label: 'unrelated Account Settings mutation',
       next: snapshot({
@@ -1312,24 +1339,26 @@ describe('plugin raw credential materializer', () => {
       allowed: false,
     }, {
       label: 'selected source change',
-      next: snapshot({ source: 'savedSecret', settingsVersion: 2 }),
+      next: snapshot({ source: 'savedSecret', sharedSecret: true, settingsVersion: 2 }),
       allowed: false,
     }] as const;
 
     for (const replacement of replacementCases) {
       const harness = createHarness({
         initialSnapshot: snapshot({ source: 'connectedAccount' }),
-        afterSnapshotRead(readNumber, replace) {
-          if (readNumber === 3) replace(replacement.next);
-        },
+        grantSubject: inspection.subject,
       });
-      const operation = harness.materializer.materialize(connectedHeaderRequest);
+      await expect(harness.materializer.materialize(connectedHeaderRequest), replacement.label).resolves.toEqual({
+        kind: 'httpHeaders', headers: { authorization: 'Bearer connected:account-a' },
+      });
+      harness.setSnapshot(replacement.next);
+      const next = harness.materializer.materialize(connectedHeaderRequest);
       if (replacement.allowed) {
-        await expect(operation, replacement.label).resolves.toEqual({
+        await expect(next, replacement.label).resolves.toEqual({
           kind: 'httpHeaders', headers: { authorization: 'Bearer connected:account-a' },
         });
       } else {
-        await expect(operation, replacement.label).rejects.toMatchObject({
+        await expect(next, replacement.label).rejects.toMatchObject({
           code: 'plugin_voice_credential_access_unavailable',
         });
       }
@@ -1343,11 +1372,11 @@ describe('plugin raw credential materializer', () => {
       initialSnapshot: snapshot({ source: 'savedSecret' }),
       getLifetimeToken: () => lifetimeToken,
       afterSnapshotRead(readNumber, replace) {
-        // The fifth read is after authorization and immediately before this
-        // invocation rechecks the selected SavedSecret for disclosure. The
-        // exact selected source/secret facts are republished unchanged; only
-        // the canonical Account lifetime has retired and re-entered.
-        if (readNumber === 5 && !republished) {
+        // The first read admits the acquisition; the second reads the value
+        // from the Home-admitted snapshot. The exact selected source/secret
+        // facts are republished unchanged; only the canonical Account lifetime
+        // has retired and re-entered, so the value is not disclosed.
+        if (readNumber === 2 && !republished) {
           republished = true;
           lifetimeToken += 1;
           replace(snapshot({ source: 'savedSecret', settingsVersion: 2 }));
@@ -1359,35 +1388,6 @@ describe('plugin raw credential materializer', () => {
       code: 'plugin_voice_credential_access_unavailable',
     });
     expect(republished).toBe(true);
-  });
-
-  it('rejects in-flight Connected Account raw materialization after logout and same-Account reentry', async () => {
-    let lifetimeToken = 1;
-    const harness = createHarness({
-      initialSnapshot: snapshot({ source: 'connectedAccount' }),
-      getLifetimeToken: () => lifetimeToken,
-      materializeAccount: async ({ account, credentialRevisionBasis, request }) => {
-        if (request.kind !== 'httpHeaders') throw new Error('unsupported test request');
-        // The provider-side materialization is the asynchronous boundary. The
-        // re-entered Account publishes semantically identical selected facts,
-        // but the captured incumbent lifetime is no longer current.
-        lifetimeToken += 1;
-        credentialRevisionBasis?.captureCredentialRevision(
-          'csr_0123456789ABCDEFGHJKMNPQRS',
-        );
-        return {
-          kind: 'httpHeaders',
-          headers: Object.fromEntries(request.headerNames.map((name) => [
-            name,
-            `Bearer connected:${account.accountId}`,
-          ])),
-        };
-      },
-    });
-
-    await expect(harness.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
-    });
   });
 
   it('rejects duplicate disclosure rows and manifest-relative duplicate Connected Account sources', () => {
@@ -1511,23 +1511,6 @@ describe('plugin raw credential materializer', () => {
         code: 'plugin_voice_provider_result_invalid',
       });
     }
-
-    const invalidStarted = deferred<void>();
-    const invalidRelease = deferred<void>();
-    const staleInvalid = createHarness({
-      materializeAccount: async () => {
-        invalidStarted.resolve();
-        await invalidRelease.promise;
-        return { kind: 'httpHeaders', headers: {} };
-      },
-    });
-    const staleInvalidOperation = staleInvalid.materializer.materialize(connectedHeaderRequest);
-    await invalidStarted.promise;
-    staleInvalid.setGrantActive(false);
-    invalidRelease.resolve();
-    await expect(staleInvalidOperation).rejects.toMatchObject({
-      code: 'plugin_voice_credential_access_unavailable',
-    });
 
     const producerBytes = new TextEncoder().encode('connected-file-secret');
     const fileHarness = createHarness({

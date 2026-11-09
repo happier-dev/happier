@@ -11,13 +11,13 @@ import {
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { resolvePluginStorePaths } from '../store/paths';
+import type { ResolvedActivationTarget } from '../projection/registry/types';
 import {
     assertContainedRegularGenerationFile,
     persistValidatedAgentSessionRunnerFactories,
     type readCurrentCommittedPluginGenerations,
 } from '../store/registry/generationStore';
 import type { PluginActivationSource } from './activationSources';
-import type { ActivationTarget } from './lifecycle/activation/targets';
 import {
     loadPluginModule,
     loadVerifiedPluginModule,
@@ -36,7 +36,7 @@ import type { PluginDaemonModuleNamespace, PreparedPluginActivationGraph } from 
  */
 export function createPluginActivationSourceResolver(deps: Readonly<{
     committed: NonNullable<Awaited<ReturnType<typeof readCurrentCommittedPluginGenerations>>> | null;
-    resolveBundledActivationSource: (target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
+    resolveBundledActivationSource: (target: ResolvedActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
     preparedActivationGraphsByPluginId?: ReadonlyMap<string, PreparedPluginActivationGraph>;
     preparedDevelopmentActivationGraphsByPluginId?: ReadonlyMap<string, PreparedPluginDevelopmentActivationGraph>;
     resolveDevelopmentSourceAuthority?: (input: Readonly<{
@@ -48,7 +48,7 @@ export function createPluginActivationSourceResolver(deps: Readonly<{
     activatedManifestAuthorityByPluginId: Map<string, 'external' | 'bundled_first_party'>;
 }>) {
     return (
-        target: ActivationTarget,
+        target: ResolvedActivationTarget,
         options: Readonly<{
             recordActivatedManifestAuthority?: boolean;
         }> = {},

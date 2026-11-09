@@ -1,5 +1,3 @@
-import { loadInstalledPlugins } from '../../discovery/load/installed';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '../../testkit/admittedRuntime';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -15,7 +13,7 @@ import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema, type ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import type { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import type { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import type {
     TargetPluginInterceptedRequest as PluginInterceptedRequest,
 } from './contributions/targetRequestInterceptors';
@@ -23,12 +21,14 @@ import type {
 import type { ResolvedContributionRegistry } from '../../projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import { createUnavailablePluginServices } from '../invocation/services/unavailable';
-import { createProjectNativeEnvironmentIoForHost, type ProjectNativeEffectCaptureForHost } from '../invocation/services/exec';
+import { createProjectNativeToolchainIoForHost, type ProjectNativeEffectCaptureForHost } from '../invocation/services/exec';
 import { createProductionPluginInvocationServiceOwners } from '../invocation/services/production';
 import { createPluginInvocationLifetime } from '../invocation/lifetime';
 import { createPluginReloadController } from '../reload/controller';
 import type { PluginRuntimeOccurrenceId } from '../runtimeSlots';
 import { ingestCanonicalPluginManifest } from '../../manifest/ingest';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '../../testkit/admittedRuntime';
+import { loadInstalledPlugins } from '../../discovery/load/installed';
 import { activatePluginRuntimeRegistry } from './manager';
 import type { PluginContributionActivationDemand } from './activation/targets';
 import { resolveProjectNativeAdapter, type ProjectNativeAdapterProductionV1 } from './contributions/targetProjectNativeAdapters';
@@ -50,7 +50,7 @@ import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import type { PtyProvider, PtyExitEvent, PtySpawnParams } from '@/terminal/pty/provider';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
-import { pixiPlugin, pixiRuntime, pixiAdapter, importedPixiTask, importedPixiEnvironment, persistedQualifiedArms } from '../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
+import { pixiPlugin, pixiRuntime, pixiAdapter, importedPixiTask, importedPixiToolchain, persistedQualifiedArms } from '../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 import { authorizePluginExecLaunchForHost, authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService } from '../invocation/services/exec';
 import { createLoadedMachineProvisionerFixture, machineProvisionerFixtureRoleIds } from '../../projection/registry/machineProvisioners.testkit';
 import { projectLoadedPluginContributes } from '../../projection/registry/fullProjection';
@@ -62,6 +62,8 @@ import { resolveManifestHostAccessRequestsForQualifiedContribution } from '../ho
 import * as processTreeBoundary from '@/processes/terminate/terminateProcessTree';
 import { readSupervisedPluginProcessIdForHost } from '../exec/processSupervisor';
 import { PROCESS_OWNER_ENV_KEY, parseProcessOwnerTag } from '@/processes/ownerTag';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 type TargetPluginRegistrationApi = ReturnType<typeof createPluginRegistrationScope>['api'];
 
@@ -126,6 +128,55 @@ describe('target activation publication', () => {
         } finally { await fixture.dispose(); }
     });
 
+    it('admits and activates an external preview capture source through public SDK authoring', async () => {
+        const matrix: { manifestFamilies: Array<{ manifestFamily: string; availabilityDisposition: string }> } = JSON.parse(
+            await readFile(new URL('../../../../../../packages/plugin-sdk/capability-matrix.json', import.meta.url), 'utf8'),
+        );
+        expect(matrix.manifestFamilies.find(row => row.manifestFamily === 'captureSources')?.availabilityDisposition).toBe('preview');
+        let startedStreamId: string | undefined;
+        let stopped = false;
+        const plugin = definePlugin({
+            id: 'acme.preview-capture', version: '1.0.0', displayName: 'External preview capture',
+            entrypoints: { daemon: './daemon.mjs' },
+            captureSources: { screen: {
+                declaration: { displayName: 'External screen', streamFamily: 'screen', supportedCodecs: ['image.mjpeg'] },
+                runtime: { async start(input) {
+                    startedStreamId = input.streamId;
+                    return { stop() { stopped = true; } };
+                } },
+            } },
+        });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+                // Public SDK callback bodies run against the real host API; source admission remains file-backed.
+                instantiateCommittedModule: () => ({ activate: plugin.activate }),
+            }],
+            coldStart: true,
+            async resolveContributes(happyHomeDir) {
+                return createResolvedContributionRegistry(projectLoadedPluginContributes({
+                    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+                }));
+            },
+        });
+        try {
+            expect(fixture.registry.contributes.activationTargets).toMatchObject([{ pluginId: plugin.manifest.id, provenance: 'external' }]);
+            const source = await fixture.registry.resolveCaptureSource({ pluginId: plugin.manifest.id, localId: 'screen' });
+            expect(source).not.toBeNull();
+            if (!source) throw new Error('External preview capture source did not activate');
+            expect(source.declaration).toMatchObject({ id: 'screen', displayName: 'External screen' });
+            expect(source.isCurrent()).toBe(true);
+            const stream = await source.runtime.start({ streamId: 'preview-stream', signal: new AbortController().signal,
+                offerFrame: () => ({ ok: true }), emitReceipt() {},
+            });
+            expect(startedStreamId).toBe('preview-stream');
+            await stream.stop();
+            expect(stopped).toBe(true);
+            await fixture.dispose();
+            expect(source.isCurrent()).toBe(false);
+            expect(source.retirementSignal.aborted).toBe(true);
+        } finally { await fixture.dispose(); }
+    });
+
     it('reports captured source-admission failures without another currentness authority', async () => {
         const registry = await activatePluginRuntimeRegistry({
             contributes: createResolvedContributionRegistry({}),
@@ -138,7 +189,9 @@ describe('target activation publication', () => {
         try {
             expect(registry.activatedPluginIds.has('acme.missing')).toBe(false);
             expect(registry.pluginDiagnosticsByPluginId['acme.missing']).toEqual([
-                expect.objectContaining({ code: 'plugin_daemon_module_load_failed' }),
+                expect.objectContaining({ code: 'plugin_daemon_module_load_failed',
+                    details: { cause: { phase: 'resolve', code: 'UNKNOWN', retryable: 'unknown' } },
+                }),
             ]);
         } finally {
             await registry.dispose();
@@ -228,7 +281,7 @@ describe('target activation publication', () => {
             await expect(resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'nativeServiceLifecycle', targets, registry })).resolves.toMatchObject({ kind: 'ready' });
             await expect(resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'detect', targets, registry, isAdmitted: () => false })).resolves.toEqual({ kind: 'refused', code: 'native_adapter_retired' });
             expect(load).toHaveBeenCalledTimes(1);
-            expect(JSON.parse(persistedQualifiedArms)).toMatchObject({ scripts: { check: { source: importedPixiTask } }, environment: importedPixiEnvironment });
+            expect(JSON.parse(persistedQualifiedArms)).toMatchObject({ scripts: { check: { source: importedPixiTask } }, toolchain: importedPixiToolchain });
             const inspectAction = createProjectDefinitionAction({ serverId: 'home-a', machineId: 'machine-a', workingDirectory: projectRoot,
                 accessPolicy: { kind: 'restrictedRoots', roots: [projectRoot] },
                 acquirePluginRuntime: async () => ({ registry: { contributes,
@@ -238,7 +291,7 @@ describe('target activation publication', () => {
             await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: projectRoot } },
                 context: { serverId: 'home-a', surface: 'cli' } })).resolves.toMatchObject({
                 definition: { basis: { kind: 'absent' } },
-                detection: { entries: [{ source: importedPixiTask, usage: 'script' }], environments: [importedPixiEnvironment], coverage: 'complete' },
+                detection: { entries: [{ source: importedPixiTask, usage: 'script' }], toolchains: [importedPixiToolchain], coverage: 'complete' },
             });
             const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: projectRoot };
             await expect(inspectAction({ actionId: 'projects.manifest.update',
@@ -246,14 +299,14 @@ describe('target activation publication', () => {
                 context: { serverId: 'home-a', surface: 'cli' },
             })).resolves.toMatchObject({ status: 'saved', basis: { kind: 'present' }, document: {
                 status: 'valid', bytes: persistedQualifiedArms,
-                manifest: { scripts: { check: { source: importedPixiTask } }, environment: importedPixiEnvironment },
+                manifest: { scripts: { check: { source: importedPixiTask } }, toolchain: importedPixiToolchain },
             } });
             expect(await readFile(join(projectRoot, '.happier/project.json'), 'utf8')).toBe(persistedQualifiedArms);
             await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace },
                 context: { serverId: 'home-a', surface: 'cli' },
             })).resolves.toMatchObject({ definition: { basis: { kind: 'present' }, document: {
                 status: 'valid', bytes: persistedQualifiedArms,
-                manifest: { scripts: { check: { source: importedPixiTask } }, environment: importedPixiEnvironment },
+                manifest: { scripts: { check: { source: importedPixiTask } }, toolchain: importedPixiToolchain },
             } } });
             const selected = await resolveProjectNativeAdapter({ reference: pixiAdapter, role: 'resolveCommand', targets, registry,
                 createInvocationContext(input) {
@@ -270,10 +323,10 @@ describe('target activation publication', () => {
                 },
             });
             expect(selected.kind).toBe('ready');
-            if (selected.kind !== 'ready' || importedPixiTask.kind !== 'pluginNative' || importedPixiEnvironment.kind !== 'pluginToolchain') throw new Error('Expected native fixture arms');
+            if (selected.kind !== 'ready' || importedPixiTask.kind !== 'pluginNative' || importedPixiToolchain.kind !== 'pluginToolchain') throw new Error('Expected native fixture arms');
             const request = { root: projectRoot, adapter: pixiAdapter, files: [{ file: 'pixi.toml', content: configContent }] };
             await expect(selected.lease.runtime.detect!(request)).resolves.toMatchObject({
-                entries: [{ source: importedPixiTask, usage: 'script' }], environments: [importedPixiEnvironment], coverage: 'complete',
+                entries: [{ source: importedPixiTask, usage: 'script' }], toolchains: [importedPixiToolchain], coverage: 'complete',
             });
             const inspected = selected.lease.acquireProduction({ root: projectRoot });
             if (inspected.kind !== 'ready') throw new Error(inspected.code);
@@ -287,10 +340,10 @@ describe('target activation publication', () => {
                 .resolves.toMatchObject({ kind: 'refused', code: 'native_service_only' });
             await expect(inspectedProduction.resolveCommand({ ...request, source: importedPixiTask })).resolves.toMatchObject({
                 kind: 'resolved', executable: { kind: 'systemTool', id: 'pixi' }, args: ['run', 'check'], cwd: projectRoot,
-                reviewInputs: request.files, environmentApplied: importedPixiEnvironment,
+                reviewInputs: request.files, toolchainApplied: importedPixiToolchain,
             });
             expect(effectSignal?.aborted).toBe(false);
-            await expect(inspectedProduction.produceEnvironment({ ...request, selection: importedPixiEnvironment, launch: { command: '/bin/echo', args: ['checked'], cwd: projectRoot, env: {} } })).resolves.toMatchObject({
+            await expect(inspectedProduction.prepareToolchain({ ...request, selection: importedPixiToolchain, launch: { command: '/bin/echo', args: ['checked'], cwd: projectRoot, env: {} } })).resolves.toMatchObject({
                 kind: 'ready', launch: { executable: { kind: 'systemTool', id: 'pixi' }, args: ['run', '--', '/bin/echo', 'checked'] }, reviewInputs: request.files,
             });
             inspectedProduction.release();
@@ -315,13 +368,13 @@ describe('target activation publication', () => {
             // alive across the returned managed reference and final capture.
             const completedBeforeProduction = completedInvocations;
             const commandProduction = selected.lease.acquireProduction({ root: projectRoot });
-            const environmentProduction = selected.lease.acquireProduction({ root: projectRoot, environment: { KEEP: 'base' } });
+            const toolchainProduction = selected.lease.acquireProduction({ root: projectRoot, environment: { KEEP: 'base' } });
             if (commandProduction.kind !== 'ready') throw new Error(commandProduction.code);
-            if (environmentProduction.kind !== 'ready') throw new Error(environmentProduction.code);
+            if (toolchainProduction.kind !== 'ready') throw new Error(toolchainProduction.code);
             try {
                 expect(commandProduction.production.pluginVersion).toBe(ingested.manifest.version);
-                expect(environmentProduction.production.pluginVersion).toBe(ingested.manifest.version);
-                expect(commandProduction.production.exec).not.toBe(environmentProduction.production.exec);
+                expect(toolchainProduction.production.pluginVersion).toBe(ingested.manifest.version);
+                expect(commandProduction.production.exec).not.toBe(toolchainProduction.production.exec);
                 const commandSignal = invocationSignals.at(-2)!;
                 const environmentSignal = invocationSignals.at(-1)!;
                 const resolved = await commandProduction.production.resolveCommand({ ...request, source: importedPixiTask });
@@ -331,21 +384,21 @@ describe('target activation publication', () => {
                 const captured = await authorizePluginExecLaunchForHost(commandProduction.production.exec, {
                     executable: resolved.executable, args: resolved.args,
                     cwd: { root: 'workspace', relativePath: '' }, env: { KEEP: 'base' },
-                });
+                }, { agentIsolation: null });
                 expect(captured).toMatchObject({ command: installedPixiPath, args: ['run', 'check'], cwd: projectRoot });
                 captured.release();
                 const wrapped = await authorizeResolvedProjectExecLaunchForHost({
                     launch: { command: '/bin/echo', args: ['checked'], cwd: projectRoot, env: { KEEP: 'base' } },
-                    nativeExecutableOwner: environmentProduction.production.exec,
+                    nativeExecutableOwner: toolchainProduction.production.exec,
                     signal: new AbortController().signal,
                     assertCurrent: () => {
-                        if (!environmentProduction.production.isCurrent()) throw new Error('Retired selected environment invocation');
+                        if (!toolchainProduction.production.isCurrent()) throw new Error('Retired selected environment invocation');
                     },
                     projectLaunch: { status: 'ready', reviewedEffectDigest: 'retained-selected-invocation',
-                        environment: { root: projectRoot, selection: importedPixiEnvironment, platform: 'linux', io: {
+                        toolchain: { root: projectRoot, selection: importedPixiToolchain, platform: 'linux', io: {
                             resolveTool: async () => { throw new Error('Plugin environment cannot use builtin resolution'); },
                             run: async () => { throw new Error('Plugin environment cannot use builtin execution'); },
-                        } }, nativeAdapter: { lease: environmentProduction.production, files: request.files },
+                        } }, nativeAdapter: { lease: toolchainProduction.production, files: request.files },
                     },
                 });
                 expect(wrapped).toMatchObject({ command: installedPixiPath, args: ['run', '--', '/bin/echo', 'checked'] });
@@ -362,18 +415,17 @@ describe('target activation publication', () => {
                     },
                 } });
                 let terminalPreparations = 0;
-                const terminalExec = createStablePluginExecService({
-                     signal: environmentSignal, isOccurrenceCurrent: environmentProduction.production.isCurrent,
+                const terminalExec = createStablePluginExecService({ signal: environmentSignal, isOccurrenceCurrent: toolchainProduction.production.isCurrent,
                     resolveExecutable: async () => { throw new Error('Installed Agent must not be resolved as the wrapper'); },
                     resolvePath: async () => projectRoot,
                     prepareAgentNativeLaunch: async () => {
                         terminalPreparations++;
-                        return { nativeExecutableOwner: environmentProduction.production.exec,
+                        return { nativeExecutableOwner: toolchainProduction.production.exec,
                             projectLaunch: { status: 'ready', reviewedEffectDigest: 'terminal-retained-selected-invocation',
-                                environment: { root: projectRoot, selection: importedPixiEnvironment, platform: 'linux', io: {
+                                toolchain: { root: projectRoot, selection: importedPixiToolchain, platform: 'linux', io: {
                                     resolveTool: async () => { throw new Error('Plugin environment cannot use builtin resolution'); },
                                     run: async () => { throw new Error('Plugin environment cannot use builtin execution'); },
-                                } }, nativeAdapter: { lease: environmentProduction.production, files: request.files },
+                                } }, nativeAdapter: { lease: toolchainProduction.production, files: request.files },
                             } };
                     },
                 });
@@ -408,13 +460,13 @@ describe('target activation publication', () => {
                 expect(commandSignal.aborted).toBe(true);
                 expect(environmentSignal.aborted).toBe(false);
                 expect(commandProduction.production.isCurrent()).toBe(false);
-                expect(environmentProduction.production.isCurrent()).toBe(true);
+                expect(toolchainProduction.production.isCurrent()).toBe(true);
                 expect(completedInvocations).toBe(completedBeforeProduction + 1);
                 await expect(commandProduction.production.resolveCommand({ ...request, source: importedPixiTask }))
                     .resolves.toEqual({ kind: 'unavailable', code: 'native_adapter_retired' });
             } finally {
                 commandProduction.production.release();
-                environmentProduction.production.release();
+                toolchainProduction.production.release();
             }
             expect(completedInvocations).toBe(completedBeforeProduction + 2);
             // Node is the installed executable fixture, so this native task
@@ -458,7 +510,7 @@ describe('target activation publication', () => {
             finalEnvironmentProduction = finalEnvironment.production;
             const projectLaunch = {
                     status: 'ready', reviewedEffectDigest: 'current-reviewed-public-native-effect',
-                    environment: { root: projectRoot, selection: importedPixiEnvironment, platform: 'linux', io: {
+                    toolchain: { root: projectRoot, selection: importedPixiToolchain, platform: 'linux', io: {
                         resolveTool: async () => { throw new Error('Plugin environment must not fall back to builtin resolution'); },
                         run: async () => { throw new Error('Plugin environment must not fall back to builtin execution'); },
                     } },
@@ -495,7 +547,7 @@ describe('target activation publication', () => {
             // Fake OS boundary: the owned process group is absent on exit.
             const terminals = createTerminalPtySessionManager({ ptyProvider, probeProcessGroup: () => 'absent', config: {
                 bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
-                bufferRetentionMs: 600_000, urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384,
+                urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384,
                 defaultCols: 80, defaultRows: 24,
             } });
             const operation = createHostActionOperationRuntime({ machineId: 'machine-a',
@@ -529,16 +581,14 @@ describe('target activation publication', () => {
             admitted.release(); admitted.release();
             expect(originalExecutableReleased).toBe(1);
             const originalExecutable = { kind: 'systemTool', id: 'pixi' } as const;
-            const originalExec = createStablePluginExecService({
-                 environment: { KEEP: 'base' },
-
+            const originalExec = createStablePluginExecService({ environment: { KEEP: 'base' },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: reference => resolveExecutable(reference, pixiAdapter.pluginId),
                 resolvePath: async () => projectRoot,
             });
             const nativeAgent = await authorizePluginExecLaunchForHost(originalExec, {
                 executable: originalExecutable, args: ['checked'], cwd: { root: 'workspace', relativePath: '' },
-            }, { projectLaunch, nativeExecutableOwner: finalEnvironmentProduction.exec });
+            }, { agentIsolation: null, projectLaunch, nativeExecutableOwner: finalEnvironmentProduction.exec });
             expect(nativeAgent).toMatchObject({ command: installedPixiPath,
                 args: ['run', '--', installedPixiPath, 'checked'], cwd: projectRoot, env: { KEEP: 'base' } });
             // This PATH is part of the original executable's admitted input,
@@ -550,9 +600,7 @@ describe('target activation publication', () => {
             // declaration namespaces. Only executable resolution is an OS fixture.
             const installedAgentRef = { kind: 'systemTool', id: 'fixture.agent' } as const;
             let installedAgentReleases = 0;
-            const installedAgentExec = createStablePluginExecService({
-                 environment: { KEEP: 'base' },
-
+            const installedAgentExec = createStablePluginExecService({ environment: { KEEP: 'base' },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async reference => {
                     expect(reference).toEqual(installedAgentRef);
@@ -563,7 +611,7 @@ describe('target activation publication', () => {
             });
             const wrappedAgent = await authorizePluginExecLaunchForHost(installedAgentExec, {
                 executable: installedAgentRef, args: ['checked'], cwd: { root: 'workspace', relativePath: '' },
-            }, { projectLaunch, nativeExecutableOwner: finalEnvironmentProduction.exec });
+            }, { agentIsolation: null, projectLaunch, nativeExecutableOwner: finalEnvironmentProduction.exec });
             expect(wrappedAgent).toMatchObject({ command: installedPixiPath,
                 args: ['run', '--', process.execPath, '--agent-prefix', 'checked'], cwd: projectRoot,
                 env: { KEEP: 'base' } });
@@ -574,7 +622,7 @@ describe('target activation publication', () => {
                 .resolves.toEqual({ kind: 'failed', code: 'native_adapter_reference_mismatch' });
             await expect(finalEnvironmentProduction.resolveCommand({ ...request, source: { ...importedPixiTask, target: 'invalid-result' } }))
                 .resolves.toEqual({ kind: 'failed', code: 'native_adapter_result_invalid' });
-            await expect(finalEnvironmentProduction.produceEnvironment({ ...request, selection: importedPixiEnvironment,
+            await expect(finalEnvironmentProduction.prepareToolchain({ ...request, selection: importedPixiToolchain,
                 launch: { command: '/bin/echo', args: ['checked'], cwd: projectRoot, env: {} } }, { signal: AbortSignal.abort() }))
                 .resolves.toEqual({ kind: 'cancelled', code: 'native_adapter_cancelled' });
             awaitRetirement = true;
@@ -602,7 +650,7 @@ describe('target activation publication', () => {
         const commandAdapter = { pluginId: 'acme.native-command', localId: 'commands' } as const;
         const commandSource = { kind: 'pluginNative', adapter: commandAdapter, file: 'command.native', target: 'check' } as const;
         const commandTool = { kind: 'systemTool', id: 'runner' } as const;
-        const environmentTool = { kind: 'systemTool', id: 'pixi' } as const;
+        const toolchainTool = { kind: 'systemTool', id: 'pixi' } as const;
         const commandContent = 'check';
         const configContent = '[tasks]\ncheck = "echo checked"';
         const commandPath = join(projectRoot, process.platform === 'win32' ? 'native-command.exe' : 'native-command');
@@ -613,7 +661,7 @@ describe('target activation publication', () => {
         if (process.platform !== 'win32') await Promise.all([chmod(commandPath, 0o755), chmod(wrapperPath, 0o755)]);
         await writeFile(join(projectRoot, '.happier/project.json'), fresh === 'direct' ? persistedQualifiedArms : JSON.stringify({ version: 1,
             workspace: { setup: fresh ? [] : [!passiveOnly && (holdCapacity || stopNativePreparation) ? { ...commandSource, target: 'hold' } : commandSource] }, scripts: { check: { source: commandSource },
-                ...(holdCapacity || stopNativePreparation ? { hold: { source: { ...commandSource, target: 'hold' } } } : {}) }, environment: importedPixiEnvironment }));
+                ...(holdCapacity || stopNativePreparation ? { hold: { source: { ...commandSource, target: 'hold' } } } : {}) }, toolchain: importedPixiToolchain }));
         let environmentEffects = 0;
         let commandEffects = 0;
         let nativePreparationProcess: Awaited<ReturnType<PluginInvocationContext['services']['exec']['spawn']>> | undefined;
@@ -643,16 +691,16 @@ describe('target activation publication', () => {
         });
         const environmentPlugin = definePlugin({
             id: pixiAdapter.pluginId, version: pixiPlugin.manifest.version, displayName: 'Selected native environment fixture', entrypoints: { daemon: './daemon.js' },
-            hostAccess: { required: [{ id: 'environment-process', capability: 'process', reason: 'Resolve the selected native wrapper', scope: { executables: [environmentTool] } },
+            hostAccess: { required: [{ id: 'environment-process', capability: 'process', reason: 'Resolve the selected native wrapper', scope: { executables: [toolchainTool] } },
                 { id: 'environment-root', capability: 'filesystem', reason: 'Read the selected environment config', scope: { locations: [{ root: 'workspace' }], access: ['read'] } }], optional: [] },
             systemTools: { pixi: { title: 'Pixi', executableNames: ['pixi'] } },
-            projectNativeAdapters: { [pixiAdapter.localId]: { declaration: { files: ['pixi.toml'], roles: ['detect', 'produceEnvironment'] }, runtime: {
+            projectNativeAdapters: { [pixiAdapter.localId]: { declaration: { files: ['pixi.toml'], roles: ['detect', 'prepareToolchain'] }, runtime: {
                 detect: pixiRuntime.detect!,
-                async produceEnvironment(request, context, options) {
+                async prepareToolchain(request, context, options) {
                     environmentEffects += 1;
                     expect(context.plugin.id).toBe(pixiAdapter.pluginId);
                     expect(new TextDecoder().decode(await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' }))).toBe(configContent);
-                    return pixiRuntime.produceEnvironment!(request, context, options);
+                    return pixiRuntime.prepareToolchain!(request, context, options);
                 },
             } } },
         });
@@ -718,11 +766,9 @@ describe('target activation publication', () => {
         const selectedFactories: NonNullable<ProjectFiniteActionRuntime['plugins']> = { resolveProjectNativeAdapter(reference, role) {
             return resolveProjectNativeAdapter({ reference, role, targets, registry,
             createInvocationContext(input) {
-                if (input.root === undefined) throw new Error('Expected workspace invocation');
                 const target = targets.find(candidate => occurrenceIds.get(candidate.pluginId) === input.occurrenceId)!;
                 const localId = target.pluginId === commandAdapter.pluginId ? commandAdapter.localId : pixiAdapter.localId;
-                if (input.root === undefined) throw new Error('Expected workspace invocation');
-                    const lifetime = createPluginInvocationLifetime(input.signal);
+                const lifetime = createPluginInvocationLifetime(input.signal);
                 const observation = { signal: lifetime.signal };
                 if (target.pluginId === pixiAdapter.pluginId) environmentInvocations.push(observation);
                 else commandInvocations.push(observation);
@@ -794,7 +840,7 @@ describe('target activation publication', () => {
                 onExit(listener) { exits.add(listener); return { dispose() { exits.delete(listener); } }; } };
         // This fake OS spawn has no descendants once its exit event fires.
         } }, probeProcessGroup: () => 'absent', config: { bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
-            bufferRetentionMs: 600_000, urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 } });
+            urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384, defaultCols: 80, defaultRows: 24 } });
         cleanups.push(() => { terminals.dispose(); });
         let operationSequence = 0;
         const operationRuntime = createHostActionOperationRuntime({ machineId: workspace.machineId, resolveAccountId: async () => 'native-requester',
@@ -809,7 +855,7 @@ describe('target activation publication', () => {
                 readPolicy: async () => ({ status: 'ready', source: 'default', policy: { accepting: true, runAtMost: holdCapacity || stopNativePreparation ? 1 : null }, metadataVersion: 1 }) }),
             resolveWorkspaceExecutionConfig: async () => workspaceConfig, plugins: selectedFactories,
             nativeIo: { async resolveTool() { throw new Error('Plugin-native commands cannot fall back to built-in IO'); } },
-            environmentIo: createProjectNativeEnvironmentIoForHost({ async resolveTool() {
+            environmentIo: createProjectNativeToolchainIoForHost({ async resolveTool() {
                 throw new Error('Plugin-native environment cannot fall back to built-in IO');
             } }),
         };
@@ -818,12 +864,16 @@ describe('target activation publication', () => {
             signal.abort();
             for (const spawnedProcess of spawned) spawnedProcess.exit({ exitCode: 1 });
         });
-        const invoke = (name = 'check', requestId = 'native-owner-request') => createProjectFiniteAction(runtime, { signal: signal.signal, transportRequestId: requestId,
+        const invoke = async (name = 'check', requestId = 'native-owner-request') => {
+            const ingress = { signal: signal.signal, transportRequestId: requestId,
             machineAdmission: { actorAccountId: runtime.accountId, custodianAccountId: runtime.accountId, machineId: runtime.machineId,
-                installationId: 'native-installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true })({
+                installationId: 'native-installation', role: 'manage' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true };
+            return createProjectFiniteAction({ ...runtime, requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress,
+                hostHomeServerIdentityId: await resolveServerProfileHomeIdentityId(runtime.serverId) }) }, ingress)({
             actionId: 'projects.script.run', input: { workspace: { serverId: workspace.serverId, machineId: workspace.machineId, rootPath: projectRoot, workspaceId: workspace.id },
                 selection: { kind: 'named', name } }, context: { authority: 'account_automation', serverId: runtime.serverId, actionRequestId: requestId },
-        });
+            });
+        };
         const scope = { accountId: runtime.accountId, machineId: runtime.machineId };
         if (passiveOnly) {
             const ingress = { signal: signal.signal, machineAdmission: { actorAccountId: runtime.accountId,
@@ -1055,17 +1105,17 @@ describe('target activation publication', () => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
             runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
-            contributes: { projectNativeAdapters: [{ id: 'pixi', files: ['pixi.toml'], roles: ['detect', 'resolveCommand', 'produceEnvironment', 'nativeServiceLifecycle'] }] },
+            contributes: { projectNativeAdapters: [{ id: 'pixi', files: ['pixi.toml'], roles: ['detect', 'resolveCommand', 'prepareToolchain', 'nativeServiceLifecycle'] }] },
         }, { sourceProvenance: 'registryCustodied' });
         expect(ingested.ok).toBe(true);
         if (!ingested.ok) throw new Error('Expected admitted native adapter');
         const load = vi.fn(async () => ({ activate(api: PluginApi) {
             api.projectNativeAdapters.register('pixi', {
-                detect: async () => ({ entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }),
+                detect: async () => ({ entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }),
                 resolveCommand: async request => ({ kind: 'resolved', executable: { kind: 'systemTool', id: 'pixi' }, args: ['services', 'start', request.source.target],
                     cwd: request.root, reviewInputs: request.files, nativeInstance: request.source.target === 'wrong-adapter'
                         ? { ...instance, adapter: { pluginId: 'other.plugin', localId: 'pixi' } } : instance }),
-                produceEnvironment: async () => ({ kind: 'unsupported', code: 'fixture_no_environment' }),
+                prepareToolchain: async () => ({ kind: 'unsupported', code: 'fixture_no_environment' }),
                 nativeServiceLifecycle: {
                     async inspect(_instance, _options, context) {
                         if (!context) throw new Error('Native inspection lost admitted invocation services');
@@ -1098,14 +1148,13 @@ describe('target activation publication', () => {
             expect(registry.targetRegistrations).toEqual([expect.objectContaining({ pluginId, registration: expect.objectContaining({ family: 'projectNativeAdapters', localId: 'pixi' }) })]);
             const selected = await resolveProjectNativeAdapter({ reference: instance.adapter, role: 'resolveCommand', targets: contributes.activationTargets, registry,
                 createInvocationContext(input) {
-                    if (input.root === undefined) throw new Error('Expected workspace invocation');
                     const lifetime = createPluginInvocationLifetime(input.signal);
                     const seed = { plugin: { id: pluginId, version: '1.0.0' },
                         contribution: { id: 'pixi', qualifiedId: `${pluginId}/projectNativeAdapters/pixi` },
                         occurrenceId: input.occurrenceId, correlationId: 'native-instance-test', surface: 'cli' as const,
                         signal: lifetime.signal, redactionLifetimeSignal: lifetime.redactionLifetimeSignal, isOccurrenceCurrent: input.isCurrent };
                     return { context: { ...seed, invokedAtMs: lifetime.invokedAtMs, services: owners.createOperationServices(seed, {
-                        filesystemRoots: { pluginData: input.root, workspace: input.root, projects: new Map() }, hostAccessRequests: [],
+                        filesystemRoots: { pluginData: root, workspace: input.root, projects: new Map() }, hostAccessRequests: [],
                     }) }, complete() { lifetime.complete(); } };
                 },
             });
@@ -1126,6 +1175,10 @@ describe('target activation publication', () => {
                 .toEqual({ kind: 'refused', code: 'native_adapter_reference_mismatch' });
             const captured = selected.lease.captureNativeServiceLifecycle(instance, { root });
             if (captured.kind !== 'ready') throw new Error('Expected admitted retained lifecycle');
+            expect(captured.lifecycle.discover).toBeUndefined();
+            expect(captured.lifecycle.start).toBeUndefined();
+            expect(captured.lifecycle.restart).toBeUndefined();
+            expect(captured.lifecycle.accounting).toBeUndefined();
             await expect(captured.lifecycle.inspect(instance)).resolves.toMatchObject({ phase: 'running' });
             await registry.dispose();
             await expect(captured.lifecycle.stop(instance)).resolves.toEqual({ status: 'stopped' });
@@ -1696,7 +1749,7 @@ describe('target activation publication', () => {
         await activated.dispose();
     });
 
-    it('retries startup source preparation once so package-local preflight can isolate an aggregate failure', async () => {
+    it('settles startup source admission failure without an immediate preparation retry', async () => {
         const pluginId = 'acme.validation.startup-preparation-isolation';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
@@ -1741,17 +1794,17 @@ describe('target activation publication', () => {
             }),
         });
 
-        expect(prepare).toHaveBeenCalledTimes(2);
-        expect(load).toHaveBeenCalledTimes(1);
-        expect(activate).toHaveBeenCalledTimes(1);
-        expect(activated.activatedPluginIds.has(pluginId)).toBe(true);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(load).not.toHaveBeenCalled();
+        expect(activate).not.toHaveBeenCalled();
+        expect(activated.activatedPluginIds.has(pluginId)).toBe(false);
         expect(activated.targetActivationFacts).toEqual([
-            expect.objectContaining({ pluginId, status: 'active' }),
+            expect.objectContaining({ pluginId, status: 'unavailable' }),
         ]);
         await activated.dispose();
     });
 
-    it('retries lazy activation on later demand only after bounded package isolation also fails', async () => {
+    it('retries unavailable source admission on later demand without repeating it within one demand', async () => {
         const pluginId = 'acme.validation.retryable-preparation';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2,
@@ -1778,8 +1831,7 @@ describe('target activation publication', () => {
             agentDefinitionsById: new Map(),             pluginDiagnosticsByPluginId: Object.freeze({}),
         } as unknown as ResolvedContributionRegistry;
         const prepare = vi.fn()
-            .mockRejectedValueOnce(new Error('aggregate source-dev preparation selected package isolation'))
-            .mockRejectedValueOnce(new Error('package-local source preparation is still unavailable'))
+            .mockRejectedValueOnce(new Error('source admission is unavailable'))
             .mockResolvedValueOnce(undefined);
         const activate = vi.fn((api: PluginApi) => {
             api.actions.register('run', async () => ({ ok: true }));
@@ -1803,17 +1855,17 @@ describe('target activation publication', () => {
             pluginId,
             diagnostics: [expect.objectContaining({
                 code: 'plugin_daemon_module_load_failed',
-                message: expect.stringContaining('package-local source preparation is still unavailable'),
+                message: expect.stringContaining('source admission is unavailable'),
             })],
         })]);
-        expect(prepare).toHaveBeenCalledTimes(2);
+        expect(prepare).toHaveBeenCalledTimes(1);
         expect(load).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
         expect(activated.targetActivationFacts).toEqual([]);
 
         await activated.activateContributionsOnDemand(demand);
 
-        expect(prepare).toHaveBeenCalledTimes(3);
+        expect(prepare).toHaveBeenCalledTimes(2);
         expect(load).toHaveBeenCalledTimes(1);
         expect(activate).toHaveBeenCalledTimes(1);
         expect(activated.activatedPluginIds.has(pluginId)).toBe(true);

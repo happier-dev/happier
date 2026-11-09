@@ -2,10 +2,9 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { resolvePluginInvocationCallerExecutionOrigin } from '../services/actionCaller';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 
 import type { InvokeContributedAction } from '../services/actions';
@@ -117,13 +116,8 @@ export function createHostContributedActionInvoker(params: Readonly<{
             ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
             signal: invocationSignal,
         });
-        if (!await isCallerCurrent()) {
-            return callerNoLongerCurrent();
-        }
-        if (executionOrigin !== undefined) {
-            const current = await resolvePluginInvocationCallerExecutionOrigin(caller, resolveCurrentOrigin, invocationSignal);
-            if (!current || !arePluginMachineExecutionOriginsEqual(executionOrigin, current)) return callerNoLongerCurrent();
-        }
+        // The caller was admitted above; its later retirement applies at its
+        // next call, never to a settlement whose effect already ran.
         if (result.status === 'executed') {
             if (result.executionOrigin) context.contributedActionExecutionOrigin?.onExecuted(result.executionOrigin);
             return { ok: true, result: result.value };

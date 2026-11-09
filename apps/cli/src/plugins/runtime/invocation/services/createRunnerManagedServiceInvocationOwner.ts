@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { assertHostRequesterExecutionAdmissionForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
@@ -63,11 +64,7 @@ import type {
 import {
     resolveManagedProviderRuntimeExecutable,
 } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
-import {
-    addExecServiceBinding,
-    createLoggerAvailablePluginInvocationServiceBinding,
-    createPluginInvocationServicesFactory,
-} from './factory';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from './factory';
 import {
     createPluginInvocationLogger,
     createPluginInvocationSecretRedactor,
@@ -102,6 +99,7 @@ type RunnerLocalPluginServices = Pick<
     | 'sessions'
     | 'managedServices'
     | 'machineProvisioners'
+    | 'deploymentSource'
     | 'targetedContributions'
     | 'interactions'
     | 'composerContent'
@@ -165,6 +163,11 @@ function requireBeforeEffect<T>(
     if (response.ok) {
         const value = read(response.result);
         if (value !== null) return value;
+    }
+    if (!response.ok && response.error.code === 'agent_isolation_unavailable') {
+        throw new PluginError({ code: response.error.code, retryable: false,
+            message: 'Requester execution protection is unavailable',
+            ...(response.error.cause ? { details: { cause: response.error.cause } } : {}) });
     }
     return fail(
         'plugin_managed_server_authorization_unavailable',
@@ -288,6 +291,8 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         reader: ReadableStreamDefaultReader<Uint8Array> | null;
         nextPending: boolean;
     };
+    // An open admits one logical read. Its exact route and this active record
+    // own continuation routing; cancellation still belongs to the response owner.
     const activeReads = new Map<string, ActiveRead>();
 
     const accessMatches = (
@@ -350,37 +355,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         return true;
     };
 
-    const validateActiveRead = async (
-        requestId: string,
-        active: ActiveRead,
-        signal?: AbortSignal,
-    ): Promise<boolean> => {
-        if (active.route.kind === 'exactHandle') {
-            try {
-                return await options.resolveExactHandleRequestPort?.()
-                    ?.isCurrent({
-                        claim: active.route.claim,
-                        serviceId: active.route.serviceId,
-                    }) === true;
-            } catch {
-                return false;
-            }
-        }
-        if (
-            !active.daemonCapability
-            || !options.validateEndpointRead
-        ) return false;
-        try {
-            return await options.validateEndpointRead({
-                requestId,
-                projectionToken: active.route.projectionToken,
-                daemonCapability: active.daemonCapability,
-                ...(signal ? { signal } : {}),
-            });
-        } catch {
-            return false;
-        }
-    };
     const continuationMatches = (
         active: ActiveRead,
         route: ManagedServiceEndpointReadNextRequestV1['route'],
@@ -538,6 +512,7 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                         serviceId: exactRequest.route.serviceId,
                         request: {
                             pathAndQuery: exactRequest.pathAndQuery,
+                            ...(exactRequest.interactive === true ? { interactive: true } : {}),
                             ...(exactRequest.method !== undefined
                                 ? { method: exactRequest.method }
                                 : {}),
@@ -595,6 +570,7 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                     response = await requestManagedService({
                         pathAndQuery: request.pathAndQuery,
                         headers: request.headers,
+                        ...(request.interactive === true ? { interactive: true } : {}),
                         signal: controller.signal,
                     });
                 }
@@ -604,11 +580,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                 if (
                     activeReads.get(request.requestId) !== active
                     || controller.signal.aborted
-                    || !await validateActiveRead(
-                        request.requestId,
-                        active,
-                        controller.signal,
-                    )
                 ) {
                     if (activeReads.get(request.requestId) === active) {
                         activeReads.delete(request.requestId);
@@ -661,13 +632,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                 if (
                     activeReads.get(request.requestId) !== active
                     || active.controller.signal.aborted
-                    || !await validateActiveRead(
-                        request.requestId,
-                        active,
-                        signal,
-                    )
-                    || activeReads.get(request.requestId) !== active
-                    || active.controller.signal.aborted
                 ) {
                     cancelActiveRead(request.requestId);
                     return unavailable();
@@ -704,12 +668,6 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
         },
         async cancel(request) {
             const active = activeReads.get(request.requestId);
-            const authorized = active !== undefined
-                && continuationMatches(active, request.route)
-                && await validateActiveRead(
-                    request.requestId,
-                    active,
-                );
             const cancelled = active !== undefined
                 && continuationMatches(active, request.route)
                 && cancelActiveRead(request.requestId);
@@ -717,7 +675,7 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
                 v: 1 as const,
                 requestId: request.requestId,
                 status: 'cancelled' as const,
-                cancelled: authorized && cancelled,
+                cancelled,
             };
         },
     });
@@ -890,6 +848,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
     bindManagedServices(input: Readonly<{
         seed: PluginInvocationServicesSeed;
         agent: Readonly<{
+            authorizePreparedLaunch: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
             exec: ExecService;
             connectedAccounts: ConnectedAccountsService;
         }>;
@@ -1415,20 +1374,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
     let disposeOwnersPromise: Promise<void> | null = null;
     const owners: RunnerLocalPluginInvocationServiceOwners = Object.freeze({
         createOperationServices(seed, operation) {
-            const managedServicesAvailable =
-                managedServicesOwner.isAvailable({
-                    occurrenceId: seed.occurrenceId,
-                    contributionQualifiedId:
-                        seed.contribution.qualifiedId,
-                }) === true;
-            const binding = addExecServiceBinding(
-                createLoggerAvailablePluginInvocationServiceBinding(
-                    seed.occurrenceId,
-                    seed.contribution.qualifiedId,
-                ),
-                operation.hostAccessRequests,
-                managedServicesAvailable,
-            );
+            const binding = createPluginInvocationServiceBinding(seed.occurrenceId, seed.contribution.qualifiedId);
             const scope = Object.freeze({
                 pluginId: seed.plugin.id,
                 occurrenceId: seed.occurrenceId,
@@ -1463,7 +1409,9 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                             operation.environment
                             ?? Object.freeze({}),
                     },
-                    managedServices: managedServicesOwner,
+                    // The local declaration-only Exec has no requester custody.
+                    // Publish managed services only through bindManagedServices,
+                    // once the original daemon Exec authority is available.
                     managedServiceCredentialFiles:
                         managedServiceCredentialFileOwner,
                     managedServiceDeclaredSecretReadPort: Object.freeze({
@@ -1477,6 +1425,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                     sessions: services.sessions,
                     managedServices: services.managedServices,
                     machineProvisioners: services.machineProvisioners,
+                    deploymentSource: services.deploymentSource,
                     targetedContributions: services.targetedContributions,
                     interactions: services.interactions,
                     composerContent: services.composerContent,
@@ -1547,6 +1496,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
         bindManagedServices(bindingInput: Readonly<{
             seed: PluginInvocationServicesSeed;
             agent: Readonly<{
+                authorizePreparedLaunch: import('./exec').HostPreparedPluginExecLaunchAuthorizer;
                 exec: ExecService;
                 connectedAccounts: ConnectedAccountsService;
             }>;
@@ -1557,6 +1507,12 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                 isCurrent(): boolean;
             }> | null;
         }>) {
+            if (typeof bindingInput.agent.authorizePreparedLaunch !== 'function') {
+                assertHostRequesterExecutionAdmissionForHost({
+                    identity: { kind: 'unknown', reason: 'requester_authority_unavailable' },
+                    agentLaunchKind: 'managedService',
+                });
+            }
             const agentServices = managedServicesOwner.bindWithExec?.(
                 bindingInput.seed,
                 bindingInput.agent.exec,
@@ -1569,6 +1525,7 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
                         bindManagedServiceSecretReadPort(bindingInput.seed),
                     managedProvider: null,
                     requestAuth: null,
+                    authorizePreparedLaunch: bindingInput.agent.authorizePreparedLaunch,
                 }),
             ) ?? managedServicesOwner.bind(bindingInput.seed);
             const managedProvider = bindingInput.managedProvider;

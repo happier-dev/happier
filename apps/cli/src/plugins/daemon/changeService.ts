@@ -18,8 +18,10 @@ import type {
   PreparedPluginDevelopmentCandidate,
 } from './changeContract';
 import { PluginRegistryProfileRequiredError } from './changeContract';
-import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { mapDaemonModuleLoadErrorToDiagnostic, projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { findPluginFailureDiagnostic, findPluginModuleLoadError } from '@/plugins/runtime/moduleFailure';
 import { logger } from '@/ui/logger';
+import { developmentSourceAuthorityEqual, type PluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
 import type {
   DaemonPluginDevelopmentControlRequest,
   DaemonPluginDevelopmentControlResult,
@@ -97,16 +99,26 @@ function failedPluginChange(
   code: string,
   error: unknown,
   sourceRootPath?: string,
-): Readonly<{ kind: 'failed'; code: string; message?: string }> {
+): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
   logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
-  const message = describePluginChangeFailureCause(error);
-  return { kind: 'failed', code, ...(message ? { message } : {}) };
+  const moduleError = findPluginModuleLoadError(error);
+  const diagnostic = findPluginFailureDiagnostic(error)
+    ?? (moduleError ? mapDaemonModuleLoadErrorToDiagnostic(moduleError) : undefined);
+  const message = diagnostic?.message ?? describePluginChangeFailureCause(error);
+  return { kind: 'failed', code: diagnostic?.code ?? code, ...(message ? { message } : {}),
+    ...(diagnostic?.details === undefined ? {} : { details: diagnostic.details }),
+  };
 }
 
 export function createDaemonPluginChangeService(params: Readonly<{
   prepare: (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange>;
+  readApprovalRetirement?: (review: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => Promise<boolean>;
   createPendingChangeId?: () => string;
   onCleanupFailure?: (pluginId: string, error: unknown) => void;
+  resolveDevelopmentSourceAuthority?: (input: Readonly<{
+    pluginId: string;
+    rootPath: string;
+  }>) => Extract<PluginRuntimeSourceAuthority, { kind: 'development' }> | null;
   applyDevelopment?: (
     prepared: PreparedPluginDevelopmentCandidate,
     decision?: Parameters<PreparedDaemonPluginChangeCandidate['apply']>[0],
@@ -245,6 +257,33 @@ export function createDaemonPluginChangeService(params: Readonly<{
     terminalById.set(pending.id, result);
   }
 
+  async function cancelPending(pending: PendingPluginChange): Promise<PluginChangeDecisionResult> {
+    removePending(pending);
+    const result = { kind: 'cancelled' } as const;
+    recordTerminal(pending, result);
+    await cleanupPrepared(pending.prepared);
+    return result;
+  }
+
+  /** Consume another client's recorded terminal decision at the next natural boundary. */
+  async function reconcileApprovalRetirement(pending: PendingPluginChange): Promise<void> {
+    if (pending.state !== 'awaitingDecision' || !params.readApprovalRetirement) return;
+    const review = projectOutstandingPendingChange(pending);
+    if (review?.kind !== 'reviewRequired') return;
+    let retired: boolean;
+    try {
+      retired = await params.readApprovalRetirement(review);
+    } catch {
+      logger.warnLocalFile('[plugins] Approval retirement read unavailable', { pendingChangeId: pending.id });
+      return;
+    }
+    // The read may overlap an already-admitted apply; finite work owns its
+    // existing completion rather than a mid-operation cancellation.
+    if (retired && pending.state === 'awaitingDecision' && pendingById.get(pending.id) === pending) {
+      await cancelPending(pending);
+    }
+  }
+
   /**
    * The one projection of a change that a present user still owes a decision
    * on. Both the by-id rejoin and the enumeration read it, so a listed change
@@ -296,7 +335,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
           optionalSelections: decision.optionalSelections ?? [],
         } : undefined), (result) => result.kind === 'committed');
         return result.kind === 'failed'
-          ? failedPluginChange(result.code, result.message, prepared.sourceAuthority.canonicalRoot)
+          ? failedPluginChange(result.code, result.message === undefined ? undefined : new Error(result.message), prepared.sourceAuthority.canonicalRoot)
           : result;
       }
       return await prepared.apply(decision ? {
@@ -330,6 +369,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
       if (!acceptsChanges()) return admissionRefusal();
       const finishActiveRequest = beginActiveRequest();
       try {
+        let preparationRequest = request;
         // An author/Action rejoins the observer's exact retained candidate.
         // New observations still carry their revision and use normal admission.
         if (request.kind === 'development' && request.observedRevision === undefined) {
@@ -337,14 +377,35 @@ export function createDaemonPluginChangeService(params: Readonly<{
           if (options?.signal?.aborted) return { kind: 'cancelled' };
           const retained = root === null ? undefined : findPendingDevelopmentSourceChange(root);
           if (retained) {
-            const outstanding = projectOutstandingPendingChange(retained);
-            if (outstanding?.kind === 'reviewRequired') return outstanding;
-            return { kind: 'busy', pluginId: retained.prepared.pluginId };
+            await reconcileApprovalRetirement(retained);
+          }
+          if (retained && pendingById.get(retained.id) === retained) {
+            const prepared = retained.prepared;
+            const sourceAuthority = isDevelopmentCandidate(prepared) ? prepared.sourceAuthority : null;
+            const current = sourceAuthority ? params.resolveDevelopmentSourceAuthority?.({
+              pluginId: prepared.pluginId, rootPath: sourceAuthority.registeredRootId,
+            }) : null;
+            if (retained.state === 'applying' || !params.resolveDevelopmentSourceAuthority
+              || !sourceAuthority
+              || developmentSourceAuthorityEqual(sourceAuthority, current)) {
+              const outstanding = projectOutstandingPendingChange(retained);
+              if (outstanding?.kind === 'reviewRequired') return outstanding;
+              return { kind: 'busy', pluginId: prepared.pluginId };
+            }
+            // A new request must not re-present facts already known to be stale.
+            // Direct approval still validates the exact retained observation.
+            removePending(retained);
+            await cleanupPrepared(prepared);
+            if (options?.signal?.aborted) return { kind: 'cancelled' };
+            if (!acceptsChanges()) return admissionRefusal();
+            if (current) preparationRequest = {
+              ...request, sourceRootPath: current.registeredRootId, observedRevision: current.observedRevision,
+            };
           }
         }
         let prepared: PreparedDaemonPluginChange;
         try {
-          prepared = await params.prepare(request);
+          prepared = await params.prepare(preparationRequest);
         } catch (error) {
           if (error instanceof PluginRegistryProfileRequiredError) {
             return { kind: 'registryProfileRequired', ...error.requirement };
@@ -367,6 +428,24 @@ export function createDaemonPluginChangeService(params: Readonly<{
           return admissionRefusal();
         }
         const key = preparedChangeKey(prepared);
+        const pendingId = pendingIdByPluginId.get(key);
+        let incumbent = pendingId ? pendingById.get(pendingId) : undefined;
+        if (incumbent) {
+          await reconcileApprovalRetirement(incumbent);
+          incumbent = pendingById.get(incumbent.id);
+        }
+        if (incumbent?.state === 'awaitingDecision'
+          && isDevelopmentCandidate(incumbent.prepared)
+          && incumbent.prepared.requiresReview !== false
+          && isDevelopmentCandidate(prepared)
+          && prepared.requiresReview === false
+          && incumbent.prepared.sourceAuthority.registeredRootId === prepared.sourceAuthority.registeredRootId) {
+          // The current source needs no new grant. Retire its obsolete review
+          // through the ordinary terminal lifecycle before adopting this edit.
+          removePending(incumbent);
+          recordTerminal(incumbent, { kind: 'cancelled' });
+          await cleanupPrepared(incumbent.prepared);
+        }
         if (
           pendingIdByPluginId.has(key)
           || applyingByPluginId.has(prepared.pluginId)
@@ -412,15 +491,9 @@ export function createDaemonPluginChangeService(params: Readonly<{
       try {
         const pending = pendingById.get(decision.pendingChangeId);
         if (!pending) return { kind: 'expired' };
-        if (pending.state === 'applying') {
-          return await pending.applyPromise!;
-        }
+        if (pending.state === 'applying') return await pending.applyPromise!;
         if (decision.decision === 'cancel') {
-          removePending(pending);
-          const result = { kind: 'cancelled' } as const;
-          recordTerminal(pending, result);
-          await cleanupPrepared(pending.prepared);
-          return result;
+          return await cancelPending(pending);
         }
 
         const prepared = pending.prepared;
@@ -444,6 +517,9 @@ export function createDaemonPluginChangeService(params: Readonly<{
       if (!acceptsChanges()) return { kind: 'daemonUnavailable' };
       const pending = pendingById.get(request.pendingChangeId);
       if (pending) {
+        await reconcileApprovalRetirement(pending);
+      }
+      if (pending && pendingById.get(pending.id) === pending) {
         const outstanding = projectOutstandingPendingChange(pending);
         if (outstanding) return outstanding;
       }
@@ -467,6 +543,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
      */
     async listPendingPluginChanges() {
       if (!acceptsChanges()) return { changes: [] };
+      await Promise.all([...pendingById.values()].map(reconcileApprovalRetirement));
       return {
         changes: [...pendingById.values()].flatMap((pending) => {
           const outstanding = projectOutstandingPendingChange(pending);

@@ -432,6 +432,17 @@ describe('runner managed-service invocation owner endpoint binding', () => {
                 effectReached = true;
             })).toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
             expect(effectReached).toBe(false);
+            // The declaration-only pre-bridge Exec is not an Agent launch
+            // authority. Only the rebound original daemon Exec may publish
+            // a usable managedServices facade.
+            expect(local.availability('managedServices')).toEqual({
+                status: 'unavailable', code: 'plugin_service_unavailable',
+            });
+            await expect(local.managedServices.supervise({
+                id: 'unbound-agent-server',
+                mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'unbound' }, args: [] }, endpoint: { kind: 'none' } },
+                healthCheck: { kind: 'none' },
+            })).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
         } finally {
             await owner?.owners.dispose();
             await fixture.cleanup();
@@ -620,6 +631,54 @@ describe('runner managed-service invocation owner endpoint binding', () => {
         }
     });
 
+    it('admits a finite endpoint read once and consumes chunks without permission revalidation', async () => {
+        const input = projectionInput();
+        const projection = createManagedServiceEndpointProjectionV1(input);
+        let current = true;
+        const claimEndpointRead = vi.fn(async () => {
+            if (!current) throw new Error('Endpoint admission withdrawn');
+            return { daemonCapability: 'finite-admitted-capability' };
+        });
+        // These callbacks are the runner-to-daemon transport boundary; the
+        // endpoint routing, active-read record and body consumption stay real.
+        const validateEndpointRead = vi.fn(async () => current);
+        const binding = createRunnerManagedServiceEndpointProjectionBinding({
+            publishEndpointProjection: async value => createManagedServiceEndpointProjectionV1(value).projectionToken,
+            releaseEndpointProjection: async () => true,
+        }, {
+            claimEndpointRead,
+            validateEndpointRead,
+            resolveProjectedManagedServiceRequest: () => async () => ({
+                ok: true, status: 200, statusText: 'OK', headers: {},
+                body: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.enqueue(new Uint8Array([1]));
+                        controller.enqueue(new Uint8Array([2]));
+                        controller.close();
+                    },
+                }),
+            }),
+        });
+        await binding.publishEndpointProjection(input);
+        const requestId = '00000000-0000-4000-8000-0000000000b1';
+        const route = { kind: 'endpointProjection' as const, projectionToken: projection.projectionToken };
+        const open = (id: string) => binding.endpointReadPort.open({
+            v: 1, requestId: id,
+            route: { kind: 'endpointProjection', projection },
+            pathAndQuery: '/session', method: 'GET', headers: {},
+        });
+        await expect(open(requestId)).resolves.toMatchObject({ status: 'opened' });
+        current = false;
+        for (const value of [1, 2]) {
+            await expect(binding.endpointReadPort.next({ v: 1, requestId, route }))
+                .resolves.toMatchObject({ status: 'chunk', dataBase64: Buffer.from([value]).toString('base64') });
+        }
+        await expect(binding.endpointReadPort.next({ v: 1, requestId, route })).resolves.toMatchObject({ status: 'end' });
+        expect(claimEndpointRead).toHaveBeenCalledTimes(1);
+        expect(validateEndpointRead).not.toHaveBeenCalled();
+        await expect(open('00000000-0000-4000-8000-0000000000b2')).resolves.toMatchObject({ status: 'unavailable' });
+    });
+
     it('keeps caller-owned concurrent reads admitted and independently cancellable', async () => {
         const { binding, route, open } = exactHandleReadHarness([new Uint8Array([1])]);
         const requestIdFor = (index: number) =>
@@ -665,22 +724,27 @@ describe('runner managed-service invocation owner endpoint binding', () => {
             serviceId: 'provider-wrapper',
         };
         const requestId = '00000000-0000-4000-8000-000000000001';
-        await expect(binding.endpointReadPort.open({
-            v: 1,
+        const openRequest = {
+            v: 1 as const,
             requestId,
             route,
+            interactive: true as const,
             pathAndQuery: '/session',
-            method: 'POST',
+            method: 'POST' as const,
             headers: { 'content-type': 'application/json' },
             bodyBase64: Buffer.from('{"hello":true}').toString('base64'),
             timeoutMs: 1_000,
-        })).resolves.toMatchObject({ status: 'opened' });
+        };
+        await expect(binding.endpointReadPort.open(openRequest)).resolves.toMatchObject({ status: 'opened' });
         await expect(binding.endpointReadPort.cancel({
             v: 1,
             requestId,
             route,
         })).resolves.toMatchObject({ status: 'cancelled', cancelled: true });
         expect(request).toHaveBeenCalledOnce();
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({
+            request: expect.objectContaining({ interactive: true }),
+        }));
         expect(isCurrent).toHaveBeenCalled();
     });
 });

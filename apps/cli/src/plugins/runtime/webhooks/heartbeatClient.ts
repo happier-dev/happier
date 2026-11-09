@@ -1,7 +1,17 @@
 import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, stringifyPluginInstallationManifestCanonicalJsonV1 } from '@happier-dev/protocol/plugins/installations/manifests';
-import { PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1, PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookHeartbeatReadInputV1Schema, PluginWebhookHeartbeatReadResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import {
+  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
+  stringifyPluginInstallationManifestCanonicalJsonV1,
+} from '@happier-dev/protocol/plugins/installations/manifests';
+import {
+  PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1,
+  PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1,
+  PluginWebhookEndpointEnsureInputV1Schema,
+  PluginWebhookEndpointEnsureResultV1Schema,
+  PluginWebhookHeartbeatReadInputV1Schema,
+  PluginWebhookHeartbeatReadResultV1Schema,
+} from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import axios from '@/api/client/credentialAxios';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';

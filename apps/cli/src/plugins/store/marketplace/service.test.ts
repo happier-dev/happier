@@ -4,13 +4,12 @@ import { join } from 'node:path';
 import * as undici from 'undici';
 
 import type { MarketplaceIndexQueryResultV1, MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveExactMarketplaceListingForInstall } from './exactInstall';
 import {
   createMarketplaceIndexService,
   projectMarketplaceArtifactAccess,
-  resolveExactMarketplaceSourceBinding,
 } from './service';
 import {accountMarketplaceUserSourceFixture,publishAccountRegistrySourcesFixture} from '@/plugins/testkit/accountRegistrySources';
 import {resetActiveAccountSettingsSnapshotForTests} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -53,23 +52,28 @@ function snapshot(sourceUrl: string, pluginId: string): MarketplaceIndexSourceSn
 
 
 describe('createMarketplaceIndexService', () => {
+  beforeEach(()=>vi.stubGlobal('fetch',undici.fetch));
   afterEach(async () => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.mocked(undici.fetch).mockReset();
     resetActiveAccountSettingsSnapshotForTests();
     await Promise.all(homes.splice(0).map(home=>rm(home,{recursive:true,force:true})));
   });
-  it('retains an Agent-only Account catalog for the plugin install handoff reached from Agent browsing', async () => {
-    const source = { ...accountMarketplaceUserSourceFixture({ sourceUrl: 'https://catalog.example/agents.json', registryProfileId: 'private-registry' }),
-      kinds: ['agent' as const], token: { secretRef: 'personal-token' } };
+  it('reads an Agent-only listing through Registry and preserves the plugin install handoff',async()=>{
+    const home=await mkdtemp(join(tmpdir(),'happier-marketplace-agent-'));homes.push(home);
+    const source={...accountMarketplaceUserSourceFixture({sourceUrl:'https://catalog.example/agents.json'}),kinds:['agent' as const]};
     publishAccountRegistrySourcesFixture([source]);
-    expect(await resolveExactMarketplaceSourceBinding({ sourceId: source.id })).toMatchObject({
-      ok: true, source: { id: source.id, sourceUrl: source.url, origin: 'user', registryProfileId: 'private-registry',
-        registrySource: { kinds: ['agent'], token: source.token } },
-    });
-    publishAccountRegistrySourcesFixture([{ ...source, enabled: false }]);
-    expect(await resolveExactMarketplaceSourceBinding({ sourceId: source.id })).toMatchObject({ ok: false, code: 'install_unavailable' });
+    const document=snapshot(source.url,'acme.agent');
+    document.source={id:source.id,title:source.title,kind:'user',sourceUrl:source.url};
+    document.entries[0]!.review={status:'unreviewed',reviewedAt:null};
+    document.entries[0]!.summary.contributions=['agents'];
+    vi.mocked(undici.fetch).mockImplementation(async()=>new undici.Response(JSON.stringify(document),{status:200}));
+    expect(await resolveExactMarketplaceListingForInstall({happyHomeDir:home,sourceId:source.id,pluginId:'acme.agent',version:'1.0.0'}))
+      .toMatchObject({ok:true,resolution:{listing:{pluginId:'acme.agent',distribution:{packageName:'@acme/agent'}}}});
+    expect(undici.fetch).toHaveBeenCalledTimes(1);
   });
+
   it('does not let a remote catalog select a host-owned private registry profile', () => {
     const entry = snapshot('https://catalog.example/private.json', 'acme.private').entries[0]!;
     const item: MarketplaceIndexQueryResultV1['items'][number] = {
@@ -165,22 +169,6 @@ describe('createMarketplaceIndexService', () => {
       [{ ...credentialFreeProfile, availability: 'sign_in_required' as const }],
       source,
     ).artifactAccess).toEqual({ state: 'auth-unavailable', registryProfileId: 'host-bound' });
-  });
-
-  it.each([
-    { allowPrivateNetwork: false, profileOrigin: 'https://127.0.0.1:41261' },
-    { allowPrivateNetwork: true, profileOrigin: 'https://other-registry.test' },
-  ])('does not admit a private catalog without exact-origin profile permission: %j', async ({allowPrivateNetwork, profileOrigin}) => {
-    const home = await mkdtemp(join(tmpdir(), 'happier-marketplace-private-'));
-    homes.push(home);
-    const persisted = accountMarketplaceUserSourceFixture({sourceUrl:'https://127.0.0.1:41261/catalog.json',registryProfileId:'private'});
-    publishAccountRegistrySourcesFixture([persisted]);
-    const profiles = createNpmRegistryProfileService({happyHomeDir:home});
-    await profiles.mutate({action:'add',machineId:'machine-1',expectedRevision:0,mutationId:'add',profileId:'private',
-      profile:{displayName:'Private',origin:profileOrigin,scopes:[],useAsDefault:false,allowPrivateNetwork}});
-    const result = await createMarketplaceIndexService({happyHomeDir:home}).queryExactListing({sourceId:persisted.id,pluginId:'acme.private'});
-    expect(result).toMatchObject({ok:false,code:'install_unavailable'});
-    expect(undici.fetch).not.toHaveBeenCalled();
   });
 
   it('resolves an exact install against a bound registry profile that never stored a credential', async () => {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import type { ActivationTarget } from './targets';
+import type { ResolvedActivationTarget } from '../../../projection/registry/types';
 import { resolveActivationSource } from './source';
 
 describe('resolveActivationSource', () => {
   it('does not synthesize executable authority from an uncommitted development target', () => {
-    const target: ActivationTarget = {
+    const target: ResolvedActivationTarget = {
       provenance: 'external',
       source: { kind: 'path' },
       pluginId: 'com.acme.development-only',
@@ -35,7 +35,7 @@ describe('resolveActivationSource', () => {
   });
 
   it('selects the development entry from development-source identity instead of legacy trust policy', () => {
-    const target: ActivationTarget = {
+    const target: ResolvedActivationTarget = {
       provenance: 'external',
       source: { kind: 'path' },
       pluginId: 'com.acme.reviewed-development',

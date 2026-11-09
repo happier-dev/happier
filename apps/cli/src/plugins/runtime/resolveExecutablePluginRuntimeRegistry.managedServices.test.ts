@@ -11,6 +11,7 @@ import {
     writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -40,24 +41,23 @@ import {
 import { createPluginReloadController } from './reload/controller';
 import {
     authorizeResolvedProjectExecLaunchForHost,
-    createProjectNativeEnvironmentIoForHost,
+    createProjectNativeToolchainIoForHost,
 } from './invocation/services/exec';
-import type { WorkspaceProjectManagedServiceSupervisionInput } from './invocation/services/managedServicesOwner';
+import type { ProjectManagedServiceSupervisionInput } from './invocation/services/managedServicesOwner';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from './invocation/services/managedServiceSpecNormalization';
-import { createProjectNativeToolchainIoForHost } from './invocation/services/exec';
-
 
 async function loadInstalledManagedServiceFixture(input: Readonly<{
     happyHomeDir: string;
     pluginId: string;
     manifest: Readonly<Record<string, unknown>>;
+    daemonSource?: string;
 }>) {
     // The on-disk external plugin is the boundary. Loading, trust, current
     // generation, activation and invocation ownership stay real.
     const pluginRoot = join(input.happyHomeDir, 'plugin');
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(input.manifest));
-    await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}');
+    await writeFile(join(pluginRoot, 'daemon.mjs'), input.daemonSource ?? 'export function activate() {}');
     await seedCurrentLocalPathPluginFixture({
         happyHomeDir: input.happyHomeDir,
         pluginRoot,
@@ -79,6 +79,156 @@ async function loadInstalledManagedServiceFixture(input: Readonly<{
 }
 
 describe('resolveExecutablePluginRuntimeRegistry managed-services production owner', () => {
+    it('runs a Machine-native lifecycle system tool through the installed invocation without a Workspace', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-machine-native-launch-'));
+        const toolRoot = join(happyHomeDir, 'tools');
+        const toolName = process.platform === 'win32' ? 'machine-native-helper.exe' : 'machine-native-helper';
+        const pluginId = 'acme.machine-native-helper';
+        const marker = join(happyHomeDir, 'daemon-identity.json');
+        const previousPath = process.env.PATH;
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let capture: { release(): Promise<void> } | undefined;
+        try {
+            await mkdir(toolRoot);
+            if (process.platform === 'win32') await copyFile(process.execPath, join(toolRoot, toolName));
+            else await symlink(process.execPath, join(toolRoot, toolName));
+            process.env.PATH = `${toolRoot}${delimiter}${previousPath ?? ''}`;
+            const fixture = await loadInstalledManagedServiceFixture({ happyHomeDir, pluginId, manifest: {
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Machine native fixture',
+                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                hostAccess: { required: [
+                    { id: 'helper', capability: 'process', reason: 'Inspect the admitted Machine service',
+                        scope: { executables: [{ kind: 'systemTool', id: 'helper' }], envKeys: ['PATH'] } },
+                ], optional: [] },
+                contributes: { systemTools: [{ id: 'helper', title: 'Machine helper', executableNames: [toolName] }],
+                    projectNativeAdapters: [{ id: 'native', files: ['native.service'], roles: ['nativeServiceLifecycle'] }] },
+            }, daemonSource: [
+                'export function activate(api) {',
+                "api.projectNativeAdapters.register('native', { nativeServiceLifecycle: {",
+                'async inspect(instance, options, context) {',
+                `await context.services.exec.run({ executable: {kind:'systemTool',id:'helper'}, args: ['-e', ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({uid:process.getuid?.()??null}))`)}] });`,
+                "return {phase:'running',readiness:'not_reported',endpoint:null}; },",
+                "async stop() { return {status:'unsupported'}; }",
+                '} }); }',
+            ].join('\n') });
+            let prepared = 0;
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, ...fixture, generation: 92,
+                agentIsolation: {
+                    read: () => ({ enabled: true, status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [] }),
+                    prepareLaunch: async () => { prepared++; throw new Error('Machine service cannot prepare Agent material'); },
+                } });
+            const adapter = { pluginId, localId: 'native' };
+            const selected = await runtime.resolveProjectNativeAdapter(adapter, 'nativeServiceLifecycle');
+            if (selected.kind !== 'ready') throw new Error(selected.code);
+            const instance = { adapter, nativeResourceId: 'existing.service' };
+            const captured = selected.lease.captureNativeServiceLifecycle(instance,
+                { machine: { serverId: 'home-a', machineId: 'machine-a' } });
+            if (captured.kind !== 'ready') throw new Error(captured.code);
+            capture = captured;
+            await expect(captured.lifecycle.inspect(instance)).resolves.toMatchObject({ phase: 'running' });
+            expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({ uid: process.getuid?.() ?? null });
+            expect(prepared).toBe(0);
+        } finally {
+            await capture?.release();
+            await runtime?.dispose();
+            if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
+    it.each([true, false])('keeps an admitted person plugin toolchain helper distinct from Agent isolation at the real installed invocation producer (published: %s)', async published => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-person-native-helper-'));
+        const toolRoot = join(happyHomeDir, 'tools');
+        const toolName = process.platform === 'win32' ? 'person-native-helper.exe' : 'person-native-helper';
+        const pluginId = 'acme.person-native-helper';
+        const marker = join(happyHomeDir, 'helper-ran');
+        const diagnostic = join(happyHomeDir, 'helper-refusal.json');
+        const previousPath = process.env.PATH;
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        const productions: Array<{ release(): Promise<void> }> = [];
+        let isolationEnabled = false;
+        let requesterCurrent = true;
+        let releasePausedHelper: (() => void) | undefined;
+        let helperEntered!: () => void;
+        const helperPaused = new Promise<void>(resolve => { helperEntered = resolve; });
+        // The external native plugin awaits this HTTP response while requester
+        // authority retires; actual registry/Exec admission beneath it stays real.
+        const helperBoundary = createServer((_request, response) => {
+            releasePausedHelper = () => response.end('continue');
+            helperEntered();
+        });
+        await new Promise<void>(resolve => helperBoundary.listen(0, '127.0.0.1', resolve));
+        const address = helperBoundary.address();
+        if (!address || typeof address === 'string') throw new Error('Expected the native helper HTTP boundary');
+        try {
+            await mkdir(toolRoot);
+            if (process.platform === 'win32') await copyFile(process.execPath, join(toolRoot, toolName));
+            else await symlink(process.execPath, join(toolRoot, toolName));
+            process.env.PATH = `${toolRoot}${delimiter}${previousPath ?? ''}`;
+            const fixture = await loadInstalledManagedServiceFixture({ happyHomeDir, pluginId, manifest: {
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Native helper fixture',
+                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                hostAccess: { required: [
+                    { id: 'helper', capability: 'process', reason: 'Run the admitted helper', scope: { executables: [{ kind: 'systemTool', id: 'helper' }], envKeys: ['PATH'] } },
+                    { id: 'root', capability: 'filesystem', reason: 'Use the admitted Project root', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
+                ], optional: [] },
+                contributes: { systemTools: [{ id: 'helper', title: 'Native helper', executableNames: [toolName] }],
+                    projectNativeAdapters: [{ id: 'environment', files: ['native.env'], roles: ['prepareToolchain'] }] },
+            }, daemonSource: [
+                'export function activate(api) {',
+                "  api.projectNativeAdapters.register('environment', { async prepareToolchain(request, context) {",
+                `    if (request.files[0]?.content === 'wait-for-authority') await fetch('http://127.0.0.1:${address.port}/native-helper');`,
+                '    try {',
+                `    await context.services.exec.run({ executable: { kind: 'systemTool', id: 'helper' }, cwd: { root: 'workspace', relativePath: '' }, executionKind: 'person_break_glass', args: ['-e', ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'person-helper')`)}] });`,
+                `    } catch (error) { await (await import('node:fs/promises')).writeFile(${JSON.stringify(diagnostic)}, JSON.stringify({ code: error.code, reason: error.data?.details?.reason })); throw error; }`,
+                "    return { kind: 'ready', env: { NATIVE_PERSON: 'ready' }, reviewInputs: [] };",
+                '  } });', '}',
+            ].join('\n') });
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, ...fixture, generation: 91,
+                agentIsolation: { read: () => ({ enabled: isolationEnabled, status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [published ? happyHomeDir : process.cwd()] }) } });
+            const adapter = { pluginId, localId: 'environment' };
+            const selected = await runtime.resolveProjectNativeAdapter(adapter, 'prepareToolchain');
+            if (selected.kind !== 'ready') throw new Error(selected.code);
+            const request = { root: happyHomeDir, adapter, files: [], selection: { kind: 'pluginToolchain' as const, adapter, configPath: 'native.env' } };
+            const control = selected.lease.acquireProduction({ root: happyHomeDir });
+            if (control.kind !== 'ready') throw new Error(control.code);
+            productions.push(control.production);
+            const controlResult = await control.production.prepareToolchain(request);
+            expect(await readFile(diagnostic, 'utf8').catch(() => null)).toBeNull();
+            expect(controlResult).toMatchObject({ kind: 'ready' });
+            expect(await readFile(marker, 'utf8')).toBe('person-helper');
+            await rm(marker);
+            isolationEnabled = true;
+            const agent = selected.lease.acquireProduction({ root: happyHomeDir });
+            if (agent.kind !== 'ready') throw new Error(agent.code);
+            productions.push(agent.production);
+            expect(await agent.production.prepareToolchain(request)).toMatchObject({ kind: 'failed' });
+            await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+            const person = selected.lease.acquireProduction({ root: happyHomeDir, executionKind: 'person_break_glass',
+                async assertLaunchCurrent() { if (!requesterCurrent) throw Object.assign(new Error('Requester retired'), { code: 'requester_retired' }); },
+            });
+            if (person.kind !== 'ready') throw new Error(person.code);
+            productions.push(person.production);
+            expect(await person.production.prepareToolchain(request)).toMatchObject({ kind: 'ready', env: { NATIVE_PERSON: 'ready' } });
+            expect(await readFile(marker, 'utf8')).toBe('person-helper');
+            await rm(marker);
+            const waiting = person.production.prepareToolchain({ ...request, files: [{ file: 'native.env', content: 'wait-for-authority' }] });
+            expect(await Promise.race([helperPaused.then(() => 'paused'), waiting.then(() => 'settled')])).toBe('paused');
+            requesterCurrent = false;
+            releasePausedHelper?.();
+            expect(await waiting).toMatchObject({ kind: 'failed' });
+            await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+            releasePausedHelper?.();
+            helperBoundary.closeAllConnections();
+            await new Promise<void>((resolve, reject) => helperBoundary.close(error => error ? reject(error) : resolve()));
+            for (const production of productions) await production.release();
+            await runtime?.dispose();
+            if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
     it('keeps Project instance control and access-loss cleanup at the same owner after registry replacement', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-project-service-reload-'));
         const first = await resolveExecutablePluginRuntimeRegistry({
@@ -87,7 +237,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
         const controller = createPluginReloadController({ resolveRuntimeRegistry: async () => first });
         const firstLease = await controller.acquireRuntimeRegistry();
         let stoppable = false;
-        const input: WorkspaceProjectManagedServiceSupervisionInput = {
+        const input: ProjectManagedServiceSupervisionInput = {
             kind: 'workspace',
             workspace: { id: 'workspace-a', serverId: 'home', machineId: 'machine-a', rootPath: happyHomeDir, createdAtMs: 1 },
             declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest', name: 'worker' } },
@@ -111,7 +261,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
                 signal, assertCurrent() {},
                 projectLaunch: {
                     status: 'ready', reviewedEffectDigest: 'reviewed-native-effect',
-                    environment: { selection: { kind: 'host' }, root: happyHomeDir, platform: process.platform,
+                    toolchain: { selection: { kind: 'host' }, root: happyHomeDir, platform: process.platform,
                         io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) },
                 },
                 launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: happyHomeDir, env: {}, release() {} },
@@ -137,14 +287,11 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
                     machineId: input.workspace.machineId, cwd: input.cwd, declaration: input.declaration,
                 })).toEqual({ status: 'found', handle: service });
                 expect(await currentLease.registry.projectManagedServices.superviseProject(input)).toBe(service);
-                const result = await currentLease.registry.projectManagedServices.stopForAccessLoss(input.requester);
-                expect(['unsupported', 'termination_incomplete']).toContain(result[0]?.status);
-                expect(service.retirementSignal.aborted).toBe(true);
+                await expect(service.stop()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
                 expect(service.snapshot().state).toBe('running');
                 expect(currentLease.registry.projectManagedServices.listProjectServices()).toEqual([service]);
                 stoppable = true;
-                expect(await currentLease.registry.projectManagedServices.stopForAccessLoss(input.requester))
-                    .toMatchObject([{ status: 'stopped', instanceId: service.instanceId }]);
+                await service.stop();
                 const next = await currentLease.registry.projectManagedServices.superviseProject(input);
                 await currentLease.release();
                 await controller.shutdown();
@@ -217,7 +364,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
                 'export function activate(api) {',
                 "  api.projectNativeAdapters.register('compose', { nativeServiceLifecycle: {",
                 `    async inspect() { try { await access(${JSON.stringify(failureReceipt)}); } catch { return { phase: 'running', readiness: 'not_reported', endpoint: null }; } throw new Error('Native fixture failed'); },`,
-                `    async logs(instance, options, context) { if (!context) throw new Error('Missing admitted output context'); await writeFile(${JSON.stringify(logsReceipt)}, JSON.stringify({ instance, maxBytes: options.maxBytes })); return 'external native diagnostic'; },`,
+                `    async logs(instance, options, context) { if (!context) throw new Error('Missing admitted output context'); await writeFile(${JSON.stringify(logsReceipt)}, JSON.stringify({ instance, maxBytes: options.maxBytes })); return { kind: 'page', page: { sourceRevision: 'native-fixture-1', text: 'external native diagnostic', nextCursor: null, truncated: false } }; },`,
                 `    async stop(instance) { await writeFile(${JSON.stringify(stopReceipt)}, JSON.stringify(instance)); return { status: 'stopped' }; },`,
                 '  } });',
                 '}',

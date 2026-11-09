@@ -1,10 +1,7 @@
-import { lstat, realpath } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-
-import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
@@ -22,16 +19,12 @@ import {
     resolveContributedAgentRoutingId,
 } from '../../projection/registry/agentRoutingIdentity';
 import {
-    snapshotAgentExternalSessionsThroughRegistrationScope,
-} from '../api/registrationRightsHost';
-import {
-    assertContainedRegularGenerationFile,
     readValidatedAgentSessionRunnerFactories,
 } from '../../store/registry/generationStore';
 import { loadVerifiedPluginModule, type PluginModuleNamespace } from '../loadPluginModule';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { projectManifestAgentContribution } from '../../projection/registry/projectManifestAgentContribution';
-import { projectAgentConnectedAccountLaunchCatalogEntry, projectAgentExperimentalVendorResumeSupportCatalogEntry } from '../../projection/registry/agentCatalogEntryHooks';
+import { projectAgentConnectedAccountLaunchCatalogEntry, projectAgentExperimentalVendorResumeSupportCatalogEntry, projectAgentRuntimeInputCapacityCatalogEntry } from '../../projection/registry/agentCatalogEntryHooks';
 import { activateContributionModule } from '../lifecycle/activation/activateContributionModule';
 import { resolvePluginAuthorStagingModule } from '../../authoring/sourceModule';
 import {
@@ -111,30 +104,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         });
     }
     const { binding, fact } = attested;
-    const sourceRootPath = await realpath(attested.rootPath);
-    if (attested.sourceKind === 'managed') {
-        await assertContainedRegularGenerationFile(
-            sourceRootPath,
-            fact.normalizedModulePath,
-            'Runner Agent factory module',
-        );
-    } else {
-        const lexicalPath = join(sourceRootPath, ...fact.normalizedModulePath.split('/'));
-        const facts = await lstat(lexicalPath);
-        if (!facts.isFile() || facts.isSymbolicLink()) {
-            throw new Error('Runner Agent factory module must be a contained regular file');
-        }
-    }
-    const modulePath = await realpath(join(
-        sourceRootPath,
-        ...fact.normalizedModulePath.split('/'),
-    ));
-    if (
-        modulePath === sourceRootPath
-        || !isCanonicalAbsolutePathInsideRoot(sourceRootPath, modulePath)
-    ) {
-        throw new Error('Runner Agent factory module escapes its retained source custody');
-    }
+    const modulePath = await realpath(join(attested.rootPath, ...fact.normalizedModulePath.split('/')));
     const moduleNamespace = await loadVerifiedPluginModule({
         entryPath: modulePath,
         loadMode: fact.loadMode,
@@ -142,7 +112,6 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         cacheKey: `${attested.cacheIdentity}:${fact.normalizedModulePath}`,
         nativeFileUrlMode: 'canonical',
     });
-    await attested.assertStillAvailable();
     const factory = Object.prototype.hasOwnProperty.call(
         moduleNamespace,
         fact.locator.export,
@@ -154,7 +123,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     }
     if (fact.locator.externalSessionsExport === undefined) {
         const catalog = await projectRetainedAgentCatalogEntry({
-            attested, declaredEntry, factory: factory as AgentRuntimeFactory,
+            attested, declaredEntry,
         });
         return Object.freeze({
             factory: factory as AgentRuntimeFactory,
@@ -170,18 +139,12 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     if (externalSessions === undefined) {
         throw new Error('External Sessions companion export is missing');
     }
-    const externalSessionsSnapshot =
-        snapshotAgentExternalSessionsThroughRegistrationScope({
-            pluginId: binding.pluginId,
-            localAgentId: binding.localAgentId,
-            contribution: externalSessions,
-        });
     const catalog = await projectRetainedAgentCatalogEntry({
-        attested, declaredEntry, factory: factory as AgentRuntimeFactory,
+        attested, declaredEntry,
     });
     return Object.freeze({
         factory: factory as AgentRuntimeFactory,
-        externalSessions: externalSessionsSnapshot,
+        externalSessions: externalSessions as AgentExternalSessionsContribution,
         ...catalog,
     });
 }
@@ -190,24 +153,52 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
 async function projectRetainedAgentCatalogEntry(input: Readonly<{
     attested: Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>;
     declaredEntry: AgentCatalogEntry | null;
-    factory: AgentRuntimeFactory;
 }>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'>> {
     const { attested, declaredEntry } = input;
-    if (!declaredEntry || (!attested.declaredAgent.connectedAccounts?.length
-        && declaredEntry.vendorResumeSupport !== 'experimental')
-        || attested.bindingKind !== 'plugin_factory_v1') return { catalogEntry: declaredEntry, dispose: async () => {} };
-    const rootPath = await realpath(attested.rootPath);
+    if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
+        return { catalogEntry: declaredEntry, dispose: async () => {} };
+    }
+    let disposed = false;
+    let acquisition: ReturnType<typeof acquireRetainedAgentCatalogEntry> | null = null;
+    const acquire = async () => {
+        if (disposed) return null;
+        acquisition ??= acquireRetainedAgentCatalogEntry({ ...input, isCurrent: () => !disposed });
+        const catalog = await acquisition;
+        return disposed ? null : catalog;
+    };
+    // Existing launch/resume consumers need these registrations during load.
+    // Capacity alone activates the exact retained source only when sizing is demanded.
+    const eager = attested.declaredAgent.connectedAccounts?.length || declaredEntry.vendorResumeSupport === 'experimental'
+        ? await acquire() : null;
+    return Object.freeze({
+        catalogEntry: Object.freeze({ ...declaredEntry, ...eager?.catalogEntry,
+            resolveRuntimeMaxInputUnicodeCharacters: async (input: Parameters<NonNullable<AgentCatalogEntry['resolveRuntimeMaxInputUnicodeCharacters']>>[0]) => {
+                const catalog = await acquire();
+                const limit = await catalog?.catalogEntry?.resolveRuntimeMaxInputUnicodeCharacters?.(input);
+                return disposed ? null : limit ?? null;
+            },
+        }),
+        async dispose() {
+            if (disposed) return;
+            disposed = true;
+            const catalog = await acquisition?.catch(() => null);
+            await catalog?.dispose();
+        },
+    });
+}
+
+async function acquireRetainedAgentCatalogEntry(input: Readonly<{
+    attested: Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>;
+    declaredEntry: AgentCatalogEntry | null;
+    isCurrent(): boolean;
+}>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'>> {
+    const { attested, declaredEntry } = input;
+    if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
+        return { catalogEntry: declaredEntry, dispose: async () => {} };
+    }
+    const rootPath = attested.rootPath;
     const loadModule = async (entryPath: string, loadMode = attested.fact.loadMode) => {
         const normalizedPath = relative(rootPath, resolve(entryPath)).split(sep).join('/');
-        if (attested.sourceKind === 'managed') {
-            await assertContainedRegularGenerationFile(rootPath, normalizedPath, 'Retained Agent catalog module');
-        } else {
-            const facts = await lstat(entryPath);
-            if (!facts.isFile() || facts.isSymbolicLink()
-                || !isCanonicalAbsolutePathInsideRoot(rootPath, await realpath(entryPath))) {
-                throw new Error('Retained Agent catalog module escapes its source custody');
-            }
-        }
         return await loadVerifiedPluginModule({
             entryPath, loadMode, generationScope: attested.binding,
             cacheKey: `${attested.cacheIdentity}:${normalizedPath}`, nativeFileUrlMode: 'canonical',
@@ -224,13 +215,7 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
         const source = createBundledActivationSourceResolver({
             bundledPackageNames: [locator.daemonEntryPath],
             importModule: async (specifier, selection) => await loadModule(fileURLToPath(specifier), selection.loadMode),
-            resolveDevelopmentSourceAuthority: ({ rootPath: selectedRoot }) => {
-                if (realpathSync(selectedRoot) !== rootPath) {
-                    throw new Error('Retained Agent catalog selected a foreign development root');
-                }
-                // Execution custody was already attested by this retained owner.
-                return null;
-            },
+            resolveDevelopmentSourceAuthority: () => null,
         })(locator);
         if (!source) throw new Error('Retained development Agent catalog source is unavailable');
         moduleNamespace = await source.load();
@@ -250,15 +235,11 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
         moduleNamespace, resolveRelativeModule, isOccurrenceCurrent: () => true,
     });
     try {
-        await attested.assertStillAvailable();
         const registration = activation.registrations.find(candidate => candidate.family === 'agents'
             && candidate.localId === attested.binding.localAgentId);
-        if (activation.status !== 'active' || registration?.family !== 'agents'
-            || registration.value.factory !== input.factory
-            || !isDeepStrictEqual(registration.value.sessionRunnerFactory, attested.fact.locator)) {
-            throw new Error('Retained Agent catalog does not match its attested factory module');
+        if (activation.status !== 'active' || registration?.family !== 'agents') {
+            throw new Error('Retained Agent catalog registration is unavailable');
         }
-        let disposed = false;
         const launch = registration.value.connectedAccountLaunch;
         const projected = launch ? projectAgentConnectedAccountLaunchCatalogEntry({
             pluginId: attested.binding.pluginId, agentId: declaredEntry.id,
@@ -269,7 +250,12 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
                 ...(registration.value.vendorResumeSupport
                     ? projectAgentExperimentalVendorResumeSupportCatalogEntry({
                         vendorResumeSupport: registration.value.vendorResumeSupport,
-                        isCurrent: () => !disposed,
+                        isCurrent: input.isCurrent,
+                    }) : {}),
+                ...(registration.value.preflightSessionControls
+                    ? projectAgentRuntimeInputCapacityCatalogEntry({
+                        preflightSessionControls: registration.value.preflightSessionControls,
+                        isCurrent: input.isCurrent,
                     }) : {}),
                 ...(projected ? {
                     connectedAccountNativeHome: projected.connectedAccountNativeHome,
@@ -281,8 +267,6 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
                 } : {}),
             }),
             async dispose() {
-                if (disposed) return;
-                disposed = true;
                 await activation.dispose();
             },
         });

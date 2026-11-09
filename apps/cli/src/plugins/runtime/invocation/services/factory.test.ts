@@ -5,20 +5,11 @@ import { join } from 'node:path';
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     PluginError,
-    type PluginServiceId,
 } from '@happier-dev/plugin-sdk';
 import type { StorageTransaction } from '@happier-dev/plugin-sdk/storage';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createLoggerAndFilesystemServiceBinding,
-    createLoggerEventsAndExecServiceBinding,
-    createLoggerAvailablePluginInvocationServiceBinding,
-    createPluginInvocationServicesFactory,
-    createUnavailablePluginInvocationServiceBinding,
-    createUnavailablePluginServicesFactory,
-} from './factory';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory, createUnavailablePluginInvocationServiceBinding, createUnavailablePluginServicesFactory } from './factory';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
 import type { PluginInvocationLogRecord } from './logger';
 import type { PluginActionsHostExecutor } from './actions';
@@ -47,6 +38,28 @@ const seed = Object.freeze({
 });
 
 describe('unavailable plugin invocation services factory', () => {
+    it('binds native identity observation only to the admitted Machine execution kind', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-machine-fs-binding-'));
+        const file = join(root, 'system.journal');
+        await writeFile(file, 'journal');
+        const roots = { pluginData: root, projects: new Map<string, string>() };
+        const binding = createPluginInvocationServiceBinding('7', 'machine-fs');
+        try {
+            for (const executionKind of [undefined, 'person_break_glass', 'machine_native'] as const) {
+                const services = createPluginInvocationServicesFactory({
+                    loggerSink: { write() {} }, filesystemRoots: roots,
+                    exec: { ...(executionKind ? { executionKind } : {}), resolveExecutable: async () => { throw new Error('No native process is needed for identity observation'); },
+                        resolvePath: async () => { throw new Error('Identity observation uses the filesystem path owner'); } },
+                })(seed, binding);
+                const observation = services.fs.observeMachinePath({ absolutePath: file }, () => {});
+                if (executionKind === 'machine_native') {
+                    const handle = await observation;
+                    expect(handle.identity).toEqual(expect.any(String));
+                    await handle.dispose();
+                } else await expect(observation).rejects.toMatchObject({ code: 'plugin_fs_machine_context_required' });
+            }
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it('keeps an accepted daemon background demand alive after its initiating invocation completes', async () => {
         let entered!: () => void;
         const started = new Promise<void>((resolve) => { entered = resolve; });
@@ -60,7 +73,7 @@ describe('unavailable plugin invocation services factory', () => {
         const lifetime = createPluginInvocationLifetime();
         const services = createPluginInvocationServicesFactory({ loggerSink: { write() {} } })(
             { ...seed, signal: lifetime.signal, demandBackgroundService: () => host.demand({ serviceId: 'factory-test' }) },
-            createLoggerAvailablePluginInvocationServiceBinding('7', 'binding'),
+            createPluginInvocationServiceBinding('7', 'binding'),
         );
         const handle = services.backgroundServices.demand('index');
         await started;
@@ -74,7 +87,7 @@ describe('unavailable plugin invocation services factory', () => {
     it('refuses a background demand from a caller that is no longer current with a typed service error', () => {
         const services = createPluginInvocationServicesFactory({ loggerSink: { write() {} } })(
             { ...seed, isOccurrenceCurrent: () => false, demandBackgroundService: () => { throw new Error('Unexpected demand'); } },
-            createLoggerAvailablePluginInvocationServiceBinding('7', 'binding'),
+            createPluginInvocationServiceBinding('7', 'binding'),
         );
         expect(() => services.backgroundServices.demand('index')).toThrow(expect.objectContaining({
             name: 'PluginError', code: 'plugin_service_unavailable', message: 'Background service caller is no longer current',
@@ -84,7 +97,7 @@ describe('unavailable plugin invocation services factory', () => {
     it('refuses bootstrap credential materialization for an ordinary plugin invocation', async () => {
         for (const [factory, binding] of [
             [createUnavailablePluginServicesFactory(), createUnavailablePluginInvocationServiceBinding('7', 'binding')],
-            [createPluginInvocationServicesFactory({ loggerSink: { write() {} } }), createLoggerAvailablePluginInvocationServiceBinding('7', 'binding')],
+            [createPluginInvocationServicesFactory({ loggerSink: { write() {} } }), createPluginInvocationServiceBinding('7', 'binding')],
         ] as const) {
             const services = factory(seed, binding);
             await expect(Promise.resolve().then(() => services.machineProvisioners.materializeBootstrapCredential({ kind: 'file' })))
@@ -102,7 +115,7 @@ describe('unavailable plugin invocation services factory', () => {
                 activePluginIds: new Set<string>(),
             },
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
-        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         const storage = services.storage as unknown as Readonly<Record<string, unknown>>;
         expect(Object.keys(storage).sort()).toEqual([
@@ -152,7 +165,6 @@ describe('unavailable plugin invocation services factory', () => {
         expect(PLUGIN_SERVICE_DESCRIPTORS.composerContent).toMatchObject({
             id: 'composerContent',
             publicProperty: 'composerContent',
-            availabilityOwner: 'host',
         });
         expect(services.availability('composerContent')).toEqual({
             status: 'unavailable',
@@ -193,22 +205,7 @@ describe('unavailable plugin invocation services factory', () => {
         try {
             const services = createPluginInvocationServicesFactory(factoryParams)(
                 seed,
-                createLoggerAndFilesystemServiceBinding(
-                    '7',
-                    'binding',
-                    [{
-                        request: {
-                            id: 'workspace-read',
-                            capability: 'filesystem',
-                            reason: 'Stage media from the selected workspace',
-                            scope: {
-                                locations: [{ root: 'workspace' }],
-                                access: ['read'],
-                            },
-                        },
-                    }],
-                    filesystemRoots,
-                ),
+                createPluginInvocationServiceBinding('7', 'binding'),
             );
 
             expect(services.availability('composerContent')).toEqual({ status: 'available' });
@@ -235,6 +232,8 @@ describe('unavailable plugin invocation services factory', () => {
             'executeAdmittedTargetedOperation',
             'executeAdmittedTargetedOperationWithExecutionOrigin',
             'executeWithExecutionOrigin',
+            'observe',
+            'observeAdmittedTargetedOperation',
         ]);
         expect(() => services.actions.executeWithExecutionOrigin(
             { pluginId: 'acme.target', localId: 'publish' },
@@ -261,7 +260,7 @@ describe('unavailable plugin invocation services factory', () => {
                 throw new Error('Contributed action invocation was not expected');
             }),
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
+        const binding = createPluginInvocationServiceBinding('7', 'binding');
         const input = {
             machineId: 'machine-1',
             query: {
@@ -337,9 +336,9 @@ describe('unavailable plugin invocation services factory', () => {
             events: {
                 broker: createStablePluginEventsBroker(),
                 declarationsByPluginId: new Map(),
-                activePluginIds: new Set<string>(),
+                activePluginIds: new Set([seed.plugin.id]),
             },
-        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         expect(services.availability('logger')).toEqual({ status: 'available' });
         expect(services.availability('events')).toEqual({ status: 'available' });
@@ -390,7 +389,7 @@ describe('unavailable plugin invocation services factory', () => {
                 activePluginIds: new Set<string>(),
             },
             targetedContributions: { bind },
-        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         const observation = services.targetedContributions.observeForSelf(
             {
@@ -463,19 +462,7 @@ describe('unavailable plugin invocation services factory', () => {
                 },
                 resolvePath: async () => root,
             },
-        })(seed, createLoggerEventsAndExecServiceBinding(
-            '7',
-            'binding',
-            [{
-                required: true,
-                request: {
-                    id: 'deepsec-process',
-                    capability: 'process',
-                    reason: 'Run DeepSec',
-                    scope: { executables: [executable] },
-                },
-            }],
-        ));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         const readiness = await services.exec.agentCli.checkReadiness({
             candidates: ['claude', 'codex'],
@@ -514,7 +501,7 @@ describe('unavailable plugin invocation services factory', () => {
             declarationsByPluginId: new Map(),
             activePluginIds: new Set<string>(),
         };
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
+        const binding = createPluginInvocationServiceBinding('7', 'binding');
         const createServices = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events,
@@ -559,7 +546,7 @@ describe('unavailable plugin invocation services factory', () => {
                 activePluginIds: new Set<string>(),
             },
             storagePaths,
-        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         await expect(services.storage.daemon.get('@happier/settings/v1'))
             .rejects.toMatchObject({ code: 'plugin_storage_reserved_key' });
@@ -581,7 +568,7 @@ describe('unavailable plugin invocation services factory', () => {
                 activePluginIds: new Set<string>(),
             },
             storagePaths: resolvePluginStorePaths({ happyHomeDir }),
-        })(seed, createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding'));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         expect(services.availability('storage')).toEqual({ status: 'available' });
         await services.storage.daemon.set('descriptor-owned', true);
@@ -589,7 +576,7 @@ describe('unavailable plugin invocation services factory', () => {
     });
 
     it('binds settings only through the canonical stable settings host', async () => {
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
+        const binding = createPluginInvocationServiceBinding('7', 'binding');
         const snapshot = Object.freeze({
             scope: Object.freeze({ kind: 'daemon' as const }),
             revision: '0',
@@ -624,7 +611,7 @@ describe('unavailable plugin invocation services factory', () => {
         await expect(services.settings.forScope({ kind: 'daemon' }).snapshot()).resolves.toBe(snapshot);
     });
 
-    it('materializes HTTP only through the canonical stable host and exact network binding', async () => {
+    it('materializes trusted HTTP through the canonical stable host without a network declaration', async () => {
         const adapter = Object.freeze({
             request: vi.fn(async () => Object.freeze({
                 status: 200,
@@ -639,18 +626,7 @@ describe('unavailable plugin invocation services factory', () => {
                 });
             },
         });
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding', [{
-            required: true,
-            request: {
-                id: 'api-read',
-                capability: 'network',
-                reason: 'Read the declared API',
-                scope: {
-                    targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
-                    methods: ['GET'],
-                },
-            },
-        }]);
+        const binding = createPluginInvocationServiceBinding('7', 'binding');
         const services = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events: {
@@ -681,7 +657,7 @@ describe('unavailable plugin invocation services factory', () => {
     it('commits ordinary storage transactions atomically and fences ended or stale transaction handles', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-invocation-storage-transaction-'));
         let current = true;
-        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding('7', 'binding');
+        const binding = createPluginInvocationServiceBinding('7', 'binding');
         const services = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events: {
@@ -748,7 +724,7 @@ describe('unavailable plugin invocation services factory', () => {
         expect(await services.storage.daemon.get('counter')).toBe(8);
     });
 
-    it('rejects a logger factory binding that does not admit exactly the logger', () => {
+    it('derives available services from their actual host constructors', () => {
         const createServices = createPluginInvocationServicesFactory({
             loggerSink: { write: () => {} },
             events: {
@@ -758,20 +734,17 @@ describe('unavailable plugin invocation services factory', () => {
             },
         });
 
-        expect(() => createServices(seed, createUnavailablePluginInvocationServiceBinding('7', 'binding')))
-            .toThrow(/availability/i);
+        const services = createServices(seed, createUnavailablePluginInvocationServiceBinding('7', 'binding'));
+        expect(services.availability('logger')).toEqual({ status: 'available' });
+        expect(services.availability('events')).toEqual({ status: 'available' });
     });
 
-    it('rejects bindings whose availability claims exceed the factory services', () => {
-        const createServices = createUnavailablePluginServicesFactory();
-        const binding = createUnavailablePluginInvocationServiceBinding('7', 'binding');
-        const availability = {
-            ...binding.availability,
-            logger: 'available' as const,
-        } satisfies Record<PluginServiceId, 'available' | 'unavailable' | 'denied'>;
-
-        expect(() => createServices(seed, Object.freeze({ ...binding, availability: Object.freeze(availability) })))
-            .toThrow(/availability/i);
+    it('settles a missing host constructor with typed unavailable services', () => {
+        const createServices = createPluginInvocationServicesFactory({ loggerSink: { write() {} } });
+        const services = createServices(seed, createPluginInvocationServiceBinding('7', 'binding'));
+        expect(services.availability('events')).toEqual({ status: 'unavailable', code: 'plugin_service_unavailable' });
+        expect(() => services.events.plugin.emit('changed', null))
+            .toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
     });
 
     it('returns only a frozen service surface with truthful unavailable facts', () => {
@@ -810,19 +783,7 @@ describe('unavailable plugin invocation services factory', () => {
                 resolveExecutable: async () => ({ command: process.execPath }),
                 resolvePath: async () => { throw new Error('unexpected path'); },
             },
-        })(seed, createLoggerEventsAndExecServiceBinding(
-            '7',
-            'binding',
-            [{
-                required: true,
-                request: {
-                    id: 'process',
-                    capability: 'process',
-                    reason: 'Run fixture',
-                    scope: { executables: [executable], envKeys: ['FIXTURE_VALUE'] },
-                },
-            }],
-        ));
+        })(seed, createPluginInvocationServiceBinding('7', 'binding'));
 
         expect(services.availability('exec')).toEqual({ status: 'available' });
         await expect(services.exec.agentCli.checkReadiness({

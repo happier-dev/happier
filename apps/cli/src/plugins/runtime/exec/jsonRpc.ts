@@ -7,8 +7,8 @@ import type {
     JsonRpcRequestHandlerV1,
     JsonRpcRequestOptionsV1,
 } from './privateContract';
-import { createJsonRpcApplicationError as createApplicationError, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
+import { createJsonRpcApplicationError as createApplicationError, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { createJsonlRequestCorrelator } from '@/plugins/runtime/jsonlRequestCorrelator';
 
 import { attachJsonlLineReader } from '@/agent/runtime/jsonl/attachJsonlLineReader';
@@ -27,7 +27,6 @@ import { attachWebSocketFrameReader } from './webSocketFraming';
 type JsonRpcObject = Record<string, unknown>;
 type JsonRpcNotificationReceipt = Readonly<{ method: string; params?: unknown; receivedAtMs: number }>;
 const MAX_JSON_RPC_ERROR_MESSAGE_BYTES = 500;
-export const DEFAULT_JSON_RPC_MAX_FRAME_BYTES = 1024 * 1024;
 
 export type CreateJsonRpcProcessClientParams = Readonly<{
     stdout: NodeJS.ReadableStream;

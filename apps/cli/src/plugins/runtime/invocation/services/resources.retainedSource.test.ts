@@ -78,7 +78,11 @@ describe('retained Custom ACP source → strict Resource admission', () => {
 
     it('identifies a hostile declaration field without invoking or disclosing its getter', async () => {
         const { source } = await retainedCustomAcpSource();
-        const declaration = { ...source.manifest.contributes.resources[0]! };
+        const brandResource = source.manifest.contributes.resources?.find(
+            ({ id }) => id === source.manifest.brand?.iconResourceId,
+        );
+        if (!brandResource) throw new Error('Expected the retained manifest to declare its brand Resource.');
+        const declaration = { ...brandResource };
         let reads = 0;
         Object.defineProperty(declaration, 'path', { get: () => {
             reads += 1;

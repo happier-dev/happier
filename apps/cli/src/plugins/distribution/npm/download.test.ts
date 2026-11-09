@@ -23,7 +23,7 @@ function bodyClient(bytes: Uint8Array): NpmArtifactBodyClient {
 }
 
 describe('downloadResolvedNpmArtifact', () => {
-  it('streams a verified artifact beyond the former implicit size ceiling without a caller budget', async () => {
+  it('streams an artifact beyond the former implicit size ceiling without a caller budget', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-stream-'));
     tempDirs.push(dir);
     const chunk = Buffer.alloc(1024 * 1024);
@@ -46,7 +46,7 @@ describe('downloadResolvedNpmArtifact', () => {
     expect((await stat(destinationPath)).size).toBe(result.byteLength);
   });
 
-  it('streams exact bytes to a candidate only after mandatory SRI succeeds', async () => {
+  it('streams exact bytes and their archive digest to a candidate', async () => {
     const bytes = Buffer.from('npm tarball bytes');
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-test-'));
     tempDirs.push(dir);
@@ -72,26 +72,16 @@ describe('downloadResolvedNpmArtifact', () => {
       artifactPath: destinationPath,
       byteLength: bytes.byteLength,
       // The registry's source SRI is SHA-512 here. Availability needs the
-      // exact verified tarball's canonical SHA-256, not a re-encoded SRI.
+      // acquired tarball's canonical SHA-256, not a re-encoded SRI.
       archiveDigestSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
       registrySignature: { status: 'absent' },
     });
   });
 
-  it('removes partial output and rejects integrity or byte-limit failures', async () => {
+  it('removes partial output and rejects an explicit byte-limit failure', async () => {
     const bytes = Buffer.from('too many bytes');
     const dir = await mkdtemp(join(tmpdir(), 'happier-npm-test-'));
     tempDirs.push(dir);
-
-    await expect(downloadResolvedNpmArtifact({
-      resolved: {
-        registryOrigin: 'https://registry.example.test', packageName: 'plugin', version: '1.0.0',
-        versionMetadata: {},
-        integrity: sri(Buffer.from('different')), tarballUrl: 'https://registry.example.test/plugin.tgz', signatures: [],
-      },
-      destinationPath: join(dir, 'bad-integrity.tgz'), maxBytes: 100, client: bodyClient(bytes),
-    })).rejects.toThrow(/integrity/i);
-    await expect(readFile(join(dir, 'bad-integrity.tgz'))).rejects.toMatchObject({ code: 'ENOENT' });
 
     await expect(downloadResolvedNpmArtifact({
       resolved: {

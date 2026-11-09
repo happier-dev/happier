@@ -652,33 +652,41 @@ describe('startSessionHookServer', () => {
     expect(result.stderr).not.toContain('sess_unreachable_forwarder');
   });
 
-  it('uses one attempt and exits successfully within the 500 ms total deadline when delivery hangs', async () => {
+  it('delivers one observation after a slow host acknowledgement within the native hook lifetime', async () => {
     let deliveryAttempts = 0;
+    let release!: () => void;
+    let entered!: () => void;
+    const pending = new Promise<void>(done => { release = done; });
+    const received = new Promise<void>(done => { entered = done; });
     const server = await startSessionHookServer({
       onSessionHook: async () => {
         deliveryAttempts += 1;
-        await new Promise(() => {});
+        entered();
+        await pending;
       },
     });
     servers.push(server);
     const secretFile = await createSecretFile('unused-session-forwarder-secret');
-    const startedAt = Date.now();
-
-    const result = await runSessionForwarder({
+    let exited = false;
+    const outcome = runSessionForwarder({
       port: server.port,
       hookEventName: 'Stop',
       secretFile,
       body: {
         session_id: 'sess_hung_forwarder',
       },
-    });
-
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    }).then(result => { exited = true; return result; });
+    try {
+      await received;
+      // The host is still processing accepted work beyond the removed subordinate cutoff.
+      await new Promise(done => setTimeout(done, 650));
+      expect(exited).toBe(false);
+    } finally { release(); }
     expect(deliveryAttempts).toBe(1);
-    expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
+    expect(await outcome).toEqual({ code: 0, stdout: '', stderr: '' });
   });
 
-  it.each(['SessionStart', 'UserPromptSubmit'])('lets native %s wait for a real acknowledgement beyond the observational deadline', async hookEventName => {
+  it.each(['SessionStart', 'UserPromptSubmit'])('lets native %s wait for a real acknowledgement beyond the former observation cutoff', async hookEventName => {
     let release!: () => void;
     let entered!: () => void;
     const pending = new Promise<void>(done => { release = done; });
@@ -691,7 +699,7 @@ describe('startSessionHookServer', () => {
       body: { session_id: 'native-proof-session' } }).then(result => { exited = true; return result; });
     try {
       await received;
-      // Exercise the existing 500ms cutoff at the actual clock/socket/process boundary.
+      // Exercise the former 500ms cutoff at the actual clock/socket/process boundary.
       await new Promise(done => setTimeout(done, 650));
       expect(exited).toBe(false);
     } finally { release(); }
@@ -717,7 +725,7 @@ describe('startSessionHookServer', () => {
     } finally { await new Promise<void>(done => { server.close(() => done()); }); }
   });
 
-  it('leaves proof-hook cancellation with its native process owner', async () => {
+  it.each(['SessionStart', 'Stop'])('leaves %s cancellation with its native process owner', async hookEventName => {
     let release!: () => void;
     let entered!: () => void;
     const pending = new Promise<void>(done => { release = done; });
@@ -726,7 +734,7 @@ describe('startSessionHookServer', () => {
     servers.push(server);
     const secretFile = await createSecretFile('proof-forwarder-secret');
     const nativeOwner: { child: ReturnType<typeof spawn> | null } = { child: null };
-    const outcome = runSessionForwarder({ port: server.port, hookEventName: 'SessionStart', secretFile,
+    const outcome = runSessionForwarder({ port: server.port, hookEventName, secretFile,
       body: { session_id: 'native-proof-session' }, onSpawn: spawned => { nativeOwner.child = spawned; } });
     try {
       await received;

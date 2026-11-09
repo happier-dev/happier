@@ -3,11 +3,11 @@ import type { ResolveDeclaredManagedServiceSecret } from './managedServicesOwner
 /**
  * Resolves the user-recorded credential that authenticates an attached managed
  * service. The caller's exact admitted occurrenceId supplies the operation
- * scoped port, which is already bound to one manifest declaration and the
- * canonical secret custody router.
+ * scoped port, which uses manifest data-custody metadata and the canonical
+ * secret custody router.
  *
  * This adapter deliberately has no paths, declaration inventory, key material,
- * or secret-store cache. Account custody and undeclared ids are unavailable;
+ * or secret-store cache. Account-custodied slots are unavailable;
  * the resolved daemon value reaches only the managed-services owner, which
  * renders and redacts it without exposing it to plugin code or diagnostics.
  */

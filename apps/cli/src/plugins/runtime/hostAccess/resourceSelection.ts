@@ -28,10 +28,11 @@ export function isPluginHostAccessRequestAuthorizedBySelection(input: Readonly<{
         && HOST_ACCESS_SCOPE_REGISTRY.validateSelection(selection)
     ));
     if (matchingSelections.length !== 1) return false;
-    const comparison = HOST_ACCESS_SCOPE_REGISTRY.compare(
+    // The same covering relation that admits a narrowed update without review:
+    // callers enforce the current declaration's scope, never the selection's.
+    return HOST_ACCESS_SCOPE_REGISTRY.isWithinGrantedScope(
         input.request.capability,
         input.request.scope,
         matchingSelections[0]!.normalizedScope,
     );
-    return comparison.relation === 'exact';
 }

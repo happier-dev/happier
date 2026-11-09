@@ -55,6 +55,16 @@ export type PluginRuntimeSourceAuthority = Readonly<
     | (Extract<PluginSourceCustodyV1, { kind: 'account_release' }> & { resolvedRoot: string })
 >;
 
+/** A retained review and runtime publication use the same observed-source fact. */
+export function developmentSourceAuthorityEqual(
+    reviewed: Extract<PluginRuntimeSourceAuthority, { kind: 'development' }>,
+    current: Extract<PluginRuntimeSourceAuthority, { kind: 'development' }> | null | undefined,
+): boolean {
+    return current?.registeredRootId === reviewed.registeredRootId
+        && current.canonicalRoot === reviewed.canonicalRoot
+        && current.observedRevision === reviewed.observedRevision;
+}
+
 function requireNonEmptyString(value: unknown, label: string): string {
     if (typeof value !== 'string' || value.trim().length === 0) {
         throw new Error(`${label} must be a non-empty string`);

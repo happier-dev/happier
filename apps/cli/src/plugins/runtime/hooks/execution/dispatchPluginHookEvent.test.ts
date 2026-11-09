@@ -25,7 +25,6 @@ function createBackendPrerequisiteHookRegistration(params: Readonly<{
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: 'agent.resolvePrerequisites',
       category: 'decision',
       scope: 'agent',
@@ -60,7 +59,6 @@ describe('dispatchPluginHookEvent', () => {
         installPolicy: 'link',
       },
       definition: {
-        hookApiVersion: 1,
         id: 'agent.stream.token',
         category: 'lifecycle',
         scope: 'agent',
@@ -250,7 +248,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -282,7 +279,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -356,7 +352,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -389,7 +384,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -464,7 +458,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -497,7 +490,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.spawnEnv.augment',
                     category: 'augmentation',
                     scope: 'daemon',
@@ -570,7 +562,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.resolvePrerequisites',
                     category: 'decision',
                     scope: 'agent',
@@ -722,7 +713,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.resolvePrerequisites',
                     category: 'decision',
                     scope: 'agent',
@@ -867,7 +857,6 @@ describe('dispatchPluginHookEvent', () => {
         hooks: [{
           id: 'resolve-prerequisites',
           on: 'agent.resolvePrerequisites',
-          hookApiVersion: 1,
           category: 'decision',
           scope: 'agent',
           filters: { agentId: 'codex' },
@@ -875,7 +864,6 @@ describe('dispatchPluginHookEvent', () => {
         }, {
           id: 'resolve-prerequisites-secondary',
           on: 'agent.resolvePrerequisites',
-          hookApiVersion: 1,
           category: 'decision',
           scope: 'agent',
           filters: { agentId: 'codex' },
@@ -1003,7 +991,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.resolvePrerequisites',
                     category: 'decision',
                     scope: 'agent',
@@ -1035,7 +1022,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'agent.resolvePrerequisites',
                     category: 'decision',
                     scope: 'agent',
@@ -1208,7 +1194,6 @@ describe('dispatchPluginHookEvent', () => {
                     installPolicy: 'link',
                   },
                   definition: {
-                    hookApiVersion: 1,
                     id: 'session.spawned',
                     category: 'lifecycle',
                     scope: 'session',

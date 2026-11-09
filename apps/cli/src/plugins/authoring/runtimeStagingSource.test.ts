@@ -211,7 +211,7 @@ describe('plugin author runtime staging authority', () => {
       await writeFile(join(installedSdkRoot, 'package.json'), JSON.stringify(sdkManifest), 'utf8');
       await writeFile(join(installedSdkRoot, 'stale-connected-accounts.cjs'), 'module.exports = {};\n', 'utf8');
       const ownerPath = fileURLToPath(new URL('./runtimeStagingSource.ts', import.meta.url));
-      const generatorTsconfigPath = fileURLToPath(new URL('../../../scripts/build-owned/tsconfig.generator-runtime.json', import.meta.url));
+      const cliRuntimeTsconfigPath = fileURLToPath(new URL('../../../tsconfig.runtime.json', import.meta.url));
       const sourceRuntimePath = resolve(sdkRoot, '../cli-common/registerSourceRuntime.mjs');
       const inspectionOwnerPath = fileURLToPath(new URL('../../../scripts/build-owned/bundledPlugins/typescriptModuleInspection.ts', import.meta.url));
       const phases: string[] = [];
@@ -228,8 +228,8 @@ describe('plugin author runtime staging authority', () => {
           'try {',
           '  phase("source owner import");',
           '  const { evaluatePluginAuthorRuntimeStagingSource } = await loader.import(ownerPath, import.meta.url);',
-          '  phase("SDK OAuth profile import");',
-          '  const { ANTIGRAVITY_OAUTH_PROFILE } = await loader.import("@happier-dev/plugin-sdk/first-party/connected-accounts", `${rootPath}/src/index.ts`);',
+          '  phase("Agent OAuth profile import");',
+          '  const { ANTIGRAVITY_OAUTH_PROFILE } = await loader.import("@happier-dev/protocol/agents/antigravity/oauth-profile", `${rootPath}/src/index.ts`);',
           '  phase("inspection owner import");',
           '  const { inspectTypescriptModule } = await loader.import(inspectionOwnerPath, import.meta.url);',
           '  const { readAgentNativeHomeEnvironmentKeys } = await loader.import(ownerPath.replace("runtimeStagingSource.ts", "agentNativeHomeEnvironmentKeys.ts"), import.meta.url);',
@@ -242,16 +242,16 @@ describe('plugin author runtime staging authority', () => {
           '    loadModule: entryPath => loader.import(entryPath, import.meta.url),',
           '  });',
           '  phase("complete");',
-          '  console.log(JSON.stringify({ pluginId: staged.evaluated.manifest.id, runnerCount: staged.sessionRunnerFactories.length, allowRawAuthorizationCode: ANTIGRAVITY_OAUTH_PROFILE.allowRawAuthorizationCode, staticHomeKeys: readAgentNativeHomeEnvironmentKeys(staticDefinition.AGENT_STATE_SHARING_DESCRIPTOR), runtimeHomeKeys: staged.agentNativeHomeEnvironmentKeys }));',
+          '  console.log(JSON.stringify({ pluginId: staged.evaluated.manifest.id, runnerCount: staged.sessionRunnerFactories.length, allowRawAuthorizationCode: ANTIGRAVITY_OAUTH_PROFILE.allowRawAuthorizationCode, staticHomeKeys: readAgentNativeHomeEnvironmentKeys(staticDefinition.AGENT_STATE_SHARING_DESCRIPTOR) }));',
           '} catch (error) { console.error(error.message); process.exitCode = 1; } finally { loader(); }',
         ].join('\n'),
-      ownerPath, generatorTsconfigPath, rootPath, inspectionOwnerPath,
+      ownerPath, cliRuntimeTsconfigPath, rootPath, inspectionOwnerPath,
       ]);
       child.child.stderr?.on('data', (chunk: Buffer) => { phases.push(chunk.toString('utf8')); });
       const { stdout } = await child;
       expect(JSON.parse(stdout.trim())).toEqual({
         pluginId: 'happier.agent.antigravity', runnerCount: 0, allowRawAuthorizationCode: true,
-        staticHomeKeys: ['GEMINI_HOME'], runtimeHomeKeys: ['GEMINI_HOME'],
+        staticHomeKeys: ['GEMINI_HOME'],
       });
     } finally {
       await rm(rootPath, { recursive: true, force: true });
@@ -260,7 +260,7 @@ describe('plugin author runtime staging authority', () => {
 
   it('stages Pi with the exact External Sessions companion when entry and leaves share the source importer', async () => {
     const ownerPath = fileURLToPath(new URL('./runtimeStagingSource.ts', import.meta.url));
-    const generatorTsconfigPath = fileURLToPath(new URL('../../../scripts/build-owned/tsconfig.generator-runtime.json', import.meta.url));
+    const cliRuntimeTsconfigPath = fileURLToPath(new URL('../../../tsconfig.runtime.json', import.meta.url));
     const sourceRuntimePath = resolve(PI_PLUGIN_ROOT, '../../cli-common/registerSourceRuntime.mjs');
     const { stdout } = await execFileAsync(process.execPath, [
       '--conditions=happier-source', '--import', sourceRuntimePath, '--input-type=module', '-e',
@@ -275,10 +275,10 @@ describe('plugin author runtime staging authority', () => {
         '    authority: { kind: "bundled_first_party", pluginId: "happier.agent.pi", packageRootPath: rootPath },',
         '    loadModule: entryPath => loader.import(entryPath, import.meta.url),',
         '  });',
-        '  console.log(JSON.stringify({ factories: staged.sessionRunnerFactories, homeKeys: staged.agentNativeHomeEnvironmentKeys }));',
+        '  console.log(JSON.stringify({ factories: staged.sessionRunnerFactories }));',
         '} catch (error) { console.error(error.message); process.exitCode = 1; } finally { loader(); }',
       ].join('\n'),
-      ownerPath, generatorTsconfigPath, PI_PLUGIN_ROOT,
+      ownerPath, cliRuntimeTsconfigPath, PI_PLUGIN_ROOT,
     ]);
     expect(JSON.parse(stdout.trim())).toEqual({
       factories: [expect.objectContaining({
@@ -292,7 +292,6 @@ describe('plugin author runtime staging authority', () => {
           externalSessionsExport: 'piExternalSessionsContribution',
         },
       })],
-      homeKeys: ['PI_CODING_AGENT_DIR'],
     });
   });
 
@@ -320,36 +319,30 @@ describe('plugin author runtime staging authority', () => {
           export: 'createClaudeAgentRuntime',
         }),
       })]);
-      expect(staged.agentNativeHomeEnvironmentKeys).toEqual(['CUSTOM_AGENT_ROOT', 'CUSTOM_AGENT_STATE_ROOT']);
     } finally {
       await fixture.dispose();
     }
   });
 
-  it('rejects bundled authority whose plugin identity or source root is not exact', async () => {
+  it('extracts runners from trusted source without a second bundled-root identity check', async () => {
     const fixture = await createSessionRunnerFixture({
       pluginId: 'happier.agent.claude',
     });
     try {
-      await expect(evaluatePluginAuthorRuntimeStagingSource({
+      const staged = await evaluatePluginAuthorRuntimeStagingSource({
         locator: fixture.entryPath,
         rootPath: fixture.rootPath,
         authority: {
           kind: 'bundled_first_party',
           pluginId: 'happier.agent.codex',
-          packageRootPath: fixture.rootPath,
-        },
-      })).rejects.toThrow(/bundled.*identity/iu);
-
-      await expect(evaluatePluginAuthorRuntimeStagingSource({
-        locator: fixture.entryPath,
-        rootPath: fixture.rootPath,
-        authority: {
-          kind: 'bundled_first_party',
-          pluginId: 'happier.agent.claude',
           packageRootPath: tmpdir(),
         },
-      })).rejects.toThrow(/bundled.*source root/iu);
+      });
+      expect(staged.evaluated.manifest.id).toBe('happier.agent.claude');
+      expect(staged).not.toHaveProperty('agentNativeHomeEnvironmentKeys');
+      expect(staged.sessionRunnerFactories).toEqual([expect.objectContaining({
+        localAgentId: 'claude', normalizedModulePath: 'src/runner.ts',
+      })]);
     } finally {
       await fixture.dispose();
     }

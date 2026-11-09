@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
     AgentCliAuthContributionV1,
+    AgentAccountSettingsContributionV1,
     AgentCliSessionCommandDeclarationV1,
     AgentConnectedAccountLaunchContributionV1,
     AgentDaemonSpawnHooks,
@@ -48,7 +49,7 @@ import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
-import { readValidatedAgentSessionRunnerFactory } from '../../api/registrationRightsHost';
+import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../../activationSources';
 import { readRetainedBundledAgentFactory } from '../../retainedBundledAgentFactory';
 import {
     createAgentSessionRunnerFactoryBinding,
@@ -104,6 +105,7 @@ type TargetRegistration = Readonly<{
     pluginId: string;
     occurrenceId: string;
     registration: ContributionRuntimeRegistration;
+    agentSessionRunnerFactory?: ValidatedAgentSessionRunnerFactoryFactV1;
 }>;
 
 type OccurrenceBoundExternalSessionHooks = Readonly<{
@@ -207,6 +209,7 @@ type AgentRuntimeRegistrationLeaseBase = Readonly<{
     cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
     cliAuth?: AgentCliAuthContributionV1;
     connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+    accountSettings?: AgentAccountSettingsContributionV1;
     preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
     terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
     sessionStartup?: AgentSessionStartupContributionV1;
@@ -1219,6 +1222,7 @@ function createLease(params: Readonly<{
     declaresExecutionRunContextV1?: boolean;
     startupInstructionsVersions?: readonly [1];
     registration: AgentContributionRuntimeRegistration;
+    agentSessionRunnerFactory?: ValidatedAgentSessionRunnerFactoryFactV1;
     runnerBinding?: AgentSessionRunnerBindingV1;
     isOccurrenceCurrent(): boolean;
     retirementSignal: AbortSignal;
@@ -1521,6 +1525,9 @@ function createLease(params: Readonly<{
         ...(params.registration.connectedAccountLaunch
             ? { connectedAccountLaunch: params.registration.connectedAccountLaunch }
             : {}),
+        ...(params.registration.accountSettings
+            ? { accountSettings: params.registration.accountSettings }
+            : {}),
         ...(params.registration.preflightSessionControls
             ? { preflightSessionControls: params.registration.preflightSessionControls }
             : {}),
@@ -1556,19 +1563,7 @@ function createLease(params: Readonly<{
         });
     }
     const factory = params.registration.factory;
-    const validatedSessionRunnerFactory = readValidatedAgentSessionRunnerFactory(
-        params.registration,
-    );
-    if (params.registration.sessionRunnerFactory && !validatedSessionRunnerFactory) {
-        throw new Error(
-            `Agent runtime '${params.agentId}' has an unvalidated session runner factory locator`,
-        );
-    }
-    if (params.runnerBinding && validatedSessionRunnerFactory) {
-        throw new Error(
-            `Agent runtime '${params.agentId}' has competing runner binding owners`,
-        );
-    }
+    const validatedSessionRunnerFactory = params.agentSessionRunnerFactory;
     const publishedFactory = params.sourceCustody.kind === 'bundled_first_party'
         && validatedSessionRunnerFactory
         ? readRetainedBundledAgentFactory(params.manifest, params.localAgentId)
@@ -1758,6 +1753,9 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
                 ? { startupInstructionsVersions }
                 : {}),
             registration: candidate.registration.value,
+            ...(candidate.agentSessionRunnerFactory
+                ? { agentSessionRunnerFactory: candidate.agentSessionRunnerFactory }
+                : {}),
             isOccurrenceCurrent: lifecycle?.isCurrent ?? params.isOccurrenceCurrent,
             retirementSignal: requireAgentRuntimeRetirementSignal({
                 agentId,

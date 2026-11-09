@@ -638,6 +638,23 @@ function buildInstalledPackagesById(params: Readonly<{
     return installedPackagesById;
 }
 
+export function projectAgentConnectedAccounts(
+    agent: ResolvedAgentContribution,
+): NonNullable<PluginProjectionV2['agentsById'][string]['connectedAccounts']> {
+    const declarations = agent.richDefinition?.definition.connectedAccounts;
+    if (!declarations?.length) return [];
+    const identity = agent.identity;
+    if (!identity) {
+        throw new Error(`Agent '${agent.id}' is missing its manifest-qualified identity`);
+    }
+    return declarations.map((declaration) => ({
+        ...declaration,
+        service: typeof declaration.service === 'string'
+            ? createPluginContributionIdentity({ pluginId: identity.pluginId, localId: declaration.service })
+            : declaration.service,
+    }));
+}
+
 export function buildAgentsById(
     registry: ResolvedContributionRegistry,
     generation: number,
@@ -653,15 +670,7 @@ export function buildAgentsById(
         const externalSessions = projectAgentExternalSessions(agent, generation);
         const capabilities = projectAgentCapabilities(agent);
         const connectedServiceIds = agent.catalogEntry?.connectedServiceIds ?? [];
-        const connectedAccounts = agent.richDefinition?.definition.connectedAccounts?.map((declaration) => ({
-            ...declaration,
-            service: typeof declaration.service === 'string'
-                ? createPluginContributionIdentity({
-                    pluginId: identity.pluginId,
-                    localId: declaration.service,
-                })
-                : declaration.service,
-        })) ?? [];
+        const connectedAccounts = projectAgentConnectedAccounts(agent);
         const uiBehavior = projectAgentUiBehavior(agent);
         agentsById[agent.id] = {
             id: agent.id,
@@ -897,7 +906,7 @@ export function buildPluginMountedActionsProjectionV2(params: Pick<
     // Carry admitted declarations. The canonical UI family sees only selected
     // Actions and translations, so unrelated UI and executable owners stay cold.
     const registry: ResolvedContributionRegistry = {
-        actions, agents: [], voiceProviders: [], uiTranslationsV2,
+        actions, agents: [], voiceProviders: [], backupDestinations: [], uiTranslationsV2,
         resources: [...translationResourceKeys].flatMap(key => {
             const resource = params.registry.resourcesById?.get(key);
             return resource ? [resource] : [];

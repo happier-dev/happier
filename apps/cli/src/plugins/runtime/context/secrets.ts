@@ -342,6 +342,7 @@ export type DeclaredPluginSecretCustody = 'account' | 'daemon';
 export type DeclaredPluginSecret = Readonly<{
     id: string;
     custody: DeclaredPluginSecretCustody;
+    saveShared?: true;
     /**
      * Declarative Account-endpoint metadata for an exact origin partition.
      * The secret remains daemon-custodied and never becomes an Account value.
@@ -350,9 +351,8 @@ export type DeclaredPluginSecret = Readonly<{
 }>;
 
 /**
- * Host-private, operation-scoped raw access for a declared daemon secret.
- * Consumers receive this only after their exact generation declaration has
- * been bound by the canonical custody router.
+ * Host-private, operation-scoped raw access for a daemon secret. The canonical
+ * custody router binds its invocation lifetime and exact origin slot.
  */
 export type DeclaredPluginSecretReadResult = Readonly<{
     /** The configured value, or the current missing/empty credential state. */
@@ -374,9 +374,9 @@ export type DeclaredPluginSecretReadPort = (input: Readonly<{
 }>) => Promise<DeclaredPluginSecretReadResult | null>;
 
 /**
- * Host-private, secret-native administration for one declared daemon secret.
+ * Host-private, secret-native administration for one daemon secret.
  * It intentionally has no `get`: raw material is available only to the
- * generation-bound managed-service read port after that service has resolved
+ * invocation-bound managed-service read port after that service has resolved
  * its own canonical endpoint origin.
  */
 export type DeclaredDaemonPluginSecretAdministrationPort = Readonly<{
@@ -638,6 +638,7 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
         declarations.set(id, Object.freeze({
             id,
             custody: declaration.custody,
+            ...(declaration.saveShared ? { saveShared: true as const } : {}),
             ...(declaration.managedServiceOrigin
                 ? {
                     managedServiceOrigin: Object.freeze({
@@ -829,8 +830,8 @@ export type StableDeclaredPluginSecretsHost = Readonly<{
         isOccurrenceCurrent(): boolean;
     }>): DeclaredDaemonPluginSecretAdministrationPort | null;
     /**
-     * Managed services may consume only an exact generation-bound daemon
-     * declaration. This remains host-private and does not expose the SDK
+     * Managed services consume an exact invocation-bound daemon origin slot.
+     * Manifest metadata selects its data owner. This does not expose the SDK
      * Secrets service or allow Account custody into daemon attachment flows.
      */
     bindManagedServiceSecretReadPort(input: Readonly<{
@@ -884,7 +885,6 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         isOccurrenceCurrent(): boolean;
     }>): DeclaredDaemonPluginSecretAdministrationPort | null => {
         const declarations = declarationsForPlugin(input.pluginId);
-        if (!declarations || declarations.length === 0) return null;
 
         const assertCurrent = (signal?: AbortSignal): void => {
             if (signal?.aborted || input.signal.aborted || !input.isOccurrenceCurrent()) {
@@ -904,13 +904,8 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         }> => {
             assertCurrent(request.signal);
             const secretId = assertValidDeclaredPluginSecretId(request.secretId);
-            const declaration = declarations.find((candidate) => candidate.id === secretId);
-            if (!declaration) {
-                throw stableSecretError(
-                    'plugin_secret_undeclared',
-                    `Plugin secret '${secretId}' is not declared`,
-                );
-            }
+            const declaration: DeclaredPluginSecret = declarations.find((candidate) => candidate.id === secretId)
+                ?? Object.freeze({ id: secretId, custody: 'daemon' as const });
             if (declaration.custody !== 'daemon') {
                 throw stableSecretError(
                     'plugin_secret_custody_unavailable',
@@ -926,13 +921,7 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
                 }
                 return Object.freeze({ declaration, canonicalOrigin: request.canonicalOrigin });
             }
-            if (request.canonicalOrigin !== undefined) {
-                throw stableSecretError(
-                    'plugin_secret_origin_unexpected',
-                    `Plugin secret '${secretId}' has no declared managed-service origin`,
-                );
-            }
-            return Object.freeze({ declaration });
+            return Object.freeze({ declaration, ...(request.canonicalOrigin === undefined ? {} : { canonicalOrigin: request.canonicalOrigin }) });
         };
         const resolveCustody = (declaration: DeclaredPluginSecret): PluginSecretCustody => {
             const custody = params.resolveCustody({
@@ -1018,21 +1007,16 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         bindDaemonPluginSecretAdministrationPort,
         bindManagedServiceSecretReadPort(input) {
             const declarations = declarationsForPlugin(input.pluginId);
-            if (!declarations || declarations.length === 0) return null;
             return async ({ secretId, canonicalOrigin, signal }) => {
                 // This private port is exclusively for a managed attach. An
                 // omitted origin must never silently select the legacy global
                 // secret key; ordinary SDK Secrets access is a different
                 // explicit surface.
                 if (typeof canonicalOrigin !== 'string') return null;
-                const declaration = declarations.find((candidate) => (
-                    candidate.id === secretId
-                ));
-                if (
-                    !declaration
-                    || declaration.custody !== 'daemon'
-                    || !declaration.managedServiceOrigin
-                ) return null;
+                const normalizedId = assertValidDeclaredPluginSecretId(secretId);
+                const declaration: DeclaredPluginSecret = declarations.find((candidate) => candidate.id === normalizedId)
+                    ?? Object.freeze({ id: normalizedId, custody: 'daemon' as const });
+                if (declaration.custody !== 'daemon') return null;
                 const custody = params.resolveCustody({
                     pluginId: input.pluginId,
                     declaration,
@@ -1091,7 +1075,6 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
                         isPluginError(error)
                         && (
                             error.code === 'plugin_secret_missing'
-                            || error.code === 'plugin_secret_undeclared'
                             || error.code === 'plugin_secret_custody_unavailable'
                             || error.code === 'plugin_generation_stale'
                         )

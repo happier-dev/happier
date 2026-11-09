@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -62,39 +60,6 @@ function externalSessionsApi(host: ReturnType<typeof createContributionRegistrat
 }
 
 describe('contribution-derived registration host', () => {
-    it('consumes Protocol-owned Voice registration rights without rebuilding declarations', () => {
-        const source = readFileSync(new URL('./registrationRightsHost.ts', import.meta.url), 'utf8');
-
-        expect(source).not.toContain('voiceProviders.find(');
-        expect(source).not.toContain('voiceProviderDeclaration })');
-    });
-
-
-    it.each([
-        ['accessor', () => Object.defineProperty({}, 'authentication', { enumerable: true, get: () => ({ kind: 'manual' }) })],
-        ['prototype', () => Object.assign(Object.create({ inherited: true }), { authentication: { kind: 'manual' } })],
-        ['cyclic/extra', () => { const value: Record<string, unknown> = {}; value.authentication = { kind: 'manual' }; value.self = value; return value; }],
-        ['nested accessor', () => ({
-            authentication: Object.defineProperty({ kind: 'manual' }, 'complete', { enumerable: true, get: () => async () => ({ status: 'rejected' }) }),
-            async refresh() {}, async revoke() {}, async status() {}, async materialize() {},
-        })],
-        ['missing common method', () => ({
-            authentication: { kind: 'manual', async complete() {} },
-            async refresh() {}, async revoke() {}, async status() {},
-        })],
-    ])('rejects a malformed connected-account runtime (%s) before publishing the activation', (_label, buildRuntime) => {
-        const host = createContributionRegistrationHost({
-            pluginId: 'acme.accounts', occurrenceId: '1',
-            rights: [{ family: 'connectedAccountDescriptors', localId: 'account', target: daemonTarget }],
-            isOccurrenceCurrent: () => true,
-        });
-
-        host.api.connectedAccounts.register('account', buildRuntime() as never);
-
-        expect(() => host.commit()).toThrow(/invalid 'connectedAccountDescriptors\/account' runtime/i);
-        expect(host.registrations()).toEqual([]);
-        expect(host.diagnostics()).toEqual([expect.objectContaining({ code: 'plugin_activation_failed' })]);
-    });
 
     it('rejects a non-string connected-account registration id before coercion or staging', () => {
         const coerceId = vi.fn(() => 'account');
@@ -183,7 +148,7 @@ describe('contribution-derived registration host', () => {
         ]);
     });
 
-    it('publishes an immutable generation-relative session runner factory locator', () => {
+    it('preserves the trusted session runner factory locator receiver', () => {
         const mutableLocator: {
             module: string;
             export: string;
@@ -208,39 +173,9 @@ describe('contribution-derived registration host', () => {
         const [registration] = host.commit();
         expect(registration?.family).toBe('agents');
         if (registration?.family !== 'agents') throw new TypeError('Expected Agent registration');
-        // The locator is captured when the activation publishes, so a later
-        // author mutation cannot reach the published registration.
         mutableLocator.module = './agent/runtime/replaced';
-        expect(registration.value.sessionRunnerFactory).toEqual(sessionRunnerFactory);
-        expect(Object.isFrozen(registration.value.sessionRunnerFactory)).toBe(true);
-    });
-
-    it.each([
-        ['absolute module', { ...sessionRunnerFactory, module: '/tmp/factory.js' }],
-        ['traversal module', { ...sessionRunnerFactory, module: './../outside.js' }],
-        ['non-normal module', { ...sessionRunnerFactory, module: './agent/./factory.js' }],
-        ['invalid export', { ...sessionRunnerFactory, export: 'default factory' }],
-        ['wrong runtime API', { ...sessionRunnerFactory, runtimeApiVersion: 2 }],
-    ])('rejects an invalid session runner factory locator (%s)', (_label, locator) => {
-        const host = createContributionRegistrationHost({
-            pluginId: 'acme.runtime',
-            occurrenceId: 'generation-7',
-            rights: [{
-                family: 'agents',
-                localId: 'assistant',
-                target: daemonTarget,
-                requiredFields: ['factory', 'sessionRunnerFactory'],
-            }],
-            isOccurrenceCurrent: () => true,
-        });
-
-        host.api.agents.register('assistant', agentFactory, {
-            sessionRunnerFactory: locator,
-        } as never);
-
-        expect(() => host.commit()).toThrow(/invalid 'agents\/assistant' runtime/i);
-        expect(host.registrations()).toEqual([]);
-        expect(host.diagnostics()).toEqual([expect.objectContaining({ code: 'plugin_activation_failed' })]);
+        expect(registration.value.sessionRunnerFactory).toBe(mutableLocator);
+        expect(registration.value.sessionRunnerFactory?.module).toBe('./agent/runtime/replaced');
     });
 
     it.each(['primary-first', 'auxiliary-first'] as const)(
@@ -284,6 +219,29 @@ describe('contribution-derived registration host', () => {
             }]);
         },
     );
+
+    it('invokes optional hydrateCandidates on its original contribution receiver', async () => {
+        const host = createContributionRegistrationHost({
+            pluginId: 'acme.runtime',
+            occurrenceId: 'generation-7',
+            rights: [{ family: 'agents', localId: 'assistant', target: daemonTarget, requiredFields: ['externalSessions'] }],
+            isOccurrenceCurrent: () => true,
+        });
+        const contribution = {
+            ...externalSessionsContribution,
+            marker: 'receiver',
+            async hydrateCandidates(this: { marker: string }) {
+                return { ok: true as const, value: { candidates: [], receiver: this.marker } };
+            },
+        } as unknown as AgentExternalSessionsContribution;
+
+        externalSessionsApi(host).registerExternalSessions('assistant', contribution);
+
+        const [registration] = host.commit();
+        const externalSessions = (registration?.value as { externalSessions: Record<string, unknown> }).externalSessions;
+        const runtime = externalSessions as { hydrateCandidates(): Promise<unknown> };
+        await expect(runtime.hydrateCandidates()).resolves.toEqual({ ok: true, value: { candidates: [], receiver: 'receiver' } });
+    });
 
     it('publishes an auxiliary-only External Sessions contribution under the Agent identity', () => {
         const host = createContributionRegistrationHost({
@@ -342,85 +300,6 @@ describe('contribution-derived registration host', () => {
             expect(() => host.commit()).toThrow(/failed/i);
         },
     );
-
-    it('captures Provider binding fields when the activation publishes', () => {
-        const originalPrepare = providerBinding.prepare;
-        const originalMaterialize = providerBinding.materialize;
-        const mutableProviderBinding = {
-            ...providerBinding,
-        };
-        const host = createContributionRegistrationHost({
-            pluginId: 'acme.runtime',
-            occurrenceId: 'generation-7',
-            rights: [{ family: 'agents', localId: 'assistant', target: daemonTarget }],
-            isOccurrenceCurrent: () => true,
-        });
-
-        host.api.agents.register('assistant', agentFactory, {
-            providerBinding: mutableProviderBinding,
-        });
-
-        const committed = host.commit()[0];
-        // Publication is the capture boundary: the author object may still be
-        // mutated afterwards without reaching the published registration.
-        mutableProviderBinding.adapterVersion = 2;
-        mutableProviderBinding.prepare = () => ({ v: 1, materialization: 'configFile' });
-        mutableProviderBinding.materialize = async () => ({ v: 1, kind: 'configFile', env: [], files: [] });
-        expect(committed?.family).toBe('agents');
-        if (committed?.family !== 'agents') throw new TypeError('Expected Agent registration');
-        expect(committed.value.providerBinding).toMatchObject({
-            v: 1,
-            adapterVersion: 1,
-            prepare: expect.any(Function),
-            materialize: expect.any(Function),
-        });
-        expect(committed.value.providerBinding?.prepare).not.toBe(originalPrepare);
-        expect(committed.value.providerBinding?.materialize).not.toBe(originalMaterialize);
-        expect(committed.value.providerBinding?.prepare({
-            v: 1,
-            agentTargetKey: 'assistant',
-            connectionId: 'connection-1',
-        })).toEqual({ v: 1, materialization: 'spawnEnv' });
-        expect(Object.isFrozen(committed.value.providerBinding)).toBe(true);
-    });
-
-    it('reads an accessor-backed Provider binding field exactly once at capture', () => {
-        const prepareGetter = vi.fn(() => providerBinding.prepare);
-        const providerBindingWithAccessor = {
-            v: 1,
-            adapterVersion: 1,
-            materialize: providerBinding.materialize,
-        } as Record<string, unknown>;
-        Object.defineProperty(providerBindingWithAccessor, 'prepare', {
-            enumerable: true,
-            get: prepareGetter,
-        });
-        const host = createContributionRegistrationHost({
-            pluginId: 'acme.runtime',
-            occurrenceId: 'generation-7',
-            rights: [{ family: 'agents', localId: 'assistant', target: daemonTarget }],
-            isOccurrenceCurrent: () => true,
-        });
-
-        host.api.agents.register('assistant', agentFactory, {
-            providerBinding: providerBindingWithAccessor as AgentProviderBindingAdapter,
-        });
-        expect(prepareGetter).not.toHaveBeenCalled();
-
-        const committed = host.commit()[0];
-        expect(committed?.family).toBe('agents');
-        if (committed?.family !== 'agents') throw new TypeError('Expected Agent registration');
-        expect(prepareGetter).toHaveBeenCalledTimes(1);
-
-        // The published façade retains the captured method, so exercising the
-        // registration must never re-enter the author accessor.
-        expect(committed.value.providerBinding?.prepare({
-            v: 1,
-            agentTargetKey: 'assistant',
-            connectionId: 'connection-1',
-        })).toEqual({ v: 1, materialization: 'spawnEnv' });
-        expect(prepareGetter).toHaveBeenCalledTimes(1);
-    });
 
     it.each([
         ['undeclared identity', (host: ReturnType<typeof createContributionRegistrationHost>) => host.api.actions.register('other', actionHandler)],

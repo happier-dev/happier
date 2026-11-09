@@ -162,10 +162,44 @@ async function createPluginFixture(
 }
 
 async function count(path: string, value: string): Promise<number> {
-  return (await readFile(path, 'utf8')).trim().split('\n').filter((line) => line === value).length;
+  const content = await readFile(path, 'utf8').catch((error: unknown) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
+    throw error;
+  });
+  return content.trim().split('\n').filter((line) => line === value).length;
 }
 
 describe('daemon plugin restart isolation', () => {
+  it('keeps a changed demand-only plugin dormant on reload until its first invocation', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-demand-reload-'));
+    const pluginId = 'acme.demand-reload';
+    const plugin = await createPluginFixture(happyHomeDir, pluginId, 'demand');
+    const controller = createPluginReloadController({ happyHomeDir });
+    const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController: controller });
+    const store = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
+    await store.initialize();
+    try {
+      await expect(installFixtureCandidate(store, plugin.createInput('1.0.0')))
+        .resolves.toMatchObject({ status: 'committed' });
+      const initialActivations = await count(plugin.counterPath, 'activate');
+      await plugin.writeManifest('2.0.0');
+      await expect(installFixtureCandidate(store, plugin.createInput('2.0.0')))
+        .resolves.toMatchObject({ status: 'committed' });
+      expect(await count(plugin.counterPath, 'activate')).toBe(initialActivations);
+      const lease = await controller.acquireRuntimeRegistry();
+      try {
+        await expect(lease.registry.targetActionInvocations?.invoke({
+          pluginId, localId: 'identity', input: {}, surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { pluginId } });
+        expect(await count(plugin.counterPath, 'activate')).toBe(initialActivations + 1);
+      } finally {
+        await lease.release();
+      }
+    } finally {
+      await controller.shutdown();
+    }
+  }, 90_000);
+
   it('does not reactivate or retire a healthy peer during a post-restart update', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-restart-isolation-'));
     const first = await createPluginFixture(happyHomeDir, 'acme.restart.first');

@@ -51,8 +51,6 @@ describe('SCM backend plugin contributions', () => {
                         contributes: {
                             agents: [],
                             actions: [],
-                            tools: [],
-                            commands: [],
                             resources: [],
                             scmBackends: [createScmBackendDefinition('acme-vcs')],
                             hooks: [],

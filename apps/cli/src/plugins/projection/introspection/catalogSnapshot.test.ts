@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import { admitPluginContributionGraph } from '../registry/normalize/admission';
 import {
   joinInstalledCatalogRuntimeIntrospection,
   projectPluginCatalogEntriesSnapshot,
@@ -11,6 +12,34 @@ import {
 } from './catalogSnapshot';
 
 describe('plugin catalog introspection snapshot', () => {
+  it('projects a registry admission exclusion as an installed load_error row', () => {
+    const entry = {
+      pluginId: 'acme.invalid', title: 'Invalid', description: null, version: '1.0.0', enabled: true,
+      desiredGeneration: null, appliedGeneration: null, admittedIntegrity: null,
+      source: { kind: 'path', locator: '/plugins/acme.invalid', trustPolicy: 'local_trusted', installPolicy: 'link', resolvedPath: '/plugins/acme.invalid', manifestPath: '/plugins/acme.invalid/plugin.json' },
+      install: { mode: 'link', manifestVersion: '1.0.0' }, compatibility: { status: 'compatible', diagnostics: [] },
+      manifestPath: '/plugins/acme.invalid/plugin.json', manifest: null, diagnostics: [],
+      contributionIntrospection: { version: 1, generation: 0, diagnostics: [], contributions: [] },
+    } satisfies PluginCatalogEntry;
+    const admitted = admitPluginContributionGraph({ loadedPlugins: [{
+      pluginId: entry.pluginId, pluginRootPath: entry.source.resolvedPath, manifestPath: entry.manifestPath,
+      sourceSpec: entry.source, daemonEntryPath: null, devDaemonEntryPath: null,
+      manifest: normalizePluginManifestV2({ schemaVersion: 2, id: entry.pluginId, version: '1.0.0',
+        displayName: 'Invalid', runtime: { apiVersion: 1 }, entrypoints: {},
+        hostAccess: { required: [{ id: 'account', capability: 'connectedAccounts', reason: 'Use an account',
+          scope: { serviceRefs: [{ pluginId: 'acme.absent', localId: 'account' }], operations: ['use'] } }], optional: [] },
+        contributes: {} }),
+    }] });
+    const diagnostic = admitted.diagnosticsByPluginId[entry.pluginId]![0]!;
+    expect(diagnostic).toMatchObject({ details: { reason: 'plugin_manifest_dangling_reference' } });
+    const [row] = joinInstalledCatalogRuntimeIntrospection([entry], {
+      pluginDiagnosticsByPluginId: { [entry.pluginId]: [diagnostic] },
+    });
+    expect(row).toMatchObject({ enabled: false, compatibility: { status: 'load_error', diagnostics: [diagnostic] } });
+    expect(row?.contributionIntrospection.diagnostics).toContainEqual(expect.objectContaining({
+      data: expect.objectContaining({ code: diagnostic.code, details: diagnostic.details }),
+    }));
+  });
   it('retains an attributed targeted-admission diagnostic in the CLI catalog snapshot', () => {
     const entry = {
       pluginId: 'acme.contributor', title: 'Contributor', description: null, version: '1.2.3', enabled: true,

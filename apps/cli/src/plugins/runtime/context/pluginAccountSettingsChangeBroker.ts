@@ -1,4 +1,5 @@
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
+import type { PluginCollectionIndexChanges } from '@happier-dev/protocol/changes/pluginDomain';
 import type { ChangeEntry } from '@happier-dev/protocol/changes';
 
 export type PluginAccountSettingsWatchInvalidation =
@@ -31,6 +32,9 @@ type PluginAccountCollectionWatchExactChangeHint = Readonly<{
     pluginId: string;
     collectionId: string;
     contractDigest: string;
+    /** Existing content-free AccountChange identities, retained for row selectors. */
+    rowIds?: readonly string[];
+    indexChanges?: PluginCollectionIndexChanges;
     full?: never;
     changeCursor: number;
 }>;
@@ -83,6 +87,10 @@ export type PluginAccountCollectionWatchSubscription = Readonly<{
     pluginId: string;
     collectionId: string;
     contractDigest: string;
+    /** An intrinsic physical row identity, not an index or a new wire query. */
+    rowId?: string;
+    /** Canonical encoded equality prefixes of an admitted static index. */
+    indexSelection?: Readonly<{ indexId: string; prefixes: readonly string[] }>;
     /**
      * The cursor returned by the initial authenticated query. The broker uses
      * it only to coalesce a change that arrived before local registration.
@@ -95,12 +103,18 @@ type PluginAccountCollectionWatchListener = (
 ) => void;
 
 type PluginAccountCollectionWatchListenerRegistration = {
-    subscription: PluginAccountCollectionWatchSubscription;
+    subscription: PluginAccountCollectionWatchSubscription | PluginAccountCollectionPresenceWatchSubscription;
     listener: PluginAccountCollectionWatchListener;
     lastObservedCursor: number | null;
     pending: PluginAccountCollectionWatchInvalidation | null;
     scheduled: boolean;
 };
+
+/** Host activation consumes physical presence across retained contract versions. */
+type PluginAccountCollectionPresenceWatchSubscription = Omit<PluginAccountCollectionWatchSubscription, 'contractDigest' | 'rowId'> & Readonly<{
+    contractDigest?: never;
+    rowId?: never;
+}>;
 
 const collectionListeners = new Set<PluginAccountCollectionWatchListenerRegistration>();
 type PluginAccountCollectionWatchState = {
@@ -143,11 +157,11 @@ function collectionWatchIdentityKey(input: Readonly<{
 
 function projectFullCollectionInvalidationForSubscription(
     invalidation: PluginAccountCollectionWatchFullInvalidation,
-    subscription: PluginAccountCollectionWatchSubscription,
+    subscription: PluginAccountCollectionWatchSubscription | PluginAccountCollectionPresenceWatchSubscription,
 ): PluginAccountCollectionWatchFullInvalidation {
     return Object.freeze({
         ...invalidation,
-        contractDigest: subscription.contractDigest,
+        contractDigest: subscription.contractDigest ?? invalidation.contractDigest,
     });
 }
 
@@ -281,6 +295,20 @@ export function publishPluginAccountCollectionWatchInvalidation(
         if (!previous || invalidation.changeCursor > previous.changeCursor) {
             state.latestInvalidations.set(key, invalidation);
         }
+        if (invalidation.indexChanges) {
+            // Reuse the identity-scoped catch-up slot: a newly registered
+            // retained reader cannot interpret another contract's index keys.
+            // Live listeners below still receive the precise hint.
+            const identity = collectionWatchIdentityKey(invalidation);
+            const previousFull = state.latestFullInvalidations.get(identity);
+            if (!previousFull || invalidation.changeCursor > previousFull.changeCursor) {
+                state.latestFullInvalidations.set(identity, {
+                    kind: 'collection', accountScopeKey: invalidation.accountScopeKey,
+                    pluginId: invalidation.pluginId, collectionId: invalidation.collectionId,
+                    contractDigest: invalidation.contractDigest, full: true, changeCursor: invalidation.changeCursor,
+                });
+            }
+        }
     }
     for (const registration of collectionListeners) {
         const subscription = registration.subscription;
@@ -298,8 +326,28 @@ export function publishPluginAccountCollectionWatchInvalidation(
                         subscription,
                     ),
                 );
-            } else if (subscription.contractDigest === invalidation.contractDigest) {
-                scheduleCollectionListener(registration, invalidation);
+            } else if (subscription.contractDigest === undefined || subscription.contractDigest === invalidation.contractDigest || invalidation.indexChanges) {
+                const changes = invalidation.indexChanges;
+                if (changes && ((subscription.contractDigest !== undefined && subscription.contractDigest !== invalidation.contractDigest)
+                    || registration.lastObservedCursor === null || registration.lastObservedCursor < changes.previousCursor)) {
+                    // The coalesced row may have replaced an unseen relevant
+                    // change (including a full hint). Keys of a newer contract
+                    // also cannot narrow a retained reader's selection.
+                    scheduleCollectionListener(registration, projectFullCollectionInvalidationForSubscription({
+                        kind: 'collection', accountScopeKey: invalidation.accountScopeKey,
+                        pluginId: invalidation.pluginId, collectionId: invalidation.collectionId,
+                        contractDigest: invalidation.contractDigest, full: true, changeCursor: invalidation.changeCursor,
+                    }, subscription));
+                } else if ((!subscription.rowId || !invalidation.rowIds || invalidation.rowIds.includes(subscription.rowId))
+                    && (!changes || !subscription.indexSelection || changes.keys.some(key =>
+                        key.indexId === subscription.indexSelection!.indexId
+                        && subscription.indexSelection!.prefixes.some(prefix => key.key.startsWith(prefix))))) {
+                    scheduleCollectionListener(registration, invalidation);
+                } else if (changes) {
+                    // Observing an irrelevant successor still establishes its
+                    // predecessor coverage. Do not replace queued relevant work.
+                    registration.lastObservedCursor = Math.max(registration.lastObservedCursor ?? 0, invalidation.changeCursor);
+                }
             }
         }
     }
@@ -320,7 +368,7 @@ export function retirePluginAccountCollectionWatchScope(accountScopeKey: string)
 }
 
 export function subscribePluginAccountCollectionWatchInvalidation(
-    subscription: PluginAccountCollectionWatchSubscription,
+    subscription: PluginAccountCollectionWatchSubscription | PluginAccountCollectionPresenceWatchSubscription,
     listener: PluginAccountCollectionWatchListener,
 ): () => void {
     const registration: PluginAccountCollectionWatchListenerRegistration = {
@@ -345,9 +393,12 @@ export function subscribePluginAccountCollectionWatchInvalidation(
                 changeCursor: state.latestResetCursor,
             }));
         } else {
-            const latestExact = state?.latestInvalidations.get(
-                collectionWatchKey(subscription),
-            );
+            const latestExact = subscription.contractDigest === undefined
+                ? [...(state?.latestInvalidations.values() ?? [])]
+                    .filter(hint => hint.pluginId === subscription.pluginId && hint.collectionId === subscription.collectionId)
+                    .reduce<PluginAccountCollectionWatchExactInvalidation | undefined>((latest, hint) =>
+                        !latest || hint.changeCursor > latest.changeCursor ? hint : latest, undefined)
+                : state?.latestInvalidations.get(collectionWatchKey(subscription));
             const latestFull = state?.latestFullInvalidations.get(
                 collectionWatchIdentityKey(subscription),
             );
@@ -361,7 +412,16 @@ export function subscribePluginAccountCollectionWatchInvalidation(
                 )
                 : latestExact;
             if (latest && latest.changeCursor > subscription.startingCursor) {
-                scheduleCollectionListener(registration, latest);
+                // The existing retained collection cursor coalesces intervening
+                // changes. A later unrelated row must not hide an earlier
+                // relevant change between the initial read and registration.
+                scheduleCollectionListener(registration, subscription.rowId || subscription.indexSelection
+                    ? projectFullCollectionInvalidationForSubscription({
+                        kind: 'collection', accountScopeKey: latest.accountScopeKey,
+                        pluginId: latest.pluginId, collectionId: latest.collectionId,
+                        contractDigest: latest.contractDigest, full: true, changeCursor: latest.changeCursor,
+                    }, subscription)
+                    : latest);
             }
         }
     }
@@ -426,7 +486,7 @@ export function readPluginAccountCollectionWatchInvalidations(
     for (const change of changes) {
         const parsed = PluginDomainChangeEntrySchema.safeParse(change);
         if (!parsed.success || parsed.data.hint.pluginDomain !== 'dataCollection') continue;
-        if ('full' in parsed.data.hint && parsed.data.hint.full === true) {
+        if ('full' in parsed.data.hint) {
             invalidations.push(Object.freeze({
                 kind: 'collection',
                 pluginId: parsed.data.hint.pluginId,
@@ -441,6 +501,8 @@ export function readPluginAccountCollectionWatchInvalidations(
                 pluginId: parsed.data.hint.pluginId,
                 collectionId: parsed.data.hint.collectionId,
                 contractDigest: parsed.data.hint.contractDigest,
+                rowIds: parsed.data.hint.rowIds,
+                ...(parsed.data.hint.indexChanges ? { indexChanges: parsed.data.hint.indexChanges } : {}),
                 changeCursor: parsed.data.cursor,
             }));
         }

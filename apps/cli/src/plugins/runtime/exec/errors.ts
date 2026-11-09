@@ -1,10 +1,15 @@
 import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { ExecClientDiagnosticSanitizerV1 } from './privateContract';
 
 import { sanitizeRpcDiagnosticString } from './diagnostics/sanitize';
+
+/** Native process settlement is an exec-owner fact, independent of adapter activation. */
+export function isProjectNativeProcessUncertain(error: unknown): boolean {
+    return !!error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete';
+}
 
 export type PluginExecClientErrorCode =
     | 'PLUGIN_EXEC_CLIENT_ABORTED'
@@ -112,8 +117,4 @@ export function createPluginExecClientExitError(
                 && termination.diagnostic === undefined,
         },
     );
-}
-
-export function isProjectNativeProcessUncertain(error: unknown): boolean {
-    return !!error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete';
 }

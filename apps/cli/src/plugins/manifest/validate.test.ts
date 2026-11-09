@@ -441,17 +441,18 @@ describe('validatePluginManifest', () => {
     });
   });
 
-  it('scopes the release-stamped engine range to registry-custodied artifacts', () => {
+  it('enforces a declared engine range for local, registry and bundled sources', () => {
     const unsatisfiable = createManifest('acme.future-host');
     unsatisfiable.engines = { happier: '>=9999.0.0' };
 
-    expect(validatePluginManifest(unsatisfiable, {
-      sourceProvenance: 'localSource',
-    })).toEqual(expect.objectContaining({ ok: true }));
-
-    expect(diagnosticMessages(validatePluginManifest(unsatisfiable, {
-      sourceProvenance: 'registryCustodied',
-    }))).toEqual([INCOMPATIBLE_HAPPIER_ENGINE_MESSAGE]);
+    for (const options of [
+      { sourceProvenance: 'localSource' },
+      { sourceProvenance: 'registryCustodied' },
+      { sourceProvenance: 'localSource', manifestAuthority: 'bundled_first_party' },
+    ] as const) {
+      expect(validatePluginManifest(unsatisfiable, options)).toMatchObject({ ok: false,
+        diagnostics: [{ code: 'plugin_manifest_engine_incompatible', message: INCOMPATIBLE_HAPPIER_ENGINE_MESSAGE }] });
+    }
   });
 
   it('keeps every provenance-independent semantic rule enforced for a local source', () => {
@@ -505,7 +506,7 @@ describe('validatePluginManifest', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       const diagnostic = result.diagnostics.find((entry) => (
-        entry.code === 'plugin_manifest_semantic_invalid'
+        entry.code === 'plugin_manifest_engine_incompatible'
       ));
       expect(diagnostic?.message).toBe('Plugin manifest requires a compatible Happier CLI version');
       expect(diagnostic?.message).not.toContain(happierEngine);
@@ -559,7 +560,7 @@ describe('validatePluginManifest', () => {
     }
   });
 
-  it('leaves ACP system-tool reference resolution to canonical manifest ingestion', () => {
+  it('shares ACP system-tool reference resolution with canonical manifest ingestion', () => {
     const manifest = createManifest('acme.undeclared-acp-tool');
     manifest.contributes = {
       agents: [{
@@ -579,7 +580,8 @@ describe('validatePluginManifest', () => {
       }],
     };
 
-    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual(expect.objectContaining({ ok: true }));
+    expect(validatePluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toMatchObject({ ok: false,
+      diagnostics: [{ code: 'plugin_manifest_invalid', message: expect.stringContaining('runtime.transport.executable.id') }] });
     expect(ingestCanonicalPluginManifest(manifest, { sourceProvenance: 'registryCustodied' })).toEqual({
       ok: false,
       diagnostics: expect.arrayContaining([expect.objectContaining({

@@ -1,0 +1,225 @@
+import { describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
+import { createTriageIssueEventSourceAdapterV1, TriageIssueEventSourceConfigV1Schema,
+    TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    createAccountScopedCryptoMaterialSnapshotV1, normalizePluginAccountCollectionContractV1,
+    PluginAccountCollectionContributionV1Schema, PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 } from '@happier-dev/protocol';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
+import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
+import { createHttpCollectionBoundary } from './accountPluginDataStorage.testkit';
+import type { StoredCredentials } from '@/persistence';
+import { scanSentrySource } from '../../../../../../packages/plugins/sentry/src/source/operations';
+import { encodeSentryInstanceConfiguration } from '../../../../../../packages/plugins/sentry/src/instances/sentryInstanceConfiguration';
+import { SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../../../../../../packages/plugins/sentry/src/sentryContracts';
+import recorded from '../../../../../../packages/plugins/sentry/src/fixtures/issuesListPage2.json' with { type: 'json' };
+import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/sentry/src/manifest';
+
+const PLUGIN_ID = 'happier.sentry';
+const SOURCE_INSTANCE_ID = '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05';
+const instance = {
+    v: 1,
+    instance: { source: { pluginId: PLUGIN_ID, localId: 'sentry-issues' }, sourceInstanceId: SOURCE_INSTANCE_ID },
+    binding: { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, account: { service: { pluginId: PLUGIN_ID, localId: 'sentry-account' }, accountId: 'account-1' } },
+    localInstanceKey: `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`,
+    configuration: { v: 1, token: encodeSentryInstanceConfiguration({ v: 1, organizationId: '7701',
+        projectScope: { kind: 'all' }, environmentScope: { kind: 'all' } }) },
+} as const;
+const source = TriageIssueEventSourceConfigV1Schema.parse({
+    v: 1, instance, checkPeriodMs: 120_000, investigation: { mode: 'inbox' },
+});
+const definition = {
+    automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 1,
+    eventRef: { pluginId: PLUGIN_ID, localId: 'issue-transition' }, sourceInstanceId: SOURCE_INSTANCE_ID,
+    sourceSelectorId: '00000000-0000-4000-8000-000000000001', sourceContractVersion: 1, sourceConfig: source,
+    observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+        pluginId: PLUGIN_ID, machineId: 'machine-1', materializationId: 'materialization-1',
+    } }, filter: null, maximumObservationAgeMs: null,
+} satisfies PluginCheckpointedEventSourceDefinitionV1;
+
+describe('issue observer through real Account storage', () => {
+    it.each(['plain', 'e2ee'] as const)('settles 257 %s checkpoints with paged quiet reads and CAS-safe pending replay', async mode => {
+        const boundary = createHttpCollectionBoundary(TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1.indexes, mode);
+        const machineKey = new Uint8Array(32).fill(7);
+        const credentials: StoredCredentials = mode === 'plain'
+            ? { token: 'storage-fixture', encryption: null }
+            : { token: 'storage-fixture', encryption: { type: 'dataKey', machineKey,
+                publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey } };
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+            material: { type: 'dataKey', machineKey },
+            dataKeyPublicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey });
+        const manifest = parsePluginManifest(PLUGIN_MANIFEST);
+        if (!manifest.ok) throw new Error('Expected current Sentry manifest.');
+        const declaration = PluginAccountCollectionContributionV1Schema.parse(manifest.manifest.contributes.accountCollections.find(
+            collection => collection.id === TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1.id,
+        ));
+        let holdMutations: (() => Promise<void>) | undefined;
+        const host = createAccountPluginDataStorageHost({
+            contracts: [normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_ID, contribution: declaration })],
+            readCredentials: async () => credentials,
+            isCurrentAccount: () => true,
+            resolveAccountScopeKey: () => 'triage-storage-fixture',
+            resolveBaseUrl: () => 'https://triage-storage.example.test',
+            resolveAccountEncryptionCurrentness: async () => ({ mode, version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: mode === 'plain' ? null
+                    : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint),
+                updatedAt: 1, recipientEnvelopeReadiness: mode === 'plain'
+                    ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } }),
+            http: { ...boundary.http, post: async (url, body) => {
+                if (url.endsWith(PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1)) await holdMutations?.();
+                return await boundary.http.post(url, body);
+            } },
+            randomBytes: length => new Uint8Array(length).fill(19),
+        });
+        const signal = new AbortController().signal;
+        const account = host.bind({ pluginId: PLUGIN_ID, occurrenceId: 'storage-fixture', signal, isOccurrenceCurrent: () => true });
+        if (!account) throw new Error('Expected Account storage binding.');
+        const nativeRows = Array.from({ length: 257 }, (_, index) => ({
+            ...recorded.body[0]!, id: String(5501001 + index), shortId: `EXAMPLE-PROJECT-${index}`,
+            permalink: `https://example-org.sentry.io/issues/${5501001 + index}/`, status: 'resolved',
+        }));
+        const adapter = createTriageIssueEventSourceAdapterV1({
+            pluginId: PLUGIN_ID, sourceLocalId: 'sentry-issues', displayName: 'Sentry', scanLimit: 100,
+            scan: scanSentrySource,
+        });
+        let sourceIsActive = true;
+        const send = vi.fn(async () => ({ deliveries: [], replayed: false,
+            notice: { artifactId: 'notice-1', changed: true, opened: true } }));
+        // Account HTTP and configured-source Actions are system boundaries;
+        // checkpoint parsing, CAS preparation and Account storage remain real.
+        const context = { surface: 'background', signal, materialization: definition.observationTransport.watcherMaterializationRef,
+            plugin: { id: PLUGIN_ID, version: '0.0.0' },
+            contribution: { id: 'issue-observer', qualifiedId: `${PLUGIN_ID}/backgroundServices/issue-observer` },
+            services: { storage: { account }, notifications: { send },
+                http: createPluginHttpFixture({ request: async input => {
+                    const url = new URL(input.url);
+                    const offset = Number(url.searchParams.get('cursor')?.split(':')[1] ?? 0);
+                    const cursor = `1754000000000:${offset + 100}:0`;
+                    url.searchParams.set('cursor', cursor);
+                    return { status: 200, finalUrl: input.url,
+                        headers: { link: `<${url.href}>; rel="next"; results="${offset + 100 < nativeRows.length}"; cursor="${cursor}"` },
+                        body: new TextEncoder().encode(JSON.stringify(nativeRows.slice(offset, offset + 100))) };
+                } }),
+                connectedAccounts: {
+                    listAccounts: async () => ({ status: 'complete', accounts: [{ account: instance.binding.account,
+                        state: 'connected', connectedAccountOrigins: ['https://us.sentry.io'], connectedAccountBases: ['https://us.sentry.io'] }] }),
+                    materializeListedAccount: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }),
+                }, actions: { execute: async () => ({
+                kind: 'read', status: 'complete', instances: sourceIsActive
+                    ? [{ v: 1, lifecycle: 'active', configured: instance }] : [],
+            }) } },
+        } as unknown as BackgroundServiceContext;
+        const attempt = { context, definition, definitions: [definition], source, isCurrent: async () => true };
+        const result = await adapter.observe(attempt);
+        expect(result.complete).toBe(true);
+        expect(result.observations).toHaveLength(0);
+        expect(boundary.capturedReadPaths).toHaveLength(Math.ceil(257 / PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1));
+        expect(boundary.capturedMutationRequests).toHaveLength(0);
+        if (!result.checkpoint) throw new Error('Expected resolved baseline checkpoint.');
+        await adapter.save({ ...attempt, checkpoint: result.checkpoint, disposition: { kind: 'checkpointSafe' } });
+        expect(boundary.retainedRowCount()).toBe(257);
+        expect(boundary.capturedMutationRequests.map(request => request.operations.length)).toEqual([
+            PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1, PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1, 57,
+        ]);
+        const readStart = boundary.capturedReadPaths.length;
+        const writes = boundary.capturedMutationRequests.length;
+        const unchanged = await adapter.observe(attempt);
+        expect(unchanged).toMatchObject({ complete: true, observations: [] });
+        expect(unchanged.checkpoint).toBeUndefined();
+        expect(boundary.capturedReadPaths.length - readStart).toBe(Math.ceil(257 / PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1));
+        expect(boundary.capturedQueryRequests.slice(-2).every(request => request.limit === PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1)).toBe(true);
+        expect(boundary.capturedMutationRequests).toHaveLength(writes);
+        expect(send).not.toHaveBeenCalled();
+
+        const selected = nativeRows[256]!;
+        nativeRows[256] = { ...selected, status: 'unresolved' };
+        // Hold both HTTP mutations until both real observers prepared from the
+        // same effective revision. Exactly one pending CAS may win.
+        let arrivals = 0;
+        let release = () => {};
+        const bothPrepared = new Promise<void>(resolve => { release = resolve; });
+        holdMutations = async () => {
+            arrivals += 1;
+            if (arrivals === 2) release();
+            await bothPrepared;
+        };
+        const raced = await Promise.allSettled([adapter.observe(attempt), adapter.observe(attempt)]);
+        holdMutations = undefined;
+        const winner = raced.find(result => result.status === 'fulfilled');
+        if (!winner || winner.status !== 'fulfilled') throw new Error('Expected one winning pending CAS.');
+        expect(raced.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+        expect(raced.find(result => result.status === 'rejected')).toMatchObject({
+            reason: { code: 'triage_issue_checkpoint_conflict' },
+        });
+        const pending = winner.value;
+        expect(pending.complete).toBe(true);
+        expect(pending.observations).toHaveLength(1);
+        expect(pending.observations[0]).toMatchObject({ observedDelta: 1, payload: { phase: 'open' } });
+        expect(boundary.capturedMutationRequests).toHaveLength(writes + 2);
+        const pendingMutation = boundary.capturedMutationRequests.at(-1)!.operations;
+        expect(pendingMutation).toHaveLength(1);
+        expect(pendingMutation[0]).toMatchObject({ kind: 'put', expectedRevision: 1 });
+        const collection = account.collection(TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1);
+        const pendingRow = await collection.get(pendingMutation[0]!.rowId);
+        expect(pendingRow).toMatchObject({ revision: 2, value: { checkpoint: {
+            state: 'resolved', pending: { state: 'active', occurredAt: pending.observations[0]!.occurredAt },
+        } } });
+        if (!pending.checkpoint) throw new Error('Expected pending checkpoint.');
+
+        // Configured-source revocation cannot commit pending state or notify.
+        sourceIsActive = false;
+        await adapter.save({ ...attempt, checkpoint: pending.checkpoint, disposition: { kind: 'checkpointSafe' } });
+        expect(boundary.capturedMutationRequests).toHaveLength(writes + 2);
+        expect(send).not.toHaveBeenCalled();
+        const revokedReads = boundary.capturedReadPaths.length;
+        const revoked = await adapter.observe(attempt);
+        expect(revoked).toMatchObject({ complete: false, observations: [] });
+        expect(boundary.capturedReadPaths).toHaveLength(revokedReads);
+        sourceIsActive = true;
+
+        const retry = await (async () => {
+            const clock = vi.spyOn(Date, 'now').mockReturnValue(pending.observations[0]!.occurredAt + 120_000);
+            try { return await adapter.observe(attempt); }
+            finally { clock.mockRestore(); }
+        })();
+        expect(retry.observations).toHaveLength(1);
+        expect(retry.observations[0]).toMatchObject({ occurrenceId: pending.observations[0]!.occurrenceId,
+            occurredAt: pending.observations[0]!.occurredAt, observedDelta: 0 });
+        expect(boundary.capturedMutationRequests).toHaveLength(writes + 2);
+        if (!retry.checkpoint) throw new Error('Expected retry checkpoint.');
+        await adapter.save({ ...attempt, checkpoint: retry.checkpoint, disposition: { kind: 'checkpointSafe' } });
+        expect(boundary.capturedMutationRequests).toHaveLength(writes + 3);
+        expect(boundary.capturedMutationRequests.at(-1)!.operations).toMatchObject([{ kind: 'put', expectedRevision: 2 }]);
+        expect(send).toHaveBeenCalledTimes(1);
+        const committedRow = await collection.get(pendingMutation[0]!.rowId);
+        expect(committedRow).toMatchObject({ revision: 3, value: { checkpoint: { state: 'active' } } });
+        expect(committedRow!.value.checkpoint).not.toHaveProperty('pending');
+
+        // Replaying the stale candidate must hit the real wire CAS and preserve
+        // the winner rather than silently overwriting its effective checkpoint.
+        await expect(adapter.save({ ...attempt, checkpoint: pending.checkpoint,
+            disposition: { kind: 'checkpointSafe' } })).rejects.toMatchObject({ code: 'triage_issue_checkpoint_conflict' });
+        const settled = await adapter.observe(attempt);
+        expect(settled).toMatchObject({ complete: true, observations: [] });
+        expect(settled.checkpoint).toBeUndefined();
+        nativeRows.splice(0, 256);
+        const narrowReadStart = boundary.capturedReadPaths.length;
+        const narrow = await adapter.observe(attempt);
+        expect(narrow).toMatchObject({ complete: true, observations: [] });
+        expect(boundary.capturedReadPaths.length - narrowReadStart).toBe(1);
+        expect(boundary.capturedQueryRequests.at(-1)!.prefixes).toHaveLength(1);
+        expect(boundary.capturedQueryRequests.at(-1)!.prefixes![0]).toHaveLength(2);
+        nativeRows.splice(0, nativeRows.length,
+            { ...selected, status: 'unsupported-native-state' },
+            { ...selected, id: '999999999', permalink: 'https://example-org.sentry.io/issues/999999999/', lastSeen: '' },
+        );
+        const ineligibleReadStart = boundary.capturedReadPaths.length;
+        const ineligibleWriteStart = boundary.capturedMutationRequests.length;
+        expect(await adapter.observe(attempt)).toMatchObject({ complete: true, observations: [] });
+        expect(boundary.capturedReadPaths).toHaveLength(ineligibleReadStart);
+        expect(boundary.capturedMutationRequests).toHaveLength(ineligibleWriteStart);
+    });
+});

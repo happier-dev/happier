@@ -30,7 +30,6 @@ function createTransformHookRegistration(params: Readonly<{
       installPolicy: 'link',
     },
     definition: {
-      hookApiVersion: 1,
       id: hookId,
       category: 'augmentation',
       scope: hookId === 'session.input.transform' ? 'session' : 'agent',

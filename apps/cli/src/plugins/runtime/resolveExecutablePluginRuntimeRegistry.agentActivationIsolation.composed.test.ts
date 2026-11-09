@@ -1,3 +1,4 @@
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -105,7 +106,7 @@ describe('Agent runtime activation isolation', () => {
                 activationEvents: [],
                 manifest: badManifest,
             }],
-        });
+        }, getResolvedContributionRegistry());
         const controller = createPluginReloadController({
             resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,

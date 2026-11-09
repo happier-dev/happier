@@ -7,6 +7,7 @@ import type {
 } from './types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { describePluginModuleFailure } from '@/plugins/runtime/moduleFailure';
 
 export type {
   PluginContributionIntrospectionCandidate,
@@ -123,6 +124,8 @@ export function readPluginDiagnosticDisplayMessage(
 ): string {
   const message = diagnostic.data.message ?? diagnostic.data.code;
   const details = diagnostic.data.details;
+  const moduleCause = describePluginModuleFailure(message, details);
+  if (moduleCause) return moduleCause;
   if (!details || typeof details !== 'object' || Array.isArray(details)) return message;
   const target = details.target;
   const contributor = details.contributor;

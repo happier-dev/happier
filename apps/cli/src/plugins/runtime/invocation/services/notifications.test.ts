@@ -62,6 +62,34 @@ const seed = Object.freeze({
 });
 
 describe('stable plugin notifications service', () => {
+    it('applies typed attention without creating a notice and binds type to the request identity', async () => {
+        const delivered: PluginNotificationSendRequest[] = [];
+        let noticeReads = 0;
+        const service = createStablePluginNotificationsService(seed, {
+            categories: [category],
+            channels: [{ ...channels[0]!, definition: { ...channels[0]!.definition, kind: 'expo_push' } }],
+            activateChannel: async () => undefined,
+            resolveNoticeArtifacts: async () => { noticeReads += 1; return null; },
+            readChannel: () => ({ occurrenceId: '7', isCurrent: () => true, send: async request => {
+                delivered.push(request);
+                return { deliveryId: request.deliveryId, channelId: request.channelId, status: 'accepted', evidence: 'provider' };
+            } }),
+        });
+        const request = { clientRequestId: 'typed-push', categoryId: 'review-ready', title: 'Ready',
+            channelIds: ['configured'], type: 'update' as const,
+            data: { sessionId: 'session-1', serverId: 'home-1', serverUrl: 'https://home.example' } };
+        await expect(service.send(request)).resolves.toMatchObject({ deliveries: [{ status: 'suppressed' }] });
+        expect(delivered).toEqual([]);
+        await expect(service.send({ ...request, type: 'blocked' })).rejects.toMatchObject({ code: 'plugin_notification_request_conflict' });
+        await expect(service.send({ ...request, clientRequestId: 'blocked-push', type: 'blocked' }))
+            .resolves.toMatchObject({ deliveries: [{ status: 'accepted' }] });
+        expect(delivered).toEqual([expect.objectContaining({ data: request.data })]);
+        expect(noticeReads).toBe(0);
+        for (const noticeOnly of [{ page: { pageId: 'detail' } }, { resolved: false }]) {
+            await expect(service.send({ ...request, ...noticeOnly })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
+        }
+    });
+
     it.each([
         { reference: 'review-ready-event', eventId: 'review-ready-event' },
         { reference: { pluginId: 'acme.events', localId: 'review-ready-event' }, eventId: 'acme.events/review-ready-event' },

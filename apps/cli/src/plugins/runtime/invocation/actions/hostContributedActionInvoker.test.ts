@@ -309,7 +309,7 @@ materialization: {
         expect(invokeContributedAction).not.toHaveBeenCalled();
     });
 
-    it('does not report a target success after the caller retires during dispatch', async () => {
+    it('reports the executed target result when the caller retires during dispatch', async () => {
         const invokeContributedAction = vi.fn<InvokeContributedAction>(async () => Object.freeze({
             status: 'executed' as const,
             value: { completed: true },
@@ -342,14 +342,12 @@ materialization: {
                     materializationId: 'materialization-1',
                 },
             },
-        })).resolves.toEqual({
-            ok: false,
-            errorCode: 'plugin_action_caller_unavailable',
-            error: 'Plugin contributed action caller is no longer current',
-        });
+        })).resolves.toEqual({ ok: true, result: { completed: true } });
 
+        // The caller is admitted once before dispatch; its later retirement
+        // applies at its next call, not to an effect that already ran.
         expect(invokeContributedAction).toHaveBeenCalledOnce();
-        expect(revalidatePluginActionCallerMaterialization).toHaveBeenCalledTimes(2);
-        expect(revalidatePluginActionCallerOccurrence).toHaveBeenCalledTimes(2);
+        expect(revalidatePluginActionCallerMaterialization).toHaveBeenCalledTimes(1);
+        expect(revalidatePluginActionCallerOccurrence).toHaveBeenCalledTimes(1);
     });
 });

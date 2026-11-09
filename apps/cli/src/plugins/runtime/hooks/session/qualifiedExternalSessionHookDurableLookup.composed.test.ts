@@ -205,6 +205,7 @@ describe('qualified External Session hook durable lookup composition', () => {
         expect(axios.post).toHaveBeenCalledOnce();
         expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledOnce();
         expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({
+            credentials: expect.objectContaining({ token: 'token-1' }),
             token: 'token-1',
             signal,
         });

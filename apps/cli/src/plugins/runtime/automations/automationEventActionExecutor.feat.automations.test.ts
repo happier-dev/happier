@@ -26,7 +26,10 @@ const transportMocks = vi.hoisted(() => ({
   createPublisherHeader: vi.fn(),
 }));
 
-vi.mock('axios', () => ({ default: { post: transportMocks.post } }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, post: transportMocks.post } };
+});
 vi.mock('@/plugins/installations/publisherProof', () => ({
   createDefaultPluginInstallationPublisherHeader: transportMocks.createPublisherHeader,
 }));
@@ -613,7 +616,7 @@ describe('createAutomationEventActionExecutor', () => {
     expect(prepareAdmission).toHaveBeenCalled();
   });
 
-  it('requires the host-held current webhook invocation before an Event producer can list durable sources', async () => {
+  it('lists durable monitoring sources in background and retains the host-held webhook claim when delivered', async () => {
     const listPublicProjection = vi.fn(async () => ({
       kind: 'page' as const,
       revision: '7',
@@ -658,11 +661,11 @@ describe('createAutomationEventActionExecutor', () => {
       input,
       caller: actionCaller,
     })).resolves.toEqual({
-      ok: false,
-      errorCode: 'automation_event_adopted_definitions_unavailable',
-      error: 'automation_event_adopted_definitions_unavailable',
+      kind: 'page', revision: '7', definitions: [], nextCursor: null,
     });
-    expect(listPublicProjection).not.toHaveBeenCalled();
+    expect(listPublicProjection).toHaveBeenCalledWith({
+      accountId: 'account-1', input, signal: expect.any(AbortSignal),
+    });
 
     const { lease, ...referenceWithoutLease } = webhookInvocationReference;
     await runWithPluginWebhookInvocationReferenceV1({
@@ -688,6 +691,19 @@ describe('createAutomationEventActionExecutor', () => {
       webhookInvocationReference,
       signal: expect.any(AbortSignal),
     });
+
+    listPublicProjection.mockClear();
+    const expired = new AbortController();
+    expired.abort();
+    await runWithPluginWebhookInvocationReferenceV1({
+      referenceWithoutLease,
+      readLease: () => lease,
+      signal: expired.signal,
+    }, async () => {
+      await expect(executor({ actionId: 'automation.event.sources.list', input, caller: actionCaller }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'automation_event_adopted_definitions_unavailable' });
+    });
+    expect(listPublicProjection).not.toHaveBeenCalled();
   });
 
   it('passes plain admission to a custom E2 transport as one strict mode-correct request', async () => {

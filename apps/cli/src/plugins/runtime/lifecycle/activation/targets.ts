@@ -1,9 +1,10 @@
 import type {
+    ResolvedActivationTarget,
     ResolvedContributionProvenance,
     ResolvedContributionRegistry,
     ResolvedContributionSource,
 } from '../../../projection/registry/types';
-import { derivePluginAccountContributionRegistrationRights, derivePluginDaemonContributionRegistrationRights, PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { derivePluginAccountContributionRegistrationRights, derivePluginAccountExecutionArtifactSlots, derivePluginDaemonContributionRegistrationRights, PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 export type PluginContributionActivationDemand = Readonly<{
     pluginId: string;
@@ -19,9 +20,9 @@ export type PluginContributionActivationDemand = Readonly<{
  * the live registration; adding a family without that boundary silently
  * deletes registrations the consumer still reads synchronously.
  *
- * Continuous background services and Event subscriptions remain eager so they
- * are listening before the first event arrives. Finite services activate only
- * through the canonical background-service demand boundary.
+ * Continuous background services and Event subscriptions remain eager unless
+ * their declaration selects the host's configuration-demand boundary. Finite
+ * services activate only through the canonical background-service demand boundary.
  */
 const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
     'actions',
@@ -61,7 +62,10 @@ const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
  * collect them and decide when they should activate.
  */
 
-export type ActivationTarget = import('../../../projection/registry/types').ResolvedActivationTarget;
+export type ActivationTarget = ResolvedActivationTarget & Readonly<{
+    /** Static declaration rights admitted with this exact daemon/Account artifact target. */
+    registrationRights: ReturnType<typeof deriveActivationTargetRegistrationRights>;
+}>;
 
 export function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readonly<{
     provenance?: ResolvedContributionProvenance;
@@ -86,7 +90,7 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
     if (targets.has(key)) {
         return;
     }
-    targets.set(key, {
+    const target: ResolvedActivationTarget = {
         provenance: raw.provenance ?? 'external',
         source: raw.source ?? { kind: raw.sourceSpec?.kind ?? 'path' },
         pluginId: raw.pluginId,
@@ -98,19 +102,23 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
         ...(raw.account ? { account: raw.account } : {}),
         ...(raw.pluginRootPath ? { pluginRootPath: raw.pluginRootPath } : {}),
         ...(raw.activationEvents ? { activationEvents: raw.activationEvents } : {}),
-    });
+    };
+    targets.set(key, Object.freeze({
+        ...target,
+        registrationRights: deriveActivationTargetRegistrationRights(target),
+    }));
 }
 
 export function collectActivationTargets(contributes: ResolvedContributionRegistry, realm?: 'account'): readonly ActivationTarget[] {
     const targets = new Map<string, ActivationTarget>();
     if (realm === 'account') {
         for (const declaration of contributes.pluginDeclarations ?? []) {
-            for (const action of declaration.manifest.contributes.actions) {
-                if (action.execution.target !== 'account') continue;
+            for (const slot of derivePluginAccountExecutionArtifactSlots(declaration.manifest.contributes)) {
+                const { realm: _realm, ...account } = slot.registrationRight.target;
                 addActivationTarget(targets, { ...declaration,
                     provenance: declaration.sourceSpec.kind === 'bundled' ? 'first_party' : 'external',
                     source: { kind: declaration.sourceSpec.kind },
-                    daemonEntryPath: null, devDaemonEntryPath: null, account: action.execution.account,
+                    daemonEntryPath: null, devDaemonEntryPath: null, account,
                 });
             }
         }
@@ -125,17 +133,16 @@ export function collectActivationTargets(contributes: ResolvedContributionRegist
     for (const action of contributes.actions) {
         addActivationTarget(targets, action);
     }
-
-
     return Object.freeze([...targets.values()]);
 }
 
 export function shouldActivateTargetAtStartup(target: ActivationTarget): boolean {
     if (target.account) return false;
     if (target.activationEvents?.includes('startup')) return true;
-    const registrationRights = derivePluginDaemonContributionRegistrationRights(
-        target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
-    );
+    // The canonical configuration consumer checks admitted Account presence
+    // and subscribes to its existing push owner before demanding this target.
+    if (target.manifest.activation?.configuration) return false;
+    const registrationRights = target.registrationRights;
     if (registrationRights.length === 0) return false;
 
     // Families stay on compatibility-eager activation until their real
@@ -149,7 +156,7 @@ export function shouldActivateTargetAtStartup(target: ActivationTarget): boolean
     ));
 }
 
-export function deriveActivationTargetRegistrationRights(target: ActivationTarget) {
+export function deriveActivationTargetRegistrationRights(target: Pick<ResolvedActivationTarget, 'manifest' | 'account'>) {
     return target.account
         ? derivePluginAccountContributionRegistrationRights(target.manifest.contributes, target.account)
         : derivePluginDaemonContributionRegistrationRights(target.manifest.contributes);
@@ -160,7 +167,7 @@ export function activationTargetMatchesContributionDemand(
     demand: PluginContributionActivationDemand,
 ): boolean {
     if (demand.pluginId !== target.pluginId) return false;
-    const rights = deriveActivationTargetRegistrationRights(target);
+    const rights = target.registrationRights;
     if (demand.family === 'machineProvisioners') {
         const descriptor = target.manifest.contributes.machineProvisioners?.find((entry) => entry.id === demand.localId);
         if (!descriptor) return false;

@@ -3,8 +3,7 @@ import semver from 'semver';
 
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
-import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
 import { configuration } from '../../configuration';
@@ -32,26 +31,28 @@ export type PluginManifestValidationOptions = Readonly<{
    * Provenance of the record these bytes came from, derived by the discovery,
    * install, or generation owner from the record itself (see
    * `pluginSourceProvenanceForKind` / `pluginSourceProvenanceForDistribution`).
-   * It scopes the two rules that only describe a *published* artifact — the
-   * reserved `happier.*` namespace and the release-stamped engine range.
+   * It scopes the reserved `happier.*` namespace rule for published artifacts.
+   * Declared host-engine compatibility applies independently to every source.
    *
    * Required, and deliberately not defaulted: a silent strict reading made
    * every caller a forget-me seam, and three owners disagreed about one
    * record because of it.
    */
   sourceProvenance: PluginSourceProvenance;
+  /** Author-time validation may opt out; host load ingestion always enforces it. */
   enforceEngineCompatibility?: boolean;
   parsedManifest?: ParsedPluginManifestV2;
 }>;
 
 export function validatePluginManifest(input: unknown, options: PluginManifestValidationOptions): PluginManifestValidationResult {
-  const parsed = options.parsedManifest ? { success: true as const, data: options.parsedManifest } : PluginManifestV2Schema.safeParse(input);
+  const ingestion = options.parsedManifest ? { ok: true as const, manifest: options.parsedManifest } : ingestPluginManifestV2(input);
+  const parsed = ingestion.ok ? { success: true as const, data: ingestion.manifest } : { success: false as const, diagnostics: ingestion.diagnostics };
   if (!parsed.success) {
     return {
       ok: false,
-      diagnostics: parsed.error.issues.map((issue) => ({
+      diagnostics: parsed.diagnostics.map((issue) => ({
         code: 'plugin_manifest_invalid',
-        message: `${issue.path.join('.') || '<manifest>'}: ${issue.message}`,
+        message: `${issue.path?.join('.') || '<manifest>'}: ${issue.message}`,
       })),
     };
   }
@@ -69,15 +70,11 @@ export function validatePluginManifest(input: unknown, options: PluginManifestVa
       message: diagnostic.message,
     })));
   }
-  // The reserved namespace and the declared engine range are registry-lifecycle
-  // rules: they exist because a published artifact's own metadata is an
-  // unverifiable third-party claim. Neither describes a working tree on this
-  // machine, where the author and the host operator are the same person, so
-  // both are scoped to a record the host did not author. `bundled_first_party`
-  // is the host's own bundled source and is likewise not a published claim.
-  const enforcesRegistryLifecycleRules = options.sourceProvenance === 'registryCustodied'
+  // Namespace custody is distinct from host compatibility: local and bundled
+  // declarations may use first-party ids but still must support this host.
+  const enforcesRegistryNamespace = options.sourceProvenance === 'registryCustodied'
     && manifestAuthority !== 'bundled_first_party';
-  if (isReservedHappierPluginId(manifest.id) && enforcesRegistryLifecycleRules) {
+  if (isReservedHappierPluginId(manifest.id) && enforcesRegistryNamespace) {
     diagnostics.push({ code: 'plugin_manifest_semantic_invalid', message: `Plugin id '${manifest.id}' uses the reserved happier.* namespace` });
   }
   if (derivePluginDaemonContributionRegistrationRights(manifest.contributes as Readonly<Record<string, unknown>>).length > 0
@@ -86,23 +83,14 @@ export function validatePluginManifest(input: unknown, options: PluginManifestVa
   }
   const declaredHappierEngine = manifest.engines?.happier;
   const currentVersion = semver.valid(configuration.currentCliVersion);
-  // A bundled first-party manifest carries a build-time engine placeholder that
-  // is stamped at release, so its declared range never describes the running
-  // host. The same is true of a local working tree: `happier plugins dev` on a
-  // plugin whose manifest still holds its pre-release placeholder is the normal
-  // author loop, not an incompatible install.
   if (declaredHappierEngine !== undefined
     && options.enforceEngineCompatibility !== false
-    && enforcesRegistryLifecycleRules
     && (!currentVersion || !semver.satisfies(currentVersion, declaredHappierEngine, { includePrerelease: true }))) {
     diagnostics.push({
-      code: 'plugin_manifest_semantic_invalid',
+      code: 'plugin_manifest_engine_incompatible',
       message: INCOMPATIBLE_HAPPIER_ENGINE_DIAGNOSTIC,
       safeCompatibilityMessage: INCOMPATIBLE_HAPPIER_ENGINE_DIAGNOSTIC,
     });
-  }
-  for (const diagnostic of collectAgentCliSystemToolDiagnostics(manifest)) {
-    diagnostics.push(diagnostic);
   }
   const daemonEntry = manifest.entrypoints?.daemon;
   if (daemonEntry && !SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS.has(extname(daemonEntry).toLowerCase())) {
@@ -113,42 +101,4 @@ export function validatePluginManifest(input: unknown, options: PluginManifestVa
     });
   }
   return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, manifest };
-}
-
-/**
- * An Agent's `catalog.agentCliSystemTool` binding is the only cross-family
- * reference in the Agent contribution: it names a system tool the same plugin
- * declares and is resolved against that Agent's own `cli` metadata. Both facts
- * live in other contribution families, so the manifest schema cannot check
- * them. Rejecting an unresolvable binding here keeps the contribution
- * projection total — the catalog-entry hook owner throws on an undeclared
- * toolId, and the runtime registry throws when the Agent has no CLI runtime
- * descriptor, neither of which the plugin loader can attribute to one plugin.
- */
-function collectAgentCliSystemToolDiagnostics(
-  manifest: CanonicalPluginManifest,
-): readonly PluginCompatibilityDiagnostic[] {
-  const agents = manifest.contributes.agents;
-  if (!Array.isArray(agents) || agents.length === 0) return [];
-  const declaredToolIds = new Set(
-    (manifest.contributes.systemTools ?? []).map((tool) => tool.id),
-  );
-  const diagnostics: PluginCompatibilityDiagnostic[] = [];
-  for (const agent of agents) {
-    const binding = agent.catalog?.agentCliSystemTool;
-    if (!binding) continue;
-    if (!declaredToolIds.has(binding.toolId)) {
-      diagnostics.push({
-        code: 'plugin_manifest_semantic_invalid',
-        message: `Agent '${agent.id}' CLI system-tool binding '${binding.toolId}' names no declared system tool`,
-      });
-    }
-    if (!agent.cli) {
-      diagnostics.push({
-        code: 'plugin_manifest_semantic_invalid',
-        message: `Agent '${agent.id}' CLI system-tool binding requires declared CLI metadata`,
-      });
-    }
-  }
-  return diagnostics;
 }

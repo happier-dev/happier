@@ -97,6 +97,82 @@ describe('Account plugin Settings watch broker', () => {
 describe('Account plugin Collection watch broker', () => {
     const accountScopeKey = 'account-scope-default';
 
+    it('uses index keys only across an observed predecessor and keeps missed, full and reset catch-up', async () => {
+        const scope = 'account-scope-index-predecessor';
+        const listener = vi.fn();
+        const subscription = { accountScopeKey: scope, pluginId: 'example.tasks', collectionId: 'tasks',
+            contractDigest: 'a'.repeat(43), startingCursor: 10,
+            indexSelection: { indexId: 'by-kind', prefixes: ['aa'] } };
+        const dispose = subscribePluginAccountCollectionWatchInvalidation(subscription, listener);
+        const publish = (changeCursor: number, previousCursor: number, key: string) => {
+            const hint = { kind: 'collection' as const, accountScopeKey: scope, pluginId: subscription.pluginId,
+                collectionId: subscription.collectionId, contractDigest: subscription.contractDigest,
+                rowIds: ['row-1'], indexChanges: { previousCursor, keys: [{ indexId: 'by-kind', key }] }, changeCursor };
+            publishPluginAccountCollectionWatchInvalidation(hint);
+        };
+        try {
+            publish(11, 10, 'bb01');
+            publish(12, 11, 'bb02');
+            await Promise.resolve();
+            expect(listener).not.toHaveBeenCalled();
+            publish(13, 12, 'aa01');
+            publish(14, 13, 'bb03');
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ changeCursor: 13 }));
+            listener.mockClear();
+            publish(16, 15, 'bb04');
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true, changeCursor: 16 }));
+            listener.mockClear();
+            const successor = { kind: 'collection' as const, accountScopeKey: scope,
+                pluginId: subscription.pluginId, collectionId: subscription.collectionId,
+                contractDigest: 'b'.repeat(43), rowIds: ['row-2'], changeCursor: 17,
+                indexChanges: { previousCursor: 16, keys: [{ indexId: 'by-kind', key: 'bb05' }] } };
+            publishPluginAccountCollectionWatchInvalidation(successor);
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true,
+                contractDigest: subscription.contractDigest, changeCursor: 17 }));
+            const late = vi.fn();
+            const disposeLate = subscribePluginAccountCollectionWatchInvalidation({ ...subscription, startingCursor: 16 }, late);
+            try {
+                await Promise.resolve();
+                expect(late).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true,
+                    contractDigest: subscription.contractDigest, changeCursor: 17 }));
+            } finally { disposeLate(); }
+            listener.mockClear();
+            publishPluginAccountCollectionWatchInvalidation({ kind: 'collection', accountScopeKey: scope,
+                pluginId: subscription.pluginId, collectionId: subscription.collectionId,
+                contractDigest: 'b'.repeat(43), full: true, changeCursor: 18 });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true, changeCursor: 18 }));
+            listener.mockClear();
+            publishPluginAccountCollectionWatchInvalidation({ kind: 'reset', accountScopeKey: scope, changeCursor: 1 });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'reset', changeCursor: 1 }));
+        } finally { dispose(); retirePluginAccountCollectionWatchScope(scope); }
+    });
+
+    it('wakes declaration-only presence watchers across retained contract versions and catches up after the read', async () => {
+        const listener = vi.fn();
+        const hint = { kind: 'collection' as const, accountScopeKey, pluginId: 'example.tasks',
+            collectionId: 'tasks', contractDigest: 'old-contract', changeCursor: 90 };
+        publishPluginAccountCollectionWatchInvalidation(hint);
+        const dispose = subscribePluginAccountCollectionWatchInvalidation({
+            accountScopeKey, pluginId: hint.pluginId, collectionId: hint.collectionId,
+            startingCursor: 89,
+        }, listener);
+        try {
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledTimes(1);
+            publishPluginAccountCollectionWatchInvalidation({ ...hint, contractDigest: 'new-contract', changeCursor: 91 });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledTimes(2);
+        } finally {
+            dispose();
+            retirePluginAccountCollectionWatchScope(accountScopeKey);
+        }
+    });
+
     it('admits only the closed dataCollection AccountChange arm without carrying row content', () => {
         expect(readPluginAccountCollectionWatchInvalidations([
             {
@@ -129,8 +205,62 @@ describe('Account plugin Collection watch broker', () => {
             pluginId: 'example.tasks',
             collectionId: 'tasks',
             contractDigest: 'a'.repeat(43),
+            rowIds: ['task-1'],
             changeCursor: 8,
         }]);
+    });
+
+    it('filters intrinsic row observers before coalescing while preserving full reset and conservative catch-up', async () => {
+        const scope = 'account-scope-exact-row';
+        const digest = 'a'.repeat(43);
+        const listener = vi.fn();
+        const subscription = { accountScopeKey: scope, pluginId: 'example.tasks', collectionId: 'tasks',
+            contractDigest: digest, rowId: 'task-1' };
+        const publish = (cursor: number, rowIds: string[]) => {
+            const [hint] = readPluginAccountCollectionWatchInvalidations([{
+                cursor, kind: 'pluginDomain', entityId: 'pluginDomain/example.tasks/data-collection/tasks', changedAt: cursor,
+                hint: { pluginDomain: 'dataCollection', pluginId: 'example.tasks', collectionId: 'tasks',
+                    contractDigest: digest, revision: cursor, rowIds },
+            }]);
+            if (!hint) throw new Error('Expected admitted Collection hint');
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: scope, ...hint });
+        };
+        const unsubscribe = subscribePluginAccountCollectionWatchInvalidation(subscription, listener);
+        let unsubscribeLate: (() => void) | undefined;
+        try {
+            for (let cursor = 1; cursor <= 5; cursor++) publish(cursor, [`unrelated-${cursor}`]);
+            await Promise.resolve();
+            expect(listener).not.toHaveBeenCalled();
+            publish(6, ['task-1', 'other']);
+            publish(7, ['other']);
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ changeCursor: 6 }));
+            listener.mockClear();
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: scope, kind: 'collection',
+                pluginId: 'example.tasks', collectionId: 'tasks', contractDigest: digest, full: true, changeCursor: 8 });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true, changeCursor: 8 }));
+            listener.mockClear();
+            publishPluginAccountCollectionWatchInvalidation({ accountScopeKey: scope, kind: 'reset', changeCursor: 9 });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledExactlyOnceWith({ accountScopeKey: scope, kind: 'reset', changeCursor: 9 });
+
+            publish(10, ['task-1']);
+            publish(11, ['other']);
+            const late = vi.fn();
+            unsubscribeLate = subscribePluginAccountCollectionWatchInvalidation({ ...subscription, startingCursor: 9 }, late);
+            await Promise.resolve();
+            expect(late).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ full: true, changeCursor: 11 }));
+            unsubscribe();
+            listener.mockClear();
+            publish(12, ['task-1']);
+            await Promise.resolve();
+            expect(listener).not.toHaveBeenCalled();
+        } finally {
+            unsubscribeLate?.();
+            unsubscribe();
+            retirePluginAccountCollectionWatchScope(scope);
+        }
     });
 
     it('publishes content-free collection reread invalidations to active watchers', async () => {

@@ -6,6 +6,7 @@ import type { LoggerService as PluginLoggerService } from '@happier-dev/plugin-s
 
 import type { PluginInvocationServicesSeed } from './types';
 import { projectTargetActionDiagnosticIssue } from '../diagnostics';
+import { readCredentialRedactionValues } from './credentialRedactionValues';
 
 const REDACTED = '[REDACTED]';
 const CIRCULAR = '[Circular]';
@@ -132,7 +133,9 @@ export function createPluginInvocationSecretRedactor(): PluginInvocationSecretRe
         },
         registerRaw(scope, value): void {
             if (value.length === 0) return;
-            registerExact(scope, value);
+            for (const representation of readCredentialRedactionValues({ rawCredential: value })) {
+                registerExact(scope, representation);
+            }
             const bytes = Buffer.from(value, 'utf8');
             registerExact(scope, bytes.toString('base64'));
             registerExact(scope, bytes.toString('base64url'));

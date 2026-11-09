@@ -24,6 +24,8 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createConnectedServiceRuntimeAuthNativeHome } from '@/daemon/connectedServices/runtimeAuth/createRuntimeAuthNativeHome';
 import { createPreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
 import { runPreflightSessionControlsProbe } from '@/capabilities/probes/runPreflightSessionControlsProbe';
+import { CODEX_PREFLIGHT_SESSION_CONTROLS } from '../../../../../../packages/plugins/codex/src/agent/lifecycle/preflight/sessionControls';
+import { readAgentRuntimeMaxInputUnicodeCharacters } from '@/capabilities/probes/agentRuntimeInputCapacity';
 
 import {
   createCliSessionCommandHandler,
@@ -53,6 +55,53 @@ function writePreflightFixtureExecutable(dir: string): string {
 }
 
 describe('Agent registration catalog projections', () => {
+  it('refuses an unqualified workspace catalog command when held isolation becomes unavailable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-catalog-isolation-'));
+    const marker = join(root, 'executions');
+    const command = { toolId: 'native-cli', args: ['-e',
+      `require('node:fs').appendFileSync(${JSON.stringify(marker)},'spawned\\n')`] };
+    let enabled = false;
+    const projected = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'fixture.native',
+      systemTools: [{ id: 'native-cli', title: 'Native fixture', executableNames: [writePreflightFixtureExecutable(root)] }],
+      agentIsolation: { read: () => ({ enabled, workspaceRoots: [root],
+        status: { kind: 'unavailable' as const, code: 'launch_probe_failed' as const } }) },
+      preflightSessionControls: { jsonRpcCommands: [command], probeCatalogs: async context => {
+        const result = await context.runDeclaredSystemToolCommand(command);
+        return result.ok ? { commands: [{ name: 'catalog-ready' }], skills: [] } : null;
+      } },
+      retirementSignal: new AbortController().signal, isCurrent: () => true,
+    });
+    try {
+      const adapter = (await projected.getPreflightSessionControlsProbeAdapter!())!;
+      await expect(adapter.probeCatalogsRaw!({ cwd: root, timeoutMs: 10_000 })).resolves.toMatchObject({
+        commands: [{ name: 'catalog-ready' }],
+      });
+      enabled = true;
+      await expect(adapter.probeCatalogsRaw!({ cwd: root, timeoutMs: 10_000 })).resolves.toBeNull();
+      expect(await readFile(marker, 'utf8')).toBe('spawned\n');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('projects runtime capacity independently of native offered-model discovery', async () => {
+    let current = true;
+    const projected = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'codex', systemTools: [], retirementSignal: new AbortController().signal,
+      isCurrent: () => current, preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS,
+    });
+    expect(projected.resolveRuntimeMaxInputUnicodeCharacters?.({ accountSettings: null })).toBe(1 << 20);
+    const catalogEntry = { ...projected, id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported' } satisfies
+      NonNullable<Parameters<typeof readAgentRuntimeMaxInputUnicodeCharacters>[0]['catalogEntry']>;
+    await expect(readAgentRuntimeMaxInputUnicodeCharacters({ agentId: 'codex', catalogEntry })).resolves.toBe(1 << 20);
+    await expect(readAgentRuntimeMaxInputUnicodeCharacters({ agentId: 'codex', catalogEntry: null })).resolves.toBeNull();
+    expect(projected.resolveRuntimeMaxInputUnicodeCharacters?.({
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp' } },
+    })).toBeNull();
+    current = false;
+    expect(projected.resolveRuntimeMaxInputUnicodeCharacters?.({ accountSettings: null })).toBeNull();
+  });
   it('keeps the containing cleanup scope open across the existing native probe retry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-preflight-retry-'));
     const script = join(root, 'inventory.cjs');
@@ -915,6 +964,7 @@ describe('Agent registration catalog projections', () => {
       runtimeAuthorityAgentId: 'acme.external',
       agentIdForAccountSettings: 'acme.external',
       isExplicitCliSubcommand: true,
+      resolveSessionRuntimePreferences: projected.resolveSessionRuntimePreferences,
     }));
     const preferencesInput = {
       isExplicitCliSubcommand: true,
@@ -994,6 +1044,7 @@ describe('Agent registration catalog projections', () => {
         cliSubcommand: 'acme.external',
         runtimeAuthorityAgentId: 'acme.external',
       },
+      null,
       {
         runBackendSessionCliCommand,
         resolveSessionCommandResumeDelegation: async () => await new Promise((resolve) => {

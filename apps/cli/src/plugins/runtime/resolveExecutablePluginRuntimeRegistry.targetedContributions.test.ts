@@ -14,6 +14,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { GITHUB_CI_ACTION_IDS_V1 } from '../../../../../packages/plugins/scm-github/src/actions/actionIds';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -658,6 +659,7 @@ describe('executable targeted contribution admission', () => {
         const pluginId = 'happier.scm.forge.github';
         try {
             const runtime = fixture.registry;
+            await runtime.activateContributionsOnDemand([{ pluginId, family: 'actions', localId: GITHUB_CI_ACTION_IDS_V1.listWorkflows }]);
             const occurrenceId = runtime.readPluginOccurrenceId?.(pluginId);
             const sourceCustody = runtime.readPluginSourceCustody?.(pluginId);
             expect(occurrenceId).toBeTruthy();

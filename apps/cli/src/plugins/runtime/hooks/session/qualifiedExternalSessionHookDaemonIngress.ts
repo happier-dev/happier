@@ -170,7 +170,7 @@ export async function resolveDurableCurrentLink(
         releasedSourceKeys,
     });
     const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
-        token: credentials.token,
+        credentials: credentials, token: credentials.token,
         ...(request.signal ? { signal: request.signal } : {}),
     }).catch(() => null);
     if (!accountEncryptionCurrentness) return { state: 'blocked' };

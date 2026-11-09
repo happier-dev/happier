@@ -130,7 +130,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         value: string,
     ): string;
 }>): ConnectedAccountHostRuntimeInvoker {
-    const { assertEstablishedTarget, assertEstablishedAuthorityCurrent, assertEstablishedFenceCurrent, invokeCurrentConnectedAccountCallback, guardStagedCredentials, invokeEstablishedRuntime } = createConnectedAccountEstablishedRuntimeDispatcher({
+    const { assertEstablishedTarget, assertEstablishedAuthorityCurrent, assertEstablishedFenceCurrent, invokeCurrentConnectedAccountCallback, guardStagedCredentials, registerEstablishedCredentialForRedaction, invokeEstablishedRuntime } = createConnectedAccountEstablishedRuntimeDispatcher({
         observePhase: observeMaterializationPhase,
         onRecoveryCreditsUnavailable: service => logger.info('[ConnectedAccounts] recovery credit inventory unavailable', { service }),
     });
@@ -335,7 +335,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         await assertCurrent();
                         const value = await input.context.credentials.get(key, options);
                         await assertCurrent();
-                        if (value !== null) redaction.registerRawForRedaction(value);
+                        registerEstablishedCredentialForRedaction(input, key, value, redaction.registerRawForRedaction);
                         return value;
                     } }),
                 });
@@ -393,7 +393,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     await assertCurrent();
                     const value = await input.context.credentials.get(key, options);
                     await assertCurrent();
-                    if (value !== null) params.registerRawForRedaction(seed, value);
+                    registerEstablishedCredentialForRedaction(input, key, value, value => params.registerRawForRedaction(seed, value));
                     return value;
                 },
             });

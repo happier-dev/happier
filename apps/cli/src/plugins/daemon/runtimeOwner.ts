@@ -1,5 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiveChangePreparer';
+import type { PluginPendingChangeEntry } from './changeContract';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import {
   createDaemonPluginChangeService,
@@ -7,18 +8,17 @@ import {
   type DaemonPluginChangeService,
 } from '@/plugins/daemon/changeService';
 import { createDaemonNpmPluginChangePreparer } from '@/plugins/daemon/npmChangePreparer';
-import type { MarketplaceRegistrySourcesReaderV1 } from '@/plugins/store/marketplace/service';
+import type { MarketplaceRegistrySourcesReaderV1, MarketplaceRegistryHostV1 } from '@/plugins/store/marketplace/service';
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
-import { shouldActivateTargetAtStartup } from '@/plugins/runtime/lifecycle/activation/targets';
+import { collectActivationTargets, shouldActivateTargetAtStartup } from '@/plugins/runtime/lifecycle/activation/targets';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import {
   activatePluginRuntimeForReadiness,
-  bootstrapPrimaryAgentRuntimesForReadiness,
 } from '@/plugins/runtime/reload/readiness';
 import {
   resolveExecutablePluginRuntimeRegistry,
@@ -56,7 +56,7 @@ import { cleanupStaleDaemonPluginCandidateRoots } from '@/plugins/daemon/candida
 import { resolveInstalledPluginUpdate } from '@/plugins/daemon/resolveInstalledUpdate';
 import { updateSelectedPluginOptionalAccess } from '@/plugins/daemon/optionalAccessSelections';
 import type { StablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
-import type { RuntimeActionExecute } from '@happier-dev/protocol';
+import type { RuntimeActionExecute, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import type {
   AgentExternalSessionsManagedEndpointReadHost,
 } from '@/session/external/agentExternalSessionsInvocation';
@@ -70,6 +70,7 @@ import { subscribePluginAccountAvailabilityChanges } from '@/plugins/runtime/con
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import type { ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -85,7 +86,6 @@ import {
 const COLD_START_READINESS_STAGE_REASONS = Object.freeze({
   activation: 'cold-start activation failed',
   daemonDatabases: 'cold-start daemon database preparation failed',
-  primaryAgentRuntime: 'cold-start primary Agent runtime construction failed',
 });
 
 /** Bind plugin file materialization to the current daemon's transfer owner. */
@@ -104,7 +104,7 @@ export type DaemonPluginRuntimeOwner = Readonly<{
   changeService: DaemonPluginChangeOwner;
   initialize: () => Promise<void>;
   /** Replays the exact current install-registry snapshot after transport recovery. */
-  reportCurrentAvailability: () => void;
+  reportCurrentAvailability: () => Promise<void>;
   readCatalog: () => ReturnType<typeof readCurrentDaemonPluginCatalog>;
   hardRevokeRunningSessionsForGenerationIntegrityFailure: (
     input: Readonly<{
@@ -129,26 +129,35 @@ export type DaemonPluginAvailabilityReporter = Readonly<{
  * subprocess host this owner; neither caller reimplements G3 decisions.
  */
 export function createDaemonPluginRuntimeOwner(params: Readonly<{
+  /** Existing observer snapshot, shared by every install/update source. */
+  readDaemonRights?: () => MachineDaemonRightsV1;
+  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   signal?: AbortSignal;
   readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
   happyHomeDir: string;
   /** Captured daemon Account source owner, shared by staging and review revalidation. */
   readRegistrySources?: MarketplaceRegistrySourcesReaderV1;
+  marketplaceRegistryHost?: MarketplaceRegistryHostV1;
   mcpServerStore?: Pick<CliMcpServerStore, 'readCatalogForOperation' | 'mutate'>;
   managedResourcePreflight?: PluginManagedResourcePreflightBinding;
   /** Daemon-owned live machine identity for host-stamped nested Action callers. */
   resolveCurrentMachineId?: () => string | null;
   readDaemonRequesterWorkAttribution?: () => RequesterWorkAttributionV1 | null;
+  ensureEnvironmentServices?(): Promise<void>;
   executeClientAction?: ClientContributedActionExecutor;
-  deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing authenticated Machine admission authority for protected Session input. */
   machineAdmissionTransport?: PluginRuntimeMachineAdmissionTransport;
+  /** Host-private custody used to sign nested requests to this Home. */
+  externalActionHomeBinding?: ExternalActionHomeBinding;
+  deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
   resolveComposerMediaStageTransferRpcHandler?: () => RpcHandlerInvoker | null;
   /** Fresh server/machine identity; never the daemon feature cache. */
   resolveCurrentMachineExecutionOriginContext?: (
     signal?: AbortSignal,
   ) => Promise<CurrentMachineExecutionOriginContext | null>;
+  /** Private approval lifecycle reader for this daemon's Account. Packed author hosts have none. */
+  approvalStore?: Pick<ReturnType<typeof createCliApprovalsArtifactStore>, 'readPluginChangeApprovalRetirement'>;
   /** Canonical Account-change exact Session-access proof for Resource admission. */
   resolveSessionResourceAccess?: ResolveSessionResourceAccess;
   /** Process-owned Account/system boundary dependencies for the canonical host. */
@@ -173,7 +182,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   awaitInitialRuntimeActivation?: () => Promise<void>;
   /** Notifies the daemon projection after a registry is durably current. */
   onDurableRegistryApplied?: () => void;
-  /** Publishes daemon-state currentness after a live runtime projection changes in place. */
+  /** Publishes daemon-state currentness after a live runtime projection changes. */
   onRuntimeProjectionInvalidated?: () => void;
   managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
   qualifiedConnectedAccountEstablishedRuntimeOwner?:
@@ -206,8 +215,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   startupMode?: 'normal' | 'pluginRecovery';
   /** Authenticated server boundary used by registry generation retirement. */
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
-
-agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
 }>): DaemonPluginRuntimeOwner {
   // A registry reload changes executable occurrences, not this host's prior
   // Account declaration admissions. All replacement Data hosts use this map.
@@ -267,8 +274,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     input,
   ) => developmentRoots?.resolveDevelopmentSourceAuthority(input) ?? null;
   const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
-...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
-
+    ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     beforeInstallPublish: async (registry, pluginIds, firstInstallPluginIds) => {
       const declarations = (registry.contributes.mcpServers ?? []).filter(entry => entry.pluginId && pluginIds.includes(entry.pluginId));
@@ -297,11 +303,15 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     ...(params.readDaemonRequesterWorkAttribution
       ? { readDaemonRequesterWorkAttribution: params.readDaemonRequesterWorkAttribution }
       : {}),
+    ...(params.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
+    ...(params.machineAdmissionTransport
+      ? { machineAdmissionTransport: params.machineAdmissionTransport }
+      : {}),
     ...(params.deploymentAccountExecution
       ? { deploymentAccountExecution: params.deploymentAccountExecution }
       : {}),
-    ...(params.machineAdmissionTransport
-      ? { machineAdmissionTransport: params.machineAdmissionTransport }
+    ...(params.externalActionHomeBinding
+      ? { externalActionHomeBinding: params.externalActionHomeBinding }
       : {}),
     ...(params.resolveComposerMediaStageTransferRpcHandler
       ? { resolveComposerMediaStageTransferRpcHandler: params.resolveComposerMediaStageTransferRpcHandler }
@@ -394,8 +404,14 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     params.onDurableRegistryApplied?.();
   };
   const preparePath = createDaemonPathPluginChangePreparer({
+    readDaemonRights: params.readDaemonRights,
     happyHomeDir: params.happyHomeDir,
     runtimeLifecycle,
+    readActivePluginManifest: (pluginId) => {
+      if (!params.reloadController.readCurrentPluginOccurrenceId?.(pluginId)) return null;
+      return params.reloadController.getState().activeRegistry?.contributes.pluginDeclarations
+        ?.find((declaration) => declaration.pluginId === pluginId)?.manifest ?? null;
+    },
     onRegistryApplied,
     ...(params.managedResourcePreflight ? { readManagedResources: (pluginId, dispositions) =>
       readServerPluginManagedResources(params.managedResourcePreflight!, pluginId, dispositions) } : {}),
@@ -404,8 +420,10 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
       : {}),
   });
   const prepareNpm = createDaemonNpmPluginChangePreparer({
+    readDaemonRights: params.readDaemonRights,
     happyHomeDir: params.happyHomeDir,
     readRegistrySources: params.readRegistrySources,
+    marketplaceRegistryHost: params.marketplaceRegistryHost,
     runtimeLifecycle,
     onRegistryApplied,
     ...(params.generationCustodyRetirement
@@ -413,6 +431,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
       : {}),
   });
   const prepareArchive = createDaemonArchivePluginChangePreparer({
+    readDaemonRights: params.readDaemonRights,
     happyHomeDir: params.happyHomeDir,
     runtimeLifecycle,
     onRegistryApplied,
@@ -420,7 +439,16 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
       ? { generationCustodyRetirement: params.generationCustodyRetirement }
       : {}),
   });
+  const approvalStore = params.approvalStore;
+  const resolveApprovalOrigin = params.resolveCurrentMachineExecutionOriginContext;
   const baseChangeService = createDaemonPluginChangeService({
+    resolveDevelopmentSourceAuthority,
+    ...(approvalStore && resolveApprovalOrigin ? {
+      readApprovalRetirement: async (pendingReview: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => {
+        const origin = await resolveApprovalOrigin();
+        return origin ? await approvalStore.readPluginChangeApprovalRetirement({ pendingReview, ...origin }) : false;
+      },
+    } : {}),
     prepare: async (request) => {
       if (request.kind === 'update') {
         const installed = (
@@ -444,7 +472,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
           installedUpdate: { pluginId: request.pluginId },
         });
       }
-      if (request.kind === 'installNpm') return await prepareNpm(request);
+      if (request.kind === 'installNpm' || request.kind === 'installMarketplace') return await prepareNpm(request);
       if (request.kind === 'installArchive') return await prepareArchive(request);
       return await preparePath(request);
     },
@@ -501,7 +529,11 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
           });
           if (!authorityCommit) {
             await prepared.abort().catch(() => undefined);
-            return Object.freeze({ kind: 'conflict' as const, pluginId: candidate.pluginId });
+            return Object.freeze({
+              kind: 'failed' as const,
+              code: 'plugin_dev_conflict',
+              message: 'The plugin registry changed while this development candidate was being prepared; re-preparing against the current registry. Any active incumbent is retained.',
+            });
           }
         }
         await prepared.adopt();
@@ -725,43 +757,69 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
    * runtime knows, so the one report adds them from the serving registry.
    */
   const reportAvailability = async (
-    inventory: PluginRegistryAvailabilityInventory,
-    reporter: DaemonPluginAvailabilityReporter,
+    inventory: PluginRegistryAvailabilityInventory | null,
+    reporter: DaemonPluginAvailabilityReporter | undefined,
   ): Promise<void> => {
     const lease = params.reloadController.tryAcquireRuntimeRegistry();
     if (!lease) {
-      projectPluginInstalledAvailabilityInventory({ inventory, registry: null, registryRevision: null, runtimeMaterializations: [] });
+      if (inventory) projectPluginInstalledAvailabilityInventory({ inventory, registry: null, registryRevision: null, runtimeMaterializations: [] });
       return;
     }
+    let declarationClaims: Promise<void> | undefined;
     try {
-      const complete = projectPluginInstalledAvailabilityInventory({
-        inventory,
-        registry: lease.registry.contributes,
-        registryRevision: lease.durableRevision,
-        runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
-      });
-      await reporter.report(complete);
+      const failures: unknown[] = [];
+      if (inventory && reporter) {
+        try {
+          const complete = projectPluginInstalledAvailabilityInventory({
+            inventory,
+            registry: lease.registry.contributes,
+            registryRevision: lease.durableRevision,
+            runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
+          });
+          await reporter.report(complete);
+        } catch (error) { failures.push(error); }
+      }
       // Native provisioners need declaration admission before Save/acquire,
       // even when they declare no Account storage capability or Collections.
       // Startup, reload and reconnect reuse this same publication lifecycle.
-      await lease.registry.claimReleaseLessDeclarations();
+      // Only Machine materialization publication precedes the configured
+      // census. Unrelated Account claims are best effort, not daemon readiness.
+      declarationClaims = Promise.resolve()
+        .then(() => lease.registry.claimReleaseLessDeclarations())
+        .catch((error: unknown) => reportAvailabilityFailure(error, inventory?.revision ?? -1));
+      // Unknown publication/read state retains the incumbent eager recovery
+      // path. It must not strand configured integrations on an older Home.
+      await lease.registry.startConfiguredActivation();
+      if (failures.length > 0) throw new AggregateError(failures, 'Plugin Account declaration publication failed');
     } finally {
-      await lease.release();
+      if (declarationClaims) {
+        // The admitted claim keeps this same registry alive through settlement,
+        // including when the serving registry changes while HTTP is in flight.
+        void declarationClaims
+          .then(async () => await lease.release())
+          .catch((error: unknown) => reportAvailabilityFailure(error, inventory?.revision ?? -1));
+      } else {
+        await lease.release();
+      }
     }
   };
   reportAvailabilityAfterApplied = (record) => {
     const reporter = params.availabilityReporter;
-    if (!reporter) return;
     // Runtime application is already durable. Availability is a best-effort
     // consumer: transport failure never changes the local transaction.
-    void stateStore.readAvailabilityInventoryForCommit(record)
+    void (reporter ? stateStore.readAvailabilityInventoryForCommit(record).catch((error: unknown) => {
+      reportAvailabilityFailure(error, record.revision);
+      return null;
+    }) : Promise.resolve(null))
       .then(async (inventory) => await reportAvailability(inventory, reporter))
       .catch((error: unknown) => reportAvailabilityFailure(error, record.revision));
   };
-  const reportCurrentAvailability = (): void => {
+  const reportCurrentAvailability = async (): Promise<void> => {
     const reporter = params.availabilityReporter;
-    if (!reporter) return;
-    void stateStore.readAvailabilityInventory()
+    await (reporter ? stateStore.readAvailabilityInventory().catch((error: unknown) => {
+      reportAvailabilityFailure(error, -1);
+      return null;
+    }) : Promise.resolve(null))
       .then(async (inventory) => await reportAvailability(inventory, reporter))
       .catch((error: unknown) => reportAvailabilityFailure(error, -1));
   };
@@ -792,11 +850,15 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             ...(params.readDaemonRequesterWorkAttribution
               ? { readDaemonRequesterWorkAttribution: params.readDaemonRequesterWorkAttribution }
               : {}),
+            ...(params.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
+            ...(params.machineAdmissionTransport
+              ? { machineAdmissionTransport: params.machineAdmissionTransport }
+              : {}),
             ...(params.deploymentAccountExecution
               ? { deploymentAccountExecution: params.deploymentAccountExecution }
               : {}),
-            ...(params.machineAdmissionTransport
-              ? { machineAdmissionTransport: params.machineAdmissionTransport }
+            ...(params.externalActionHomeBinding
+              ? { externalActionHomeBinding: params.externalActionHomeBinding }
               : {}),
             ...(params.resolveComposerMediaStageTransferRpcHandler
               ? {
@@ -886,6 +948,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             // self-target would pin them to a retired predecessor.
             currentGlobalExternalSessionsRouter:
               params.reloadController.currentGlobalExternalSessions,
+            runtimeRegistryController: params.reloadController,
             onTerminalActivationFailure,
             ...(targetedContributions
               ? { targetedContributions }
@@ -916,15 +979,6 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
               const reason = `${COLD_START_READINESS_STAGE_REASONS[stage]}: ${
                 projectPluginFailureText(error)
               }`;
-              // Isolation alone would keep advertising the rejected plugin as
-              // ready. A registry that cannot fence it has no way to publish a
-              // truthful cold projection, so the whole startup fails closed.
-              if (!registry.recordPluginActivationFailure) {
-                throw new AggregateError(
-                  [error],
-                  'Prepared plugin runtime registry cannot fence a rejected cold-start readiness participant',
-                );
-              }
               await registry.recordPluginActivationFailure(pluginId, reason);
               logger.warn(
                 '[PLUGIN RUNTIME] Cold startup fenced a failed plugin readiness participant',
@@ -933,7 +987,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             }
           };
           try {
-            const activationTargets = registry.contributes.activationTargets ?? [];
+            // Same admitted-target contract the lifecycle manager activates from.
+            const activationTargets = collectActivationTargets(registry.contributes);
             // The lifecycle manager owns which targets must be live before the
             // daemon can serve. Its demand-ready targets remain dormant until
             // their consumer admits the exact demand; cold-start readiness must
@@ -956,7 +1011,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
               });
             }));
             params.signal?.throwIfAborted();
-            if (registry.prepareDaemonDatabases) {
+            {
               const daemonDatabasePluginIds = [...new Set(
                 coldStartActivationTargets
                   .filter((target) => (
@@ -967,22 +1022,10 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
               )].sort();
               for (const pluginId of daemonDatabasePluginIds) {
                 await isolateReadinessParticipant(pluginId, 'daemonDatabases', async () => {
-                  await registry.prepareDaemonDatabases!({ pluginIds: [pluginId] });
+                  await registry.prepareDaemonDatabases({ pluginIds: [pluginId] });
                 });
               }
             }
-            await Promise.all(readinessPluginIds.map(async (pluginId) => {
-              // A plugin an earlier readiness step already fenced is retired.
-              // Constructing its runtime against that retired generation would
-              // only fail again and record a second reason for one rejection.
-              if (!registry.activatedPluginIds.has(pluginId)) return;
-              await isolateReadinessParticipant(pluginId, 'primaryAgentRuntime', async () => {
-                await bootstrapPrimaryAgentRuntimesForReadiness({
-                  registry,
-                  pluginIds: [pluginId],
-                });
-              });
-            }));
             params.signal?.throwIfAborted();
             return registry;
           } catch (error) {
@@ -1022,7 +1065,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         ] : [
           ...pluginIds,
           ...Object.entries(contributes?.pluginEnablementById ?? {})
-            .filter(([, enablement]) => enablement.unavailableCode === 'plugin_account_execution_unavailable')
+            .filter(([, enablement]) => enablement.unavailableCode !== undefined)
             .map(([pluginId]) => pluginId),
         ])];
         const relevantPluginIds = changedPluginIds.filter(pluginId => contributes?.pluginEnablementById?.[pluginId]

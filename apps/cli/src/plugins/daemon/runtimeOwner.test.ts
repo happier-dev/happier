@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,8 +8,12 @@ import {
   type CurrentGlobalExternalSessionsRouter,
 } from '@/session/external/currentGlobalRouting';
 import type { ProvidersService } from '@happier-dev/plugin-sdk/providers';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
 import { projectPath } from '@/projectPath';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedActivationTarget } from '@/plugins/projection/registry/types';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
@@ -17,6 +21,7 @@ import { createTargetedContributionsService } from '@/plugins/runtime/invocation
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRegistryAvailabilityInventory } from '@/plugins/store/registry/currentState';
 import type { PluginChangeRequest, PreparedDaemonPluginChange } from './changeContract';
+import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 
 const unusedTargetedContributionsOwner = createTargetedContributionsService({
   subscribeToCatalogChanges: () => () => undefined,
@@ -103,7 +108,7 @@ vi.mock('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry', () => ({
   resolveExecutablePluginRuntimeRegistry: vi.fn(async (params: Readonly<Record<string, unknown>>) => {
     ownerMocks.resolveRuntimeRegistryParams = params;
     return ownerMocks.resolveRuntimeRegistryOverride ?? Object.freeze({
-      contributes: Object.freeze({ generationId: 'candidate-generation' }),
+      contributes: Object.freeze({ ...createResolvedContributionRegistry({}), generationId: 'candidate-generation' }),
       stableEventsBroker: ownerMocks.stableEventsBroker,
       claimReleaseLessDeclarations: async () => undefined,
     });
@@ -113,11 +118,14 @@ vi.mock('@/plugins/projection/registry/sources/generatedBundledPlugins', () => (
   // Registry construction is mocked below; loading bundled plugin packages is not part of this owner test.
   BUNDLED_FIRST_PARTY_PLUGINS: Object.freeze([]),
 }));
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  // Recovery-mode contribution projection is separately owned; this test only
-  // verifies that the daemon runtime owner supplies its built-in snapshot.
-  getResolvedContributionRegistry: vi.fn(() => Object.freeze({})),
-}));
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', async () => {
+  const actual = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+  return {
+    // Recovery-mode contribution projection is separately owned; this test only
+    // verifies that the daemon runtime owner supplies its built-in snapshot.
+    getResolvedContributionRegistry: vi.fn(() => actual.createResolvedContributionRegistry({})),
+  };
+});
 vi.mock('@/plugins/store/registry/currentState', () => ({
   createPluginRegistryStateStore: (params: Readonly<Record<string, unknown>>) => {
     ownerMocks.stateStoreParams = params;
@@ -136,9 +144,6 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-type CreateDaemonPluginRuntimeOwner = typeof import('./runtimeOwner').createDaemonPluginRuntimeOwner;
-
-let createDaemonPluginRuntimeOwner: CreateDaemonPluginRuntimeOwner;
 let happyHomeDir: string;
 
 function createUnusedConnectedAccountsOwner(): StablePluginConnectedAccountsOwner {
@@ -161,10 +166,6 @@ function createUnusedConnectedAccountsOwner(): StablePluginConnectedAccountsOwne
 }
 
 describe('createDaemonPluginRuntimeOwner publication join', () => {
-  beforeAll(async () => {
-    ({ createDaemonPluginRuntimeOwner } = await import('./runtimeOwner'));
-  });
-
   beforeEach(async () => {
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-runtime-owner-test-'));
     ownerMocks.runtimeLifecycleParams = null;
@@ -693,35 +694,13 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     const dispose = vi.fn(async () => undefined);
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
-      contributes: Object.freeze({
+      contributes: createResolvedContributionRegistry({
         activationTargets: Object.freeze([
-          Object.freeze({
-            pluginId: 'com.acme.indexer',
-            activationEvents: Object.freeze(['startup']),
-            manifest: Object.freeze({
-              contributes: Object.freeze({
-                daemonDatabases: Object.freeze([Object.freeze({ id: 'index' })]),
-              }),
-            }),
-          }),
-          Object.freeze({
-            pluginId: 'com.acme.no-database',
-            manifest: Object.freeze({
-              contributes: Object.freeze({
-                daemonDatabases: Object.freeze([]),
-              }),
-            }),
-          }),
+          createReadinessActivationTarget('com.acme.indexer', 'external', [{ id: 'index' }]),
+          createReadinessActivationTarget('com.acme.no-database', 'external', [], { activationEvents: [] }),
           // Declared databases are not enough: a plugin whose activation never
           // succeeded must not have native handles opened on its behalf.
-          Object.freeze({
-            pluginId: 'com.acme.unactivated-indexer',
-            manifest: Object.freeze({
-              contributes: Object.freeze({
-                daemonDatabases: Object.freeze([Object.freeze({ id: 'index' })]),
-              }),
-            }),
-          }),
+          createReadinessActivationTarget('com.acme.unactivated-indexer', 'external', [{ id: 'index' }], { activationEvents: [] }),
         ]),
       }),
       activatedPluginIds: new Set(['com.acme.indexer']),
@@ -832,22 +811,28 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   function createReadinessActivationTarget(
     pluginId: string,
     provenance: 'first_party' | 'external',
-    daemonDatabases: readonly unknown[],
+    daemonDatabases: readonly Readonly<{ id: string }>[],
     options: Readonly<{
       activationEvents?: readonly string[];
       contributes?: Readonly<Record<string, unknown>>;
     }> = {},
-  ) {
+  ): ResolvedActivationTarget {
+    const pluginRootPath = join(happyHomeDir, pluginId);
     return Object.freeze({
       pluginId,
       provenance,
+      source: { kind: 'path' as const },
+      manifestPath: join(pluginRootPath, 'happier.plugin.json'),
+      daemonEntryPath: join(pluginRootPath, 'daemon.mjs'),
+      sourceSpec: { kind: 'path' as const, locator: pluginRootPath, trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
       activationEvents: Object.freeze(options.activationEvents ?? ['startup']),
-      manifest: Object.freeze({
-        contributes: Object.freeze({
-          daemonDatabases: Object.freeze([...daemonDatabases]),
+      manifest: PluginManifestV2Schema.parse(createPluginManifestV2Fixture({
+        id: pluginId,
+        contributes: {
+          daemonDatabases: daemonDatabases.map(database => ({ ...database, migrations: [], incumbentQueryFixtureId: 'empty' })),
           ...(options.contributes ?? {}),
-        }),
-      }),
+        },
+      })),
     });
   }
 
@@ -880,16 +865,15 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     const dispose = vi.fn(async () => undefined);
     const activatedPluginIds = new Set(['com.acme.bundled-indexer', 'com.zeta.external-indexer']);
     const fencing = createReadinessFencingRecorder(activatedPluginIds);
-    // The fenced plugin also owns a primary Agent runtime. Its generation is
-    // already retired, so the later readiness step must not construct it and
-    // record a second reason for one rejection.
+    // Primary Agent factories remain demand-owned, including on a plugin
+    // whose separate startup database participant has failed.
     const fencedCreateRuntime = vi.fn(async () => {
       events.push('fenced-runtime-created');
       return Object.freeze({});
     });
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
-      contributes: Object.freeze({
+      contributes: createResolvedContributionRegistry({
         activationTargets: Object.freeze([
           createReadinessActivationTarget('com.acme.bundled-indexer', 'first_party', [{ id: 'index' }]),
           createReadinessActivationTarget('com.zeta.external-indexer', 'external', [{ id: 'index' }]),
@@ -933,105 +917,6 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
-  it('isolates failing activation and primary-Agent-runtime participants at cold start', async () => {
-    vi.useFakeTimers();
-    const events: string[] = [];
-    const dispose = vi.fn(async () => undefined);
-    const activatedPluginIds = new Set([
-      'com.acme.broken-activation',
-      'com.beta.broken-agent',
-      'com.zeta.healthy',
-    ]);
-    const fencing = createReadinessFencingRecorder(activatedPluginIds);
-    const activatePluginsForValidation = vi.fn(async (pluginIds: readonly string[]) => {
-      if (pluginIds.includes('com.acme.broken-activation')) {
-        throw new Error('plugin activation rejected');
-      }
-      events.push(`activated:${pluginIds.join(',')}`);
-      return Object.freeze([]);
-    });
-    let rejectBrokenRuntime!: (error: Error) => void;
-    const brokenRuntime = new Promise<never>((_resolve, reject) => { rejectBrokenRuntime = reject; });
-    const brokenCreateRuntime = vi.fn(() => brokenRuntime);
-    const healthyCreateRuntime = vi.fn(async () => {
-      events.push('healthy-runtime-created');
-      return Object.freeze({});
-    });
-    ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
-      claimReleaseLessDeclarations: async () => undefined,
-      contributes: Object.freeze({
-        activationTargets: Object.freeze([
-          createReadinessActivationTarget('com.acme.broken-activation', 'external', []),
-          createReadinessActivationTarget('com.beta.broken-agent', 'external', []),
-          createReadinessActivationTarget('com.zeta.healthy', 'external', []),
-        ]),
-      }),
-      activatedPluginIds,
-      activatePluginsForValidation,
-      agentRuntimesByAgentId: new Map<string, unknown>([
-        ['broken', Object.freeze({
-          agentId: 'broken',
-          pluginId: 'com.beta.broken-agent',
-          hasPrimaryRuntime: true,
-          retirementSignal: new AbortController().signal,
-          createRuntime: brokenCreateRuntime,
-        })],
-        ['healthy', Object.freeze({
-          agentId: 'healthy',
-          pluginId: 'com.zeta.healthy',
-          hasPrimaryRuntime: true,
-          retirementSignal: new AbortController().signal,
-          createRuntime: healthyCreateRuntime,
-        })],
-      ]),
-      stableEventsBroker: ownerMocks.stableEventsBroker,
-      recordPluginActivationFailure: fencing.recordPluginActivationFailure,
-      dispose,
-    });
-    const owner = createDaemonPluginRuntimeOwner({
-      happyHomeDir,
-      staleCandidateCleanup: 'disabled',
-      reloadController: createColdStartReloadController(events),
-      connectedAccounts: createUnusedConnectedAccountsOwner(),
-    });
-
-    let initializationSettled = false;
-    const initialization = owner.initialize().then(() => { initializationSettled = true; });
-    await vi.advanceTimersByTimeAsync(0);
-
-    // Slow construction does not fence a participant. Only its actual
-    // rejection is isolated; the healthy peer can construct meanwhile.
-    expect(healthyCreateRuntime).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(60_001);
-    expect(initializationSettled).toBe(false);
-    expect(events).not.toContain('published');
-    rejectBrokenRuntime(new Error('primary runtime construction rejected'));
-    await initialization;
-
-    // A rejected activation and a rejected Agent-runtime factory are both isolated:
-    // their healthy peers still complete and the registry still becomes serving.
-    expect(brokenCreateRuntime).toHaveBeenCalledOnce();
-    expect(healthyCreateRuntime).toHaveBeenCalledOnce();
-    expect(events).toEqual([
-      'activated:com.beta.broken-agent',
-      'activated:com.zeta.healthy',
-      'healthy-runtime-created',
-      'published',
-    ]);
-    // Both rejected participants are fenced as one typed activation failure each,
-    // so neither is advertised as ready by the published cold registry. The
-    // healthy peer is never fenced.
-    expect(fencing.fenced.map((entry) => entry.pluginId)).toEqual([
-      'com.acme.broken-activation',
-      'com.beta.broken-agent',
-    ]);
-    expect(fencing.fenced[0]?.message).toContain('cold-start activation failed');
-    expect(fencing.fenced[0]?.message).toContain('plugin activation rejected');
-    expect(fencing.fenced[1]?.message).toContain('cold-start primary Agent runtime construction failed');
-    expect(fencing.fenced[1]?.message).toContain('primary runtime construction rejected');
-    expect(dispose).not.toHaveBeenCalled();
-  });
-
   it('keeps demand-ready bundled Agent runtimes cold while proving cold-start participants', async () => {
     const events: string[] = [];
     const dispose = vi.fn(async () => undefined);
@@ -1050,7 +935,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     });
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
-      contributes: Object.freeze({
+      contributes: createResolvedContributionRegistry({
         activationTargets: Object.freeze([
           createReadinessActivationTarget('com.acme.bundled-startup', 'first_party', []),
           createReadinessActivationTarget(
@@ -1116,6 +1001,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
       contributes: Object.freeze({
+        ...createResolvedContributionRegistry({}),
         get activationTargets(): never {
           throw readinessError;
         },
@@ -1139,7 +1025,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
 
   it('passes the publication callback through the connected-account owner after durable contraction', async () => {
     const events: string[] = [];
-    const previous = Object.freeze({ generationId: 'previous-generation' });
+    const previous = Object.freeze({ ...createResolvedContributionRegistry({}), generationId: 'previous-generation' });
     const candidateActivationIds = new Set(['acme.available']);
     const reconcile = vi.fn(async (input: Readonly<{
       previous: unknown;
@@ -1149,7 +1035,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       publish(): void;
     }>) => {
       expect(input.previous).toBe(previous);
-      expect(input.candidate).toEqual({ generationId: 'candidate-generation' });
+      expect(input.candidate).toMatchObject({ generationId: 'candidate-generation' });
       candidateActivationIds.clear();
       expect(input.candidateActivePluginIds).toEqual(new Set(['acme.available']));
       expect(input.resolveOptionalAccess('acme.plugin')).toEqual([]);
@@ -1157,14 +1043,14 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       input.publish();
       events.push('reconciled');
     });
-    // This owner-boundary fixture deliberately supplies only the registry field the owner reads.
+    // The executable shell is owner-local; its contribution input comes from the real producer.
     const previousRegistry = Object.freeze({
       contributes: previous,
       activatedPluginIds: new Set(['acme.previous']),
     }) as unknown as ResolvedExecutablePluginRuntimeRegistry;
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
-      contributes: Object.freeze({ generationId: 'candidate-generation' }),
+      contributes: Object.freeze({ ...createResolvedContributionRegistry({}), generationId: 'candidate-generation' }),
       activatedPluginIds: candidateActivationIds,
       stableEventsBroker: ownerMocks.stableEventsBroker,
     });
@@ -1227,7 +1113,6 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   });
 
   it('reports exact persisted inventories only after registry application without owning machine or server facts', async () => {
-    const { createResolvedContributionRegistry } = await vi.importActual<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>('@/plugins/projection/registry/createResolvedContributionRegistry');
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
       contributes: createResolvedContributionRegistry({}), stableEventsBroker: ownerMocks.stableEventsBroker,
@@ -1304,7 +1189,6 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   });
 
   it('retries the full current Availability snapshot after reconnect without a plugin mutation', async () => {
-    const { createResolvedContributionRegistry } = await vi.importActual<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>('@/plugins/projection/registry/createResolvedContributionRegistry');
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
       claimReleaseLessDeclarations: async () => undefined,
       contributes: createResolvedContributionRegistry({}), stableEventsBroker: ownerMocks.stableEventsBroker,

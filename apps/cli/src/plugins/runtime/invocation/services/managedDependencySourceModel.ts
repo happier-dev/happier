@@ -56,7 +56,7 @@ function platformName(platform: ManagedDependencyHostPlatform): DeclaredPlatform
 
 function sourceVersion(source: V2Source): string | null {
     if (source.kind === 'managedPypiWheelAsset') return source.versionSpecifier;
-    if (source.kind === 'pinnedArchive') return source.version;
+    if (source.kind === 'pinnedArchive' || source.kind === 'managedJavaScriptPackage') return source.version;
     return null;
 }
 

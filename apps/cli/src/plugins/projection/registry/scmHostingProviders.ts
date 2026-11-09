@@ -1,21 +1,15 @@
 import { ScmHostingProviderCapabilitiesSchema } from '@happier-dev/protocol/scm/pullRequests';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 
 function readProjectedTitle(definition: object): string | undefined {
-    const title = Reflect.get(definition, 'title') ?? Reflect.get(definition, 'displayName');
-    if (typeof title === 'string') return title.trim() || undefined;
-    if (!title || typeof title !== 'object' || Array.isArray(title)) return undefined;
-    const fallback = Reflect.get(title, 'fallback');
-    return typeof fallback === 'string' ? fallback.trim() || undefined : undefined;
+    return readProjectedText(Reflect.get(definition, 'title') ?? Reflect.get(definition, 'displayName'));
 }
 
 function readProjectedText(value: unknown): string | undefined {
-    if (typeof value === 'string') return value.trim() || undefined;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    const fallback = Reflect.get(value, 'fallback');
-    return typeof fallback === 'string' ? fallback.trim() || undefined : undefined;
+    return resolvePluginLocalizedStringV2Text(value).trim() || undefined;
 }
 
 function projectAuthService(

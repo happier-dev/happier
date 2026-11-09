@@ -1,6 +1,7 @@
 import { PluginAvailabilityPortableReleaseSourceClassV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { snapshotPluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginAvailabilityPortableReleaseSourceClassV1, PackageAssetArchiveDescriptorV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
@@ -38,9 +39,11 @@ export function projectVerifiedPluginUiReleaseSlotsV2(input: Readonly<{
   for (const action of input.manifest.contributes.actions) {
     if (action.execution.target === 'client') {
       declarations.push({ contributionId: action.id, artifactId: action.execution.client.artifactId, tier: 'reactNative', platforms: action.execution.platforms });
-    } else if (action.execution.target === 'account') {
-      declarations.push({ contributionId: action.id, artifactId: action.execution.account.artifactId, tier: 'reactNative', platforms: ALL_EXECUTABLE_UI_PLATFORMS });
     }
+  }
+  for (const slot of derivePluginAccountExecutionArtifactSlots(input.manifest.contributes)) {
+    declarations.push({ contributionId: slot.contributionId, artifactId: slot.registrationRight.target.artifactId,
+      tier: 'reactNative', platforms: ALL_EXECUTABLE_UI_PLATFORMS });
   }
   return declarations.flatMap((declaration) => {
     const artifact = entriesByArtifactId.get(declaration.artifactId);

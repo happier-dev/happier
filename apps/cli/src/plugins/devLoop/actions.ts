@@ -1,4 +1,5 @@
-import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema, PluginPublishInspectActionInputSchema,
+  PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema, PluginPublishStatusActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext, PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
 
 import { installPluginFromLocator } from '@/plugins/projection/catalog/installed';
@@ -12,14 +13,14 @@ import {
   readUserPluginChangeStatus,
   requestUserPluginChange,
 } from '@/plugins/daemon/changeClient';
-import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
+import { projectPluginCatalogEntrySnapshot, projectPluginCatalogEntrySummary } from '@/plugins/projection/introspection/catalogSnapshot';
 import { runPluginAuthorToolchain, type PluginAuthorToolchainOperation } from '@/plugins/authoring/toolchain';
 import { runPluginAuthorDoctor } from '@/plugins/authoring/doctor';
 import { packLocalPlugin } from '@/plugins/packaging/pack';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { configuration } from '@/configuration';
+import { readPluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { requestExactMarketplaceInstall } from '@/plugins/store/marketplace/exactInstall';
 import type { createMarketplaceIndexService } from '@/plugins/store/marketplace/service';
 import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/integrity';
 import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
@@ -63,7 +64,7 @@ export type ExecutePluginDevLoopActionParams = Readonly<{
    * Narrow canonical Action context. The executor remains the sole caller
    * policy owner; the development cycle consumes only its cancellation signal.
    */
-  context?: Pick<ActionExecutorContext, 'actionCaller' | 'signal' | 'presentUserApproval' | 'actionRequestId'>;
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'signal' | 'presentUserApproval' | 'actionRequestId' | 'hostReviewedChild'>;
 }>;
 
 function readInput(input: unknown): PluginDevLoopActionInput {
@@ -139,12 +140,15 @@ function projectInstallChangeFailure(
   fallbackMessage: string,
 ) {
   const failure = describeUserPluginChangeFailure(change);
+  const cause = readPluginModuleFailureCause(failure.details);
   return {
     ok: false,
     kind: 'plugins_install' as const,
     outcome: 'failed' as const,
     change,
-    diagnostics: [{ code: failure.code, message: failure.message || fallbackMessage }],
+    diagnostics: [{ code: failure.code, message: failure.message || fallbackMessage,
+      ...(cause ? { details: { cause } } : {}),
+    }],
   };
 }
 
@@ -204,7 +208,9 @@ async function runPluginDevelopmentAction(params: Readonly<{
     return {
       ok: false,
       kind: params.actionKind,
-      diagnostics: [{ code: result.code, message: result.message }],
+      diagnostics: [{ code: result.code, message: result.message,
+        ...(result.details === undefined ? {} : { details: result.details }),
+      }],
     };
   }
   return {
@@ -219,6 +225,24 @@ export async function executePluginDevLoopAction(
   services: PluginDevLoopActionServices = {},
 ): Promise<unknown> {
   const input = readInput(params.input);
+
+  if (params.actionId === 'plugins.dev.publication.inspect' || params.actionId === 'plugins.dev.publication.prepare'
+    || params.actionId === 'plugins.dev.publish' || params.actionId === 'plugins.dev.publication.status') {
+    const publisher = await import('@/plugins/authoring/publish');
+    const options = { ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+      ...(params.context?.signal ? { signal: params.context.signal } : {}),
+      ...(params.context?.hostReviewedChild ? { hostReviewedChild: params.context.hostReviewedChild } : {}) };
+    const result = params.actionId === 'plugins.dev.publication.inspect'
+      ? await publisher.inspectPluginPublication(PluginPublishInspectActionInputSchema.parse(input), options)
+      : params.actionId === 'plugins.dev.publication.prepare'
+        ? await publisher.preparePluginPublication(PluginPublishPrepareActionInputSchema.parse(input), options)
+        : params.actionId === 'plugins.dev.publication.status'
+          ? await publisher.checkPluginPublicationStatus(PluginPublishStatusActionInputSchema.parse(input), options)
+          : await publisher.publishPluginPublication(PluginPublishActionInputSchema.parse(input), options);
+    return { ok: result.status === 'ready' || result.status === 'prepared' || result.status === 'published'
+      || result.status === 'awaiting_maintainer' || result.status === 'review_required',
+      kind: params.actionId.replaceAll('.', '_'), result };
+  }
 
   if ((params.actionId === 'plugins.enable' || params.actionId === 'plugins.disable') && input.scope === 'account') {
     if (!services.account) return { ok: false, errorCode: 'not_supported', error: 'not_supported' };
@@ -247,8 +271,10 @@ export async function executePluginDevLoopAction(
         : { kind: params.actionId === 'plugins.enable' ? 'enable' : params.actionId === 'plugins.rollback' ? 'rollback' : 'forgetTrust', pluginId };
     const change = await (services.requestUserPluginChange ?? requestUserPluginChange)({ request, approval: 'none',
       ...(params.context?.signal ? { signal: params.context.signal } : {}) });
+    const failure = change.kind === 'committed' ? null : describeUserPluginChangeFailure(change);
     return { ok: change.kind === 'committed', kind: params.actionId.replaceAll('.', '_'),
-      action: request.kind, pluginId, change };
+      action: request.kind, pluginId, change,
+      ...(failure ? { diagnostics: [{ code: failure.code, message: failure.message }] } : {}) };
   }
 
   if (
@@ -427,27 +453,23 @@ export async function executePluginDevLoopAction(
       if (!services.marketplaceIndexService) return {
         ok: false, errorCode: 'account_credentials_unavailable', error: 'account_credentials_unavailable',
       };
-      const result = await requestExactMarketplaceInstall({
-        happyHomeDir: params.happyHomeDir ?? configuration.happyHomeDir,
-        sourceId: readString(source, 'sourceId'),
-        pluginId: readString(source, 'pluginId'),
-        version: readString(source, 'version'),
-        ...(readString(source, 'packageName') ? { packageName: readString(source, 'packageName') } : {}),
+      const change = await (services.requestUserPluginChange ?? requestUserPluginChange)({
+        request: {
+          kind: 'installMarketplace',
+          sourceId: readString(source, 'sourceId'),
+          pluginId: readString(source, 'pluginId'),
+          version: readString(source, 'version'),
+          ...(readString(source, 'packageName') ? { packageName: readString(source, 'packageName') } : {}),
+        },
         // Preparation cannot answer the daemon-issued pending decision. The
         // admitted Action effect applies the user's approval policy below.
         approval: 'none',
-      }, { requestChange: services.requestUserPluginChange, marketplaceIndexService: services.marketplaceIndexService });
-      if (!result.ok) return {
-        ok: false, kind: 'plugins_install', outcome: 'failed',
-        diagnostics: [{ code: result.code, message: result.message }],
-        change: result.code === 'registry_profile_required'
-          ? { kind: 'registryProfileRequired', ...result.requirement }
-          : { kind: 'failed', code: result.code, message: result.message },
-      };
-      if (isPluginPendingReview(result.change)) return await settleApprovedInstallReview(result.change, params, services);
-      return result.change.kind === 'committed'
-        ? { ok: true, kind: 'plugins_install', outcome: 'applied', change: result.change }
-        : projectInstallChangeFailure(result.change, 'The daemon did not apply the plugin install.');
+        ...(params.context?.signal ? { signal: params.context.signal } : {}),
+      });
+      if (isPluginPendingReview(change)) return await settleApprovedInstallReview(change, params, services);
+      return change.kind === 'committed'
+        ? { ok: true, kind: 'plugins_install', outcome: 'applied', change }
+        : projectInstallChangeFailure(change, 'The daemon did not apply the plugin install.');
     }
     const locator = readString(input, 'path');
     const sourceKind = readString(input, 'kind');
@@ -611,7 +633,8 @@ export async function executePluginDevLoopAction(
     return {
       ok: true,
       kind: 'plugins_list',
-      plugins: entries.map(summarizeCatalogEntry),
+      // The admitted input decides the projection; a listing surface asks for the summary.
+      plugins: input.projection === 'summary' ? entries.map(projectPluginCatalogEntrySummary) : entries.map(summarizeCatalogEntry),
       // The daemon is the only pending-decision owner. Project its exact
       // listing beside installed inventory so an Agent can discover the id
       // it must rejoin through plugins.change.status without recreating work.

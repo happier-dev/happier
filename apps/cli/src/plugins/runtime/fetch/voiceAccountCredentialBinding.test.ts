@@ -27,9 +27,7 @@ import {
 import {
     createVoiceCredentialResolver,
 } from '@/daemon/voice/credentials/resolver';
-import {
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-} from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createStablePluginHttpHost as createProductionStablePluginHttpHost } from './service';
 import {
     createVoiceAccountPluginHttpCredentialBindingHost as createUnboundVoiceAccountPluginHttpCredentialBindingHost,
@@ -43,6 +41,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { createPluginRawCredentialAuthorizationInspector, createPluginRawCredentialMaterializer } from '@/plugins/runtime/credentials/rawCredentialMaterializer';
 
 function createVoiceAccountPluginHttpCredentialBindingHost(
     params: Parameters<typeof createUnboundVoiceAccountPluginHttpCredentialBindingHost>[0],
@@ -57,13 +56,6 @@ type TestFetchRequest = Parameters<HttpService['request']>[0] & Readonly<{
     signal?: AbortSignal;
 }>;
 type TestFetchResponse = Awaited<ReturnType<HttpService['request']>>;
-
-/** DNS is a system boundary; this fixture has one declared public origin. */
-const resolveVoiceFixtureNetworkAddresses = async (
-    hostname: string,
-): Promise<readonly string[]> => (
-    hostname === 'voice.example.test' ? ['93.184.216.34'] : []
-);
 
 function createStablePluginHttpHost(
     params: Omit<Parameters<typeof createProductionStablePluginHttpHost>[0], 'adapter'> & Readonly<{
@@ -383,41 +375,11 @@ function definitionWithConnectedAccountSource() {
 }
 
 function networkBinding() {
-    return createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-        'generation-7',
-        'binding-voice',
-        [{
-            required: true,
-            request: {
-                id: 'voice-session-api',
-                capability: 'network',
-                reason: 'Mint a short-lived Voice session artifact',
-                scope: {
-                    targets: [{ kind: 'fixedOrigin', origin: 'https://voice.example.test' }],
-                    methods: ['POST'],
-                },
-            },
-        }],
-    );
+    return createPluginInvocationServiceBinding('generation-7', 'binding-voice');
 }
 
 function catalogNetworkBinding() {
-    return createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-        'generation-7',
-        'binding-voice-catalog',
-        [{
-            required: true,
-            request: {
-                id: 'voice-catalog-api',
-                capability: 'network',
-                reason: 'Read the bounded Voice catalog',
-                scope: {
-                    targets: [{ kind: 'fixedOrigin', origin: 'https://voice.example.test' }],
-                    methods: ['GET'],
-                },
-            },
-        }],
-    );
+    return createPluginInvocationServiceBinding('generation-7', 'binding-voice-catalog');
 }
 
 function catalogRequest(
@@ -478,6 +440,130 @@ function createCatalogService(
 }
 
 describe('Voice account Plugin fetch credential binding', () => {
+    it.each([
+        { relationship: 'owner', grantPresent: false, declaration: 'approved', admitted: true },
+        { relationship: 'recipient', grantPresent: false, declaration: 'approved', admitted: false },
+        { relationship: 'recipient', grantPresent: true, declaration: 'approved', admitted: true },
+        // 2026-10-31 15:38 link-as-grant ruling + 18:47 shared-custodian ruling:
+        // the old recipient-contract digest is not another person's consent.
+        // The custodian grant binds the recipient destination, not the whole
+        // declaration: an added operation keeps it, a moved origin needs consent again.
+        { relationship: 'recipient', grantPresent: true, declaration: 'operationAdded', admitted: true },
+        { relationship: 'recipient', grantPresent: true, declaration: 'destinationMoved', admitted: false },
+        // Linking one's own Saved Secret is the grant; a plugin update's new
+        // scope is confirmed at install/update consent, not per credential use.
+        { relationship: 'owner', grantPresent: false, declaration: 'destinationMoved', admitted: true },
+    ] as const)(
+        'uses shared custody admission for mediated Saved Secrets: $relationship grant=$grantPresent declaration=$declaration',
+        async ({ relationship, grantPresent, declaration, admitted }) => {
+            publishCredential('acme.voice/conversation', 1, `sha256:${'0'.repeat(64)}`);
+            const snapshot = getActiveAccountSettingsSnapshot();
+            if (!snapshot) throw new Error('Expected Voice credential fixture');
+            const voiceSettings = snapshot.settings.voiceSettingsV1;
+            if (!voiceSettings || typeof voiceSettings !== 'object') throw new Error('Expected Voice settings fixture');
+            const resourceId = 'mediated-secret';
+            const ref = `happier:shared-secret:v1:${resourceId}`;
+            setActiveAccountSettingsSnapshot({
+                ...snapshot,
+                // This is an admitted Home catalog fixture. Network hydration
+                // is tested separately; declaration, selection and custody run real.
+                scopeKey: undefined,
+                savedSecretCatalogState: 'ready',
+                savedSecretResources: [{
+                    resourceId, ownerAccountId: 'custodian', relationship,
+                    capabilities: { use: true }, displayName: 'Mediated credential',
+                    kind: 'apiKey', encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+                    storedContent: protocol.sealSavedSecretResourceStoredContentV1({
+                        resourceId, mode: 'plain', content: { v: 1,
+                            name: 'Mediated credential', kind: 'apiKey', value: 'mediated-fixture-key' },
+                    }),
+                }],
+                settings: protocol.accountSettingsParse({
+                    ...snapshot.settings,
+                    voiceSettingsV1: {
+                        ...voiceSettings,
+                        credentialBindings: [{ contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+                            credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
+                            approvedRecipientContractDigest: `sha256:${'0'.repeat(64)}`,
+                            credentialBindings: { account: { api_key: ref }, byMachineId: {} } }],
+                    },
+                }),
+            });
+            const authoritySource = { kind: 'machine_installation' as const,
+                machineId: 'machine-a', installationId: 'installation-a' };
+            const caller = { pluginId: 'acme.voice', machineId: 'machine-a', materializationId: 'materialization-a' };
+            const binding = { manifest: { id: 'acme.voice', contributes: PluginContributesV2Schema.parse({ voiceProviders: [definition] }) },
+                contribution: { pluginId: 'acme.voice', localId: 'conversation' }, realm: 'web' as const,
+                phase: 'prepare' as const, machineId: null, materialization: caller,
+                isRuntimeAuthorityCurrent: () => true };
+            const inspectorInput = { binding, getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+                currentInstallReviewPrincipal: { readCurrent: async () => null },
+                readCurrentGrantAuthoritySource: async () => authoritySource };
+            const rawRequest = { kind: 'httpHeaders' as const, origin: 'https://voice.example.test',
+                headerNames: ['authorization'] };
+            const inspection = await createPluginRawCredentialAuthorizationInspector(inspectorInput)
+                .inspectAuthorization(rawRequest);
+            const grants = { list: vi.fn(async () => ({ grants: grantPresent ? [{
+                v: 1 as const, id: 'custodian-grant', accountId: 'requester', pluginId: 'acme.voice',
+                capability: inspection.capability, targetScope: inspection.targetScope,
+                subject: inspection.subject, authoritySource, status: 'active' as const,
+                grantedByUserId: 'custodian', grantedAt: 1, createdAt: 1, updatedAt: 1,
+            }] : [], pendingRequests: [] })) };
+            const transport = vi.fn(async (request: TestFetchRequest) => response(request));
+            const signal = new AbortController().signal;
+            const currentDefinition = declaration === 'approved' ? definition : {
+                ...definition,
+                credentials: { ...definition.credentials!, hostMediated: { operations: declaration === 'operationAdded'
+                    ? [...definition.credentials!.hostMediated!.operations, {
+                        ...definition.credentials!.hostMediated!.operations[0]!,
+                        id: 'new-operation', purpose: 'voice.new-operation',
+                    }]
+                    : definition.credentials!.hostMediated!.operations.map(operation => operation.id === 'client-auth'
+                        ? { ...operation, request: { ...operation.request, origin: 'https://moved.example.test' } }
+                        : operation) } },
+            };
+            const service = createVoiceAccountOperationService({
+                voiceProviders: [{ pluginId: 'acme.voice',
+                    identity: { pluginId: 'acme.voice', localId: 'conversation' }, definition: currentDefinition,
+                    provenance: 'external' }],
+                provider: { pluginId: 'acme.voice', localId: 'conversation' },
+                kind: 'conversation', phase: 'prepare', realm: 'web',
+                credentialResolver: createVoiceCredentialResolver({ machineId: null,
+                    credentialGrantContext: { caller, grants,
+                        readCurrentGrantAuthoritySource: async () => authoritySource } }),
+                isCurrent: () => true, signal, transport: { request: transport },
+            });
+            const request = service.request({ operationId: 'client-auth', parameters: {}, signal });
+            if (admitted) {
+                await expect(request).resolves.toMatchObject({ status: 200 });
+                expect(transport).toHaveBeenCalledOnce();
+                expect(transport.mock.calls[0]?.[0].headers?.authorization).toBe('Bearer mediated-fixture-key');
+            } else {
+                await expect(request).rejects.toMatchObject({
+                    code: 'plugin_voice_credential_access_unavailable',
+                    details: { grantRequirement: 'approval_required' },
+                });
+                expect(transport).not.toHaveBeenCalled();
+            }
+            expect(grants.list).toHaveBeenCalledTimes(relationship === 'owner' ? 0 : 1);
+            if (grantPresent && declaration === 'approved') {
+                // Inspection permits the existing review record, never raw
+                // disclosure from a mediated-only declaration.
+                await expect(createPluginRawCredentialMaterializer({ ...inspectorInput, grants })
+                    .materialize(rawRequest)).rejects.toMatchObject({ code: 'plugin_voice_provider_result_invalid' });
+                const rawDefinition = { ...definition, credentials: { ...definition.credentials!,
+                    sources: definition.credentials!.sources.map(source => ({ ...source,
+                        rawGrants: [{ realm: 'web' as const, phase: 'prepare' as const, request: rawRequest }] })) } };
+                const raw = createPluginRawCredentialMaterializer({ ...inspectorInput,
+                    binding: { ...binding, manifest: { ...binding.manifest,
+                        contributes: PluginContributesV2Schema.parse({ voiceProviders: [rawDefinition] }) } }, grants });
+                await expect(raw.materialize(rawRequest)).resolves.toMatchObject({
+                    kind: 'httpHeaders', headers: { authorization: 'mediated-fixture-key' },
+                });
+            }
+        },
+    );
+
     it('admits the captured purpose row before selecting a declared Voice operation from existing Settings', async () => {
         const home = await createTempDir('happier-voice-credential-binding-');
         const envScope = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_HOME_DIR', 'HAPPIER_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
@@ -557,7 +643,7 @@ describe('Voice account Plugin fetch credential binding', () => {
     expect(adapter).not.toHaveBeenCalled();
   });
 
-  it('resolves the exact qualified ElevenLabs binding by the canonical recipient contract digest', async () => {
+  it('resolves the exact qualified ElevenLabs binding from linked Account settings', async () => {
         const identity = {
             pluginId: 'happier.voice.elevenlabs',
             localId: 'realtime-elevenlabs',
@@ -609,7 +695,7 @@ describe('Voice account Plugin fetch credential binding', () => {
         expect(adapter).toHaveBeenCalledOnce();
     });
 
-    it('materializes the declared account slot only inside the exact action request', async () => {
+    it('materializes the declared account slot inside the exact action request without a plugin network declaration', async () => {
         publishCredential();
         const adapter = vi.fn(async (request: TestFetchRequest) => (
             request.url.endsWith('/v1/voices')
@@ -773,13 +859,13 @@ describe('Voice account Plugin fetch credential binding', () => {
         await expect(cancelledService.request(request)).rejects.toMatchObject({
             code: 'plugin_fetch_voice_account_operation_cancelled',
         });
-        await expect(bind(
+        expect(() => bind(
             'mint-session',
             new AbortController().signal,
             () => false,
-        ).request(request)).rejects.toMatchObject({
+        )).toThrowError(expect.objectContaining({
             code: 'plugin_final_generation_retired',
-        });
+        }));
         expect(adapter).not.toHaveBeenCalled();
     });
 
@@ -850,131 +936,6 @@ describe('Voice account Plugin fetch credential binding', () => {
         await expect(escapedReflectedArtifactService.request(request)).rejects.toMatchObject({
             code: 'plugin_fetch_voice_client_auth_artifact_invalid',
         });
-    });
-
-    it('refuses an external provider when its declared recipient operations changed after approval', async () => {
-        const sourceSpec = {
-            kind: 'path',
-            locator: '/plugins/acme.voice',
-            trustPolicy: 'local_trusted',
-        } as const;
-        const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
-            package: {
-                pluginId: 'acme.voice',
-                source: { kind: sourceSpec.kind, locator: sourceSpec.locator },
-            },
-            publisher: {
-                trust: 'verified',
-                identity: `${sourceSpec.kind}:${sourceSpec.locator}:${sourceSpec.trustPolicy}`,
-            },
-            contribution: { pluginId: 'acme.voice', localId: 'conversation' },
-            credentials: {
-                slot: definition.credentials!.slot,
-                hostMediated: definition.credentials!.hostMediated!,
-            },
-            presentation: { title: definition.title },
-        });
-        publishCredential(
-            'acme.voice/conversation',
-            1,
-            createRecipientContractDigestV1(recipientContract),
-        );
-        const changedDefinition = {
-            ...definition,
-            credentials: {
-                ...definition.credentials!,
-                hostMediated: {
-                    operations: [
-                        ...definition.credentials!.hostMediated!.operations,
-                        {
-                            ...definition.credentials!.hostMediated!.operations[0]!,
-                            id: 'new-operation',
-                            purpose: 'voice.new-operation',
-                        },
-                    ],
-                },
-            },
-        };
-        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
-        const service = createCatalogService(adapter, {
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, [{
-            pluginId: 'acme.voice',
-            identity: { pluginId: 'acme.voice', localId: 'conversation' },
-            definition: changedDefinition,
-            provenance: 'external',
-            source: { kind: sourceSpec.kind },
-            sourceSpec,
-        }]);
-
-        await expect(service.request(catalogRequest())).rejects.toMatchObject({
-            code: 'plugin_voice_credential_unavailable',
-        });
-        expect(adapter).not.toHaveBeenCalled();
-    });
-
-    it('admits a bundled first-party provider whose declared recipient operations changed after approval', async () => {
-        const identity = {
-            pluginId: 'happier.voice.elevenlabs',
-            localId: 'realtime-elevenlabs',
-        } as const;
-        const approvedDefinition = {
-            ...definition,
-            id: identity.localId,
-            title: 'ElevenLabs Voice',
-        };
-        // The approval the user gave before the release that changed the
-        // bundled provider's mediated operations.
-        publishCredential(
-            'happier.voice.elevenlabs/realtime-elevenlabs',
-            1,
-            createRecipientContractDigestV1(createVoiceProviderRecipientContractFromCredentialsV1({
-                package: {
-                    pluginId: identity.pluginId,
-                    source: { kind: 'bundled', locator: identity.pluginId },
-                },
-                publisher: { trust: 'bundled', identity: 'happier.dev:first-party-bundle' },
-                contribution: identity,
-                credentials: {
-                    slot: approvedDefinition.credentials!.slot,
-                    hostMediated: approvedDefinition.credentials!.hostMediated!,
-                },
-                presentation: { title: approvedDefinition.title },
-            })),
-        );
-        const changedDefinition = {
-            ...approvedDefinition,
-            credentials: {
-                ...approvedDefinition.credentials!,
-                hostMediated: {
-                    operations: [
-                        ...approvedDefinition.credentials!.hostMediated!.operations,
-                        {
-                            ...approvedDefinition.credentials!.hostMediated!.operations[0]!,
-                            id: 'new-operation',
-                            purpose: 'voice.new-operation',
-                        },
-                    ],
-                },
-            },
-        };
-        const adapter = vi.fn(async (request: TestFetchRequest) => response(request, { voices: [] }));
-        const service = createCatalogService(adapter, {
-            signal: new AbortController().signal,
-            isOccurrenceCurrent: () => true,
-        }, [{
-            pluginId: identity.pluginId,
-            identity,
-            definition: changedDefinition,
-            provenance: 'first_party',
-            source: { kind: 'bundled' },
-        }], identity.pluginId);
-
-        await expect(service.request(catalogRequest(identity))).resolves.toMatchObject({
-            status: 200,
-        });
-        expect(adapter).toHaveBeenCalledOnce();
     });
 
     it('lets trusted interceptors inspect credentials while sanitizing adapter failures', async () => {
@@ -1057,6 +1018,14 @@ describe('Voice account Plugin fetch credential binding', () => {
         });
         expect(JSON.stringify(failure)).not.toContain('long-lived-account-secret');
         expect(String(failure)).not.toContain('long-lived-account-secret');
+
+        const redirectingAdapter = vi.fn(async (input: TestFetchRequest): Promise<TestFetchResponse> => ({
+            ...response(input), status: 307, headers: { location: '/next?private=redirect-secret' },
+        }));
+        const redirectFailure = await createService(redirectingAdapter).request(request).catch((error: unknown) => error);
+        expect(redirectFailure).toMatchObject({ code: 'plugin_fetch_redirect_refused' });
+        expect(String(redirectFailure)).not.toContain('redirect-secret');
+        expect(redirectingAdapter).toHaveBeenCalledOnce();
     });
 
     it('lets trusted interceptors inspect and replace a host-materialized credential header', async () => {
@@ -1553,22 +1522,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             surface: 'ui' as const,
             signal,
             isOccurrenceCurrent: () => true,
-        }, createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-            'generation-7',
-            `binding-packed-voice:${phase}`,
-            [{
-                required: true,
-                request: {
-                    id: 'voice-provider-api',
-                    capability: 'network',
-                    reason: 'Read, provision, and authenticate a bounded Voice session',
-                    scope: {
-                        targets: [{ kind: 'fixedOrigin', origin: 'https://voice.example.test' }],
-                        methods: ['GET', 'POST', 'PATCH'],
-                    },
-                },
-            }],
-        ));
+        }, createPluginInvocationServiceBinding('generation-7', `binding-packed-voice:${phase}`));
         const services = Object.freeze({
             settings: bindForHostPhase('settings'),
             prepare: bindForHostPhase('prepare'),

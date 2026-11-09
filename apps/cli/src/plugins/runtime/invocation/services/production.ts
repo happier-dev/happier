@@ -3,20 +3,8 @@ import {
     createTargetActionHostBindingResolver,
     createTargetActionHostPolicyResolver,
 } from '../../hostAccess/resolve';
-import {
-    addConnectedAccountsAvailablePluginInvocationServiceBinding,
-    addMcpAvailablePluginInvocationServiceBinding,
-    createLoggerAndEventsAvailablePluginInvocationServiceBinding,
-    createLoggerEventsAndExecServiceBinding,
-    createLoggerFilesystemAndEventsServiceBinding,
-    createLoggerFilesystemEventsAndExecServiceBinding,
-    createPluginInvocationServicesFactory,
-} from './factory';
-import {
-    resolvePluginInvocationExecutable,
-    withPluginInvocationAccountStorageAvailability,
-    withPluginInvocationServiceBindingAvailability,
-} from './unavailable';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from './factory';
+import { resolvePluginInvocationExecutable } from './unavailable';
 import {
     createPluginInvocationLogger,
     createPluginInvocationSecretRedactor,
@@ -66,7 +54,6 @@ import type {
 } from '../../fetch/service';
 import type { StablePluginResourcesOwner } from './resources';
 import type { PluginStorePaths } from '@/plugins/store/paths';
-import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 import type { ResolvedTargetAction } from '../actionExecutor';
 import type {
     PluginMachineMaterializationRefV1,
@@ -114,7 +101,7 @@ import type {
 } from './actions';
 import type { StableTargetedContributionsOwner } from './targetedContributions';
 import type { StablePluginComposerContentOwner } from './composerContent';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { BackgroundServiceProcessLocalPolicy, PreparedBackgroundServiceProcessLocalServices, PreparedBackgroundServiceProcessOperationServices } from '../../lifecycle/contributions/backgroundServiceProcessServices';
 import { projectBackgroundServiceProcessProxiedServices } from '../../lifecycle/contributions/backgroundServiceProcessPolicy';
 
@@ -192,6 +179,7 @@ function readListenerFailureMessage(error: unknown): string {
 export function createProductionPluginInvocationServiceOwners(params?: Readonly<{
     loggerSink?: PluginInvocationLogSink;
     readSecretSources?(): import('../../lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1 | undefined;
+    resolveRetirementSignal?(pluginId: string): AbortSignal;
     now?: () => number;
     filesystemRoots?: PluginFileSystemRoots;
     resolveFilesystemRoots?: (pluginId: string) => PluginFileSystemRoots | null;
@@ -199,14 +187,13 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
     activePluginIds?: PluginInvocationEventsHost['activePluginIds'];
     eventsBroker?: StablePluginEventsBroker;
     exec?: Readonly<{
+        agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
         readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
         agentCli?: PluginAgentCliReadinessService;
         systemToolsForPlugin?: (pluginId: string) => ExecSystemToolServiceV1;
         resolveExecutable: ResolvePluginExecutable;
         resolvePath: Parameters<typeof createStablePluginExecService>[0]['resolvePath'];
-
-agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
-}>;
+    }>;
     managedServices?: ManagedServicesInvocationOwner;
     providers?: PluginProviderOperationsSource;
     managedServiceCredentialFiles?: ManagedServiceCredentialFileOwner;
@@ -247,12 +234,13 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     accountCredentialAuthority?: Readonly<{
         readCredentials: () => Promise<StoredCredentials | null>;
         actionsSettingsProvider: RuntimeActionSettingsProvider;
+        savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     }>;
     secretDeclarations?: readonly PluginSecretDeclaration[];
-    resolveOptionalAccess?: (pluginId: string) => readonly PluginAccessSelection[];
     isOccurrenceCurrent?: (action: ResolvedTargetAction) => boolean | Promise<boolean>;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
     actionExecutor?: PluginActionsHostExecutor;
+    healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['healthChecks'];
     invokeContributedAction?: InvokeContributedAction;
     targetedContributions?: StableTargetedContributionsOwner;
     composerContent?: StablePluginComposerContentOwner;
@@ -271,8 +259,6 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         pluginId: string,
         signal?: AbortSignal,
     ): Promise<import('@happier-dev/protocol').PluginMachineExecutionOriginV1 | null>;
-
-healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['healthChecks'];
 }>) {
     const attachCurrentPluginCallerResolvers = (
         seed: PluginInvocationServicesSeed,
@@ -280,6 +266,8 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         const pluginId = seed.plugin.id;
         const resolvedSeed = Object.freeze({
             ...seed,
+            ...(!seed.retirementSignal && params?.resolveRetirementSignal
+                ? { retirementSignal: params.resolveRetirementSignal(pluginId) } : {}),
             ...(!seed.resolveCurrentPluginMaterializationRef && params?.resolveCurrentPluginMaterializationRef
                 ? { resolveCurrentPluginMaterializationRef: () => params.resolveCurrentPluginMaterializationRef!(pluginId) } : {}),
             ...(!seed.resolveCurrentPluginExecutionOrigin && params?.resolveCurrentPluginExecutionOrigin
@@ -411,7 +399,9 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         ...(accountCredentialAuthority
             ? {
                 readCredentials: accountCredentialAuthority.readCredentials,
-                accountScopeKey: null,
+                accountScopeKey: accountCredentialAuthority.savedSecretOperationContext?.readSnapshot()?.scopeKey ?? null,
+                ...(accountCredentialAuthority.savedSecretOperationContext
+                    ? { operationContext: accountCredentialAuthority.savedSecretOperationContext } : {}),
             }
             : {}),
     });
@@ -428,18 +418,14 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         ...(daemonSecretCustody ? { daemon: daemonSecretCustody.resolve } : {}),
     });
     const createSecretsHost = (declarations: readonly PluginSecretDeclaration[]) => (
-        declarations.length > 0
-            ? createStableDeclaredPluginSecretsHost({
-                declarations,
-                resolveCustody: secretCustody.resolve,
-            })
-            : null
+        createStableDeclaredPluginSecretsHost({
+            declarations,
+            resolveCustody: secretCustody.resolve,
+        })
     );
-    const secretsHost = params?.secretDeclarations
-        ? createSecretsHost(params.secretDeclarations.filter((entry) => (
-            !accountCredentialAuthority || entry.declaration.custody !== 'account'
-        )))
-        : null;
+    const secretsHost = createSecretsHost((params?.secretDeclarations ?? []).filter((entry) => (
+            !accountCredentialAuthority || !!accountCredentialAuthority.savedSecretOperationContext || entry.declaration.custody !== 'account'
+        )));
     const filesystemRoots = params?.filesystemRoots;
     const notificationsOwner = params?.notifications
         ? createStablePluginNotificationsOwner(params.notifications)
@@ -463,14 +449,13 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         });
     const connectedAccountsHost = params?.connectedAccounts ? createConnectedAccountsHost(params.connectedAccounts) : null;
     const createServicesFactory = createPluginInvocationServicesFactory({
-...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
-
         loggerSink,
         resolveLogger: resolveInvocationLogger,
         secretRedactor,
         events,
         approvals,
         ...(params?.actionExecutor ? { actionExecutor: params.actionExecutor } : {}),
+        ...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
         ...(params?.invokeContributedAction ? { invokeContributedAction: params.invokeContributedAction } : {}),
         ...(params?.targetedContributions ? { targetedContributions: params.targetedContributions } : {}),
         ...(params?.composerContent ? { composerContent: params.composerContent } : {}),
@@ -484,8 +469,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             : {}),
         ...(params?.exec ? { exec: {
             ...params.exec,
-            // Ordinary daemon Actions need the host environment as the input
-            // to ExecService's declared-key filter, just like scoped operations.
+            // Ordinary daemon Actions use the host environment, as scoped operations do.
             environment: Object.freeze(Object.fromEntries(Object.entries(process.env)
                 .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))),
         } } : {}),
@@ -647,8 +631,6 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 })
                 : admittedConnectedAccountsHost;
         return createPluginInvocationServicesFactory({
-...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
-
             loggerSink,
             resolveLogger: resolveInvocationLogger,
             secretRedactor,
@@ -657,12 +639,12 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             ...(params?.actionExecutor ? { actionExecutor: params.actionExecutor } : {}),
             ...(params?.invokeContributedAction ? { invokeContributedAction: params.invokeContributedAction } : {}),
             ...(params?.targetedContributions ? { targetedContributions: params.targetedContributions } : {}),
+            ...(params?.healthChecks ? { healthChecks: params.healthChecks } : {}),
             ...(params?.composerContent ? { composerContent: params.composerContent } : {}),
             filesystemRoots: roots,
             ...(params?.exec ? {
                 exec: {
-...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
-
+                    ...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
                     ...(overrides?.agentLaunchKind ? { agentLaunchKind: overrides.agentLaunchKind } : {}),
                     ...(overrides?.executionKind ? { executionKind: overrides.executionKind } : {}),
                     ...(overrides?.requesterIdentity ? { requesterIdentity: overrides.requesterIdentity } : {}),
@@ -769,140 +751,10 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         resourceOwnersByGenerationKey.set(key, retained);
     };
     let disposePromise: Promise<void> | null = null;
-    const addOrdinaryAvailableServices = (binding: PluginInvocationServiceBinding): PluginInvocationServiceBinding => {
-        return params?.mcp
-            ? addMcpAvailablePluginInvocationServiceBinding(binding)
-            : binding;
-    };
-    const removeUnavailableHttp = (
-        binding: PluginInvocationServiceBinding,
-    ): PluginInvocationServiceBinding => params?.http
-        ? binding.availability.http === 'available'
-            ? binding
-            : Object.freeze({
-                ...withPluginInvocationServiceBindingAvailability(
-                    binding,
-                    { serviceId: 'http', availability: 'available' },
-                ),
-                networkOrigins: binding.networkOrigins ?? Object.freeze([]),
-                networkScopes: binding.networkScopes ?? Object.freeze([]),
-            })
-        : binding.availability.http === 'unavailable'
-            ? binding
-            : withPluginInvocationServiceBindingAvailability(
-                binding,
-                { serviceId: 'http', availability: 'unavailable' },
-            );
-    const removeUnavailableHostBackedServices = (
-        binding: PluginInvocationServiceBinding,
-    ): PluginInvocationServiceBinding => removeUnavailableHttp(binding);
-    const addManagedServicesAvailability = (
-        occurrenceId: string,
-        contributionQualifiedId: string,
-        binding: PluginInvocationServiceBinding,
-    ): PluginInvocationServiceBinding => params?.managedServices?.isAvailable({
-        occurrenceId,
-        contributionQualifiedId,
-    }) === true
-        ? withPluginInvocationServiceBindingAvailability(
-            binding,
-            { serviceId: 'managedServices', availability: 'available' },
-        )
-        : binding;
-    const createOrdinaryServiceBinding = (
-        occurrenceId: string,
-        id: string,
-        hostAccessRequests: readonly Readonly<{
-            request: import('@happier-dev/protocol').PluginHostAccessRequestV2;
-            required: boolean;
-        }>[] = [],
-        contributionQualifiedId = id,
-    ): PluginInvocationServiceBinding => addManagedServicesAvailability(
-        occurrenceId,
-        contributionQualifiedId,
-        addOrdinaryAvailableServices(
-            removeUnavailableHostBackedServices(createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                occurrenceId,
-                id,
-                hostAccessRequests,
-            )),
-        ),
-    );
-    const createTargetServiceBindingForRoots = (
-        roots: PluginFileSystemRoots | undefined,
-        connectedAccountsAvailable = connectedAccountsHost !== null,
-    ): CreatePluginInvocationServiceBinding => (
-        occurrenceId,
-        id,
-        hostAccessRequests = [],
-        contributionQualifiedId = id,
-    ) => {
-        const processDeclarationsAvailable = params?.exec !== undefined;
-        const resolved = roots && processDeclarationsAvailable
-            ? createLoggerFilesystemEventsAndExecServiceBinding(
-                occurrenceId,
-                id,
-                hostAccessRequests,
-                roots,
-                false,
-                params?.exec !== undefined,
-            )
-            : roots
-                ? createLoggerFilesystemAndEventsServiceBinding(
-                    occurrenceId,
-                    id,
-                    hostAccessRequests,
-                    roots,
-                )
-                : processDeclarationsAvailable
-                    ? createLoggerEventsAndExecServiceBinding(
-                        occurrenceId,
-                        id,
-                        hostAccessRequests,
-                        false,
-                        params?.exec !== undefined,
-                    )
-                    : createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                        occurrenceId,
-                        id,
-                        hostAccessRequests,
-                    );
-        const publicFilesystemBinding = addManagedServicesAvailability(
-            occurrenceId,
-            contributionQualifiedId,
-            resolved,
-        );
-        const hostAvailable = connectedAccountsAvailable
-            ? addConnectedAccountsAvailablePluginInvocationServiceBinding(
-                publicFilesystemBinding,
-            )
-            : publicFilesystemBinding;
-        const accountStorageAvailable = params?.accountStorage !== undefined && params.storagePaths !== undefined
-            ? withPluginInvocationAccountStorageAvailability(hostAvailable, 'available')
-            : hostAvailable;
-        return addOrdinaryAvailableServices(removeUnavailableHostBackedServices(accountStorageAvailable));
-    };
-    const createTargetServiceBinding: CreatePluginInvocationServiceBinding = (
-        occurrenceId,
-        id,
-        hostAccessRequests = [],
-        contributionQualifiedId = id,
-    ) => {
-        const pluginId = contributionQualifiedId.split('/', 1)[0] ?? '';
-        const roots = filesystemRoots
-            ?? params?.resolveFilesystemRoots?.(pluginId)
-            ?? undefined;
-        return createTargetServiceBindingForRoots(roots)(
-            occurrenceId,
-            id,
-            hostAccessRequests,
-            contributionQualifiedId,
-        );
-    };
+    const createOrdinaryServiceBinding: CreatePluginInvocationServiceBinding = createPluginInvocationServiceBinding;
+    const createTargetServiceBinding: CreatePluginInvocationServiceBinding = createPluginInvocationServiceBinding;
     const hostPolicyParams = {
-        ...(params?.resolveOptionalAccess ? { resolveOptionalAccess: params.resolveOptionalAccess } : {}),
         createServiceBinding: createTargetServiceBinding,
-        sessionServiceAvailable: params?.sessions !== undefined,
     };
     const resolveHostPolicy = createTargetActionHostPolicyResolver(hostPolicyParams);
     const resolveInvocationHostPolicy = createPluginInvocationHostPolicyResolver(hostPolicyParams);
@@ -916,12 +768,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
     ): Readonly<{ services: PluginServices; binding: PluginInvocationServiceBinding; seed: PluginInvocationServicesSeed; hostAccess: ReturnType<ReturnType<typeof createPluginInvocationHostPolicyResolver>>['hostAccess'] }> => {
         const currentSeed = attachCurrentPluginCallerResolvers(seed);
         const policy = createPluginInvocationHostPolicyResolver({
-            ...(params?.resolveOptionalAccess ? { resolveOptionalAccess: params.resolveOptionalAccess } : {}),
-            createServiceBinding: createTargetServiceBindingForRoots(
-                operation.filesystemRoots,
-                operation.connectedAccountsOwner !== undefined || connectedAccountsHost !== null,
-            ),
-            sessionServiceAvailable: params?.sessions !== undefined,
+            createServiceBinding: createTargetServiceBinding,
         })({
             pluginId: currentSeed.plugin.id,
             occurrenceId: currentSeed.occurrenceId,
@@ -935,16 +782,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 : { executionRealm: operation.executionRealm }),
         });
         const baseBinding = policy.serviceBinding;
-        const binding = operation.managedProviderRuntime
-            && params?.managedServices
-            ? withPluginInvocationServiceBindingAvailability(
-                baseBinding,
-                {
-                    serviceId: 'managedServices',
-                    availability: 'available',
-                },
-            )
-            : baseBinding;
+        const binding = baseBinding;
         retainResourceGeneration(
             'resources' in operation
                 ? operation.resources
@@ -1033,15 +871,13 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             throw new PluginError({ code: 'background_service_process_managed_runtime_unavailable', message: 'Managed provider custody cannot be transferred to a background service child' });
         }
         const roots = operation?.filesystemRoots ?? filesystemRoots ?? params?.resolveFilesystemRoots?.(seed.plugin.id) ?? undefined;
-        const { id, occurrenceId, processEnvKeys } = binding;
+        const { id, occurrenceId } = binding;
         const environment = operation ? operation.environment ?? {} : process.env;
         const localPolicy: BackgroundServiceProcessLocalPolicy = {
             binding: { id, occurrenceId },
             ...(roots ? { filesystemRoots: { pluginData: roots.pluginData, workspace: roots.workspace, projects: [...roots.projects] } } : {}),
-            environment: Object.fromEntries((processEnvKeys ?? []).flatMap((key) => {
-                const value = environment[key];
-                return value === undefined ? [] : [[key, value]];
-            })),
+            environment: Object.fromEntries(Object.entries(environment)
+                .filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
         };
         const systemTools = operation?.systemTools ?? params?.exec?.systemToolsForPlugin?.(seed.plugin.id);
         const http = params?.http;
@@ -1170,7 +1006,6 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
         ): void {
             secretRedactor.completeInvocation(scope);
         },
-        addOrdinaryAvailableServices,
         createOrdinaryServiceBinding,
         createOperationServices,
         prepareBackgroundServiceProcessLocalPolicy,
@@ -1182,8 +1017,7 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 // Consumed Agent readers receive the available operation services, just
                 // like ordinary Agent operations. Their manifest also declares runtime
                 // needs (for example a terminal) that these reads never consume.
-                // Runner admission still refuses unsupported required HostAccess;
-                // individual unavailable services retain their fail-closed bindings.
+                // Each service reports its actual host availability.
                 const local = await prepareBackgroundServiceProcessLocalPolicy(admitted.seed, admitted.binding, processOperation);
                 return { localPolicy: local.localPolicy, services: {
                     ...projectBackgroundServiceProcessProxiedServices(admitted.services),

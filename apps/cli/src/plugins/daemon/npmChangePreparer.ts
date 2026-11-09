@@ -1,9 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { PluginSourceSpecV1, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
-import { pluginCompatibilityProjectionEqualV1 } from '@happier-dev/protocol/plugins/availability/v1';
-import { readMarketplaceRegistryProfileRequirementV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import type { PluginSourceSpecV1, PluginUpdatePolicyV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { NpmArtifactCompatibilityError, resolveAndDownloadNpmArtifact } from '@/plugins/distribution/npm/adapter';
@@ -49,13 +47,13 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import {
   createMarketplaceIndexService,
-  resolveExactMarketplaceSourceBinding,
-  resolveMarketplaceArtifactAccess,
   type MarketplaceRegistrySourcesReaderV1,
+  type MarketplaceRegistryHostV1,
 } from '@/plugins/store/marketplace/service';
 import {
   marketplaceListingMatchesExpected,
   resolveExactMarketplaceListingForInstall,
+  projectExpectedMarketplaceListing,
 } from '@/plugins/store/marketplace/exactInstall';
 
 import {
@@ -181,41 +179,6 @@ function assertMarketplaceRequestMatchesListing(
 }
 
 /**
- * Source targeting before acquisition. The listing the user acted on names a
- * source; that binding is resolved from persisted state before any registry
- * access, so a removed, disabled, or rebound source refuses the change without
- * fetching anything. The full listing is revalidated again at apply, because
- * the source can still move while a human reviews the change.
- */
-async function assertMarketplaceSourceBindingCurrent(
-  happyHomeDir: string,
-  request: Extract<PluginChangeRequest, { kind: 'installNpm' }>,
-  npmRegistryProfiles: NpmRegistryProfileArtifactService,
-  readRegistrySources?: MarketplaceRegistrySourcesReaderV1,
-): Promise<void> {
-  const expected = request.expectedMarketplaceListing;
-  if (!expected) return;
-  const binding = await resolveExactMarketplaceSourceBinding({ happyHomeDir, sourceId: expected.source.id, readRegistrySources });
-  if (!binding.ok
-    || binding.source.origin !== expected.source.kind
-    || binding.source.sourceUrl !== expected.source.sourceUrl
-    || (binding.source.registryProfileId ?? undefined) !== expected.registryProfileId) {
-    throw new NpmRegistryProfileOperationError('source_changed');
-  }
-  // The listing's artifact must be reachable through this Home's own source
-  // binding. When it needs a registry profile that binding does not provide,
-  // the change stops here — before any registry is contacted — naming the
-  // registry to select, rather than failing after the user has reviewed it.
-  const { profiles } = await npmRegistryProfiles.snapshot();
-  const distribution = { packageName: expected.packageName, registryOrigin: expected.registryOrigin };
-  const artifactAccess = resolveMarketplaceArtifactAccess(distribution, profiles, binding.source);
-  const requirement = artifactAccess
-    ? readMarketplaceRegistryProfileRequirementV1({ artifactAccess, ...distribution, profiles })
-    : null;
-  if (requirement) throw new PluginRegistryProfileRequiredError(requirement);
-}
-
-/**
  * A registry that refused this Home's request — anonymously, or with a
  * profile that must be signed in again — is a registry selection the user
  * still owes, not a failed install.
@@ -238,27 +201,39 @@ function registryProfileRequiredFrom(
   });
 }
 
-async function assertMarketplaceListingCurrent(
+async function admitMarketplaceRequest(
   happyHomeDir: string,
-  request: Extract<PluginChangeRequest, { kind: 'installNpm' }>,
+  request: Extract<PluginChangeRequest, { kind: 'installNpm' | 'installMarketplace' }>,
   service?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'queryExactListing'>,
-): Promise<void> {
-  const expected = request.expectedMarketplaceListing;
-  if (!expected) return;
-  // The expected listing carries the untrusted exact distribution facts the
-  // user acted on. They target the source before acquisition — the resolver
-  // asks that one source for that one package — and are revalidated here
-  // against the freshly resolved listing before any artifact is admitted.
+): Promise<Extract<PluginChangeRequest, { kind: 'installNpm' }>> {
+  const expected = request.kind === 'installNpm' ? request.expectedMarketplaceListing : undefined;
+  if (request.kind === 'installNpm' && !expected) return request;
+  const pointer = request.kind === 'installMarketplace' ? request : {
+    sourceId: expected!.source.id, pluginId: expected!.pluginId, packageName: expected!.packageName, version: expected!.version,
+  };
   const result = await resolveExactMarketplaceListingForInstall({
     happyHomeDir,
-    sourceId: expected.source.id,
-    pluginId: expected.pluginId,
-    packageName: expected.packageName,
-    version: expected.version,
+    sourceId: pointer.sourceId,
+    pluginId: pointer.pluginId,
+    ...(pointer.packageName ? { packageName: pointer.packageName } : {}),
+    ...(pointer.version !== undefined ? { version: pointer.version } : {}),
+    ...(expected ? { expectedSourceBinding: expected } : {}),
   }, service);
-  if (!result.ok || !marketplaceListingMatchesExpected(expected, result.resolution.listing)) {
+  if (!result.ok) {
+    if (result.code === 'registry_profile_required') throw new PluginRegistryProfileRequiredError(result.requirement);
+    if (expected) throw new NpmRegistryProfileOperationError('source_changed');
+    throw new DaemonPluginChangePreparationError(result.code, result.message);
+  }
+  if (expected && !marketplaceListingMatchesExpected(expected, result.resolution.listing)) {
     throw new NpmRegistryProfileOperationError('source_changed');
   }
+  const { listing, registryProfileId } = result.resolution;
+  return {
+    kind: 'installNpm', packageName: listing.distribution.packageName, selector: listing.distribution.version,
+    registryOrigin: listing.distribution.registryOrigin,
+    ...(registryProfileId ? { registryProfileId } : {}),
+    expectedMarketplaceListing: projectExpectedMarketplaceListing(listing, registryProfileId),
+  };
 }
 
 function assertStagedCandidateMatchesMarketplaceListing(
@@ -354,12 +329,14 @@ async function cleanupOwnedCandidate(params: Readonly<{
 }
 
 export function createDaemonNpmPluginChangePreparer(params: Readonly<{
+  readDaemonRights?: () => MachineDaemonRightsV1;
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   npmRegistryProfiles?: NpmRegistryProfileArtifactService;
   createClient?: CreateNpmRegistryClient;
   marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'queryExactListing'>;
+  marketplaceRegistryHost?: MarketplaceRegistryHostV1;
   readRegistrySources?: MarketplaceRegistrySourcesReaderV1;
   nowMs?: () => number;
   generationCustodyRetirement?: PluginGenerationCustodyRetirementRemoteDependencies;
@@ -372,7 +349,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
   const createClient = params.createClient ?? createNpmRegistryHttpsClient;
   const nowMs = params.nowMs ?? Date.now;
   const marketplaceIndexService = params.marketplaceIndexService ?? createMarketplaceIndexService({
-    happyHomeDir: params.happyHomeDir, readRegistrySources: params.readRegistrySources,
+    happyHomeDir: params.happyHomeDir, readRegistrySources: params.readRegistrySources, registryHost: params.marketplaceRegistryHost,
   });
   const createMutationStore = (
     onApplied?: (record: PluginRegistryCommitRecord) => void,
@@ -385,12 +362,12 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
     ...(onApplied ? { onApplied } : {}),
   });
 
-  return async (request, context) => {
-    if (request.kind !== 'installNpm') {
-      throw new Error(`Plugin change '${request.kind}' is not implemented by the npm candidate adapter`);
+  return async (input, context) => {
+    if (input.kind !== 'installNpm' && input.kind !== 'installMarketplace') {
+      throw new Error(`Plugin change '${input.kind}' is not implemented by the npm candidate adapter`);
     }
-    assertMarketplaceRequestMatchesListing(request);
-    await assertMarketplaceSourceBindingCurrent(params.happyHomeDir, request, npmRegistryProfiles, params.readRegistrySources);
+    if (input.kind === 'installNpm') assertMarketplaceRequestMatchesListing(input);
+    const request = await admitMarketplaceRequest(params.happyHomeDir, input, marketplaceIndexService);
     const installedUpdate = context?.installedUpdate;
     const requestedUpdatePolicy = installedUpdate?.updatePolicy
       ?? request.expectedMarketplaceListing?.updatePolicy
@@ -448,15 +425,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
       }
       stagedCandidate = staged.candidate;
       assertStagedCandidateMatchesMarketplaceListing(request, staged.candidate);
-      if (
-        downloaded.compatibility?.projection
-        && !pluginCompatibilityProjectionEqualV1(
-          downloaded.compatibility.projection,
-          staged.candidate.compatibilityProjection,
-        )
-      ) {
-        throw new Error('Npm compatibility projection does not match staged archive facts');
-      }
       const availability = createVerifiedPortablePluginInstallationAvailability({
         sourceClass: 'registryPackage',
         archiveDigestSha256: staged.candidate.archiveDigestSha256,
@@ -510,6 +478,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
       });
       preparedGeneration = candidateGeneration;
       const review = projectPluginInstallationReview({
+        daemonRights: params.readDaemonRights?.(),
         manifest: staged.candidate.manifest.value,
         source: {
           kind: 'npm',
@@ -588,7 +557,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
             return { kind: 'failed' as const, code: 'plugin_install_trust_required' };
           }
           try {
-            await assertMarketplaceListingCurrent(params.happyHomeDir, request, marketplaceIndexService);
             const applySnapshot = await registryStateStore.readSnapshot();
             const existingAtApply = applySnapshot.state.plugins[staged.candidate.manifest.id];
             if (
@@ -601,17 +569,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
             ) {
               return { kind: 'conflict' as const, pluginId: staged.candidate.manifest.id };
             }
-            await npmRegistryProfiles.runArtifactRequest(npmArtifactRequestFor(request), async (access) => {
-              if (
-                access.request.registryOrigin !== staged.candidate.source.registryOrigin
-                || access.request.packageName !== staged.candidate.source.packageName
-                || access.request.selection.profileId !== resolvedRegistryProfileId
-              ) {
-                throw new PluginRegistryCandidateConflictError(
-                  `Npm source changed after installation review for '${staged.candidate.manifest.id}'`,
-                );
-              }
-            });
             const approvedAtMs = approval
               ? nowMs()
               : existingAtApply?.install.trust?.approvedAtMs ?? nowMs();

@@ -43,7 +43,7 @@ export function projectBuiltInAgents(params: Readonly<{
     registrationBindings: readonly BundledAgentRegistrationBinding[];
 }>): readonly ResolvedAgentContribution[] {
     indexManifestAgents(params.manifestAgents);
-    const manifestAgentsByIdentity = indexManifestAgentsByIdentity(params.manifestAgents);
+    indexManifestAgentsByIdentity(params.manifestAgents);
     const registrationBindings = indexAgentBindings(params.registrationBindings);
     const compatibilityDefinitionsById = new Map(
         getAllAgentDefinitionContracts().map((definition) => [definition.id, definition]),
@@ -93,13 +93,7 @@ export function projectBuiltInAgents(params: Readonly<{
             catalogEntry,
         } satisfies ResolvedAgentContribution);
     });
-    for (const binding of registrationBindings.byImplementationOwnerId.values()) {
-        if (!manifestAgentsByIdentity.has(manifestAgentKey(
-            binding.identity.pluginId,
-            binding.identity.localId,
-        ))) {
-            throw new Error(`Missing bundled manifest for agent '${binding.implementationOwnerId}'`);
-        }
-    }
+    // Admission owns missing/invalid optional manifests. An executable binding
+    // alone cannot resurrect an excluded Agent or make healthy peers fatal.
     return Object.freeze(projected);
 }
