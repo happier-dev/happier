@@ -4,9 +4,15 @@ import { setPreferredLanguageFromSettings } from '@/text';
 import { preloadTranslations } from '@/text/i18n';
 import { getDefaultModelPackId, listModelPackCatalogEntries } from '@happier-dev/protocol/voice/modelPacks/catalog';
 
-import { getSherpaStreamingSttPackOptions } from './sherpaStreamingSttPacks';
+import { getSherpaStreamingSttPackOptions, getSherpaSttPackOptions } from './sherpaStreamingSttPacks';
 
 describe('sherpaStreamingSttPacks', () => {
+  it('offers the published batch default and smaller streaming alternatives for daemon Dictation', () => {
+    const options = getSherpaSttPackOptions({ streamingOnly: false });
+    expect(options[0]?.id).toBe('sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
+    expect(options.some(option => option.id === getDefaultModelPackId('stt_sherpa'))).toBe(true);
+    expect(getSherpaStreamingSttPackOptions({}).some(option => option.id === options[0]?.id)).toBe(false);
+  });
   afterEach(() => {
     setPreferredLanguageFromSettings(null);
   });

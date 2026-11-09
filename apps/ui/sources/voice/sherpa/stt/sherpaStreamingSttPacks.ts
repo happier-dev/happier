@@ -17,16 +17,16 @@ const SherpaStreamingSttPackOptionSchema = z.object({
   subtitle: z.optional(z.string()),
 });
 
-function getBuiltInOptions(): SherpaStreamingSttPackOption[] {
-  const defaultPackId = getDefaultModelPackId('stt_sherpa');
+function getBuiltInOptions(streamingOnly: boolean): SherpaStreamingSttPackOption[] {
+  const defaultPackId = getDefaultModelPackId('stt_sherpa', streamingOnly ? 'streaming' : 'batch');
   return listModelPackCatalogEntries('stt_sherpa')
     .filter(entry => entry.publicationStatus === 'published'
-      && entry.streamingCapable && entry.runtimeFamily === 'sherpa_zipformer_streaming')
+      && (!streamingOnly || (entry.streamingCapable && entry.runtimeFamily === 'sherpa_zipformer_streaming')))
     .sort((a, b) => Number(b.packId === defaultPackId) - Number(a.packId === defaultPackId))
     .map(entry => ({
       id: entry.packId,
       title: formatModelPackDisplayName(entry),
-      ...(entry.packId === defaultPackId
+      ...(entry.packId === defaultPackId && streamingOnly
         ? { subtitle: t('settingsVoice.local.models.nativeOptions.sherpaStreamingRecommendedSubtitle') }
         : {}),
     }));
@@ -45,6 +45,13 @@ function readOptionsFromEnv(env: Record<string, string | undefined>): SherpaStre
 }
 
 export function getSherpaStreamingSttPackOptions(env: Record<string, string | undefined> = process.env): SherpaStreamingSttPackOption[] {
+  return getSherpaSttPackOptions({ streamingOnly: true }, env);
+}
+
+export function getSherpaSttPackOptions(
+  options: { streamingOnly: boolean },
+  env: Record<string, string | undefined> = process.env,
+): SherpaStreamingSttPackOption[] {
   const fromEnv = readOptionsFromEnv(env);
-  return fromEnv && fromEnv.length > 0 ? fromEnv : getBuiltInOptions();
+  return options.streamingOnly && fromEnv && fromEnv.length > 0 ? fromEnv : getBuiltInOptions(options.streamingOnly);
 }

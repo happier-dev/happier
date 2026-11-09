@@ -5,7 +5,7 @@ import {
 } from '@/voice/settings/panels/modelPack/modelPackTransferRows';
 import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
+import { useVoiceSttPurpose, useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
 
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -18,7 +18,7 @@ import { t } from '@/text';
 import { useLocalNeuralModelPackState } from '@/voice/settings/panels/localTts/useLocalNeuralModelPackState.native';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
-import { getSherpaStreamingSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
+import { getSherpaSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -33,15 +33,16 @@ export function LocalNeuralSttSettings(props: {
   hideLanguage?: boolean;
 }) {
   const settings = useVoiceSttSettingRefs();
+  const purpose = useVoiceSttPurpose();
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'packId' | 'language'>(null);
   const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
     requestedExecution: props.cfg.localNeural.execution,
   }), [props.cfg.localNeural.execution]);
 
-  const packOptions = getSherpaStreamingSttPackOptions();
-  const effectivePackId = props.cfg.localNeural.assetId ?? packOptions[0]?.id ?? null;
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
+  const packOptions = getSherpaSttPackOptions({ streamingOnly: purpose !== 'dictation' || !usesDaemonExecution });
+  const effectivePackId = props.cfg.localNeural.assetId ?? packOptions[0]?.id ?? null;
 
   const setLocalNeural = (patch: Partial<VoiceLocalSttSettings['localNeural']>) => {
     props.setCfg({

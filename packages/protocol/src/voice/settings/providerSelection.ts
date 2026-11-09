@@ -1,6 +1,7 @@
 import type { VoiceSettings } from './voiceSettings.js';
 import { VoiceProviderSettingsJsonValueV1Schema, type VoiceProviderSettingsJsonValueV1 } from '../realtime/providerSettings.js';
 import type { VoiceReadinessRole } from '../realtime/capabilities.js';
+import { getDefaultModelPackId } from '../modelPacks/catalog.js';
 
 import {
   isVoiceProviderSettingsProjectionCurrent,
@@ -92,6 +93,7 @@ export function applyVoiceDictationEngineChoice(
   settings: VoiceSettings,
   registry: VoiceSettingsRegistry,
   choice: string,
+  neuralExecution: 'device' | 'daemon' = settings.dictation.stt.localNeural.execution === 'device' ? 'device' : 'daemon',
 ): VoiceSettings | null {
   if (choice === 'same_as_local') return {
     ...settings, dictation: { ...settings.dictation, sttBinding: 'same_as_local' },
@@ -102,7 +104,12 @@ export function applyVoiceDictationEngineChoice(
     ...selected,
     dictation: {
       ...settings.dictation, sttBinding: 'explicit',
-      stt: { ...settings.dictation.stt, provider: choice },
+      stt: {
+        ...settings.dictation.stt, provider: choice,
+        localNeural: choice === 'local_neural' && settings.dictation.stt.localNeural.assetId === null
+          ? { ...settings.dictation.stt.localNeural, assetId: getDefaultModelPackId('stt_sherpa', neuralExecution === 'daemon' ? 'batch' : 'streaming') }
+          : settings.dictation.stt.localNeural,
+      },
     },
   };
 }

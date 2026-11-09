@@ -6,7 +6,10 @@ import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInferen
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
+import { useVoiceSttPurpose, useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { getSherpaSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
+import { t } from '@/text';
 import { LocalNeuralSttLanguageItem } from './LocalNeuralSttLanguageItem';
 
 export function LocalNeuralSttSettings(props: {
@@ -17,12 +20,15 @@ export function LocalNeuralSttSettings(props: {
   hideLanguage?: boolean;
 }) {
   const settings = useVoiceSttSettingRefs();
+  const purpose = useVoiceSttPurpose();
+  const [packOpen, setPackOpen] = React.useState(false);
   const [languageOpen, setLanguageOpen] = React.useState(false);
   const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
     requestedExecution: props.cfg.localNeural.execution,
     platformOs: 'web',
   }), [props.cfg.localNeural.execution]);
   const execution = executionPolicy.selectableExecution as 'auto' | 'daemon';
+  const packOptions = getSherpaSttPackOptions({ streamingOnly: purpose !== 'dictation' });
   return (
     <>
       <SettingAnchor setting={settings.sttExecution}>
@@ -39,6 +45,28 @@ export function LocalNeuralSttSettings(props: {
         popoverBoundaryRef={props.popoverBoundaryRef}
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
+      </SettingAnchor>
+      <SettingAnchor setting={settings.sttAssetId}>
+        <DropdownMenu
+          open={packOpen}
+          onOpenChange={setPackOpen}
+          variant="selectable"
+          search={false}
+          selectedId={props.cfg.localNeural.assetId ?? ''}
+          showCategoryTitles={false}
+          rowKind="item"
+          popoverBoundaryRef={props.popoverBoundaryRef}
+          itemTrigger={{
+            title: t('settingsVoice.local.localNeuralStt.modelPack.title'),
+            subtitle: t('settingsVoice.local.localNeuralStt.modelPack.subtitle'),
+            showSelectedSubtitle: false,
+          }}
+          items={packOptions}
+          onSelect={(assetId) => {
+            props.setCfg({ ...props.cfg, localNeural: { ...props.cfg.localNeural, assetId } });
+            setPackOpen(false);
+          }}
+        />
       </SettingAnchor>
       {props.hideLanguage ? null : <LocalNeuralSttLanguageItem
         language={props.cfg.localNeural.language}

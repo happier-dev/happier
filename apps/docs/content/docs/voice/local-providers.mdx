@@ -456,16 +456,19 @@ build these download to the device, where you can configure:
 
 That is Local voice's genuinely on-device speech-to-text option: no external server, and
 no audio leaving the device. On web the same provider runs on the daemon instead, under
-the **Machine speech** feature, and only offers an execution choice and a
-daemon-side model pack.
+the **Machine speech** feature, with an execution choice, model picker and
+daemon-side download controls.
 
-In 0.3 development, the default Machine speech-to-text pack is the June 2023
+In 0.3 development, choosing Local neural for a new daemon Dictation setup selects
+Parakeet v3 (0.6B, int8). It supports 25 languages including French, with a
+487.2 MB archive and about 670.5 MB of model files. Models download only when you
+choose to install them through the existing download controls.
+
+Streaming Voice conversations and native-device recognition retain June 2023
 English Zipformer (chunk-16/left-128, int8), about 72.7 MB including notices.
-It supports both streaming Voice conversations and batch dictation. Models download
-only when you choose to install them. Existing explicit model selections, including
-the smaller February 2023 20M pack, stay selected; changing the default does not
-replace an installed model. Parakeet packs remain optional catalog entries, rather
-than the default, and require a published pack and runtime support before use.
+June stays selectable as the smaller Dictation option. Existing June setups,
+including those without an explicit model choice, and other saved model choices
+stay selected; this change does not replace or download an installed model.
 
 ## Model downloads, updates, and storage
 

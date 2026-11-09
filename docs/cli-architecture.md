@@ -3614,18 +3614,22 @@ pack is retained; otherwise a published matching pack is selected. Missing model
 files return `model_not_installed`; a language with no matching pack for the
 requested batch or streaming mode returns `runtime_unavailable`. An English
 pack is never substituted for an explicitly requested French language.
-The 0.3 development STT default is the published
+The 0.3 development streaming and native-device STT default is the published
 `sherpa-onnx-streaming-zipformer-en-2023-06-26` pack (chunk-16/left-128 int8,
 72,703,581 bytes including notices), using the existing
-`sherpa_zipformer_streaming` runtime family for streaming conversations and batch
-dictation. `voice/modelPacks/catalog.ts` owns the default; the Local STT settings
-schema and Dictation's shared STT schema resolve through it. Explicit persisted
-pack choices are preserved, including the still-published February 2023 20M pack.
+`sherpa_zipformer_streaming` runtime family. New daemon Dictation neural-engine
+selections default to `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` for batch
+recognition. `voice/modelPacks/catalog.ts` owns both defaults; Dictation's engine
+selection materializes the appropriate model using the host execution policy.
+Existing selections, including June rows with an implicit/missing model, retain
+June; explicit persisted pack choices, including February 2023 20M, are preserved.
 No model is installed automatically; the Settings installer fetches the canonical
-integrity-declared manifest. In 0.3 development, Parakeet TDT 0.6B v3 int8 is an
-optional multilingual **batch** STT pack through the same installer and daemon
+integrity-declared manifest. In 0.3 development, Parakeet TDT 0.6B v3 int8 is
+the multilingual **batch** STT default through the same installer and daemon
 runtime. It does not provide streaming partials or replace the conversation
-default. Its normalized files, CC-BY-4.0 license and attribution notice are
+default. Its archive is 487,170,055 bytes and its normalized files total
+670,498,712 bytes. June remains selectable as the smaller option. Parakeet's
+normalized files, CC-BY-4.0 license and attribution notice are
 published in the existing model-packs release. Parakeet v2 remains unavailable.
 Catalog language codes and compressed upstream archive bytes are distinct from
 the normalized install transfer size, loaded model-file bytes and process memory.

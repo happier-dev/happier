@@ -12,6 +12,15 @@ import {
 } from './catalog.js';
 
 describe('MODEL_PACK_CATALOG', () => {
+  it('defaults daemon batch recognition to published multilingual Parakeet while retaining June for streaming and native', () => {
+    const packId = getDefaultModelPackId('stt_sherpa', 'batch');
+    expect(packId).toBe('sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8');
+    expect(getModelPackCatalogEntry(packId!)).toMatchObject({
+      publicationStatus: 'published', streamingCapable: false,
+      sizeBytes: 670_498_712, languages: expect.arrayContaining(['fr', 'en']),
+    });
+    expect(getDefaultModelPackId('stt_sherpa')).toBe('sherpa-onnx-streaming-zipformer-en-2023-06-26');
+  });
   it('owns distinct human display names for every selectable pack, including Parakeet v3', () => {
     const entries = listModelPackCatalogEntries();
     for (const entry of entries) {

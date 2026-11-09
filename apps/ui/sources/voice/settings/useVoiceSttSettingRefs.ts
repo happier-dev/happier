@@ -13,8 +13,12 @@ const dictationSttSettings = {
 };
 
 /** Shared recognizer rows retain the identity of the intent page that renders them. */
+export function useVoiceSttPurpose(): 'dictation' | 'conversation' {
+    return usePathname() === SETTINGS_ROUTES.voiceDictation ? 'dictation' : 'conversation';
+}
+
 export function useVoiceSttSettingRefs() {
-    return usePathname() === SETTINGS_ROUTES.voiceDictation
+    return useVoiceSttPurpose() === 'dictation'
         ? dictationSttSettings
         : VOICE_CONVERSATIONS_SETTINGS.settings;
 }

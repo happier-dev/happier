@@ -52,6 +52,7 @@ export type LocalConversationPreferencePath = Exclude<ScalarPaths<VoiceLocalConv
 export function createVoiceSettingBindingsV1<T extends {voice: VoiceSettings}>(input: Readonly<{
  owner: VoiceSettingsOwner; registry: VoiceProviderRegistry; unavailableValue: unknown;
  captureLanguageOwner?: (providerId: string | null, registry: VoiceProviderRegistry) => ((voice: VoiceSettings) => boolean);
+ resolveDictationNeuralExecution?: (requested: VoiceSettings['dictation']['stt']['localNeural']['execution']) => 'device' | 'daemon';
 }>) {
  const { owner, registry: choiceRegistry, unavailableValue: SETTING_VALUE_UNAVAILABLE } = input;
  const { CanonicalVoiceSettingsSchema, readVoiceProviderSettingsConfig, readLocalConversationVoiceSettings, readLocalDirectVoiceSettings, writeLocalConversationVoiceSettings, writeLocalDirectVoiceSettings } = owner;
@@ -190,7 +191,8 @@ function voiceSettingBinding(path: VoicePreferencePath): VoiceSettingBindingV1<T
                 ? { success: true, value } : { success: false };
         },
         mutate: (settings, value) => {
-            const voice = typeof value === 'string' && applyVoiceDictationEngineChoice(settings.voice, choiceRegistry, value);
+            const voice = typeof value === 'string' && applyVoiceDictationEngineChoice(settings.voice, choiceRegistry, value,
+                input.resolveDictationNeuralExecution?.(settings.voice.dictation.stt.localNeural.execution));
             return voice ? { voice } : null;
         },
     };

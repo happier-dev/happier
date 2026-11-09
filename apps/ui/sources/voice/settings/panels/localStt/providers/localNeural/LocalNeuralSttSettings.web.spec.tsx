@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
@@ -8,12 +8,34 @@ import { t } from '@/text';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+
+const route = vi.hoisted(() => ({ pathname: '/' }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
+    .createExpoRouterMock({ pathname: () => route.pathname }).module);
 
 afterEach(standardCleanup);
+beforeEach(() => { route.pathname = '/'; });
 
 const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.web');
 
 describe('LocalNeuralSttSettings (web)', () => {
+    it('allows choosing the smaller June pack without changing execution or language', async () => {
+        route.pathname = SETTINGS_ROUTES.voiceDictation;
+        const cfg = { provider: 'local_neural' as const, localNeural: {
+            assetId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8', language: 'fr', execution: 'daemon' as const,
+        } };
+        const setCfg = vi.fn();
+        const { tree } = await renderScreen(<LocalNeuralSttSettings cfg={cfg} setCfg={setCfg} />);
+        const picker = tree.root.findAllByType(DropdownMenu).find(node => node.props.selectedId === cfg.localNeural.assetId);
+        expect(picker).toBeDefined();
+        expect(picker!.props.items.some((item: { id: string }) => item.id === cfg.localNeural.assetId)).toBe(true);
+        const june = 'sherpa-onnx-streaming-zipformer-en-2023-06-26';
+        expect(picker!.props.items.some((item: { id: string }) => item.id === june)).toBe(true);
+        await act(async () => { picker!.props.onSelect(june); });
+        expect(setCfg).toHaveBeenCalledTimes(1);
+        expect(setCfg).toHaveBeenCalledWith({ ...cfg, localNeural: { ...cfg.localNeural, assetId: june } });
+    });
     it('changes the daemon recognizer language while retaining its pack and execution target', async () => {
         const cfg = { provider: 'local_neural' as const, localNeural: {
             assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17', language: 'en', execution: 'daemon' as const,

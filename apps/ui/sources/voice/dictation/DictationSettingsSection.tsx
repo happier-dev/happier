@@ -38,6 +38,7 @@ import type {
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { applyVoiceDictationEngineChoice } from '@/voice/registry/providerSelection';
+import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { inspectVoiceDictationSettingsReadiness, projectVoiceRawSpeechReadinessTargets } from '@/voice/settings/voiceProviderReadinessInspection';
@@ -248,7 +249,8 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   ];
   const selectEngine = (id: string) => {
     if (id === selectedId) return;
-    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id);
+    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id,
+      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution }).preferredExecution);
     if (!voice) return;
     setReadinessCheck((current) => current?.status === 'checking' ? current : null);
     props.setVoice(voice);
@@ -266,7 +268,8 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   /** What choosing this engine would need, from the same readiness owner as the card. Only the page asks. */
   const readinessForEngine = (id: string): VoiceRoleReadiness | null => {
     if (id === selectedId) return readiness;
-    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id);
+    const voice = applyVoiceDictationEngineChoice(props.voice, voiceProviderRegistry, id,
+      resolveLocalNeuralExecutionPolicy({ requestedExecution: props.voice.dictation.stt.localNeural.execution }).preferredExecution);
     return voice ? projectReadiness({ ...accountSettings, voice }) : null;
   };
 

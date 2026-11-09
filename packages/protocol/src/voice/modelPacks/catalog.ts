@@ -28,6 +28,8 @@ type ModelPackCatalogEntryBase = Readonly<{
   displayName: string;
   /** When set, this entry is the default pack for the given kind. */
   defaultFor?: ModelPackKind;
+  /** Default for recorded/batch recognition; streaming consumers retain defaultFor. */
+  batchDefaultFor?: ModelPackKind;
   /** Archive download URL, or null until a published manifest supplies it. */
   archiveUrl: string | null;
   /** Whether the pack supports streaming inference. */
@@ -89,7 +91,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
-    displayName: 'Zipformer English (2023-06-26)',
+    displayName: 'Zipformer English (2023-06-26, smaller)',
     languages: ['en'],
     runtimeFamily: 'sherpa_zipformer_streaming',
     defaultFor: 'stt_sherpa',
@@ -169,6 +171,7 @@ export const MODEL_PACK_CATALOG = [
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     displayName: 'Parakeet v3 (0.6B, int8)',
+    batchDefaultFor: 'stt_sherpa',
     // NVIDIA model card, revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b.
     languages: ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'],
     // k2-fsa/sherpa-onnx asr-models asset 283097583 (verified 2026-10-30).
@@ -238,7 +241,11 @@ export function listModelPackCatalogEntries(kind?: ModelPackKind): readonly Mode
   return kind ? CATALOG_ENTRIES.filter((entry) => entry.kind === kind) : CATALOG_ENTRIES;
 }
 
-export function getDefaultModelPackId(kind: ModelPackKind): string | null {
+export function getDefaultModelPackId(kind: ModelPackKind, mode: 'streaming' | 'batch' = 'streaming'): string | null {
+  if (mode === 'batch') {
+    const batchDefault = CATALOG_ENTRIES.find(entry => entry.batchDefaultFor === kind);
+    if (batchDefault) return batchDefault.packId;
+  }
   return CATALOG_ENTRIES.find((entry) => entry.defaultFor === kind)?.packId ?? null;
 }
 

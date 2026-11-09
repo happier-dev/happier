@@ -7,6 +7,7 @@ import { createVoiceSettingBindingsV1 } from '@happier-dev/protocol/voice/settin
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import { rebaseVoiceSettingsEdit } from './voiceSettingsEdit';
+import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 
 /** The mounted editor's one compound edit uses the same admitted Account CAS as field Actions. */
 export const voiceSettingsEditBinding = {
@@ -31,6 +32,7 @@ const registry = createDefaultVoiceProviderRegistry();
 export const { voiceServiceChoiceBinding, voiceConversationLanguageBinding, voiceSettingBinding, voiceLocalConversationBinding, voiceGreetingBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, updateVoiceConversationLanguagePreference, updateVoiceLocalConversationSetting,
  voiceMemoryRestoreBinding, resolveVoiceMemoryRestoreChoice, applyVoiceMemoryRestoreChoice, voiceExecutionMachineBinding, voiceDiagnosticsCaptureBinding } = createVoiceSettingBindingsV1<Settings>({
  owner: voiceSettingsOwner, registry, unavailableValue: SETTING_VALUE_UNAVAILABLE,
+ resolveDictationNeuralExecution: requestedExecution => resolveLocalNeuralExecutionPolicy({ requestedExecution }).preferredExecution,
  captureLanguageOwner: (providerId, capturedRegistry) => captureConversationLanguagePreferenceOwner(providerId, capturedRegistry as VoiceProviderRegistry),
 });
 export type { LocalConversationPreferencePath } from '@happier-dev/protocol/voice/settings/voiceSettingBindings';
