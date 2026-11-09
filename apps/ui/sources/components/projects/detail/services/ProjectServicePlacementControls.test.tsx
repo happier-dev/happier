@@ -149,6 +149,16 @@ async function setup(options: Readonly<{
       status,
       headers: { 'Content-Type': 'application/json' },
     });
+  const setupInspection = options.setupReview ? {
+    definition: { basis: { kind: 'absent' }, document: null },
+    detection: { entries: [], diagnostics: [], toolchains: [], devcontainers: [], coverage: 'complete' },
+    importCandidates: [], setupReview: options.setupReview,
+  } : null;
+  const inspectionBoundary = setupInspection ? await createExternalActionAccountHttpBoundary({
+    serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
+    accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.inspect', tokenEpoch: 0,
+    requesterInvocation: 'none', execute: () => setupInspection,
+  }) : null;
   const moveBoundary = options.onMove ? await createExternalActionAccountHttpBoundary({
     serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
     accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.service.relocate', tokenEpoch: 0,
@@ -168,6 +178,8 @@ async function setup(options: Readonly<{
         }
         const moveResponse = await moveBoundary?.handle(new URL(path, 'https://service-placement-ui.test'), init);
         if (moveResponse) return moveResponse;
+        const inspectionResponse = await inspectionBoundary?.handle(new URL(path, 'https://service-placement-ui.test'), init);
+        if (inspectionResponse) return inspectionResponse;
         if (path === '/v1/artifacts/read') {
           const request = JSON.parse(String(init?.body)) as { artifactIds: string[]; projection?: string };
           if (request.projection !== 'headers') options.artifactBodyReads?.push(...request.artifactIds);
@@ -297,11 +309,7 @@ async function setup(options: Readonly<{
   const workerStatusMethod = getActionSpec('projects.worker.status').bindings?.rpcMethod;
   if (!workerStatusMethod) throw new Error('missing_worker_status_method');
   remote.mockImplementation(async ({ machineId, method, payload: params }) => {
-    if (method === getActionSpec('projects.inspect').bindings?.rpcMethod && options.setupReview) return {
-      definition: { basis: { kind: 'absent' }, document: null },
-      detection: { entries: [], diagnostics: [], toolchains: [], devcontainers: [], coverage: 'complete' },
-      importCandidates: [], setupReview: options.setupReview,
-    };
+    if (method === getActionSpec('projects.inspect').bindings?.rpcMethod && setupInspection) return setupInspection;
     if (options.liveFeeds && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
     if (options.liveFeeds && (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT
       || method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)) return {
@@ -507,7 +515,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const h = await setup({ running: true, waiveMoveApproval: false, setupReview, onMove: input => moves.push(input) });
     try {
       await h.choose('hz-build-1');
-      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.setup')).toBeTruthy());
+      await vi.waitFor(() => expect(h.screen.findAllHostsByTestId('placement.move.setup'), h.screen.getTextContent()).not.toHaveLength(0));
       expect(h.screen.getTextContent()).toContain('echo install-on-destination');
       expect(h.screen.findAllHostsByTestId('placement.move.confirm')).toHaveLength(1);
       expect(moves).toEqual([]);
@@ -515,7 +523,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(moves).toEqual([]);
       expect(h.screen.findAllHostsByTestId('placement.move.confirm')).toHaveLength(0);
       await h.choose('hz-build-1');
-      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.setup')).toBeTruthy());
+      await vi.waitFor(() => expect(h.screen.findAllHostsByTestId('placement.move.setup'), h.screen.getTextContent()).not.toHaveLength(0));
       await h.screen.pressByTestIdAsync('placement.move.confirm');
       await vi.waitFor(() => expect(moves).toHaveLength(1));
       expect(moves[0]).toMatchObject({ setupReview });

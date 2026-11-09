@@ -56,7 +56,7 @@ describe('Project command approval facts', () => {
     } });
     expect(presentation).toMatchObject({ kind: 'service', setupReview, destination: { kind: 'machine', machineId: 'worker' } });
     if (!presentation) throw new Error('Missing Move review');
-    expect(describeProjectCommandApprovalDecisions(presentation).approve).toBe('Move');
+    expect(describeProjectCommandApprovalDecisions(presentation).approve).toBe('Move service');
     const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
     expect(screen.getTextContent()).toContain('install on destination');
     await screen.unmount();

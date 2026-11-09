@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -607,7 +608,9 @@ describe('accepted Project Service declaration starter', () => {
                 if (!publishedMachine) throw new Error(`Unknown fixture Machine path: ${path}`);
                 return { status: 200, data: { machine: {
                     ...machines.find(machine => machine.id === publishedMachine.machineId),
-                    metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
+                    metadata: encodePlainMachineStoredContent({ host: publishedMachine.machineId, platform: process.platform,
+                        arch: process.arch, happyCliVersion: 'test', homeDir: root, happyHomeDir: root }),
+                    metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
                 } } };
             }
             return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
