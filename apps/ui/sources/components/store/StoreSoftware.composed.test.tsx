@@ -29,6 +29,8 @@ import type { StoreSoftwareEntryState } from './StoreSoftwareEntry';
 import type { ManagedInventoryQuery } from './inventory/useManagedInventory';
 
 const homes = createHomeGovernanceHarness();
+// The renderer has no native measurements; expose the same viewport as the Search composed harness.
+vi.mock('@/components/ui/popover/measure', () => ({ measureInWindow: async () => ({ x: 0, y: 0, width: 800, height: 600 }) }));
 installHomeGovernanceBoundaries(homes);
 vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
 const network = await installSessionOpsNetworkBoundary();
@@ -46,6 +48,24 @@ const { StoreKindScreen } = await import('./StoreKindScreen');
 const { getServerProfileById, resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { SoftwareListing } = await import('./StoreSoftwarePage');
 let disposeLoader: (() => void) | undefined;
+
+// Native layout boundary: page-virtualized collections need the viewport a real host reports.
+const searchContentNode = {};
+let searchContentRevision = 4000;
+const searchRenderOptions = { createNodeMock: (node: Readonly<{ type: unknown }>) => node.type === 'ScrollView'
+    ? { getInnerViewRef: () => searchContentNode, scrollTo: () => {} } : node.type === 'View' ? {} : null };
+async function expectSearchRow(screen: Awaited<ReturnType<typeof renderScreen>>, rowID: string) {
+    await waitForHomeGovernance(async () => {
+        await act(async () => {
+            for (const node of screen.root.findAll(candidate => typeof candidate.props.onScroll === 'function' && typeof candidate.props.onLayout === 'function')) {
+                node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 900 } } });
+                node.props.onContentSizeChange?.(800, ++searchContentRevision);
+            }
+        });
+        await flushHookEffects();
+        expect(screen.findAllHostsByTestId(rowID).length).toBeGreaterThan(0);
+    });
+}
 
 const ref = { pluginId: 'example.software', recipeId: 'package', revision: '3' };
 const recipe = PluginProjectedMachineRecipeEntryV1Schema.parse({
@@ -226,11 +246,11 @@ it('searches Software on the explicitly routed Machine without reading any of th
             filters: JSON.stringify({ kind: { include: ['software'], exclude: [] } }) } }}
         navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
         <AppPaneProvider><StoreSearchPage presented /></AppPaneProvider>
-    </DestinationInstanceHost>);
+    </DestinationInstanceHost>, searchRenderOptions);
     await waitForHomeGovernance(() => expect({ text: screen.getTextContent(),
         targets: network.requests.map(request => request.targetId) }).toMatchObject({ targets: ['machine-0'] }));
     const rowID = `store.kind.search.row.${actionInputOptionValueKey(ref)}`;
-    expect(screen.findAllByTestId(rowID).length).toBeGreaterThan(0);
+    await expectSearchRow(screen, rowID);
     expect(screen.findAllByTestId(`${rowID}.add`).length).toBeGreaterThan(0);
 });
 
@@ -588,8 +608,9 @@ it('prepares one full-target review then submits one public Apply without execut
         sources: value.sources.map(source => source.kind !== 'direct' ? source : { ...source, setup: { ...source.setup,
             scripts: [...(source.setup.scripts ?? []), { body: 'echo changed' }] } }),
     })) };
-    expect(await createFrontDoorActionExecute().confirmed('machines.setup.apply', changedInput, { surface: 'ui',
-        serverId: homeId, expectedAccountId: 'alice', presentUserConfirmation: confirmation })).toMatchObject({
+    const changedOutcome = await createFrontDoorActionExecute().confirmed('machines.setup.apply', changedInput, { surface: 'ui',
+        serverId: homeId, expectedAccountId: 'alice', presentUserConfirmation: confirmation });
+    expect(changedOutcome, JSON.stringify(changedOutcome)).toMatchObject({
         ok: true, result: { kind: 'approval_request_created' },
     });
     expect(applied).toHaveLength(1);
@@ -713,7 +734,7 @@ it('lets mixed-kind Search choose the one Machine whose Software it includes, wr
             <AppPaneProvider><StoreSearchPage presented /></AppPaneProvider>
         </DestinationInstanceHost>;
     }
-    const screen = await renderScreen(<Page />);
+    const screen = await renderScreen(<Page />, searchRenderOptions);
     // The shared chip owner the chooser renders.
     const chooser = () => screen.root.findAll(node => node.props.filter?.testID === 'store.search.software.machine')[0];
     await waitForHomeGovernance(() => expect(chooser()).toBeDefined());
@@ -725,5 +746,5 @@ it('lets mixed-kind Search choose the one Machine whose Software it includes, wr
     await waitForHomeGovernance(() => expect(network.requests.map(request => request.targetId)).toEqual(['machine-0']));
     expect(chooser()!.props.filter.selectedId).toBe('machine-0');
     const rowID = `store.kind.search.row.${actionInputOptionValueKey(ref)}`;
-    await waitForHomeGovernance(() => expect(screen.findAllByTestId(rowID).length).toBeGreaterThan(0));
+    await expectSearchRow(screen, rowID);
 });

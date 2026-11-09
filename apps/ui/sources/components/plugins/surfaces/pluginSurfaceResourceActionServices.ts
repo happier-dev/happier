@@ -4,6 +4,7 @@ import type { PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtim
 import type { PluginUiClientExecutableRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { randomUUID } from '@/platform/randomUUID';
 import { dispatchPluginSurfaceAction, type DispatchPluginSurfaceActionInput } from './pluginSurfaceActionDispatch';
 import { observePluginSurfaceActionRead } from './pluginSurfaceActionReadObservation';
 
@@ -33,6 +34,7 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
             expectedAccountId: accountLifetime.scope.accountId,
             defaultSessionId: input.context.kind === 'session' ? input.context.sessionId : undefined,
             sessionTargetsV1: undefined,
+            resourceActionInvocation: undefined,
         },
     };
     const isCurrent = () => !lifetime.signal.aborted && input.isCurrent()
@@ -47,7 +49,9 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
         readObservation?: DispatchPluginSurfaceActionInput['readObservation'],
     ) => {
         assertCurrent();
+        const requestId = randomUUID();
         const result = await dispatchPluginSurfaceAction({
+            actionRequestId: requestId,
             callerPluginId: registration.contribution.pluginId,
             resourceCaller: { pluginId: registration.contribution.pluginId, serverId: accountLifetime.scope.serverId,
                 contributionLocalId: registration.contribution.localId, occurrenceId: registration.occurrenceId,
@@ -63,19 +67,20 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
             invocationSurface: 'plugin', originSurface: 'ui', signal, isCurrent,
         });
         assertCurrent();
-        return result;
+        return { result, requestId };
     };
     const services: Pick<PluginDynamicResourceInvocationOptionsV1, 'readAction' | 'observeAction'> = {
         async readAction(action, value, options) {
             const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
             try {
-                const result = await dispatch(action, value, cancellation.signal);
+                const { result, requestId } = await dispatch(action, value, cancellation.signal);
                 return result.ok ? { ok: true, result: result.result }
                     : { ok: false, errorCode: result.reason, error: result.message ?? result.reason,
-                        ...(result.retryable === undefined && result.remediation === undefined ? {} : { details: {
+                        details: {
+                            requestId,
                             ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
                             ...(result.remediation === undefined ? {} : { remediation: result.remediation }),
-                        } }) };
+                        } };
             } finally { cancellation.dispose(); }
         },
         async observeAction(action, value, invalidate, options) {
@@ -84,8 +89,8 @@ export function createPluginSurfaceResourceActionServices(input: Readonly<{
                 const subscription = await observePluginSurfaceActionRead({
                     signal: cancellation.signal, isCurrent, invalidate, retire: input.retireObservation,
                     async invoke(observation, signal) {
-                        const result = await dispatch(action, value, signal, observation);
-                        if (!result.ok) throw new PluginError({ code: result.reason, message: result.message });
+                        const { result, requestId } = await dispatch(action, value, signal, observation);
+                        if (!result.ok) throw new PluginError({ code: result.reason, message: result.message, details: { requestId } });
                         return result.result;
                     },
                 });

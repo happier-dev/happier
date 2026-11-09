@@ -56,6 +56,48 @@ const config: CapabilityAddModalConfig<Entry> = {
     testID: 'add',
 };
 
+it.each([1440, 390])('lands once on asynchronously admitted results without pushing a phone (%i px)', async (width) => {
+    viewport.width = width;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const primary = vi.fn(async () => ({ itemId: 'created', then: 'stay' as const }));
+    let current: CapabilityAddModalConfig<Entry> = { ...config, catalog: { ...config.catalog, items: [] as readonly Entry[], loading: true },
+        renderDetail: (entry: Entry) => <View testID={`preview:${entry.name}`} />,
+        detailFooter: () => ({ primary: { label: 'Add', onPress: primary } }),
+    };
+    let measuredWidth = width;
+    const render = async () => {
+        await act(async () => root.render(<CustomModal visible onClose={() => {}}
+            config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never,
+                props: { config: current } as never, chrome: capabilityAddChrome(current) }} />));
+        // The real modal portals outside the React root, so measure and read its actual document surface.
+        await measureWebLayout(document.body, { viewport: { width: measuredWidth, height: 800 }, settle: (replay) => act(replay) });
+    };
+    const preview = (name: string) => document.body.querySelector(`[data-testid="preview:${name}"]`);
+    try {
+        await render();
+        expect(preview('docx')).toBeNull();
+        current = { ...current, catalog: { ...current.catalog, items: entries, loading: false } };
+        await render();
+        expect(preview('docx') !== null).toBe(width === 1440);
+        expect(primary).not.toHaveBeenCalled();
+        if (width === 1440) {
+            current = { ...current, catalog: { ...current.catalog, items: [...entries].reverse() } };
+            await render();
+            expect(preview('docx')).not.toBeNull();
+            expect(preview('webapp-testing')).toBeNull();
+            viewport.width = 390;
+            measuredWidth = 390;
+            await render();
+            expect(preview('docx')).toBeNull();
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 it.each([
     [1440, 24],
     [390, 16],

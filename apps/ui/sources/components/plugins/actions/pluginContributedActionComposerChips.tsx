@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { HappierComposerChip } from '@happier-dev/plugin-ui/presentation';
 import {
     redactBugReportSensitiveText,
@@ -11,10 +13,12 @@ import type {
     ComposerControlStateV1,
     ComposerOperationV1,
     ComposerScopeKindV1,
-    ComposerTransactionResultV1,
-    PluginContributionIdentityV1,
+    ComposerTransactionResultV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectedComposerControlEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
 import type {
@@ -43,7 +47,11 @@ import type {
     PluginContributedActionController,
     PluginContributedActionDescriptor,
 } from './pluginContributedActionController';
-import { resolvePluginContributedActionIconName } from './pluginContributedActionPresentation';
+import {
+    createPluginComposerActionPlacement,
+    createPluginComposerControlPlacement,
+    dedupePluginComposerActions,
+} from './pluginComposerPlacement';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 const COMPOSER_CONTROL_UNKNOWN_CHOICE_ID_SAMPLE_COUNT = 3;
@@ -52,15 +60,7 @@ const COMPOSER_CONTROL_UNKNOWN_CHOICE_ID_SAMPLE_MAX_UTF8_BYTES = 96;
 export const EMPTY_PLUGIN_COMPOSER_ACTION_CHIPS: readonly AgentInputExtraActionChip[] = Object.freeze([]);
 
 function actionChipKey(action: PluginContributedActionDescriptor): string {
-    return `plugin-contributed-action:${action.placement}:${action.qualifiedActionId}`;
-}
-
-function actionMenuId(action: PluginContributedActionDescriptor): string {
-    return `plugin-contributed-action:${action.placement}:${action.qualifiedActionId}`;
-}
-
-function composerControlId(control: PluginProjectedComposerControlEntryV1): `plugin:${string}` {
-    return `plugin:${control.id}`;
+    return `plugin-contributed-action:${action.qualifiedActionId}`;
 }
 
 export function composerControlKey(control: PluginProjectedComposerControlEntryV1): string {
@@ -73,39 +73,32 @@ function composerControlMenuId(control: PluginProjectedComposerControlEntryV1): 
 
 function createComposerActionChip(params: Readonly<{
     action: PluginContributedActionDescriptor;
-    openAction: (action: PluginContributedActionDescriptor) => void;
+    openAction: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;
 }>): AgentInputExtraActionChip {
-    const invoke = () => params.openAction(params.action);
-    const isPrimary = params.action.placement === 'composer.primary';
-    const iconName = resolvePluginContributedActionIconName(params.action.icon);
+    const invoke = (anchor?: PopoverAnchor) => params.openAction(params.action, anchor);
+    const metadata = createPluginComposerActionPlacement(params.action);
+    const iconName = metadata.placement.icon;
 
     return {
         key: actionChipKey(params.action),
-        // `shortcuts` is the incumbent composer Action row/overflow control. It
-        // decides responsive collapse and menu order; this adapter only supplies
-        // controller-admitted Action descriptors, never a second catalog.
-        controlId: 'shortcuts',
-        collapsedAction: ({ dismiss, tint }) => ({
-            id: actionMenuId(params.action),
+        ...metadata,
+        collapsedAction: ({ dismiss, tint, focusReturnRef }) => ({
+            id: actionChipKey(params.action),
             label: params.action.title,
             ...(params.action.description ? { subtitle: params.action.description } : {}),
             icon: <Icon name={iconName} size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
             onPress: () => {
                 dismiss();
-                invoke();
+                invoke(resolvePressTriggerAnchor({ currentTarget: focusReturnRef?.current }));
             },
         }),
-        render: ({ chipStyle, iconColor, showLabel, textStyle }) => {
-            // `composer.more` Actions belong to the overflow menu. Returning
-            // no row node preserves the declared semantic placement rather
-            // than treating it as a lower-priority primary Action.
-            if (!isPrimary) return null;
+        render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, popoverAnchorRef }) => {
             return (
                 <HappierComposerChip
                     testID={`plugin-composer-action:${params.action.qualifiedActionId}`}
                     accessibilityRole="button"
                     accessibilityLabel={params.action.title}
-                    onPress={invoke}
+                    onPress={() => invoke({ kind: 'view', ref: chipAnchorRef ?? popoverAnchorRef })}
                     style={chipStyle}
                 >
                     <Icon
@@ -1067,9 +1060,9 @@ function createComposerControlChip(params: Readonly<{
 
     const baseChip = {
         key: composerControlKey(control),
-        controlId: composerControlId(control),
+        ...createPluginComposerControlPlacement(control, host.localize),
         ...(definition.labelPolicy === undefined ? {} : { labelPolicy: definition.labelPolicy }),
-    };
+    } satisfies Pick<AgentInputExtraActionChip, 'key' | 'controlId' | 'placement' | 'labelPolicy'>;
     const usesStaticContentPopover = fallbackResolved.contentPopover?.layout === 'content';
     const usesDynamicSurfacePopover = fallbackResolved.contentPopover !== undefined
         && !usesStaticContentPopover;
@@ -1201,7 +1194,7 @@ type PluginComposerControlProjectionInput =
  */
 export function createPluginContributedActionComposerChips(params: Readonly<{
     controller: PluginContributedActionController;
-    openAction: (action: PluginContributedActionDescriptor) => void;
+    openAction: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;
     /** Non-session Composer scopes project controls only, never Session Action rows. */
     includeSessionActions?: boolean;
 }> & PluginComposerControlProjectionInput): readonly AgentInputExtraActionChip[] {
@@ -1211,6 +1204,7 @@ export function createPluginContributedActionComposerChips(params: Readonly<{
     const more = params.includeSessionActions === false
         ? []
         : params.controller.list({ placement: 'composer.more', scope: 'session' });
+    const actions = dedupePluginComposerActions(primary, more);
     const composerControls = params.composerControls === undefined
         ? []
         : params.composerControls.flatMap((control) => {
@@ -1221,8 +1215,7 @@ export function createPluginContributedActionComposerChips(params: Readonly<{
             return chip === null ? [] : [chip];
         });
     const chips = [
-        ...primary.map((action) => createComposerActionChip({ action, openAction: params.openAction })),
-        ...more.map((action) => createComposerActionChip({ action, openAction: params.openAction })),
+        ...actions.map((action) => createComposerActionChip({ action, openAction: params.openAction })),
         ...composerControls,
     ];
     return chips.length > 0 ? chips : EMPTY_PLUGIN_COMPOSER_ACTION_CHIPS;

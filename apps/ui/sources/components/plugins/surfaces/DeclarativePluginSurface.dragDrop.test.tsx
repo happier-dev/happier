@@ -3,12 +3,15 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import {
-    normalizePluginDeclarativeDocumentV1,
-    PluginDeclarativeProjectedModelV1Schema,
+    normalizePluginDeclarativeDocumentV1} from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import {
+    PluginDeclarativeProjectedModelV1Schema} from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
+import {
     PluginDragSourceContributionV1Schema,
-    PluginDropTargetContributionV1Schema,
+    PluginDropTargetContributionV1Schema} from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
+import {
     type JsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 

@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useRouter } from 'expo-router';
 import {
     HappierValidationMessage,
     resolveHappierFormPending,
 } from '@happier-dev/plugin-ui/presentation';
 
 import type { CustomModalInjectedProps } from '@/modal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -18,6 +19,7 @@ import { useInputFieldOptions } from '@/components/sessions/actions/useInputFiel
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 
 import type {
     ActionInputForm,
@@ -66,7 +68,6 @@ export type ActionInputFormModalProps = Readonly<{
 export function ActionInputFormModal(props: ActionInputFormModalProps): React.ReactElement {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const router = useRouter();
     const pluginUiTheme = usePluginUiTheme(theme);
     const [, refresh] = React.useReducer((value: number) => value + 1, 0);
     const onRetireRef = React.useRef(props.onRetire);
@@ -120,7 +121,9 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 if (outcome.kind === 'unavailable' && outcome.reason === 'submission_in_flight') {
                     return;
                 }
-                setError(t('pluginRuntime.unavailableGeneric'));
+                setError(outcome.kind === 'settled' && outcome.outcome.layer && outcome.outcome.code
+                    ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: outcome.outcome.code }).body
+                    : t('pluginRuntime.unavailableGeneric'));
             } catch {
                 setError(t('pluginRuntime.unavailableGeneric'));
             }
@@ -128,12 +131,17 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     }, [props.form, props.onClose]);
 
     const repairConnectedAccounts = React.useCallback(() => {
-        // A fresh open after repair must re-resolve the one host-owned source;
-        // retaining this transient form would leave its resolved-empty snapshot
-        // falsely current behind the Settings route.
+        // A fresh open after repair re-resolves the form's options on its admitted target.
         close();
-        router.push('/(app)/settings/connected-services');
-    }, [close, router]);
+        void presentConnectSheet({
+            ...(props.pickerContext?.machineId && props.pickerContext.serverId ? {
+                initialMachineTarget: {
+                    serverIdentityId: captureServerProfileScopeResolver()(props.pickerContext.serverId),
+                    machineId: props.pickerContext.machineId,
+                },
+            } : {}),
+        });
+    }, [close, props.pickerContext?.machineId, props.pickerContext?.serverId]);
 
     const footer = React.useMemo(() => (
         <ModalCardFooterActions cancel={{ onPress: close, testID: 'plugin-contributed-action-form-cancel' }}>

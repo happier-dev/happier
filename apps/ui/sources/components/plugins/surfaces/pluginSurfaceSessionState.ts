@@ -13,12 +13,24 @@ import {
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
+import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { AccountEncryptionMaterialUnavailableError } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { HappyError } from '@/utils/errors/errors';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { loadDaemonMergedProjectionCacheEntry, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { readSessionAcceptedWorkspace } from '@/sync/domains/session/sessionAcceptedWorkspace';
+import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
+import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
 import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
@@ -77,10 +89,15 @@ type ProjectedSession = Readonly<{
 }>;
 
 function projectSession(session: Session, accountScope: ServerAccountScope | null): ProjectedSession {
-    const status = getSessionStatus(session, Date.now(), { workingTextMode: 'static', vibingIndex: 0 });
+    const status = getSessionStatus(session, Date.now(), { vibingIndex: 0 });
     const { awareness } = status;
     const agentId = readSessionPresentationAgentId(session);
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata ?? session.metadata, agentId,
+        readExternalSessionLink(ownerMetadata ?? session.metadata));
+    const acceptedWorkspace = readSessionAcceptedWorkspace(session, accountScope, storage.getState());
     const cached = readCachedDaemonMergedProjectionCacheEntry({
+        sections: ['agentsById'],
         machineId: awareness.workspace?.machineId,
         serverId: accountScope?.serverId,
     });
@@ -119,6 +136,8 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
     const state = PluginUiSessionStateV1Schema.parse({
         sessionId: session.id,
         ...(accountScope ? { serverId: accountScope.serverId } : {}),
+        ...(agentTarget ? { agentTarget } : {}),
+        ...(acceptedWorkspace ? { acceptedWorkspace } : {}),
         title: getSessionName(session, accountScope?.serverId),
         ...(catalog ? { agent: {
             agentId: catalog.agentId,
@@ -137,11 +156,18 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
     return { state, requests };
 }
 
-function readProjectedSession(
+function readScopedSession(
     sessionId: string,
     accountScope: ServerAccountScope | null,
-): ProjectedSession | null {
-    const session = storage.getState().sessions[sessionId];
+    state = storage.getState(),
+): Session | undefined {
+    const session = state.sessions[sessionId];
+    return session && (!accountScope || !session.serverId
+        || areServerProfileIdentifiersEquivalent(session.serverId, accountScope.serverId)) ? session : undefined;
+}
+
+function readProjectedSession(sessionId: string, accountScope: ServerAccountScope | null): ProjectedSession | null {
+    const session = readScopedSession(sessionId, accountScope);
     return session ? projectSession(session, accountScope) : null;
 }
 
@@ -158,6 +184,8 @@ function readPayloadRecord(payload: PluginUiJsonValueV1 | undefined): Readonly<R
 type ActiveSessionWatch = Readonly<{ release: () => void }>;
 
 export type PluginSurfaceSessionHandlers = Readonly<{
+    /** The same exact-Account read without requiring a mounted transport envelope. */
+    readSession: (sessionId: string, options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginUiJsonValueV1>;
     handlers: Required<Pick<
         PluginSurfaceHostApiHandlers,
         'readSession' | 'watchSession' | 'respondToSessionPermission' | 'disposeHostResource'
@@ -189,33 +217,51 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         watch.release();
     };
 
-    const hydrateSession = async (sessionId: string, options?: PluginSurfaceHostApiRequestOptions): Promise<void> => {
+    // False is a positively classified terminal absence. Failures never establish absence.
+    const hydrateSession = async (sessionId: string, options?: PluginSurfaceHostApiRequestOptions): Promise<boolean> => {
         const scope = input.accountScope;
-        if (storage.getState().sessions[sessionId] || !scope) return;
+        if (readScopedSession(sessionId, scope)) return true;
+        if (!scope) throw new PluginError({ code: 'unavailable', retryable: false });
         // A linked Session may be outside the client's loaded list window. Use the ordinary exact-Account
         // hydration owner, including its in-flight sharing and currentness checks, before claiming absence.
-        await runWithServerRequestAuthorityForServerAccountScope({ scope, activeRequest: serverFetch }, async (authority) => {
-            await sync.ensureSessionVisibleForMessageRoute(sessionId, {
-                serverId: scope.serverId,
-                authority,
-                scopeCurrentness: () => refusal(options) === null,
-                hydrateMessages: false,
-            });
-        });
+        const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
+        let result: EnsureSessionVisibleForRouteResult;
+        try {
+            result = await runWithServerRequestAuthorityForServerAccountScope({ scope, activeRequest: serverFetch,
+                signal: cancellation.signal }, authority => sync.ensureSessionVisibleForMessageRoute(sessionId, {
+                    serverId: scope.serverId,
+                    authority,
+                    scopeCurrentness: () => refusal(options) === null,
+                    hydrateMessages: false,
+                }));
+        } catch (error) {
+            // The caller settles retirement/cancellation through the existing refusal owner below.
+            if (refusal(options)) return true;
+            const code = isPluginError(error) ? error.code
+                : error instanceof HappyError || error instanceof AccountEncryptionMaterialUnavailableError
+                    ? error.code ?? 'unavailable' : 'unavailable';
+            throw new PluginError({ code, retryable: shouldRetryError(error) });
+        } finally { cancellation.dispose(); }
+        if (refusal(options)) return true;
+        if (result.kind === 'available') return true;
+        if (result.kind === 'missing' && result.cause !== 'auth_unavailable') return false;
+        throw new PluginError({ code: result.errorCode ?? result.cause,
+            retryable: true });
     };
 
     const readSession = async (
-        request: PluginUiHostApiRequestEnvelopeV1,
+        request: Pick<PluginUiHostApiRequestEnvelopeV1, 'payload'>,
         options?: PluginSurfaceHostApiRequestOptions,
     ): Promise<PluginUiJsonValueV1> => {
         const refused = refusal(options);
         if (refused) return refused;
         const parsed = PluginUiReadSessionRequestV1Schema.safeParse(request.payload);
         if (!parsed.success) return createPluginSurfaceHostApiError('invalid_payload', ['session_read_payload_invalid']);
-        await hydrateSession(parsed.data.sessionId, options);
+        const available = await hydrateSession(parsed.data.sessionId, options);
         const retiredAfterHydration = refusal(options);
         if (retiredAfterHydration) return retiredAfterHydration;
-        const session = storage.getState().sessions[parsed.data.sessionId];
+        if (!available) return null;
+        const session = readScopedSession(parsed.data.sessionId, input.accountScope);
         const agentId = session ? readSessionPresentationAgentId(session) : null;
         const machineId = session ? getSessionStatus(session).awareness.workspace?.machineId : null;
         // Built-ins have a local catalog. Installed Agents need the same cold,
@@ -227,6 +273,8 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                     machineId,
                     serverId: input.accountScope?.serverId,
                     accountLifetime: input.accountLifetime,
+                    // The session projection reads only the Agent catalog (`projectSession`).
+                    sections: DAEMON_AGENT_CATALOG_SECTIONS,
                     reuseFreshReady: true,
                     signal: cancellation.signal,
                 });
@@ -235,7 +283,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             if (retired) return retired;
         }
         const projected = readProjectedSession(parsed.data.sessionId, input.accountScope);
-        if (!projected) return null;
+        if (!projected) return createPluginSurfaceHostApiError('unavailable', ['session_projection_unavailable'], undefined, { retryable: true });
         if (!input.accountScope || projected.state.latestActivity?.kind === 'hidden') return projected.state;
         const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
         try {
@@ -249,7 +297,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             const current = readProjectedSession(parsed.data.sessionId, input.accountScope);
             return current ? PluginUiSessionStateV1Schema.parse({ ...current.state,
                 latestActivity: current.state.latestActivity?.kind === 'hidden' ? { kind: 'hidden' } : latestActivity,
-            }) : null;
+            }) : createPluginSurfaceHostApiError('unavailable', ['session_projection_unavailable'], undefined, { retryable: true });
         } finally { cancellation.dispose(); }
     };
 
@@ -297,12 +345,13 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         };
         bindCatalog(initial.state);
         const readInputs = (state: ReturnType<typeof storage.getState>) => ({
-            session: state.sessions[sessionId],
+            session: readScopedSession(sessionId, input.accountScope, state),
             messages: state.sessionMessages?.[sessionId],
             displayRow: input.accountScope
                 ? readSessionListRowForServerId(state.sessionListRowsByServerId, input.accountScope.serverId, sessionId)
                 : undefined,
             locale: state.settings.preferredLanguage,
+            workspaceRefs: readProjectAccountWorkspaceRefs(state),
         });
         let lastInputs = readInputs(storage.getState());
         const unsubscribe = storage.subscribe((state) => {
@@ -315,6 +364,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 || nextInputs.session?.currentStorageState !== lastInputs.session?.currentStorageState;
             if (nextInputs.session === lastInputs.session && nextInputs.messages === lastInputs.messages
                 && nextInputs.displayRow === lastInputs.displayRow
+                && nextInputs.workspaceRefs === lastInputs.workspaceRefs
                 && nextInputs.locale === lastInputs.locale) return;
             lastInputs = nextInputs;
             if (!input.isCurrent()) return;
@@ -335,7 +385,8 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             if (digest === lastDigest && !transcriptChanged) return;
             lastDigest = digest;
             input.deliver({ version: 1, subscriptionId, kind: 'invalidated', digest });
-        });
+        }, { sessions: [sessionId], sessionMessages: [sessionId], sessionListRowsByServerId: true,
+            settings: ['preferredLanguage'], projectAccountRows: true, profileScope: true });
         watches.set(subscriptionId, { release: () => { unsubscribe(); unsubscribeCatalog(); } });
         return null;
     };
@@ -380,6 +431,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
     };
 
     return Object.freeze({
+        readSession: (sessionId: string, options?: PluginSurfaceHostApiRequestOptions) => readSession({ payload: { sessionId } }, options),
         handlers: Object.freeze({ readSession, watchSession, respondToSessionPermission, disposeHostResource }),
         dispose: () => {
             if (disposed) return;

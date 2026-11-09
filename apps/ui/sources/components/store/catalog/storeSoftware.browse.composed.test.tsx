@@ -18,8 +18,9 @@ const { replacePluginAccountAvailabilityProjection } = await import('@/sync/doma
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { StoreSoftwarePage } = await import('../StoreSoftwarePage');
+const { StoreSearchPage } = await import('../StoreSearchPage');
 
-it('shows the Software directory for an Account with no Machine, and reads no Machine to do it', async () => {
+it.each(['directory', 'search'] as const)('shows Software %s for an Account with no Machine, and reads no Machine to do it', async surface => {
     const bridge = await loadSyncSingletonForTests();
     const http = createHomeHubArtifactHttpBoundary('viewer');
     let machineReads = 0;
@@ -40,8 +41,11 @@ it('shows the Software directory for an Account with no Machine, and reads no Ma
         machineReads = 0;
         const navigation = { push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} };
         const content = {};
-        const screen = await renderScreen(<DestinationInstanceHost tabId="software" ref={{ kind: 'plugins', params: { view: 'kind', kind: 'software' } }}
-            pathname="/plugins" focused visible navigation={navigation}><AppPaneProvider><StoreSoftwarePage presented /></AppPaneProvider></DestinationInstanceHost>,
+        const params: Record<string, string> = surface === 'directory' ? { view: 'kind', kind: 'software' } : { view: 'search', q: 'Google Chrome',
+            filters: JSON.stringify({ kind: { include: ['software'], exclude: [] } }) };
+        const screen = await renderScreen(<DestinationInstanceHost tabId="software" ref={{ kind: 'plugins', params }}
+            pathname="/plugins" focused visible navigation={navigation}><AppPaneProvider>{surface === 'directory'
+                ? <StoreSoftwarePage presented /> : <StoreSearchPage presented />}</AppPaneProvider></DestinationInstanceHost>,
             { createNodeMock: node => (node.type === 'ScrollView' ? { getInnerViewRef: () => content, scrollTo: () => {} } : node.type === 'View' ? {} : null) });
         // A directory opened before the Account's plugins arrive waits for them; it never reads as a failed catalog.
         await flushHookEffects();
@@ -60,6 +64,7 @@ it('shows the Software directory for an Account with no Machine, and reads no Ma
         expect(screen.getTextContent()).toContain('Google Chrome');
         expect(screen.findHostByTestId('store.kind.software.noMachine')).toBeNull();
         expect(screen.findHostByTestId('store.kind.software.machine')).toBeNull();
+        expect(screen.findHostByTestId('store.search.software.machine')).toBeNull();
         expect(machineReads).toBe(0);
     } finally {
         disposeLoader(); account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose();

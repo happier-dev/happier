@@ -6,14 +6,16 @@ import { CapabilityStatusChip } from '@/components/capabilities/status/Capabilit
 import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 /** The list form's visible rows before the rest fold (lab `ad`: more than 8 folds). */
 const LIST_FOLD_AFTER = 8;
+const LOADING: ItemLoadState = Object.freeze({ kind: 'loading' });
 
 export type CapabilityMachineTruthRow = Readonly<{
     machineId: string;
@@ -51,6 +53,11 @@ export function CapabilityMachineTruth(props: Readonly<{
     sectionAction?: Readonly<{ label: string; onPress: () => void; busy?: boolean; icon?: IconName }>;
     /** Open on arrival (a machine needs the person). */
     defaultExpanded?: boolean;
+    /**
+     * The rules that decide these machines are not read yet: the rows are reserved, and the section
+     * never says it is on no machine.
+     */
+    loading?: boolean;
     /** What the section says when it is on no machine (default: "No machines yet"). */
     emptyLabel?: string;
     /**
@@ -93,7 +100,9 @@ export function CapabilityMachineTruth(props: Readonly<{
                 />
             ) : undefined}
         >
-            {props.rows.length === 0 ? (
+            {props.loading ? (
+                <ItemLoadStateRows testID={`${props.testID}:loading`} state={LOADING} rows={1} lines={1} />
+            ) : props.rows.length === 0 ? (
                 <Item testID={`${props.testID}:none`} title={props.emptyLabel ?? t('capabilities.detail.noMachines')} showChevron={false} />
             ) : props.presentation === 'list' ? (
                 <>
@@ -111,9 +120,7 @@ export function CapabilityMachineTruth(props: Readonly<{
                             testID={`${props.testID}:more`}
                             title={t('capabilities.detail.moreMachines', { count: props.rows.length - shownRows.length })}
                             titleStyle={styles.more}
-                            leftElement={<ExpandableItemCaret expanded={false} />}
                             onPress={() => setShowAll(true)}
-                            showChevron={false}
                         />
                     ) : null}
                 </>
@@ -128,14 +135,13 @@ export function CapabilityMachineTruth(props: Readonly<{
                             {...(headerProps as Readonly<Record<string, unknown>>)}
                             testID={`${props.testID}:summary`}
                             title={t('capabilities.detail.byMachine')}
-                            leftElement={<ExpandableItemCaret expanded={open} />}
+                            keepChevronWithRightElement
                             rightElement={open ? null : (
                                 <View style={styles.summaryLine}>
                                     <Text variant="meta" numberOfLines={1} style={styles.summaryText}>{props.summary}</Text>
                                     {props.summaryNote ? <Text variant="meta" numberOfLines={1} style={styles.summaryNote}>{`· ${props.summaryNote}`}</Text> : null}
                                 </View>
                             )}
-                            showChevron={false}
                         />
                     )}
                 >

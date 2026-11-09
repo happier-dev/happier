@@ -79,12 +79,12 @@ export const CapabilityReachLegend = React.memo(function CapabilityReachLegend(
         );
         return (
           <Item
+            rowRole="catalogRow"
             key={row.machineId}
             testID={`${props.testID}.machine.${row.machineId}`}
             title={row.name}
             titleStyle={row.offline ? styles.offline : undefined}
             subtitle={subtitle}
-            subtitleLines={1}
             icon={
               <Icon
                 name="desktop"
@@ -92,7 +92,7 @@ export const CapabilityReachLegend = React.memo(function CapabilityReachLegend(
                 color={theme.colors.text.secondary}
               />
             }
-            rightElement={
+            titleMeta={
               previewAgents ? null : (
                 <Text
                   variant="label"
@@ -111,6 +111,7 @@ export const CapabilityReachLegend = React.memo(function CapabilityReachLegend(
       })}
       {props.more ? (
         <Item
+          rowRole="item"
           testID={`${props.testID}.more`}
           title={t('capabilities.skills.home.moreMachines', { count: props.more })}
           titleStyle={styles.offline}

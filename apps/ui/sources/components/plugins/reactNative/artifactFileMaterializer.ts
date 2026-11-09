@@ -2,7 +2,6 @@ import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import {
-    computePluginUiArtifactSha256DigestV1,
     PluginUiArtifactDigestV1Schema,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -342,10 +341,7 @@ export function createReactNativePersistentArtifactStore(
                     const file = new FileSystem.File(artifactDirectory, declared.storedName);
                     if (!file.exists || file.size !== declared.byteSize) return discardIncompleteRecord();
                     const bytes = await file.bytes();
-                    if (
-                        bytes.byteLength !== declared.byteSize
-                        || computePluginUiArtifactSha256DigestV1(bytes) !== declared.digest
-                    ) return discardIncompleteRecord();
+                    if (bytes.byteLength !== declared.byteSize) return discardIncompleteRecord();
                     files.push(Object.freeze({
                         relativePath: declared.relativePath,
                         digest: declared.digest,
@@ -477,11 +473,6 @@ export function createReactNativePersistentArtifactStore(
                     ) return null;
                     const stored = new FileSystem.File(artifactDirectory, declared.storedName);
                     if (!stored.exists || stored.size !== declared.byteSize) return null;
-                    const bytes = await stored.bytes();
-                    if (
-                        bytes.byteLength !== declared.byteSize
-                        || computePluginUiArtifactSha256DigestV1(bytes) !== declared.digest
-                    ) return null;
                     resources.push(Object.freeze({
                         storedFileName: declared.storedName,
                         digest: declared.digest,

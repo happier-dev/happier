@@ -13,11 +13,14 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
     machine?: Readonly<{ machineId: string; serverId?: string | null }>;
+    resolveMachine?(): Promise<Readonly<{ machineId: string; serverId?: string | null }> | undefined>;
     /** Connection-owner fact; an optional pending Machine cannot hold Account admission. */
     isMachineAvailable?(): boolean;
     isCurrent(): boolean;
 }>) {
     const availability = readPluginAccountAvailability(input.accountLifetime.scope);
+    let machine = input.machine;
+    const bindMachineSubscriptions = new Set<() => void>();
     let machineDeclarations: readonly TargetedContributionManifestDeclaration[] = [];
     const readDeclarations = (): readonly TargetedContributionManifestDeclaration[] => mergeTargetedContributionManifestDeclarations({
         targetPluginId: input.pluginId,
@@ -27,7 +30,8 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
     });
     return {
         readDeclarations,
-        async readCurrentDeclarations(signal: AbortSignal = input.signal) {
+        async readCurrentDeclarations(signal: AbortSignal = input.signal,
+            onAccountReady?: (declarations: readonly TargetedContributionManifestDeclaration[]) => Promise<void>) {
             const assertCurrent = () => {
                 signal.throwIfAborted();
                 if (!input.accountLifetime.isCurrent() || !input.isCurrent()) {
@@ -38,9 +42,18 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
             await availability.ensureAccountTargetDeclarations(input.pluginId);
             assertCurrent();
             if (input.isMachineAvailable?.() === false) return readDeclarations();
-            if (input.machine) {
-                const result = await machinePluginTargetedSourceDeclarationsRead(input.machine.machineId, {
-                    serverId: input.machine.serverId, pluginId: input.pluginId,
+            if (onAccountReady && (machine || input.resolveMachine)) {
+                await onAccountReady(readDeclarations());
+                assertCurrent();
+            }
+            if (!machine && input.resolveMachine) {
+                machine = await input.resolveMachine();
+                assertCurrent();
+                if (machine) for (const bind of bindMachineSubscriptions) bind();
+            }
+            if (machine) {
+                const result = await machinePluginTargetedSourceDeclarationsRead(machine.machineId, {
+                    serverId: machine.serverId, pluginId: input.pluginId,
                     accountLifetime: input.accountLifetime, signal,
                 });
                 assertCurrent();
@@ -49,12 +62,17 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
             return readDeclarations();
         },
         subscribe(listener: () => void) {
-            const unsubscribeAccount = availability.subscribe(listener);
-            const unsubscribeMachine = input.machine ? subscribeMachineContributionRegistryProjectionInvalidation({
-                machineId: input.machine.machineId,
-                serverId: input.machine.serverId ?? input.accountLifetime.scope.serverId,
-            }, listener) : undefined;
-            return () => { unsubscribeAccount(); unsubscribeMachine?.(); };
+            const unsubscribeAccount = availability.subscribe(listener, input.pluginId);
+            let unsubscribeMachine: (() => void) | undefined;
+            const bind = () => {
+                if (machine && !unsubscribeMachine) unsubscribeMachine = subscribeMachineContributionRegistryProjectionInvalidation({
+                    machineId: machine.machineId,
+                    serverId: machine.serverId ?? input.accountLifetime.scope.serverId,
+                }, listener);
+            };
+            bindMachineSubscriptions.add(bind);
+            bind();
+            return () => { bindMachineSubscriptions.delete(bind); unsubscribeAccount(); unsubscribeMachine?.(); };
         },
     };
 }

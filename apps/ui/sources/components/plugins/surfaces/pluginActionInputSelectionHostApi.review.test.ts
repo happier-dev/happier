@@ -21,11 +21,12 @@ function reviewRequest(): PluginUiHostApiRequestEnvelopeV1 {
         draft: { engineIds: ['claude'], instructions: 'Review the selected PR' },
     } };
 }
+const anchor = { kind: 'rect', rect: { left: 20, top: 30, width: 80, height: 32 } } as const;
 function mount() {
     const controller = new AbortController();
     const handler = createPluginActionInputSelectionHostApiHandler({
         host: { machineId: 'source-machine', serverId: 'source-home', targetPluginId: 'acme.triage',
-            accountLifetime, signal: controller.signal }, isCurrent: () => !controller.signal.aborted,
+            accountLifetime, signal: controller.signal }, isCurrent: () => !controller.signal.aborted, anchor,
     });
     return { handler, controller };
 }
@@ -49,7 +50,7 @@ describe('host review launch selection lifecycle', () => {
         const shown = createDeferred<{ sessionId: string; serverId: string; onResolve: (result: LaunchSelection | null) => void }>();
         // Native presentation is the genuine user/system boundary. The production
         // component beneath it uses the real shared controls and launch admission.
-        vi.spyOn(Modal, 'show').mockImplementation((config) => {
+        const show = vi.spyOn(Modal, 'show').mockImplementation((config) => {
             shown.resolve(config.props as { sessionId: string; serverId: string; onResolve: (result: LaunchSelection | null) => void });
             return 'review-modal';
         });
@@ -57,6 +58,7 @@ describe('host review launch selection lifecycle', () => {
         const { handler } = mount();
         const selecting = handler(reviewRequest());
         const presentation = await shown.promise;
+        expect(show.mock.calls[0]?.[0].chrome).toMatchObject({ scrollHost: 'bounded', bodyScroll: 'none', anchor });
         expect(presentation).toMatchObject({ sessionId: 'prepared-session', serverId: 'session-home' });
         const result: LaunchSelection = { kind: 'executionRunLaunch', input: {
             secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: 'happier:shared-secret:v1:selected-key', revision: 7 } } },

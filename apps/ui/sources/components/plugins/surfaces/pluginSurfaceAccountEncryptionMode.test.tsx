@@ -1,12 +1,18 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import {
     createHomeGovernanceHarness,
+    createAccountTokenForTests,
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -17,8 +23,13 @@ const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, p
     await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } =
     await import('@/sync/domains/scope/activeServerAccountScope');
-const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+const { fetchAccountEncryptionMode, invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+const { apiSocket } = await import('@/sync/api/session/apiSocket');
+const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+const { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } =
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness');
 const { usePluginSurfaceAccountEncryptionMode } = await import('./pluginSurfaceContext');
+const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 
 const modePath = '/v1/account/encryption';
 let serverId: string;
@@ -52,11 +63,198 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
 
     afterEach(async () => {
         await standardCleanup();
+        apiSocket.disconnect();
         retireActiveServerAccountScopeLifetime();
         invalidateAccountEncryptionModeCache();
         await home.reset();
         storage.setState(previous);
         publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    });
+
+    it('reads the mounted Home Account on remount while another Home is focused', async () => {
+        await currentAccount('account-a');
+        const otherServerId = await home.addHome({ serverUrl: 'https://focused-plugin-mode.test', name: 'Focused Home', accountId: 'other-account' });
+        home.answer(otherServerId, modePath, { body: AccountEncryptionModeResponseSchema.parse({ mode: 'e2ee', updatedAt: 1 }) });
+        const mount = () => renderHook(() => {
+            const bindings = useServerCredentialAccountScopeBindings([serverId]);
+            const accountLifetime = bindings.values().next().value ?? null;
+            return usePluginSurfaceAccountEncryptionMode({ accountLifetime, isCurrent: () => true });
+        });
+        for (let index = 0; index < 2; index += 1) {
+            const hook = await mount();
+            try {
+                await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+                const reads = home.requestsFor(modePath).length;
+                for (let arrival = 0; arrival < 20; arrival += 1) await hook.rerender();
+                expect(home.requestsFor(modePath)).toHaveLength(reads);
+            } finally { await hook.unmount(); }
+        }
+        expect(home.requestsFor(modePath).filter(request => request.serverId === otherServerId)).toEqual([]);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('settles a successful %s mode response across equivalent mount-currentness callbacks without re-reading', async (mode) => {
+        const account = await currentAccount('account-a');
+        const extraRead = createDeferred<void>();
+        let modeReads = 0;
+        // The wire boundary emits the exact strict response owned by the Home
+        // route. Park only an unintended second read so old code cannot spin.
+        home.answer(serverId, modePath, { select: () => ({
+            body: AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }),
+            ...(modeReads++ === 0 ? {} : { respondAfter: extraRead.promise }),
+        }) });
+        const hook = await renderHook(() => usePluginSurfaceAccountEncryptionMode({
+            accountLifetime: account.lifetime,
+            credentials: account.credentials,
+            isCurrent: () => account.lifetime.isCurrent(),
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode }));
+            const settledModeReads = home.requestsFor(modePath).length;
+            const settledCurrentnessReads = home.requestsFor(`${modePath}/currentness`).length;
+            for (let index = 0; index < 20; index += 1) await hook.rerender();
+            await flushHookEffects();
+            expect(hook.getCurrent()).toEqual({ status: 'ready', mode });
+            expect(home.requestsFor(modePath).length - settledModeReads).toBe(0);
+            expect(home.requestsFor(`${modePath}/currentness`).length - settledCurrentnessReads).toBe(0);
+            expect(modeReads).toBe(1);
+        } finally {
+            await hook.unmount();
+            extraRead.resolve();
+        }
+    });
+
+    it('admits a successful mode 200 when the same credential material is recaptured during render', async () => {
+        const account = await currentAccount('account-a');
+        const extraRead = createDeferred<void>();
+        let modeReads = 0;
+        home.answer(serverId, modePath, { select: () => ({
+            body: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }),
+            ...(modeReads++ === 0 ? {} : { respondAfter: extraRead.promise }),
+        }) });
+        const isCurrent = () => account.lifetime.isCurrent();
+        const hook = await renderHook(() => usePluginSurfaceAccountEncryptionMode({
+            accountLifetime: account.lifetime,
+            credentials: { ...account.credentials },
+            isCurrent,
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(modeReads).toBeGreaterThan(0));
+            await flushHookEffects();
+            expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' });
+            expect(modeReads).toBe(1);
+        } finally {
+            await hook.unmount();
+            extraRead.resolve();
+        }
+    });
+
+    it('keeps the real admitted socket currentness settled until an encryption invalidation', async () => {
+        const account = await currentAccount('account-a');
+        const endpoint = 'https://plugin-mode.test';
+        const generation = getActiveServerSnapshot().generation;
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        apiSocket.initialize({ endpoint, serverId, generation, credentials: account.credentials,
+            token: account.credentials.token,
+            request: createServerFetchAtEndpoint({ endpointUrl: endpoint, serverId, credentials: account.credentials }),
+            isCurrent: account.lifetime.isCurrent,
+        }, null);
+        const request = apiSocket.createRequestForPreparedTarget({ endpoint, serverId, generation });
+        const resolveMode = async (_signal: AbortSignal) => (await fetchAccountEncryptionMode(account.credentials, {
+            request, usage: 'identity',
+        })).mode;
+        const hook = await renderHook((props: Readonly<{ isCurrent: () => boolean }>) => usePluginSurfaceAccountEncryptionMode({
+            accountLifetime: account.lifetime, credentials: account.credentials, resolveMode, isCurrent: props.isCurrent,
+        }), { initialProps: { isCurrent: () => account.lifetime.isCurrent() } });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+            const modeReads = home.requestsFor(modePath).length;
+            const currentnessReads = home.requestsFor(`${modePath}/currentness`).length;
+            expect(currentnessReads).toBeGreaterThan(0);
+            for (let index = 0; index < 20; index += 1) {
+                await hook.rerender({ isCurrent: () => account.lifetime.isCurrent() });
+            }
+            expect(home.requestsFor(modePath).length - modeReads).toBe(0);
+            expect(home.requestsFor(`${modePath}/currentness`).length - currentnessReads).toBe(0);
+            await act(async () => invalidateAccountEncryptionModeCache({ serverId }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+            expect(home.requestsFor(`${modePath}/currentness`).length - currentnessReads).toBe(1);
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps settled disclosure through unrelated Home withdrawals and equal arrivals, then acquires once for its real mode change', async () => {
+        const otherServerId = await home.addHome({ serverUrl: 'https://other-plugin-mode.test', name: 'Other Home', accountId: 'other-account', active: false });
+        const account = await currentAccount('account-a');
+        const pending = createDeferred<void>();
+        const states: string[] = [];
+        const hook = await renderHook(() => {
+            const result = usePluginSurfaceAccountEncryptionMode({
+                accountLifetime: captureActiveServerAccountScopeLifetime(),
+                credentials: { ...account.credentials },
+                isCurrent: () => account.lifetime.isCurrent(),
+            });
+            states.push(result.status);
+            return result;
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+            const reads = home.requestsFor(modePath).length;
+            states.length = 0;
+            home.answer(serverId, modePath, { respondAfter: pending.promise,
+                body: AccountEncryptionModeResponseSchema.parse({ mode: 'e2ee', updatedAt: 2 }) });
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => invalidateAccountEncryptionModeCache({ serverId: otherServerId, reason: 'transport-withdrawal' }));
+                await hook.rerender();
+            }
+            expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' });
+            expect(states).not.toContain('loading');
+            expect(home.requestsFor(modePath).length - reads).toBe(0);
+
+            await act(async () => invalidateAccountEncryptionModeCache({ serverId }));
+            expect(hook.getCurrent()).toEqual({ status: 'loading' });
+            await waitForHomeGovernance(() => expect(home.requestsFor(modePath).length - reads).toBe(1));
+            // A different Home cannot retire this now-pending acquisition,
+            // either. Its next borrower shares the same physical request.
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => invalidateAccountEncryptionModeCache({ serverId: otherServerId, reason: 'transport-withdrawal' }));
+            }
+            const borrower = fetchAccountEncryptionMode(account.credentials)
+                .then(value => ({ value }), (error: unknown) => ({ error }));
+            await flushHookEffects();
+            expect(home.requestsFor(modePath).length - reads).toBe(1);
+            await act(async () => pending.resolve());
+            await expect(borrower).resolves.toMatchObject({ value: { mode: 'e2ee' } });
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'e2ee' }));
+            expect(home.requestsFor(modePath).length - reads).toBe(1);
+            expect(states.filter((status, index) => index === 0 || status !== states[index - 1]))
+                .toEqual(['ready', 'loading', 'ready']);
+        } finally {
+            await hook.unmount();
+            pending.resolve();
+        }
+    });
+
+    it('withdraws the old mode when credential authority actually changes within the same captured Account', async () => {
+        const account = await currentAccount('account-a');
+        const isCurrent = () => account.lifetime.isCurrent();
+        const hook = await renderHook((props: Readonly<{ credentials: AuthCredentials }>) => usePluginSurfaceAccountEncryptionMode({
+            accountLifetime: account.lifetime, credentials: props.credentials, isCurrent,
+        }), { initialProps: { credentials: account.credentials } });
+        const refreshed = createDeferred<void>();
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+            const credentials = { ...account.credentials, token: createAccountTokenForTests('account-a', { currentAccount: true }) };
+            expect(credentials.token).not.toBe(account.credentials.token);
+            home.answer(serverId, modePath, { respondAfter: refreshed.promise,
+                body: AccountEncryptionModeResponseSchema.parse({ mode: 'e2ee', updatedAt: 2 }) });
+            await hook.rerender({ credentials });
+            expect(hook.getCurrent()).toEqual({ status: 'loading' });
+            await act(async () => refreshed.resolve());
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'e2ee' }));
+            expect(home.requestsFor(modePath)).toHaveLength(2);
+        } finally {
+            await hook.unmount();
+            refreshed.resolve();
+        }
     });
 
     it('retries cached disclosure when a successor mount currentness fence replaces a retired controller', async () => {
@@ -136,6 +334,21 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         await hook.unmount();
     });
 
+    it('recovers a transient exact-Home mode failure through canonical readiness without another invalidation', async () => {
+        const account = await currentAccount('account-a');
+        home.answer(serverId, modePath, { status: 503, body: {} });
+        const hook = await renderHook(() => usePluginSurfaceAccountEncryptionMode({
+            accountLifetime: account.lifetime, isCurrent: () => true,
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(home.requestsFor(modePath).length).toBeGreaterThan(0));
+            await flushHookEffects();
+            expect(hook.getCurrent()).toEqual({ status: 'loading' });
+            home.answer(serverId, modePath, { body: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) });
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'ready', mode: 'plain' }));
+        } finally { await hook.unmount(); }
+    });
+
     it('reports a terminal refusal only after the pending mode request settles', async () => {
         const account = await currentAccount('account-a');
         const pending = createDeferred<void>();
@@ -143,7 +356,6 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         const isCurrent = () => account.lifetime.isCurrent();
         const hook = await renderHook(() => usePluginSurfaceAccountEncryptionMode({
             accountLifetime: account.lifetime,
-            credentials: account.credentials,
             isCurrent,
         }));
 
@@ -151,6 +363,10 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         await waitForHomeGovernance(() => expect(home.requestsFor(modePath)).toHaveLength(1));
         await act(async () => pending.resolve());
         await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ status: 'unavailable' }));
+        const reads = home.requestsFor(modePath).length;
+        for (let index = 0; index < 20; index += 1) await hook.rerender();
+        expect(hook.getCurrent()).toEqual({ status: 'unavailable' });
+        expect(home.requestsFor(modePath)).toHaveLength(reads);
         await hook.unmount();
     });
 });

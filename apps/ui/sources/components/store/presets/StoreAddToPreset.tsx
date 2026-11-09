@@ -32,6 +32,7 @@ import {
   type StorePresetDoorItem,
 } from './storePresetDoor';
 import { useStorePresets } from './useStorePresets';
+import { StorePresetsReadFailure } from './StorePresetsReadFailure';
 import { useStoreListingPaneTitle } from '../storeListingPaneTitle';
 
 const NO_SERVERS: readonly string[] = [];
@@ -134,6 +135,7 @@ export function StoreAddToPresetButton(
           : items
       }
       emptyLabel={null}
+      header={state?.error ? <StorePresetsReadFailure testID={`${props.testID}.state`} error={state.error} onRetry={presets.refresh} /> : undefined}
       separateCategories
       matchTriggerWidth={false}
       onSelect={(id) => {

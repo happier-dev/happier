@@ -1,6 +1,9 @@
 import { Modal } from '@/modal';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { PopoverAnchor } from '@/components/ui/popover';
+
 import { t } from '@/text';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 
 import { presentActionInputForm } from './presentActionInputForm';
 import type {
@@ -9,8 +12,9 @@ import type {
     PluginContributedActionOpenOutcome,
 } from './pluginContributedActionController';
 
-function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown'): void {
-    const message = kind === 'failed' ? t('pluginRuntime.actionFailed')
+function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown', reasonCode?: string): void {
+    const message = reasonCode ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode }).body
+        : kind === 'failed' ? t('pluginRuntime.actionFailed')
         : kind === 'stale' ? t('pluginRuntime.actionStale')
             : kind === 'unavailable' ? t('pluginRuntime.actionUnavailable')
                 : t('pluginRuntime.actionOpenFailed');
@@ -21,6 +25,7 @@ async function presentPluginContributedActionOpen(
     open: () => Promise<PluginContributedActionOpenOutcome>,
     signal: AbortSignal | undefined,
     showUnavailableFeedback = true,
+    anchor?: PopoverAnchor,
 ): Promise<PluginContributedActionOpenOutcome> {
     if (signal?.aborted) return { kind: 'stale', reason: 'host_retired' };
     try {
@@ -30,14 +35,14 @@ async function presentPluginContributedActionOpen(
         // known effect as stale, because consumers can otherwise retry it.
         if (opened.kind === 'direct') {
             if (showUnavailableFeedback && !opened.outcome.ok && !signal?.aborted) {
-                presentPluginActionFailure('failed');
+                presentPluginActionFailure('failed', opened.outcome.layer ? opened.outcome.code : undefined);
             }
             return opened;
         }
         if (signal?.aborted) return { kind: 'stale', reason: 'host_retired' };
         if (opened.kind === 'form') {
             presentActionInputForm({ form: opened.form, signal, pickerContext: opened.form.pickerContext,
-                actionId: formatQualifiedPluginActionId(opened.form.action.identity) });
+                actionId: formatQualifiedPluginActionId(opened.form.action.identity), anchor });
             return opened;
         }
         if (showUnavailableFeedback && (
@@ -65,10 +70,13 @@ export async function openPluginContributedAction(params: Readonly<{
     controller: PluginContributedActionController;
     action: PluginContributedActionDescriptor;
     signal?: AbortSignal;
+    anchor?: PopoverAnchor;
 }>): Promise<PluginContributedActionOpenOutcome> {
     return await presentPluginContributedActionOpen(
-        () => params.controller.open(params.action),
+        () => params.controller.open(params.action, params.anchor),
         params.signal,
+        true,
+        params.anchor,
     );
 }
 
@@ -85,11 +93,13 @@ export async function openPluginContributedActionSessionReference(params: Readon
     signal?: AbortSignal;
     /** Callers with their own unavailable state can suppress generic feedback. */
     showUnavailableFeedback?: boolean;
+    anchor?: PopoverAnchor;
 }>): Promise<PluginContributedActionOpenOutcome> {
     return await presentPluginContributedActionOpen(
-        () => params.controller.openSessionReference(params.action, params.input),
+        () => params.controller.openSessionReference(params.action, params.input, params.anchor),
         params.signal,
         params.showUnavailableFeedback !== false,
+        params.anchor,
     );
 }
 

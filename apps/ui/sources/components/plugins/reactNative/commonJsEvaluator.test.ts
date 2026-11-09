@@ -11,11 +11,13 @@ import EnglishLocale from 'zod/v4/locales/en.js';
 import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { compileUniversalPluginUiCommonJs } from '../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { PLUGIN_UI_COMMON_JS_HOST_MODULES } from './hostModules';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
 import {
     PluginUiCommonJsEvaluationError,
     evaluatePluginUiCommonJsBundle,
+    instantiatePluginUiCommonJsBundle,
 } from './commonJsEvaluator';
 
 const identity = Object.freeze({
@@ -27,6 +29,83 @@ const identity = Object.freeze({
 const encoder = new TextEncoder();
 
 describe('evaluatePluginUiCommonJsBundle', () => {
+    it('runs the Triage PR view filter through the browser-selected public Task identity', async () => {
+        const repoRoot = resolve(import.meta.dirname, '../../../../../..');
+        const packages = await readWorkspacePackages(repoRoot);
+        const root = await mkdtemp(join(tmpdir(), 'happier-triage-browser-identity-'));
+        try {
+            const entryPath = join(root, 'entry.ts');
+            await writeFile(entryPath, [
+                `import { TRIAGE_PR_VIEW_INVENTORY_V1 as view } from ${JSON.stringify(join(repoRoot, 'packages/plugins/triage/src/ui/list/viewInventory.ts'))};`,
+                "import { INTERNAL_TASK_SOURCE_V1 as source, internalTaskLocalRefV1, internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from '@happier-dev/plugin-sdk/protocol';",
+                'export function read() { const ref = { source, ...internalTaskLocalRefV1("task-1", "owner") }; return { task: view.includesSource(source), other: view.includesSource({ pluginId: "acme.issues", localId: "issues" }), isTask: isInternalTaskReferenceV1(ref), owner: internalTaskOwnerAccountIdV1(ref, "viewer") }; }',
+            ].join('\n'));
+            const result = await compileUniversalPluginUiCommonJs({
+                projectRoot: root, entryPath, artifactId: 'triage-browser-identity', requestedExports: ['read'],
+                resolveSourceImport: (specifier) => packages.has(packageNameOfSpecifier(specifier))
+                    ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+            });
+            const browserSource = resolveWorkspaceSource(packages, '@happier-dev/plugin-sdk/protocol', { conditions: ['react-native', 'browser'] });
+            const bridge = await loadVitestModuleForNodeRequire(
+                pathToFileURL(createRequire(import.meta.url).resolve('@happier-dev/plugin-sdk/protocol')),
+                () => import(pathToFileURL(browserSource).href));
+            try {
+                const read = evaluatePluginUiCommonJsBundle({ bytes: result.bytes, identity, requestedExport: 'read' });
+                expect(read()).toEqual({ task: false, other: true, isTask: true, owner: 'owner' });
+            } finally {
+                bridge.dispose();
+            }
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+    it.each([
+        ['triage-account-runtime', 'src/accountRuntime.ts', 'activate'],
+        ['triage-latest-widget-native', 'src/ui/widget/latestWidget.tsx', 'renderSurface'],
+        ['triage-list-page-native', 'src/ui/surface.tsx', 'renderSurface'],
+        ['triage-scm-pull-request-native', 'src/ui/scmPullRequestCard.tsx', 'renderSurface'],
+        ['triage-session-pull-request-native', 'src/ui/sessionPullRequestWidget.tsx', 'renderSurface'],
+        ['triage-session-entries-native', 'src/sessions/cockpit/sessionLinkedEntriesSurface.tsx', 'renderSurface'],
+    ])('evaluates %s without duplicating host schema modules', async (artifactId, entryPath, requestedExport) => {
+        const repoRoot = resolve(import.meta.dirname, '../../../../../..');
+        const packages = await readWorkspacePackages(repoRoot);
+        const result = await compileUniversalPluginUiCommonJs({
+            projectRoot: join(repoRoot, 'packages/plugins/triage'), entryPath, artifactId,
+            requestedExports: [requestedExport], exportConditions: ['happier-source'],
+            resolveSourceImport: (specifier) => packages.has(packageNameOfSpecifier(specifier))
+                ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+        });
+        const retained = Object.values(result.metafile.outputs).flatMap(output => Object.entries(output.inputs)
+            .filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path));
+        // Include SDK protocol facades as well as Protocol and Zod internals:
+        // those facades now come from the same host-owned public SDK modules.
+        const duplicates = retained.filter(path => /(?:^|[/\\])(?:zod|protocol)(?:[/\\]|@)/u.test(path));
+        // Vitest imports source through Vite; Metro's literal call-time require
+        // shares that source namespace through the canonical Node boundary bridge.
+        const preparationStarted = performance.now();
+        const bridges = await Promise.all(result.externalSpecifiers
+            .filter(specifier => specifier.startsWith('@happier-dev/plugin-sdk'))
+            .map(specifier => loadVitestModuleForNodeRequire(pathToFileURL(createRequire(import.meta.url).resolve(specifier)),
+                () => import(pathToFileURL(resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] })).href))));
+        const hostModulePreparationMs = performance.now() - preparationStarted;
+        try {
+            const hostStarted = performance.now();
+            for (const specifier of result.externalSpecifiers) {
+                expect(PLUGIN_UI_COMMON_JS_HOST_MODULES[specifier as keyof typeof PLUGIN_UI_COMMON_JS_HOST_MODULES]).toBeDefined();
+            }
+            const hostResolutionMs = performance.now() - hostStarted;
+            const started = performance.now();
+            const instance = instantiatePluginUiCommonJsBundle({ bytes: result.bytes, identity: { ...identity, artifactId }, requestedExport });
+            const evaluationMs = performance.now() - started;
+            expect(instance.readExport(requestedExport)).toBeTypeOf('function');
+            console.info('PLUGIN_UI_HOST_EVALUATION_MEASUREMENT', JSON.stringify({ artifactId,
+                bytes: result.bytes.byteLength, duplicates: duplicates.length, hostModulePreparationMs, hostResolutionMs, evaluationMs, externalSpecifiers: result.externalSpecifiers,
+            }));
+            expect(duplicates).toHaveLength(0);
+        } finally {
+            for (const bridge of bridges) bridge.dispose();
+        }
+    });
     it('evaluates compiled schemas using the same host Zod and Protocol identities', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-host-ui-schemas-'));
         try {

@@ -2,7 +2,7 @@ import {
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
@@ -16,6 +16,13 @@ import {
 } from './pluginSurfaceResourceRead';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
+
+const rpc = vi.hoisted(() => ({ request: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(rpc.request);
+});
+afterEach(() => { rpc.request.mockReset(); });
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -47,14 +54,19 @@ const DIGEST: Extract<PluginUiResourceSubscriptionEventV1, { kind: 'invalidated'
  * machine RPC — a genuine process boundary — is substituted, and it answers with
  * the exact `DaemonPluginUiResourceReadResponse` shape the daemon parses.
  */
-function createMountedHostApi(read: PluginSurfaceResourceReadTransport) {
+function createMountedHostApi(read?: PluginSurfaceResourceReadTransport, lifetime?: Readonly<{
+    isCurrent: () => boolean;
+    signal: AbortSignal;
+}>) {
     const host = createPluginSurfaceActionHostApi({
         surfaceContext,
+        resourceInvalidation: { deliver: () => {} },
+        ...(lifetime ? { isCurrent: lifetime.isCurrent, resourceLifetimeSignal: lifetime.signal } : {}),
         resource: {
             machineId: 'machine-1',
             serverId: null,
             expectedCallerOccurrenceId: 'occurrence-7',
-            read,
+            ...(read ? { read } : {}),
         },
     });
     return {
@@ -62,7 +74,6 @@ function createMountedHostApi(read: PluginSurfaceResourceReadTransport) {
         adapter: createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surfaceContext,
-            requestIdPrefix: 'rn-resource',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         }),
@@ -70,6 +81,52 @@ function createMountedHostApi(read: PluginSurfaceResourceReadTransport) {
 }
 
 describe('mounted plugin surface resource snapshot read (§3.6)', () => {
+    it('finishes an admitted read after authority withdrawal and rejects the next admission', async () => {
+        let current = true;
+        const lifetime = new AbortController();
+        let release!: () => void;
+        let transportSignal: AbortSignal | undefined;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const { adapter } = createMountedHostApi(async (_machine, options) => {
+            transportSignal = options.signal;
+            await pending;
+            return { supported: true, result: { ok: true, resource: options.resource, kind: 'config',
+                contentType: 'application/json', digest: DIGEST, bytesBase64: 'e30=' } };
+        }, { isCurrent: () => current, signal: lifetime.signal });
+        try {
+            const read = adapter.api.readResource('review-summary');
+            await vi.waitFor(() => expect(transportSignal).toBeDefined());
+            current = false;
+            release();
+            await expect(read).resolves.toMatchObject({ digest: DIGEST });
+            await expect(adapter.api.readResource('review-summary')).rejects.toMatchObject({ code: 'stale_surface' });
+        } finally { adapter.dispose(); lifetime.abort(); }
+    });
+
+    it.each(['caller', 'mount'] as const)('drops an admitted read after %s cancellation', async (cancel) => {
+        const lifetime = new AbortController();
+        const caller = new AbortController();
+        let release!: () => void;
+        let transportSignal: AbortSignal | undefined;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        const { adapter } = createMountedHostApi(async (_machine, options) => {
+            transportSignal = options.signal;
+            await pending;
+            return { supported: true, result: { ok: true, resource: options.resource, kind: 'config',
+                contentType: 'application/json', digest: DIGEST, bytesBase64: 'e30=' } };
+        }, { isCurrent: () => true, signal: lifetime.signal });
+        try {
+            const read = adapter.api.readResource('review-summary', { signal: caller.signal });
+            const rejected = expect(read).rejects.toMatchObject({ code: 'unavailable',
+                diagnostics: [{ code: cancel === 'caller' ? 'aborted' : 'plugin_resource_aborted', severity: 'error' }] });
+            await vi.waitFor(() => expect(transportSignal).toBeDefined());
+            (cancel === 'caller' ? caller : lifetime).abort();
+            expect(transportSignal!.aborted).toBe(true);
+            release();
+            await rejected;
+        } finally { adapter.dispose(); lifetime.abort(); }
+    });
+
     it('uses the canonical host identity for equivalent closed log references in reads and watches', async () => {
         const resource = { hostRead: 'machines.services.logs' as const,
             input: { serviceId: 'worker', machineId: 'machine', serverId: 'home' },
@@ -211,28 +268,30 @@ describe('mounted plugin surface resource snapshot read (§3.6)', () => {
         });
     });
 
-    it('maps one transient transport result consistently for contextual and mounted reads', async () => {
+    it('preserves a real timeout producer through contextual and mounted Resource read/watch errors', async () => {
+        // Only the RPC boundary refuses. Real request parsing, transport-code
+        // classification, read/watch owners and the physical SDK facade run.
+        rpc.request.mockRejectedValue(Object.assign(new Error('RPC timed out'), { code: 'MACHINE_RPC_TIMEOUT' }));
         const contextual = createPluginContextualResourceReadClient({
             pluginId: 'acme.preview',
             resource: {
                 machineId: 'machine-1',
                 serverId: null,
                 expectedCallerOccurrenceId: 'occurrence-7',
-                read: async () => ({ supported: false, reason: 'error' }),
             },
         });
-        const { adapter } = createMountedHostApi(async () => ({
-            supported: false,
-            reason: 'error',
-        }));
+        const { adapter } = createMountedHostApi();
+        const watch = createPluginContextualResourceWatchClient({ pluginId: 'acme.preview',
+            resource: { machineId: 'machine-1', serverId: null, expectedCallerOccurrenceId: 'occurrence-7' },
+            subscriptionIdPrefix: 'resource-reason' });
+        const failure = { code: 'plugin_resource_transport_timeout', retryable: true,
+            details: { layer: 'transport', phase: 'invocation' } };
 
-        await expect(contextual.readResource('review-summary')).rejects.toMatchObject({
-            code: 'plugin_resource_transport_error',
-        });
-        await expect(adapter.api.readResource('review-summary')).rejects.toMatchObject({
-            code: 'unavailable',
-            diagnostics: [{ code: 'plugin_resource_transport_error', severity: 'error' }],
-        });
+        await expect.soft(contextual.readResource('review-summary')).rejects.toMatchObject(failure);
+        await expect.soft(adapter.api.readResource('review-summary')).rejects.toMatchObject(failure);
+        await expect.soft(watch.watchResource('review-summary', () => {})).rejects.toMatchObject(failure);
+        await expect.soft(adapter.api.watchResource('review-summary', () => {})).rejects.toMatchObject(failure);
+        adapter.dispose();
     });
 
     it('rejects a cross-plugin reference and admits the owning plugin (positive control)', async () => {

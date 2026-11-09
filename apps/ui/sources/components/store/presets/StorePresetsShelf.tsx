@@ -1,18 +1,22 @@
 import * as React from 'react';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { readMachineSetupPresetChoices } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { t } from '@/text';
 
 import { Directory, ROW_MARK_PX, type DirectoryRow } from '../StoreKindPage';
 import { describeStorePreset } from './StoreAddToPreset';
 import { useStorePresets } from './useStorePresets';
+import { StorePresetsReadFailure } from './StorePresetsReadFailure';
+import { showStoreSoftwarePresetReview } from '../StoreSoftwareReview';
 
 const NO_SERVERS: readonly string[] = [];
 const NO_GROUPS: readonly [] = [];
@@ -20,9 +24,10 @@ const NO_GROUPS: readonly [] = [];
 const HELD_LIST = { loading: false, hasNextPage: false } as const;
 
 /**
- * Store → Software's Presets shelf (lab `w/kind`, S40-U3b): the Account's own presets, each saying what it sets up.
+ * Store → Software's Presets shelf (lab `w/kind`, S40-U3b): saved and bundled presets, each saying what it sets up.
  * Its rows are the same directory rows as Runtimes and Programs above it (one rhythm, one material). A preset opens
- * in the one P20 preset page; the "+" starts a new one there. The collection is read once the page has been
+ * in the one P20 preset page when saved, or reviews its bundled setup on an enrolled Machine. The "+" starts a new
+ * saved preset. The collection is read once the page has been
  * presented, and its held answer stays on screen while the page is hidden or refreshing.
  */
 export function StorePresetsShelf(
@@ -38,11 +43,14 @@ export function StorePresetsShelf(
     [demanded, serverId],
   );
   const presets = useStorePresets(serverIds);
+  const projection = useAppShellPluginUiDeclarationProjection();
+  const localize = usePluginLocalizedTextResolver({ projection });
+  const bundled = React.useMemo(() => readMachineSetupPresetChoices([], projection, localize), [projection, localize]);
   const state = serverId ? presets.statesByServerId[serverId] : undefined;
   const query = props.query.trim().toLocaleLowerCase();
   const rows = React.useMemo(
     () =>
-      presets.rows
+      [...presets.rows, ...(serverId ? bundled.map(preset => ({ serverId, preset })) : [])]
         .filter(
           (row) =>
             !query || row.preset.name.toLocaleLowerCase().includes(query),
@@ -51,33 +59,36 @@ export function StorePresetsShelf(
         .map((row): DirectoryRow => ({
           key: `preset:${row.serverId}:${row.preset.id}`,
           title: row.preset.name,
-          description: describeStorePreset(row.preset) || null,
+          description: ('kind' in row.preset ? row.preset.description : describeStorePreset(row.preset)) || null,
           group: 'presets',
           mark: (
             <ManagedPresetMark
               serverId={row.serverId}
-              preset={row.preset}
+              preset={'kind' in row.preset ? {} : row.preset}
               size={ROW_MARK_PX}
             />
           ),
-          // A preset is already the Account's: the row opens its page and carries no "+".
+          // Saved rows open their page; bundled rows use the same native review as Software.
           addable: false,
-          open: () =>
+          open: () => {
+            if ('kind' in row.preset) {
+              if (scope) showStoreSoftwarePresetReview({ name: row.preset.name, preset: row.preset, scope });
+              return;
+            }
             router.push(
               machinePresetCollectionHref({
                 serverId: row.serverId,
                 presetId: row.preset.id,
               }) as never,
-            ),
+            );
+          },
         })),
-    [presets.rows, query, router],
+    [presets.rows, bundled, serverId, scope, query, router],
   );
   if (!serverId) return null;
   // A search that matched no preset leaves the shelf out rather than saying "no presets" under matching software.
   if (query && rows.length === 0) return null;
   const awaiting = !state || (state.loading && state.value == null);
-  const denied =
-    state?.error === 'permission_denied' || state?.error === 'signed_out';
   const add =
     !awaiting && !state?.error ? (
       <IconButton
@@ -104,18 +115,7 @@ export function StorePresetsShelf(
         action={add}
       >
         {state?.error ? (
-          <SurfaceStateCard
-            testID="store.software.presets.state"
-            size="line"
-            kind={denied ? 'denied' : 'unavailable'}
-            title={
-              denied
-                ? t('machinePresets.accessLost')
-                : t('capabilities.store.softwarePage.presetsFailed')
-            }
-            diagnosticCode={state.error}
-            action={{ label: t('common.retry'), onPress: presets.refresh }}
-          />
+          <StorePresetsReadFailure testID="store.software.presets.state" error={state.error} onRetry={presets.refresh} />
         ) : rows.length === 0 ? (
           // Loading and empty share one line on the rows' edge, so the section never shifts when the answer arrives.
           <EmptyState
@@ -130,7 +130,7 @@ export function StorePresetsShelf(
           />
         ) : null}
       </ItemGroup>
-      {!state?.error && rows.length > 0 ? (
+      {rows.length > 0 ? (
         <Directory
           kind="software"
           label={t('capabilities.store.softwarePage.presetsTitle')}

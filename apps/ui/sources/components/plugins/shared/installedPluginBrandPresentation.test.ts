@@ -1,6 +1,6 @@
 import {
     PluginProjectionInstalledPackageV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import {
     PluginUiArtifactDigestV1Schema,
@@ -985,5 +985,31 @@ describe('installed package brand presentation', () => {
         });
         await hook.unmount();
     });
-
+    it('draws a mark with no installed package without waking on Account availability republications', async () => {
+        const active = await activateStorageAccountScope({ serverId: 'server-a', accountId: 'account-a' });
+        const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        const scope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
+        const snapshot = (availabilityCursor: number) => Object.freeze({ availabilityCursor,
+            intentReads: Object.freeze([]), materializations: Object.freeze([]), snapshots: Object.freeze([]) });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: snapshot(1) });
+        // A built-in Agent's identity mark: no installed package, so no package asset to read.
+        const input = readInput({ installedPackage: null });
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useInstalledPluginBrandPresentation(input); });
+        try {
+            const settled = renders;
+            // Foreign Account writes advance the Account-wide cursor; nothing this mark shows changed.
+            for (let cursor = 2; cursor <= 6; cursor += 1) {
+                await act(async () => {
+                    replacePluginAccountAvailabilityProjection({ scope, snapshot: snapshot(cursor) });
+                    await Promise.resolve();
+                });
+            }
+            expect(renders - settled).toBe(0);
+        } finally {
+            await hook.unmount();
+            clearPluginAccountAvailabilityProjection();
+            active.dispose();
+        }
+    });
 });

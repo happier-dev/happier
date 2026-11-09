@@ -64,6 +64,7 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     generate: 'sparkle',
     workflow: 'play-circle',
     neutral: 'minus-circle',
+    task: 'check-square',
     rocket: 'rocket',
     star: 'star',
     flag: 'flag',
@@ -71,9 +72,15 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     flask: 'flask',
     book: 'book',
     heart: 'heart',
+    shield: 'shield',
+    edit: 'pencil-simple',
 });
 
 describe('resolvePluginUiIconToken', () => {
+    it('admits the task token and renders the task glyph instead of the unknown-token fallback', () => {
+        expect(PluginUiIconTokenV1Schema.safeParse('task').success).toBe(true);
+        expect(iconTokenResolver.resolvePluginUiIconName('task')).toBe('check-square');
+    });
     it('exposes the Protocol-owned semantic icon contract through the plugin-UI seam', () => {
         expect([...HAPPIER_ICON_NAMES]).toEqual([...PluginUiIconTokenV1Schema.options]);
     });

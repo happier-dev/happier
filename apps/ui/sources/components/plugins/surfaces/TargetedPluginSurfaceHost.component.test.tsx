@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DaemonPluginUiTargetedSurfaceMountV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
     preparePluginJsonSchema,

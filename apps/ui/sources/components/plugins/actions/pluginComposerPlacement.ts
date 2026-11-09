@@ -1,4 +1,5 @@
-import type { ComposerScopeKindV1, PluginProjectedComposerControlEntryV1 } from '@happier-dev/protocol';
+import type { ComposerScopeKindV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type { PluginProjectedComposerControlEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { AgentInputControlPlacement, AgentInputPlacementContext, AgentInputPluginControlId } from '@/components/sessions/agentInput/controls/agentInputControlTypes';

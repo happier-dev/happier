@@ -1,9 +1,9 @@
 import * as React from 'react';
+import { useStore } from 'zustand';
 import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useUnistyles } from 'react-native-unistyles';
-import type { DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -45,8 +45,8 @@ import type {
   StoreAppListingState,
   StoreAppPreparationInput,
   StoreAppCreateChoices,
-  StoreAppCreateFailure,
 } from './useStoreAppListing';
+import { createStoreAppPreparationState, type StoreAppPreparationStore } from './storeAppPreparationState';
 
 type Ready = Extract<StoreAppListingState, { kind: 'ready' }>;
 /** The Deploys field's choice for the Account's usual controller; a Machine id is never this word. */
@@ -58,8 +58,15 @@ type ReviewProps = Readonly<{
   name?: string;
   /** Explicit Store route choice, captured before the review opens. */
   initialMachine?: QualifiedMachineV1 | null;
+  reviewState?: StoreAppPreparationStore;
   onClose: () => void;
 }>;
+
+function createReviewState(props: Pick<ReviewProps, 'initialMachine' | 'lifetime'>) {
+  return createStoreAppPreparationState(props.initialMachine
+    && areServerProfileIdentifiersEquivalent(props.initialMachine.serverId, props.lifetime.scope.serverId)
+    ? props.initialMachine.machineId : null);
+}
 
 /** A catalog template's own words; catalog Apps carry no plugin translation bundle, so the fallback is the text. */
 export function catalogText(value: DeploymentTemplateV1['title'] | undefined): string | null {
@@ -71,7 +78,8 @@ export function catalogText(value: DeploymentTemplateV1['title'] | undefined): s
 export function showStoreAppPreparation(
   props: Omit<ReviewProps, 'onClose'> & Readonly<{ name: string }>,
 ): string {
-  return Modal.show({ component: StoreAppPreparationModal, props });
+  return Modal.show({ component: StoreAppPreparationModal,
+    props: { ...props, reviewState: props.reviewState ?? createReviewState(props) } });
 }
 
 function StoreAppPreparationModal(
@@ -100,24 +108,16 @@ export function StoreAppPreparationReview(
   }, [allMachines]);
   const projectChoice = useDeploymentProjectChoice({ lifetime });
   const sources = projectChoice.sources;
-  const [machineId, setMachineId] = React.useState<string | null>(() =>
-    props.initialMachine && areServerProfileIdentifiersEquivalent(props.initialMachine.serverId, serverId)
-      ? props.initialMachine.machineId : null);
-  const [controllerId, setControllerId] = React.useState<string | null>(null);
+  const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
+  const { machineId, controllerId, pending, prepared, refusal, environmentName, domainHostnames, production, creating } = useStore(reviewState);
   const [controllerMenuOpen, setControllerMenuOpen] = React.useState(false);
   const [optionsOpen, setOptionsOpen] = React.useState(false);
   const [deployDefaultsOpen, setDeployDefaultsOpen] = React.useState(false);
   const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
-  const [pending, setPending] = React.useState(false);
-  const [prepared, setPrepared] =
-    React.useState<DeploymentPublishPrepareResultV1 | null>(null);
-  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; step: 'prepare' | 'create'; failure?: StoreAppCreateFailure }> | null>(null);
   const partialFailure = refusal?.failure?.progress ? refusal.failure : null;
   const created = refusal?.failure?.created;
   // The Environment's own choices, with the existing create form's starting values: no name, not production,
   // managers deploy (DeploymentEnvironmentDraft).
-  const [environmentName, setEnvironmentName] = React.useState('');
-  const [domainHostnames, setDomainHostnames] = React.useState<Readonly<Record<string, string>>>({});
   const domainChoices = React.useMemo(() => {
     const bindings: NonNullable<StoreAppCreateChoices['domainBindings']> = [];
     let invalid = false;
@@ -131,8 +131,6 @@ export function StoreAppPreparationReview(
     }
     return { bindings, invalid };
   }, [domainHostnames, ready.app.domains]);
-  const [production, setProduction] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
   const router = useRouter();
   const approval = useActionApprovalContinuation({
     scopeKey: JSON.stringify([serverId, accountId, ready.templateRef]),
@@ -188,7 +186,7 @@ export function StoreAppPreparationReview(
         : projectChoice.missing;
 
   const review = React.useCallback(async () => {
-    if (pending || !chosen?.installationId || missing) return;
+    if (reviewState.getState().pending || !chosen?.installationId || missing) return;
     const project: Pick<StoreAppPreparationInput, 'projectSourceId' | 'sourceRevision' | 'newProject'> | null = projectChoice.selection;
     if (!project) return;
     const input: StoreAppPreparationInput = {
@@ -199,41 +197,40 @@ export function StoreAppPreparationReview(
         ? { explicit: { controllerMachineId: controllerId } }
         : {}),
     };
-    setPending(true);
-    setRefusal(null);
+    reviewState.setState({ pending: true, refusal: null });
     const outcome = await ready.prepare(input);
-    setPending(false);
     if ('kind' in outcome && outcome.kind === 'prepared') {
-      setPrepared(outcome);
+      reviewState.setState({ pending: false, prepared: outcome });
       return;
     }
     if ('kind' in outcome && outcome.kind === 'approval_request_created') {
+      reviewState.setState({ pending: false });
       approval.requestApproval(outcome.artifactId);
       return;
     }
-    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'prepare', failure: outcome });
+    if ('ok' in outcome) reviewState.setState({ pending: false,
+      refusal: { code: outcome.errorCode, step: 'prepare', failure: outcome } });
   }, [
     approval,
     chosen,
     controllerId,
     missing,
-    pending,
     projectChoice.selection,
     ready,
+    reviewState,
   ]);
 
   const create = React.useCallback(async () => {
-    if (!prepared || creating) return;
-    setCreating(true);
-    if (!partialFailure && !created) setRefusal(null);
+    if (!prepared || reviewState.getState().creating) return;
+    reviewState.setState({ creating: true, ...(!partialFailure && !created ? { refusal: null } : {}) });
     const outcome = await ready.create(prepared, {
       name: environmentName.trim(),
       protection: production ? 'production' : 'nonProduction',
       deployerMode: 'managers',
       ...(domainChoices.bindings.length ? { domainBindings: domainChoices.bindings } : {}),
     });
-    setCreating(false);
     if ('environmentId' in outcome) {
+      reviewState.setState({ creating: false });
       onClose();
       const href = ready.environmentHref(outcome);
       const result = runGuardedNavigation(() => router.push(href as never));
@@ -241,11 +238,13 @@ export function StoreAppPreparationReview(
       return;
     }
     if ('kind' in outcome && outcome.kind === 'approval_request_created') {
+      reviewState.setState({ creating: false });
       approval.requestApproval(outcome.artifactId);
       return;
     }
-    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'create', failure: outcome });
-  }, [approval, created, creating, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, router]);
+    if ('ok' in outcome) reviewState.setState({ creating: false,
+      refusal: { code: outcome.errorCode, step: 'create', failure: outcome } });
+  }, [approval, created, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, reviewState, router]);
 
   const footer = created ? (
     <MachineSetupReviewFooter onCancel={onClose} cancelTestID="store.app.prepare.cancel"
@@ -263,15 +262,14 @@ export function StoreAppPreparationReview(
         onPress: () => { void create(); } }} />
   ) : prepared ? (
     <MachineSetupReviewFooter
-      onCancel={() => {
-        setPrepared(null);
-        setRefusal(null);
+      onCancel={creating ? onClose : () => {
+        reviewState.setState({ prepared: null, refusal: null });
       }}
-      cancelLabel={t('capabilities.store.appPage.back')}
-      cancelTestID="store.app.prepare.back"
-      note={t('capabilities.store.appPage.prepareDescription')}
+      cancelLabel={t(creating ? 'common.close' : 'capabilities.store.appPage.back')}
+      cancelTestID={creating ? 'store.app.prepare.cancel' : 'store.app.prepare.back'}
+      note={creating || refusal?.step === 'create' ? null : t('capabilities.store.appPage.prepareDescription')}
       primary={{
-        label: t('capabilities.store.appPage.install'),
+        label: t(creating ? 'common.working' : 'capabilities.store.appPage.install'),
         testID: 'store.app.prepare.confirm',
         loading: creating,
         disabled: creating || approval.approvalPending,
@@ -335,8 +333,8 @@ export function StoreAppPreparationReview(
     <>
     <ItemGroup
       testID="store.app.prepare.prepared"
-      title={t('capabilities.store.appPage.preparedTitle')}
-      description={t('capabilities.store.appPage.preparedDescription')}
+      title={creating ? t('common.working') : refusal?.step === 'create' ? undefined : t('capabilities.store.appPage.preparedTitle')}
+      description={creating || refusal?.step === 'create' ? undefined : t('capabilities.store.appPage.preparedDescription')}
     >
       <Item
         mode="info"
@@ -446,7 +444,7 @@ export function StoreAppPreparationReview(
             selectedId={machineId ?? ''}
             onSelect={(id) => {
               setMachineMenuOpen(false);
-              if (id && selectable.has(id)) setMachineId(id);
+              if (id && selectable.has(id)) reviewState.setState({ machineId: id });
             }}
             itemTrigger={{
               title: t('capabilities.store.softwarePage.machineLabel'),
@@ -465,7 +463,7 @@ export function StoreAppPreparationReview(
             <FieldTextInput
               testID="store.app.prepare.environmentName"
               value={environmentName}
-              onChangeText={setEnvironmentName}
+              onChangeText={(environmentName) => reviewState.setState({ environmentName })}
               accessibilityLabel={t('projects.deployments.name')}
               placeholder={t('projects.deployments.namePlaceholder')}
             />
@@ -493,7 +491,7 @@ export function StoreAppPreparationReview(
                   <FieldTextInput
                     testID={`store.app.prepare.domain.${domain.key}`}
                     value={domainHostnames[domain.key] ?? ''}
-                    onChangeText={(hostname) => setDomainHostnames((current) => ({ ...current, [domain.key]: hostname }))}
+                    onChangeText={(hostname) => reviewState.setState(current => ({ domainHostnames: { ...current.domainHostnames, [domain.key]: hostname } }))}
                     accessibilityLabel={label}
                     accessibilityHint={helper}
                     placeholder={t('capabilities.store.appPage.domainPlaceholder')}
@@ -546,7 +544,7 @@ export function StoreAppPreparationReview(
               selectedId={controllerId ?? CONTROLLER_DEFAULT}
               onSelect={(id) => {
                 setControllerMenuOpen(false);
-                setControllerId(id && id !== CONTROLLER_DEFAULT ? id : null);
+                reviewState.setState({ controllerId: id && id !== CONTROLLER_DEFAULT ? id : null });
               }}
               itemTrigger={{
                 title: t('capabilities.store.appPage.controllerLabel'),
@@ -557,8 +555,8 @@ export function StoreAppPreparationReview(
               testID="store.app.prepare.production"
               title={t('projects.deployments.production')}
               subtitle={t('projects.deployments.productionHint')}
-              rightElement={<Switch value={production} onValueChange={setProduction} />}
-              onPress={() => setProduction((current) => !current)}
+              rightElement={<Switch value={production} onValueChange={(production) => reviewState.setState({ production })} />}
+              onPress={() => reviewState.setState(current => ({ production: !current.production }))}
               showChevron={false}
             />
           </ExpandableItem>

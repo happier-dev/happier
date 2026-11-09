@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { DaemonPluginUiResourceWatchOpenRequestSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { fileURLToPath } from 'node:url';
 import {
     PluginUiArtifactDigestV1Schema,
@@ -20,7 +21,6 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
-import { PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1 } from '@/components/plugins/hostApi/outwardEffectSettlement';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { createPluginSurfaceContext } from '@/components/plugins/surfaces/pluginSurfaceContext';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -67,11 +67,79 @@ function readProductionSource(relativePath: string): string {
 }
 
 describe('canonical React Native plugin Host API adapter', () => {
+    it('preserves the host request id with a pre-dispatch Action projection refusal', async () => {
+        const { createPluginSurfaceHostApiError } = await import('../surfaces/createPluginSurfaceHostApi');
+        let requestId = '';
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            installedMethods: ['executeAction'], handleRequest: request => {
+                requestId = request.requestId;
+                return createPluginSurfaceHostApiError('unavailable', ['plugin_surface_action_projection_unavailable']);
+            },
+        });
+        try {
+            await expect(adapter.api.executeAction({ pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' }, {}))
+                .rejects.toMatchObject({ code: 'unavailable', details: { requestId: expect.any(String) },
+                    diagnostics: [{ code: 'plugin_surface_action_projection_unavailable', severity: 'error' }] });
+            expect(requestId).not.toBe('');
+        } finally { adapter.dispose(); }
+    });
+    it('carries an authority-only exact-purpose watch without snapshot bytes or a digest', async () => {
+        const resource = { readAuthority: { consumer: { pluginId: 'acme.preview', localId: 'read-ci' }, purpose: 'github', input: {} } };
+        let subscriptionId = '';
+        const events: ResourceSubscriptionEvent[] = [];
+        // The real native caller formerly supplied its complete mount/artifact/
+        // target identity here, which is valid but larger than a wire watch id.
+        const params = {
+            surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
+            requestIdPrefix: `rn-v2:${'mount-artifact-target/'.repeat(40)}`, installedMethods: ['watchResource'] as const,
+            handleRequest: async (request: PluginUiHostApiRequestEnvelopeV1): Promise<PluginUiJsonValueV1> => {
+                if (request.method === 'disposeHostResource') return {};
+                expect(request.method).toBe('watchResource');
+                const payload = request.payload as { subscriptionId: string; resource: typeof resource };
+                expect(payload.resource).toEqual(resource);
+                // Exercise the exact next consumer, not a second local id bound.
+                DaemonPluginUiResourceWatchOpenRequestSchema.parse({
+                    machineId: 'machine-1', expectedCallerOccurrenceId: 'occurrence-1',
+                    callerPluginId: 'acme.preview', ...payload,
+                });
+                subscriptionId = payload.subscriptionId;
+                return { subscriptionId };
+            },
+        };
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter(params);
+        try {
+            const subscription = await adapter.api.watchResource(resource, event => events.push(event));
+            expect(subscription).not.toHaveProperty('admittedDigest');
+            expect(adapter.publishResourceSubscriptionEvent({ version: 1, subscriptionId, kind: 'error',
+                code: 'expired_resource', diagnostics: [] })).toBe(true);
+            expect(events).toEqual([{ version: 1, subscriptionId, kind: 'error', code: 'expired_resource', diagnostics: [] }]);
+            await subscription.dispose();
+            expect(adapter.publishResourceSubscriptionEvent({ version: 1, subscriptionId, kind: 'error',
+                code: 'expired_resource', diagnostics: [] })).toBe(false);
+        } finally { adapter.dispose(); }
+    });
+    it('keeps contributed download input and canonical outcomes identical to the hosted client', async () => {
+        const requests: PluginUiHostApiRequestEnvelopeV1[] = [];
+        let result: PluginUiJsonValueV1 = { success: false, status: 'unknown', error: 'ACK unavailable', errorCode: 'indeterminate' };
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
+            requestSurface: surface, installedMethods: ['downloadFile'],
+            handleRequest: async request => { requests.push(request); return result; } });
+        try {
+            const download = { action: { pluginId: 'acme.files', localId: 'download' }, input: { artifactId: 'exact' } };
+            await expect(adapter.api.downloadFile(download)).resolves.toEqual(result);
+            expect(requests).toEqual([expect.objectContaining({ method: 'downloadFile', payload: download })]);
+            await expect(adapter.api.downloadFile({ ...download, input: { destination: { destinationId: 'forged' } } }))
+                .rejects.toMatchObject({ code: 'invalid_payload' });
+            result = { success: true, status: 'completed', url: 'https://not-a-receipt.test' };
+            await expect(adapter.api.downloadFile(download)).rejects.toMatchObject({ code: 'invalid_payload' });
+        } finally { adapter.dispose(); }
+    });
     it('routes Discussion Composer reads through the advertised optional operation', async () => {
         const methods: string[] = [];
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
-            requestSurface: surface, requestIdPrefix: 'rn-discussion-composer',
+            requestSurface: surface,
             installedMethods: ['readComposer', 'readDiscussionComposer'],
             handleRequest: async request => {
                 methods.push(request.method);
@@ -90,7 +158,7 @@ describe('canonical React Native plugin Host API adapter', () => {
         const methods: string[] = [];
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
-            requestSurface: surface, requestIdPrefix: 'rn-old-discussion-composer',
+            requestSurface: surface,
             installedMethods: ['readComposer', 'applyComposer'],
             handleRequest: async request => {
                 methods.push(request.method);
@@ -117,7 +185,7 @@ describe('canonical React Native plugin Host API adapter', () => {
                 : { code: 'denied', diagnostics: [] },
         } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
-            requestIdPrefix: 'rn-host-read', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+            handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
         await expect(adapter.api.readResource(reference)).resolves.toMatchObject({ bytes: new Uint8Array([55]) });
         adapter.dispose();
         await expect(adapter.api.readResource(reference)).rejects.toMatchObject({ code: 'stale_surface' });
@@ -127,17 +195,19 @@ describe('canonical React Native plugin Host API adapter', () => {
         const result = { ok: true, result: { ref: { surface: { serverId: 'home', accountId: 'viewer',
             owner: { kind: 'pluginArea', pluginId: surface.pluginId, pageId: surface.contributionId, area: 'pinned' } }, instanceId: 'copy' }, instance: null } };
         const owner = createPluginSurfaceHostApi({ surfaceContext: surface, handlers: { widgetArea: () => { retire(); return result; } } });
+        let current = true;
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
-            requestIdPrefix: 'rn-area-edit', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
-        retire = adapter.dispose;
+            handleRequest: owner.handleRequest, installedMethods: owner.installedMethods, isCurrent: () => current });
+        retire = () => { current = false; };
         await expect(adapter.api.widgetArea({ area: 'pinned', operation: { actionId: 'widgets.item.remove', instanceId: 'copy' } })).resolves.toEqual(result);
+        adapter.dispose();
     });
     it('transports declared-area operations through the mounted host and refuses author authority', async () => {
         const requests: unknown[] = [];
         const owner = createPluginSurfaceHostApi({ surfaceContext: surface,
             handlers: { widgetArea: request => { requests.push(request.payload); return { ok: false, errorCode: 'unavailable', error: 'area_not_available' }; } } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
-            requestIdPrefix: 'rn-area', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+            handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
         const request = { area: 'pinned', operation: { actionId: 'widgets.item.list' as const } };
         await expect(adapter.api.widgetArea(request)).resolves.toMatchObject({ ok: false, errorCode: 'unavailable' });
         await expect(adapter.api.widgetArea({ ...request, accountId: 'other' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
@@ -149,7 +219,7 @@ describe('canonical React Native plugin Host API adapter', () => {
         const owner = createPluginSurfaceHostApi({ surfaceContext: surface,
             handlers: { readEntityDragItem: () => null, updateEntityDragDrop: () => ({ accepted: true }) } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }), requestSurface: surface,
-            requestIdPrefix: 'rn-entity', handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
+            handleRequest: owner.handleRequest, installedMethods: owner.installedMethods });
         await expect(adapter.api.readEntityDragItem({ kind: 'session' })).resolves.toBeNull();
         await expect(adapter.api.updateEntityDragDrop({ kind: 'cancel' })).resolves.toEqual({ accepted: true });
         await expect(adapter.api.updateEntityDragDrop({ kind: 'cancel', scope: { accountId: 'other' } } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
@@ -174,7 +244,6 @@ describe('canonical React Native plugin Host API adapter', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-stored-image',
             handleRequest: owner.handleRequest,
             installedMethods: owner.installedMethods,
         });
@@ -196,11 +265,8 @@ describe('canonical React Native plugin Host API adapter', () => {
         } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
-            requestSurface: surface,
-            // Artifact digest and destination identity legitimately exceed the
-            // root Action request-id budget; they are authority, not correlation.
-            requestIdPrefix: `rn-v2:${JSON.stringify({ mount: canonicalRightPaneMount,
-                artifactDigest: `sha256:${'e'.repeat(64)}`, occurrenceId: 'inspector-generation-44' })}`,
+            // Mounted identities are authority, not request correlation ids.
+            requestSurface: { ...surface, surfaceId: `mounted:${'target-artifact/'.repeat(40)}` },
             handleRequest: owner.handleRequest,
             installedMethods: owner.installedMethods,
         });
@@ -221,7 +287,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-action-without-input',
             handleRequest: async (request) => {
                 requests.push(request);
                 return { ok: true };
@@ -243,7 +308,6 @@ describe('canonical React Native plugin Host API adapter', () => {
             createCanonicalPluginReactNativeHostApiAdapter({
                 surface: canonicalSurface,
                 requestSurface: surface,
-                requestIdPrefix: `rn-strict-${method}`,
                 handleRequest: async () => result,
                 installedMethods: [method],
             })
@@ -309,19 +373,20 @@ describe('canonical React Native plugin Host API adapter', () => {
         ];
 
         for (const operation of operations) {
-            let adapter: ReturnType<typeof createCanonicalPluginReactNativeHostApiAdapter>;
-            adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            let current = true;
+            const adapter = createCanonicalPluginReactNativeHostApiAdapter({
                 surface: canonicalSurface,
                 requestSurface: surface,
-                requestIdPrefix: 'rn-v2',
+                isCurrent: () => current,
                 handleRequest: async () => {
-                    adapter.dispose();
+                    current = false;
                     return { token: 'known-success' };
                 },
                 installedMethods: PLUGIN_UI_HOST_METHODS_V1,
             });
 
             await expect(operation.invoke(adapter)).resolves.toEqual(operation.expected);
+            adapter.dispose();
         }
     });
 
@@ -333,7 +398,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-open-surface',
             handleRequest: async (request) => {
                 requests.push(request);
                 return {};
@@ -379,7 +443,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-composer-media',
             handleRequest: async (request) => {
                 requests.push(request);
                 if (request.method === 'pickComposerMedia') return handle;
@@ -439,7 +502,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-composer-watch',
             handleRequest: async (request) => {
                 requests.push(request);
                 return null;
@@ -509,7 +571,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: `rn-${method}-abort`,
             handleRequest: async (request, options) => {
                 if (request.method === method) {
                     const candidate = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
@@ -574,7 +635,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-composer-lock-retire',
             handleRequest: async (request) => {
                 requests.push(request);
                 return null;
@@ -608,7 +668,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-open-surface-qualified',
             handleRequest: async (request) => {
                 requests.push(request);
                 return {};
@@ -633,7 +692,6 @@ describe('canonical React Native plugin Host API adapter', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-open-connected-accounts',
             handleRequest: async (request) => {
                 requests.push(request);
                 return result;
@@ -711,7 +769,6 @@ describe('canonical React Native plugin Host API adapter', () => {
             adapter = createCanonicalPluginReactNativeHostApiAdapter({
                 surface: canonicalSurface,
                 requestSurface: surface,
-                requestIdPrefix: 'rn-v2',
                 handleRequest: async () => {
                     adapter.dispose();
                     return operation.result;
@@ -731,7 +788,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-active-composer-retirement',
             handleRequest: async (request) => {
                 if (request.method !== 'activeComposer') throw new Error('expected_active_composer_request');
                 return await new Promise<PluginUiJsonValueV1>((resolve) => {
@@ -762,7 +818,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn',
             handleRequest: async (request) => {
                 if (request.method === 'watchResource') {
                     await new Promise<void>((resolve) => {
@@ -816,7 +871,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-resource-abort',
             handleRequest: async (request, options) => {
                 if (request.method === 'watchResource') {
                     const subscriptionId = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
@@ -924,7 +978,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-resource-admission',
             handleRequest: async (request) => {
                 if (request.method !== 'watchResource') return null;
                 const subscriptionId = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
@@ -956,7 +1009,6 @@ describe('canonical React Native plugin Host API adapter', () => {
                 target: { kind: 'session', sessionId: 'session-1' },
             }),
             requestSurface: surface,
-            requestIdPrefix: 'rn-resource-establishment',
             handleRequest: async (request) => {
                 if (request.method !== 'watchResource') return null;
                 const subscriptionId = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
@@ -1020,7 +1072,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         return createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-advertised',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         });
@@ -1216,10 +1267,8 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
     });
 
     // The withdrawal policy is GENERIC at the request carrier: every probe —
-    // spanning the outward-effect, decision, read and Composer families — gets
-    // the same prompt settlement, with no per-method allowlist. Family
-    // membership is read from the CANONICAL classification owner, never
-    // re-declared here.
+    // spanning effects, decisions, reads and Composer work — gets the same
+    // prompt settlement, with no per-method allowlist.
     describe('caller-withdrawal policy across method families (UI-D02)', () => {
         const composerRef = { kind: 'session', sessionId: 'session-1' } as const;
 
@@ -1239,7 +1288,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             return createCanonicalPluginReactNativeHostApiAdapter({
                 surface: canonicalSurface,
                 requestSurface: surface,
-                requestIdPrefix: `rn-withdrawal-${method}`,
                 handleRequest: host.handleRequest,
                 installedMethods: host.installedMethods,
             });
@@ -1296,14 +1344,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             winning: PluginUiJsonValueV1;
         }[];
 
-        it('draws its probes from the canonical settlement classification', () => {
-            // The retired-success regression (openNewSession) and the families
-            // the policy must serve are owned by the classifier, not this file.
-            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).toContain('openNewSession');
-            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).not.toContain('confirm');
-            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).not.toContain('readResource');
-        });
-
         it.each(withdrawalProbes)(
             'settles caller withdrawal promptly for $method and fences its late response',
             async ({ method, invoke }) => {
@@ -1348,9 +1388,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             },
         );
 
-        it.each(withdrawalProbes.filter((probe) => (
-            (PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1 as readonly string[]).includes(probe.method)
-        )))(
+        it.each(withdrawalProbes)(
             'preserves a $method settlement that won before caller withdrawal',
             async ({ method, invoke, winning }) => {
                 const controller = new AbortController();
@@ -1385,7 +1423,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: targetedSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-1.0',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         });
@@ -1493,6 +1530,15 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         )).rejects.toMatchObject({ code: 'invalid_payload' });
     });
 
+    it('serializes an exact Session address separately from strict Action input', async () => {
+        const requests: unknown[] = [];
+        const adapter = createAdapterOverHost({ executeAction: request => { requests.push(request.payload); return null; } });
+        const input = { sessionId: 'reviewed', message: 'Repair', idempotencyKey: 'reviewed-message' };
+        const sessionAddress = { serverId: 'reviewed-home', sessionId: 'reviewed' };
+        await adapter.api.executeAction('session.message.send', input, { sessionAddress });
+        expect(requests).toEqual([{ action: 'session.message.send', input, sessionAddress }]);
+    });
+
     it('never carries immediate-execute provenance from a host request', async () => {
         const operation = {
             point: { pointId: 'connection', protocol: { id: 'provider', version: 1 } },
@@ -1554,7 +1600,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: targetedSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-context-1.0',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         });
@@ -1618,7 +1663,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: targetedSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-selection-carrier',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         });
@@ -1698,7 +1742,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: targetedSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-selection-replacement',
             handleRequest: requestHandler,
             installedMethods: ['selectActionInput', 'executeAction'],
         });
@@ -1775,7 +1818,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: targetedSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-terminal-selected-settlement',
             handleRequest: executeAction,
             installedMethods: ['selectActionInput', 'executeAction'],
         });
@@ -1992,7 +2034,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const withoutSurfaceFact = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-no-context',
             handleRequest: async () => ({ accepted: true }),
             installedMethods: [],
         });
@@ -2025,7 +2066,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-narrowed',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
             getInstalledMethods: () => host.installedMethods,
@@ -2079,7 +2119,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const withoutAdmissionSource = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-narrowed',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
             getInstalledMethods: () => host.installedMethods,
@@ -2166,7 +2205,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-retired-publication',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
             isCurrent: () => current,
@@ -2319,7 +2357,6 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-action-schema',
             handleRequest,
             installedMethods: ['executeAction'],
         });
@@ -2359,7 +2396,6 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
         return createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-context',
             handleRequest: host.handleRequest,
             installedMethods: host.installedMethods,
         });
@@ -2384,7 +2420,7 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
         });
         const initial = project();
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: initial,
-            requestSurface: surface, requestIdPrefix: 'rn-immutable-theme', installedMethods: ['context', 'watchContext'],
+            requestSurface: surface, installedMethods: ['context', 'watchContext'],
             handleRequest: async () => null,
         });
         const publications: SurfaceContext[] = [];
@@ -2459,7 +2495,6 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
         expect(createCanonicalPluginReactNativeHostApiAdapter({
             surface: canonicalSurface,
             requestSurface: surface,
-            requestIdPrefix: 'rn-context-invalid',
             handleRequest: invalid.handleRequest,
             installedMethods: invalid.installedMethods,
         }).api.version().methods).toEqual([]);
@@ -2522,7 +2557,6 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: raw,
             requestSurface: surface,
-            requestIdPrefix: 'rn-owned-context',
             installedMethods: ['context', 'watchContext'],
             handleRequest: async () => null,
         });

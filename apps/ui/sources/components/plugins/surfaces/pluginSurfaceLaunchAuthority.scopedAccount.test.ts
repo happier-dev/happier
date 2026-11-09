@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
-import { resolvePluginSurfaceLaunchAuthority } from './pluginSurfaceLaunchAuthority';
+import { isSamePluginSurfaceLaunchAuthority, resolveSelectedPluginSurfaceLaunchAuthority, resolvePluginSurfaceLaunchAuthority } from './pluginSurfaceLaunchAuthority';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 
 const pluginId = 'acme.scoped-account';
 const machineId = 'scope-machine';
@@ -62,4 +65,59 @@ describe('plugin surface exact scoped Account authority', () => {
             accountLifetime: null,
         })).toMatchObject({ machineId, serverId, executionOrigin });
     });
+});
+
+const accountPlacement = {
+    ...directPlacement,
+    occurrenceId: 'portable-custody',
+    hostAccountOrigin: { serverId, accountId: 'account-a', custodyId: 'portable-custody',
+        sourceCustody: { kind: 'account_release', pluginId, version: '1.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` } },
+} satisfies PluginUiSurfacePlacementProjection;
+
+async function admitAccount() {
+    const runtime = await activateStorageAccountScope({ serverId, accountId: 'account-a' });
+    onTestFinished(() => runtime.dispose());
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected current Account fixture');
+    return lifetime;
+}
+
+it('admits Account-owned renderer launch custody without borrowing a Machine origin', async () => {
+    const accountLifetime = await admitAccount();
+    expect(readPluginUiAccountExecutableOrigin(accountPlacement)).not.toBeNull();
+    const authority = resolveSelectedPluginSurfaceLaunchAuthority({ placement: accountPlacement, accountLifetime });
+    expect(authority).toMatchObject({ serverId, machineId: null, occurrenceId: 'portable-custody', executionOrigin: null, accountLifetime });
+    expect(resolvePluginSurfaceLaunchAuthority({ placement: accountPlacement, accountLifetime,
+        scoped: { serverId, machineId: null, interactionEnabled: true } })).toEqual(authority);
+    const withMachineSupply = resolveSelectedPluginSurfaceLaunchAuthority({
+        placement: { ...accountPlacement, hostOrigin: selectedPlacement.hostOrigin }, accountLifetime,
+    });
+    if (!authority || !withMachineSupply) throw new Error('Expected exact Account authority');
+    expect(isSamePluginSurfaceLaunchAuthority(authority, withMachineSupply)).toBe(true);
+    expect(isSamePluginSurfaceLaunchAuthority(authority, resolveSelectedPluginSurfaceLaunchAuthority({
+        placement: { ...accountPlacement, occurrenceId: 'replacement-custody',
+            hostAccountOrigin: { ...accountPlacement.hostAccountOrigin, custodyId: 'replacement-custody' } }, accountLifetime,
+    })!)).toBe(false);
+});
+
+it.each([
+    { accountId: 'account-b' },
+    { serverId: 'other-home' },
+    { custodyId: 'not-this-occurrence' },
+    { custodyId: '' },
+])('refuses mismatched Account renderer custody %j even with a usable Machine stamp', async changed => {
+    const accountLifetime = await admitAccount();
+    const placement = { ...accountPlacement, hostOrigin: selectedPlacement.hostOrigin,
+        hostAccountOrigin: { ...accountPlacement.hostAccountOrigin, ...changed } };
+    expect(resolveSelectedPluginSurfaceLaunchAuthority({ placement, accountLifetime })).toBeNull();
+});
+
+it('withdraws Account renderer launch custody when its Account lifetime retires', async () => {
+    const accountLifetime = await admitAccount();
+    const authority = resolveSelectedPluginSurfaceLaunchAuthority({ placement: accountPlacement, accountLifetime });
+    expect(authority).not.toBeNull();
+    retireActiveServerAccountScopeLifetime();
+    expect(resolveSelectedPluginSurfaceLaunchAuthority({ placement: accountPlacement, accountLifetime })).toBeNull();
+    expect(resolveSelectedPluginSurfaceLaunchAuthority({ placement: accountPlacement, accountLifetime: null })).toBeNull();
+    expect(isSamePluginSurfaceLaunchAuthority(authority!, authority!)).toBe(false);
 });

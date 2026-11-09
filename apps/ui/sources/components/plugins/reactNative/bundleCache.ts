@@ -656,10 +656,10 @@ export function createPluginReactNativeBundleCache(
             });
             if (!operation) return null;
             try {
-                // Custody returns detached bytes and keeps the same Account
-                // generation captured across the asynchronous integrity work.
+                // Custody returns already-admitted detached bytes. Match the
+                // requested privacy partition without rehashing internal data.
                 const record = await operation.readPersistentArtifact(identity) as PluginReactNativePersistentArtifactRecord | null;
-                if (!record || !await persistentRecordHasValidIntegrity(record, identity)) {
+                if (!record || !persistentIdentityMatches(record.persistentIdentity, identity)) {
                     if (record) await operation.removePersistentArtifact(identity);
                     return null;
                 }

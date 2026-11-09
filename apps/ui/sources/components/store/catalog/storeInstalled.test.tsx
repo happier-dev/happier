@@ -413,7 +413,7 @@ it('distinguishes confirmed-empty from native failure and withdraws a retired Ac
 });
 
 it('keeps native Plugin partial rows and isolates two Homes sharing a Machine id', async () => {
-    const machine = createMachineFixture({ id: 'same-id' });
+    const machine = createMachineFixture({ id: 'same-id', activeAt: Date.now() });
     await account.restore({ serverIdentityId: 'srv_store_plugin_a', machines: [machine] });
     const scope = storage.getState().settingsScope!;
     const materialization = (serverIdentityId: string): PluginMachineMaterializationV1 => ({

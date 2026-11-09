@@ -13,6 +13,7 @@ import type {
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
+import { createContext, runInContext } from 'node:vm';
 
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { createPluginSurfaceContext } from '@/components/plugins/surfaces/pluginSurfaceContext';
@@ -22,6 +23,7 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
+import { HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT } from './guestBootstrap.generated';
 
 /**
  * §7 layer 3 — the public hosted-web client against the real host bridge, with
@@ -200,6 +202,55 @@ async function connectClient(input: Readonly<{
 }
 
 describe('hosted-web surface context over the real bridge and public client (§3.2, §3.3)', () => {
+    it('loads the generated guest with the current host theme, including named hues', async () => {
+        const surface = createHostSurface({ themeProfileIndex: 0, locale: 'en' });
+        const styles = new Map<string, string>();
+        const listeners = new Set<(event: unknown) => void>();
+        const requests: Promise<unknown>[] = [];
+        let presented!: () => void;
+        let failed!: (error: Error) => void;
+        const presentation = new Promise<void>((resolve, reject) => { presented = resolve; failed = reject; });
+        // The WebView/DOM and realm are genuine system boundaries. The generated
+        // guest, strict readers, negotiation and host bridge all remain real.
+        const realm = createContext({
+            TextEncoder, TextDecoder, AbortController, URL,
+            addEventListener: (_type: string, listener: (event: unknown) => void) => listeners.add(listener),
+            removeEventListener: (_type: string, listener: (event: unknown) => void) => listeners.delete(listener),
+            document: {
+                documentElement: {
+                    style: { setProperty: (key: string, value: string) => {
+                        styles.set(key, value);
+                        if (key === 'color') presented();
+                    } },
+                    getBoundingClientRect: () => ({ height: 1 }),
+                },
+            },
+            ReactNativeWebView: { postMessage: (raw: string) => {
+                const envelope = JSON.parse(raw);
+                if (envelope.kind === 'error') failed(new Error(envelope.payload.code));
+                requests.push(handler(envelope).then(dispatch));
+            } },
+        });
+        const dispatch = (message: unknown) => {
+            const data: unknown = runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(message))})`, realm);
+            for (const listener of listeners) listener({ data });
+        };
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface: requestSurface,
+            requestIdPrefix: 'generated-guest',
+            identity,
+            bootstrap: { frameOrigin: 'null' },
+            canonicalHostApi: { identity, surface: surface as unknown as PluginUiJsonValueV1, methods: [...PLUGIN_UI_HOST_METHODS_V1] },
+            postToFrame: dispatch,
+        });
+        runInContext(`globalThis.window = globalThis; globalThis.__HAPPIER_UI_FRAME_BOOTSTRAP_V1__ = ${JSON.stringify({
+            identity, frameOrigin: 'null', hostOrigin: 'https://host.test',
+        })};\n${HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT}`, realm);
+        await presentation;
+        expect(styles.get('--happier-plugin-color-blue')).toBe(surface.theme.colors.blue);
+        expect(styles.get('--happier-plugin-color-purple')).toBe(surface.theme.colors.purple);
+        await Promise.all(requests);
+    });
     it('carries optional spinner preferences through the existing hosted context without changing motion policy', async () => {
         const initial = createHostSurface({ themeProfileIndex: 0, locale: 'en' });
         const spinner = { style: 'hWave', speed: 'slow', pause: 'long' };

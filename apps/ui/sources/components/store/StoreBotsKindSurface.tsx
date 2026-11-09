@@ -36,7 +36,7 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
     const { sourceIds } = useStoreDirectorySources(directory.state?.filters ?? NO_FILTERS, presented && directory.state !== null);
     const list = useRegistryItems({ kind: 'plugin', contributionFamily: 'botTemplates', query, sourceIds }, presented && directory.state !== null);
     const received = useReceivedBotTemplates(query, presented && directory.state !== null);
-    const sourceTitle = useSourceTitle('plugin');
+    const sourceTitle = useSourceTitle();
     const router = useRouter();
     const scope = useAccountSettingsScope();
     const [selected, setSelected] = React.useState<Omit<Parameters<typeof useRegistryItem>[0], 'kind'> | null>(null);

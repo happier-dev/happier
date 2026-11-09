@@ -1,5 +1,3 @@
-import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { PluginUiHostApiSurfaceContextV1Schema, type PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { act } from 'react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -9,6 +7,8 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storage';
 
 import { createPluginSurfaceContext, getPluginSurfaceTargetAuthorityKey, resolvePluginSurfaceTarget, usePluginSurfaceEnvironment } from './pluginSurfaceContext';
+import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 const targetedContributions: PluginUiTargetedContributionsV1 = {
     target: {
@@ -44,6 +44,34 @@ describe('createPluginSurfaceContext', () => {
             ...resolution.target, homeId: 'replacement-home' }));
         expect(resolvePluginSurfaceTarget({ targetKind: 'services' })).toEqual({ resolved: true, target: { kind: 'services' } });
     });
+    it('publishes only the admitted current Account lifetime scope, never a global or retired identity', () => {
+        const fixture = createPluginSurfaceContextFixture();
+        const input = { mount: fixture.mount, target: fixture.target, accountEncryptionMode: fixture.accountEncryptionMode,
+            environment: { ...fixture, columnVisible: false }, translations: fixture.translations };
+        const scope = { serverId: 'home-a', accountId: 'viewer-a' };
+        let current = true;
+        const accountLifetime = { scope, isCurrent: () => current };
+        const published = createPluginSurfaceContext({ ...input, accountLifetime });
+        expect(PluginUiHostApiSurfaceContextV1Schema.parse(published).accountScope).toEqual(scope);
+        expect(published.accountScope).toBe(scope);
+        expect(createPluginSurfaceContext(input)).not.toHaveProperty('accountScope');
+        current = false;
+        expect(createPluginSurfaceContext({ ...input, accountLifetime })).not.toHaveProperty('accountScope');
+    });
+    it('shares admitted repository, current branch and HEAD facts with the exact Session target', () => {
+        const snapshot = { hostingProvider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com',
+            nameWithOwner: 'Owner/Repo', urlSafety: { allowedSchemes: ['https:'] } },
+            branch: { head: 'feature/ci', headOid: 'abc123', upstream: null, ahead: 0, behind: 0, detached: false } };
+        const facts = { targetKind: 'session' as const, sessionId: 'session-a', agentId: 'codex', snapshot };
+        const resolved = resolvePluginSurfaceTarget(facts);
+        expect(resolved).toMatchObject({ resolved: true, target: { kind: 'session', sessionId: 'session-a', agentId: 'codex',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' }, branch: 'feature/ci', headOid: 'abc123' } });
+        const detached = resolvePluginSurfaceTarget({ ...facts, snapshot: { ...snapshot, branch: { ...snapshot.branch, detached: true } } });
+        expect(detached).toMatchObject({ resolved: true, target: { headOid: 'abc123' } });
+        if (detached.resolved) expect(detached.target).not.toHaveProperty('branch');
+        expect(resolvePluginSurfaceTarget({ targetKind: 'session', sessionId: 'session-a' })).toEqual({ resolved: true, target: { kind: 'session', sessionId: 'session-a' } });
+    });
+
     it('publishes the canonical logical Project target through the public context reader', () => {
         const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout-address', projectKey: 'logical-project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
             futurePrivateFact: 'not disclosed', source: { sourceId: 'source', revision: 1, futurePrivateFact: 'not disclosed' },
@@ -115,6 +143,25 @@ describe('createPluginSurfaceContext', () => {
         expect(hook.getCurrent().theme.spinner).toEqual({ style: 'classicRing', speed: 'fast', pause: 'none' });
         expect(hook.getCurrent().reducedMotion).toBe(initial.reducedMotion);
     });
+    it('tells a page companion which page opened it, and no other mount', () => {
+        const fixture = createPluginSurfaceContextFixture();
+        const environment = {
+            platform: fixture.platform, locale: fixture.locale, direction: fixture.direction, colorScheme: fixture.colorScheme,
+            contrast: fixture.contrast, textScale: fixture.textScale, reducedMotion: fixture.reducedMotion,
+            screenReaderEnabled: fixture.screenReaderEnabled, safeAreaInsets: fixture.safeAreaInsets, theme: fixture.theme,
+            columnVisible: true,
+        };
+        const companionMount = { kind: 'destination' as const, destination: { pluginId: 'happier.triage', localId: 'entry-session' },
+            container: 'rightSidebarTab' as const };
+        const input = { target: { kind: 'app' as const }, accountEncryptionMode: fixture.accountEncryptionMode,
+            translations: fixture.translations, targetedContributions, mount: companionMount };
+        const openedFrom = { pageKind: { pluginId: 'happier.triage', localId: 'triage' }, subPath: 'e,issue,56' };
+        const context = createPluginSurfaceContext({ ...input, environment: { ...environment, openedFrom } });
+        expect(context.openedFrom).toEqual(openedFrom);
+        expect(PluginUiHostApiSurfaceContextV1Schema.safeParse(context).success).toBe(true);
+        expect(createPluginSurfaceContext({ ...input, environment }).openedFrom).toBeUndefined();
+    });
+
     it('projects the shell column visibility only for an app page', () => {
         const fixture = createPluginSurfaceContextFixture();
         const environment = {

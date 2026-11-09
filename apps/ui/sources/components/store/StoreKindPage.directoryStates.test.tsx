@@ -52,6 +52,17 @@ describe('Store directory states', () => {
             .toEqual(['Happier catalog · A failed', 'Team catalog · B failed']);
     });
 
+    it('says an outage above the results, so rows arriving under it never move it', async () => {
+        const row = { key: 'a', title: 'Alpha', description: null, mark: null, group: 'g', open: () => {} };
+        const screen = await renderScreen(<Directory kind="bot" rows={[row]} groups={[{ key: 'g', title: 'Group' }]} query="" sourceTitle={() => 'Team catalog'}
+            list={{ ...idle, sourceFailures: [{ sourceId: 'a', message: 'A failed', onRetry: () => {} }] }} />);
+        const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+        const { Collection } = await import('@happier-dev/plugin-ui');
+        const order = screen.tree.findAll(node => node.type === RegistrySourcesUnavailable || node.type === Collection)
+            .map(node => node.type === Collection ? 'results' : 'outage');
+        expect(order).toEqual(['outage', 'results']);
+    });
+
     it('keeps the inline no-match state for a real search', async () => {
         const screen = await render({}, 'garden');
         expect(screen.findAllByType(EmptyState)[0]!.props.layout).toBe('inline');

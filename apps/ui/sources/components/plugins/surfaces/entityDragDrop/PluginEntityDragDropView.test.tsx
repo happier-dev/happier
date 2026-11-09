@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
-import { PluginDragSourceContributionV1Schema } from '@happier-dev/protocol';
+import { PluginDragSourceContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import type { TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';

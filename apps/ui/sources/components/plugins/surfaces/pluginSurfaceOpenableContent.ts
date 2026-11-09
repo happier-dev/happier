@@ -1,5 +1,5 @@
 import {
-    DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1,
+    HARD_OPENABLE_CONTENT_MAX_BYTES_V1,
     OpenableContentReadRequestV1Schema,
     OpenableContentReadResultV1Schema,
     OpenableContentRefV1Schema,
@@ -111,13 +111,12 @@ type OpenableContentKind = Readonly<{
  *
  * The daemon transfer refuses a file larger than the ceiling it is given, so a
  * cheap prefix probe does not exist: a probe reads the whole file or nothing.
- * `DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1` is therefore the honest bound — the
- * canonical default an openable read already delivers, so classification never
- * moves more bytes than the read it describes. Above it an undecided filename
- * cannot honestly select a text or binary viewer, so stat reports the existing
- * unsupported outcome.
+ * Use the public hard maximum so classification can admit every file an
+ * explicit read may request. The default read budget belongs to each read,
+ * not viewer selection. Above the hard maximum an undecided filename cannot
+ * be classified within the openable-content contract.
  */
-const CONTENT_CLASSIFICATION_PROBE_MAX_BYTES = DEFAULT_OPENABLE_CONTENT_MAX_BYTES_V1;
+const CONTENT_CLASSIFICATION_PROBE_MAX_BYTES = HARD_OPENABLE_CONTENT_MAX_BYTES_V1;
 
 /**
  * The canonical classifier supplies kind and MIME. Text candidates still need
@@ -258,6 +257,7 @@ async function classifyWorkspaceOpenableContent(input: Readonly<{
     const probe = await awaitCancellable(
         workspaceReadFile(input.target, input.filePath, {
             maxBytes: CONTENT_CLASSIFICATION_PROBE_MAX_BYTES,
+            knownSizeBytes: input.sizeBytes,
             ...(input.signal ? { signal: input.signal } : {}),
         }),
         input.signal,

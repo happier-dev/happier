@@ -10,6 +10,7 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 import {
     PLUGIN_UI_HOST_API_BASE_VERSION_V1,
+    PLUGIN_UI_HOST_METHODS_V1,
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiSelectActionInputResultV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
@@ -21,6 +22,11 @@ import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1 } from 
 
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { installedPluginUiSdk1 } from '@/dev/testkit/fixtures/pluginUiInstalledSdk1';
+
+// Load the genuine composed host graph during collection. Its cold transform
+// is setup, not part of the per-test targeted-execution behavior budget.
+const { createPluginSurfaceActionHostApi } = await import('@/components/plugins/surfaces/pluginSurfaceActionDispatch');
 
 const surface: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -96,6 +102,85 @@ function createEnvelope(
 }
 
 describe('hosted web plugin host API adapter', () => {
+    it('keeps per-client semantic advertisement separate from shared mounted dispatch authority', async () => {
+        const delivered: string[] = [];
+        // Terminal platform ports; the mount dispatcher, wire parser, method
+        // policy and subscription owner below execute their real logic.
+        const mounted = createPluginSurfaceHostApi({ surfaceContext: surface, handlers: {
+            openManagedMachineConfiguration: () => { delivered.push('open'); return null; },
+            actionControl: () => { delivered.push('observe'); return null; },
+        } });
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface, requestIdPrefix: 'mixed-sdk-authority', identity: canonicalIdentity,
+            canonicalHostApi: { identity: canonicalIdentity, surface: canonicalSurface, methods: mounted.installedMethods },
+            handleRequest: mounted.handleRequest, postToFrame: () => {},
+        });
+        const request = (requestId: string) => createEnvelope('hostApi', {
+            wireVersion: 1, identity: canonicalIdentity, kind: 'request', requestId,
+            method: 'openManagedMachineConfiguration', payload: {},
+        });
+        await expect(handler(request('before-ready'))).resolves.toMatchObject({ kind: 'error' });
+        await handler(createEnvelope('ready', { ready: true }));
+        await expect(handler(request('before-negotiate'))).resolves.toMatchObject({ payload: { kind: 'result', result: null } });
+        for (const apiRange of ['^1.1.0', '^1.0.0']) {
+            const result = await handler(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'negotiate', apiRange }));
+            const reply = PluginUiHostApiWireEnvelopeV1Schema.parse(result.payload);
+            if (reply.kind !== 'negotiated') throw new Error('Expected negotiation');
+            expect(reply.methods.includes('openManagedMachineConfiguration')).toBe(apiRange === '^1.1.0');
+        }
+        // An older sibling opening cannot revoke a current client's methods:
+        // ordinary requests share identity and carry no client range.
+        await expect(handler(request('current-sibling'))).resolves.toMatchObject({ payload: { kind: 'result', result: null } });
+        await expect(handler(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'subscribe',
+            requestId: 'observe-current', subscriptionId: 'current-control', method: 'actionControl', payload: { kind: 'bind' },
+        }))).resolves.toMatchObject({ payload: { kind: 'result', method: 'actionControl' } });
+        expect(delivered).toEqual(['open', 'open', 'observe']);
+        const restricted = createPluginHostedWebHostApiBridgeHandler({
+            surface, requestIdPrefix: 'restricted-sdk-authority', identity: canonicalIdentity,
+            canonicalHostApi: { identity: canonicalIdentity, surface: canonicalSurface, methods: ['context'] },
+            handleRequest: mounted.handleRequest, postToFrame: () => {},
+        });
+        await restricted(createEnvelope('ready', { ready: true }));
+        await restricted(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'negotiate', apiRange: '^1.1.0' }));
+        await expect(restricted(request('not-granted'))).resolves.toMatchObject({ payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+        await expect(restricted(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'subscribe',
+            requestId: 'not-granted-watch', subscriptionId: 'not-granted-control', method: 'actionControl', payload: { kind: 'bind' },
+        }))).resolves.toMatchObject({ payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+        await expect(handler(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'request', requestId: 'unknown-method', method: '__unknown__' })))
+            .resolves.toMatchObject({ kind: 'error', payload: { code: 'invalid_payload' } });
+        await expect(handler(createEnvelope('hostApi', { wireVersion: 1, identity: canonicalIdentity, kind: 'request', requestId: 'unknown-input', method: 'context', unexpected: true })))
+            .resolves.toMatchObject({ kind: 'error', payload: { code: 'invalid_payload' } });
+        expect(delivered).toEqual(['open', 'open', 'observe']);
+        handler.dispose();
+        restricted.dispose();
+    });
+
+    it('keeps the installed 1.0 reader usable while advertising new methods only to 1.1 clients', async () => {
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface, requestIdPrefix: 'sdk-version-skew', identity: canonicalIdentity,
+            canonicalHostApi: { identity: canonicalIdentity, surface: canonicalSurface,
+                methods: PLUGIN_UI_HOST_METHODS_V1 },
+            handleRequest: async () => null,
+            postToFrame: () => {},
+        });
+        await handler(createEnvelope('ready', { ready: true }));
+        const negotiate = (apiRange: string) => handler(createEnvelope('hostApi', {
+            wireVersion: 1, identity: canonicalIdentity, kind: 'negotiate', apiRange,
+        }));
+        await expect(negotiate('^1.0.0')).resolves.toMatchObject({ kind: 'result', payload: {
+            kind: 'negotiated', apiVersion: installedPluginUiSdk1.apiVersion,
+            methods: installedPluginUiSdk1.methods.filter(method => method !== 'widgetArea'),
+        } });
+        await expect(negotiate('^1.1.0')).resolves.toMatchObject({ kind: 'result', payload: {
+            kind: 'negotiated', apiVersion: '1.1.0',
+            methods: PLUGIN_UI_HOST_METHODS_V1.filter(method => method !== 'widgetArea'),
+        } });
+        await expect(negotiate('>=1.0.0 <2.0.0')).resolves.toMatchObject({ payload: {
+            kind: 'negotiated', apiVersion: installedPluginUiSdk1.apiVersion,
+            methods: installedPluginUiSdk1.methods.filter(method => method !== 'widgetArea'),
+        } });
+    });
+
     it('refuses host widget-area embedding before reading or mutating the shared area', async () => {
         const scope = { serverId: 'home', accountId: 'viewer' };
         let reads = 0;
@@ -532,6 +617,7 @@ describe('hosted web plugin host API adapter', () => {
             frameOrigin: 'https://preview.happier.test',
             subPath: 'work/ideas.md',
             launchInput: { noteId: 'note-7' },
+            launch: { kind: 'explicit' as const, input: { noteId: 'note-7' } },
             composerRef,
         });
         const handler = createPluginHostedWebHostApiBridgeHandler({
@@ -562,6 +648,7 @@ describe('hosted web plugin host API adapter', () => {
                 identity: canonicalIdentity,
                 subPath: 'work/ideas.md',
                 launchInput: { noteId: 'note-7' },
+                launch: { kind: 'explicit', input: { noteId: 'note-7' } },
                 composerRef,
             },
         }));
@@ -944,7 +1031,6 @@ describe('hosted web plugin host API adapter', () => {
     });
 
     it('accepts targeted execution only after selection and forwards the host-owned selected operation', async () => {
-        const { createPluginSurfaceActionHostApi } = await import('@/components/plugins/surfaces/pluginSurfaceActionDispatch');
         const targetedOperation = {
             point: { pointId: 'connection', protocol: { id: 'connection', version: 1 } },
             contributor: {
@@ -999,6 +1085,7 @@ describe('hosted web plugin host API adapter', () => {
         const mountedHostApi = createPluginSurfaceActionHostApi({
             surfaceContext: surface,
             callerSourceCustody: targetSourceCustody,
+            targetSourceCustody,
             callerBinding: {
                 pluginId: surface.pluginId,
                 contributionLocalId: surface.contributionId,
@@ -2375,9 +2462,6 @@ describe('hosted web plugin host API adapter', () => {
     });
 
     it('EU-5a: carries openSurface launch input to the real mounted host and returns its typed rejection', async () => {
-        const { createPluginSurfaceActionHostApi } = await import(
-            '@/components/plugins/surfaces/pluginSurfaceActionDispatch'
-        );
         const {
             PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
         } = await import('@happier-dev/protocol/plugins/ui');

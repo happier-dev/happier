@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+
+import { PluginHostedWebFrame } from './PluginHostedWebFrame.native';
 
 const genericFrameProps: Array<Record<string, unknown>> = [];
 const artifactFrameProps: Array<Record<string, unknown>> = [];
@@ -62,7 +64,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         const onLoadStart = vi.fn();
         const onLoad = vi.fn();
         const onError = vi.fn();
-        const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
         await renderScreen(
             <PluginHostedWebFrame
@@ -98,7 +99,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
 
     it('uses the opaque Artifact frame and its canonical custom-scheme bridge instead of a generic URL frame', async () => {
         const onMessage = vi.fn();
-        const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
         await renderScreen(
             <PluginHostedWebFrame
@@ -158,7 +158,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
 
     it('registers by-value HTML with the incumbent isolated native frame instead of passing it to the generic WebView', async () => {
         const onMessage = vi.fn();
-        const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
         const screen = await renderScreen(
             <PluginHostedWebFrame
@@ -214,7 +213,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         const onLoadStart = vi.fn();
         const onLoadEnd = vi.fn();
         const onLoadError = vi.fn();
-        const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
         const renderArtifactFrame = (nativeArtifactLoadState: 'loading' | 'ready') => (
             <PluginHostedWebFrame
@@ -288,7 +286,6 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
     it('forwards only an Artifact guest go-back command and its current history fact to the native Artifact frame', async () => {
         const onHistoryStateChange = vi.fn();
         const onGoBackResult = vi.fn();
-        const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
         await renderScreen(
             <PluginHostedWebFrame

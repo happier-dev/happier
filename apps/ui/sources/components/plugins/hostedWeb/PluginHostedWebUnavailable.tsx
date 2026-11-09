@@ -6,6 +6,12 @@ import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/c
 import { t } from '@/text';
 
 export type PluginHostedWebUnavailableDiagnosticCode =
+    | 'asset_not_declared'
+    | 'directory_listing_disabled'
+    | 'invalid_request_path'
+    | 'mime_type_not_allowed'
+    | 'source_map_unavailable'
+    | 'artifact_file_not_declared'
     | 'artifact_bytes_rpc_unavailable'
     | 'artifact_bytes_response_invalid'
     | 'artifact_bytes_fetch_failed'
@@ -30,6 +36,8 @@ export type PluginHostedWebUnavailableDiagnosticCode =
     | 'disabled'
     | 'feature_disabled'
     | 'hosted_web_artifact_tier_invalid'
+    | 'hosted_web_artifact_policy_invalid'
+    | 'hosted_web_artifact_bundle_invalid'
     | 'hosted_web_bridge_nonce_unavailable'
     | 'hosted_web_bridge_policy_absent'
     | 'hosted_web_bridge_timeout'
@@ -71,6 +79,12 @@ export function readPluginHostedWebUnavailableDiagnosticCode(
     value: unknown,
 ): PluginHostedWebUnavailableDiagnosticCode | null {
     switch (value) {
+        case 'asset_not_declared':
+        case 'directory_listing_disabled':
+        case 'invalid_request_path':
+        case 'mime_type_not_allowed':
+        case 'source_map_unavailable':
+        case 'artifact_file_not_declared':
         case 'artifact_bytes_rpc_unavailable':
         case 'artifact_bytes_response_invalid':
         case 'artifact_bytes_fetch_failed':
@@ -95,6 +109,8 @@ export function readPluginHostedWebUnavailableDiagnosticCode(
         case 'disabled':
         case 'feature_disabled':
         case 'hosted_web_artifact_tier_invalid':
+        case 'hosted_web_artifact_policy_invalid':
+        case 'hosted_web_artifact_bundle_invalid':
         case 'hosted_web_bridge_nonce_unavailable':
         case 'hosted_web_bridge_policy_absent':
         case 'hosted_web_bridge_timeout':

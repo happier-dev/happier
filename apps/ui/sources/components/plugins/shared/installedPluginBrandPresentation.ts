@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
+import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { materializeHappierRenderableImage } from '@happier-dev/plugin-ui/advanced';
 
 import {
@@ -449,11 +449,14 @@ export async function readInstalledPluginBrandPresentation(
 export function useInstalledPluginBrandPresentation(
     input: InstalledPluginBrandPresentationInput,
 ): InstalledPluginBrandPresentation | null {
-    const availabilityReader = useActivePluginAccountAvailabilityReader(input.installedPackage?.id);
+    // Only a portable installed package reads its brand through Account Package Assets. Without one
+    // (a built-in Agent's mark) there is no plugin to observe, and an unkeyed reader would follow
+    // every Account-wide availability publication.
+    const readsPackageAssets = input.packageAssets === undefined && input.installedPackage != null
+        && input.installedPackage.source.kind !== 'localPath' && input.installedPackage.source.kind !== 'bundled';
+    const availabilityReader = useActivePluginAccountAvailabilityReader(input.installedPackage?.id, { enabled: readsPackageAssets });
     const effectiveInput = React.useMemo<InstalledPluginBrandPresentationInput>(() => {
-        if (input.packageAssets !== undefined || input.installedPackage?.source.kind === 'localPath' || input.installedPackage?.source.kind === 'bundled') {
-            return input;
-        }
+        if (!readsPackageAssets) return input;
         return {
             ...input,
             packageAssets: availabilityReader
@@ -463,7 +466,7 @@ export function useInstalledPluginBrandPresentation(
                 })
                 : null,
         };
-    }, [availabilityReader, input]);
+    }, [availabilityReader, input, readsPackageAssets]);
     const key = presentationKey(effectiveInput);
     const fallback = neutralFallback(effectiveInput);
     const inputRef = React.useRef(effectiveInput);

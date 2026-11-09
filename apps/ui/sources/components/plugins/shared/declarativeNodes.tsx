@@ -5,7 +5,7 @@ import { renderDeclarativeNode as renderPortableDeclarativeNode, projectDeclarat
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginDeclarativeNodeV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import { readPluginDeclarativeDataFieldV1, readPluginDeclarativeDataRowsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
-import type { PluginDeclarativeActionVariantV2, PluginDeclarativeToneV2 } from '@happier-dev/protocol';
+import type { PluginDeclarativeActionVariantV2, PluginDeclarativeToneV2 } from '@happier-dev/protocol/plugins/contributions/ui/v2';
 import type { Theme } from '@/theme';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import type { MarkdownRenderingProfile } from '@/components/markdown/rendering/MarkdownRenderingProfile';
@@ -14,6 +14,8 @@ import { Text } from '@/components/ui/text/Text';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { t } from '@/text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useUnistyles } from 'react-native-unistyles';
+import { SeriesPlotLens, type SeriesLensPlot } from '@/components/settings/usage/usageSeriesPresentation';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 export { readDeclarativeRecord, readDeclarativeText, createDeclarativeTextResolver, DECLARATIVE_TONE_TO_HAPPIER_TONE, DECLARATIVE_STATE_PRESENTATION, resolveDeclarativePresentationTone, resolveDeclarativeToneColor } from '@happier-dev/plugin-ui/declarative';
 export type { DeclarativeTextResolver, DeclarativeFindTextBlock, DeclarativeActionAffordance } from '@happier-dev/plugin-ui/declarative';
@@ -133,6 +135,13 @@ export function projectDeclarativeStructuredFindText(root: unknown) {
     return projectPortableFindText(root, (action) => readDeclarativeActionSelection(action) !== null);
 }
 
+/** Agent-made charts read through the same all-series lens as Usage, in the chart's own ink and reading. */
+function DeclarativeSeriesLens(props: Readonly<{ plot: SeriesLensPlot }>) {
+    const { theme } = useUnistyles();
+    return <SeriesPlotLens plot={props.plot} accentColor={theme.colors.text.primary} testID="plugin-declarative-chart-lens" />;
+}
+const renderSeriesLens = (plot: SeriesLensPlot) => <DeclarativeSeriesLens plot={plot} />;
+
 /** App leaves bind the one portable vocabulary to current theme, text, icons, Markdown and motion. */
 export function renderDeclarativeNode(node: unknown, context: DeclarativeNodeRenderContext, fallbackPath = 'root'): React.ReactNode {
     const host: DeclarativeRenderingHost = {
@@ -149,6 +158,7 @@ export function renderDeclarativeNode(node: unknown, context: DeclarativeNodeRen
         readDataField: readPluginDeclarativeDataFieldV1,
         readDataRows: readPluginDeclarativeDataRowsV1,
         renderAction: (value, affordance, portable, label) => renderActionAffordance(value, affordance, { ...context, nodePath: portable.nodePath }, label),
+        renderSeriesLens,
     };
     return renderPortableDeclarativeNode(node, { ...context, host }, fallbackPath);
 }

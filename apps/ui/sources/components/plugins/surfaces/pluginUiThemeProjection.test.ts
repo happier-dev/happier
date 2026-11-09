@@ -88,6 +88,11 @@ describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
             for (const variant of ['success', 'warning', 'attention', 'danger', 'info', 'neutral'] as const) {
                 expect(projected.statusText?.[variant]).toBe(theme.colors.state[variant].textForeground);
             }
+            // The tints behind status words are the host's state backgrounds; attention borrows the warning tint.
+            for (const variant of ['success', 'warning', 'danger', 'info', 'neutral'] as const) {
+                expect(projected.statusTint?.[variant]).toBe(theme.colors.state[variant].background);
+            }
+            expect(projected.statusTint?.attention).toBe(theme.colors.state.warning.background);
         }
     });
     it('projects every colour field from the canonical token it names', () => {
@@ -105,6 +110,19 @@ describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
                         `theme.colors.${field} must project ${tokenId}`,
                     ).toBe(canonical);
                 }
+            }
+        }
+    });
+
+    it('projects a real blue and purple for marks a person colours, in every built-in profile, never the accent and never each other', () => {
+        for (const profile of [null, ...BUILT_IN_THEME_PROFILES.map((definition) => definition.profile)]) {
+            for (const mode of ['light', 'dark'] as const) {
+                const theme = themeFor(profile, mode);
+                const projected = projectPluginUiTheme(theme);
+                expect(projected.colors.blue).toBe(theme.colors.accent.blue);
+                expect(projected.colors.blue).not.toBe(projected.colors.accent);
+                expect(projected.colors.purple).toBe(theme.colors.accent.purple);
+                expect(projected.colors.purple).not.toBe(projected.colors.blue);
             }
         }
     });

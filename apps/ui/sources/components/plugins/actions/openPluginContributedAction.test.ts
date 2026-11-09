@@ -122,7 +122,7 @@ describe('openPluginContributedAction', () => {
 
         await openPluginContributedAction({ controller, action: descriptor });
 
-        expect(controller.open).toHaveBeenCalledWith(descriptor);
+        expect(controller.open).toHaveBeenCalledWith(descriptor, undefined);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(Modal.alert).toHaveBeenCalledWith(
             t('common.error'),
@@ -294,7 +294,7 @@ describe('openPluginContributedAction', () => {
             action: reference,
         })).resolves.toMatchObject({ kind: 'form', action: descriptor });
 
-        expect(controller.openSessionReference).toHaveBeenCalledWith(reference, undefined);
+        expect(controller.openSessionReference).toHaveBeenCalledWith(reference, undefined, undefined);
         expect(Modal.show).toHaveBeenCalledTimes(1);
     });
 

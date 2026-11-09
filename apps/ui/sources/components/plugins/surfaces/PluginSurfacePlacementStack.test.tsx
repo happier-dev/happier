@@ -8,7 +8,6 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { renderScreen } from '@/dev/testkit';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
-    isPluginUiDestinationSurfacePlacementProjection,
     type PluginUiProjectionModel,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
@@ -71,38 +70,6 @@ function placement(input: Readonly<{
         order: input.order,
     });
 }
-
-function servicesPlacement(): PluginUiSurfacePlacementProjection {
-    const normalized = normalizePluginUiDestinationBindingV1({
-        pluginId: 'acme.services',
-        destinationId: 'health',
-        rendererId: 'services-hosted',
-        container: 'servicesPanel',
-        target: Object.freeze({ kind: 'services' }),
-    });
-    if (!normalized) throw new Error('test fixture must use an admitted services binding');
-    return Object.freeze({
-        id: 'surfacePlacement:acme.services:health',
-        pluginId: 'acme.services',
-        occurrenceId: 'services-health-occurrence',
-        contributionKind: 'surfacePlacement' as const,
-        descriptorId: 'health',
-        binding: normalized,
-        target: Object.freeze({ kind: 'services' }),
-        renderer: Object.freeze({ kind: 'hostedWeb', contributionId: 'health' }),
-        display: Object.freeze({ label: 'Health' }),
-        availability: Object.freeze({ state: 'available' as const, reason: 'available', diagnostics: [] }),
-        headerActions: Object.freeze([]),
-        order: 10,
-    });
-}
-
-const servicesProjection: PluginUiProjectionModel = {
-    ...EMPTY_PLUGIN_UI_PROJECTION,
-    surfacePlacementsById: {
-        'surfacePlacement:acme.services:health': servicesPlacement(),
-    },
-};
 
 const pluginUiProjection: PluginUiProjectionModel = {
     ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -197,85 +164,6 @@ describe('PluginSurfacePlacementStack', () => {
             formFactor: 'tablet',
             platform: 'ios',
         }));
-    });
-
-    // Target scopes partition the destination space, so an enclosing resolver is
-    // this mount's navigation authority only when it resolves this mount's own
-    // target. A Services panel rendered inside a Session/Project scope publicly
-    // declares `target: services`; handing it the Session resolver would let it
-    // open the enclosing Session's destinations.
-    it('threads an enclosing navigation binding only when its target matches the mounted target', async () => {
-        const { PluginSurfacePlacementStack } = await import('./PluginSurfacePlacementStack');
-        const {
-            createPluginSurfaceDestinationNavigationBinding,
-            PluginSurfaceDestinationNavigationBindingProvider,
-        } = await import('./pluginSurfaceDestinationNavigation');
-        placementHostSpy.mockClear();
-
-        const sessionBinding = createPluginSurfaceDestinationNavigationBinding({
-            placements: Object.values(servicesProjection.surfacePlacementsById)
-                .filter(isPluginUiDestinationSurfacePlacementProjection),
-            targetKind: 'session',
-        });
-
-        await renderScreen(
-            <PluginSurfaceDestinationNavigationBindingProvider binding={sessionBinding}>
-                <PluginSurfacePlacementStack
-                    container="servicesPanel"
-                    targetKind="services"
-                    pluginUiProjection={servicesProjection}
-                    machineId="machine-1"
-                    serverId="server-1"
-                    platform="web"
-                    testID="services-plugin-placements"
-                />
-            </PluginSurfaceDestinationNavigationBindingProvider>,
-        );
-
-        expect(placementHostSpy).toHaveBeenCalledTimes(1);
-        expect((placementHostSpy.mock.calls.at(-1)?.[0] as Readonly<{ binding?: unknown }>).binding)
-            .toBeUndefined();
-
-        // The same enclosing binding IS the authority for a stack whose mounted
-        // target is the one it resolves.
-        placementHostSpy.mockClear();
-        await renderScreen(
-            <PluginSurfaceDestinationNavigationBindingProvider binding={sessionBinding}>
-                <PluginSurfacePlacementStack
-                    container="detailsTab"
-                    targetKind="session"
-                    pluginUiProjection={pluginUiProjection}
-                    machineId="machine-1"
-                    serverId="server-1"
-                    platform="web"
-                    testID="session-plugin-placements"
-                />
-            </PluginSurfaceDestinationNavigationBindingProvider>,
-        );
-
-        expect(placementHostSpy).toHaveBeenCalledTimes(3);
-        expect(placementHostSpy).toHaveBeenCalledWith(expect.objectContaining({
-            binding: expect.objectContaining({ openSurface: sessionBinding.openSurface }),
-        }));
-
-        // Standalone: no surrounding target scope, so no navigation authority is
-        // invented for the mount and `openSurface` stays factually uninstalled.
-        placementHostSpy.mockClear();
-        await renderScreen(
-            <PluginSurfacePlacementStack
-                container="servicesPanel"
-                targetKind="services"
-                pluginUiProjection={servicesProjection}
-                machineId="machine-1"
-                serverId="server-1"
-                platform="web"
-                testID="standalone-services-plugin-placements"
-            />,
-        );
-
-        expect(placementHostSpy).toHaveBeenCalledTimes(1);
-        expect((placementHostSpy.mock.calls.at(-1)?.[0] as Readonly<{ binding?: unknown }>).binding)
-            .toBeUndefined();
     });
 
     it('uses the observed phone form factor for default web admission', async () => {

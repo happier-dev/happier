@@ -20,8 +20,36 @@ import { log } from '@/log';
 export type PluginSurfaceDiagnosticIdentity = Readonly<{
     pluginId: string | null;
     contributionId: string | null;
-    surfaceId: string;
+    /** Artifact acquisition may fail before a concrete surface is mounted. */
+    surfaceId: string | null;
 }>;
+
+/** Typed transfer facts only: never inspect error prose, stacks, URLs or payloads. */
+export function readPluginSurfaceTransferFailureCodes(failure: unknown): Readonly<{
+    outcomeCode: string | null;
+    osCode: string | null;
+}> {
+    let outcomeCode: string | null = null;
+    let osCode: string | null = null;
+    let current = failure;
+    const seen = new Set<object>();
+    while (current !== null && typeof current === 'object' && !seen.has(current)) {
+        seen.add(current);
+        try {
+            for (const key of ['errorCode', 'rpcErrorCode', 'code']) {
+                const code: unknown = Reflect.get(current, key);
+                // Codes are identifiers, not another channel for arbitrary transfer text.
+                if (typeof code !== 'string' || !/^[A-Za-z][A-Za-z0-9_.-]*$/.test(code)) continue;
+                if (/^E[A-Z0-9_]+$/.test(code)) osCode ??= code;
+                else outcomeCode ??= code;
+            }
+            current = Reflect.get(current, 'cause');
+        } catch {
+            break;
+        }
+    }
+    return Object.freeze({ outcomeCode, osCode });
+}
 
 export function formatPluginSurfaceDiagnosticLogMessage(
     surface: PluginSurfaceDiagnosticIdentity,

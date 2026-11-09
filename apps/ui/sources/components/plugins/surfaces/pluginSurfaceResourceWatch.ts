@@ -4,26 +4,31 @@ import {
     PluginUiResourceSubscriptionRequestV1Schema,
     type PluginUiJsonValueV1,
     type PluginUiResourceSubscriptionEventV1,
+    type PluginUiHostApiErrorPayloadV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import type { PluginUiResourceClient, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
-import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiHostReadReferenceV1Schema, PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
     readPluginSurfaceResourceReference,
     readPluginResourceStoreSnapshot,
+    createPluginSurfaceResourceSnapshotError,
     type PluginContextualResourceBinding,
     type PluginResourceHostRequest,
 } from './pluginSurfaceResourceRead';
 import {
     createPluginSurfaceHostApiError,
+    createPluginSurfaceHostApiPluginErrorData,
+    readPluginSurfaceHostApiFailureMetadata,
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 import { createContextualResourceWatchOwner, invalidatedEvent, terminalEvent, type PluginSurfaceResourceWatchTransport } from './daemonResourceWatch';
+import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 export type { PluginSurfaceResourceWatchTransport } from './daemonResourceWatch';
 
 /**
@@ -73,12 +78,9 @@ function resourceAbortPayload(isCurrent: (() => boolean) | undefined): PluginUiJ
 function resourceClientFailure(
     code: string,
     message: string,
-    options?: Readonly<{ retryable?: boolean }>,
+    options?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
 ): never {
-    throw Object.assign(new Error(message), {
-        code,
-        ...(options?.retryable === undefined ? {} : { retryable: options.retryable }),
-    });
+    throw new PluginError(createPluginSurfaceHostApiPluginErrorData(code, [], message, options));
 }
 
 /**
@@ -177,6 +179,8 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
     pluginId: string;
     resource?: PluginContextualResourceBinding;
     hostResourceStore?: PluginUiResourceStore;
+    /** Existing selected-member ceiling applies to ordinary Resource watches only. */
+    canWatchPluginResources?(): boolean;
     isDaemonAvailable?: () => boolean;
     /** Publishes one event into the mount's existing subscription registry. */
     deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
@@ -211,6 +215,10 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                 return errorPayload('invalid_payload', 'plugin_surface_resource_subscription_payload_invalid');
             }
             const hostReference = PluginUiHostReadReferenceV1Schema.safeParse(parsed.data.resource);
+            const readAuthority = PluginUiReadAuthorityReferenceV1Schema.safeParse(parsed.data.resource);
+            if (!readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
+                return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
+            }
             if (hostReference.success && input.hostResourceStore) {
                 const { subscriptionId } = parsed.data;
                 hostWatches.get(subscriptionId)?.();
@@ -247,7 +255,7 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                 try {
                     const snapshot = await readPluginResourceStoreSnapshot(entry, signal);
                     if (signal?.aborted || input.isCurrent?.() === false) { close(); return resourceAbortPayload(input.isCurrent); }
-                    if (!snapshot.value) { close(); return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable'); }
+                    if (!snapshot.value) { close(); return createPluginSurfaceResourceSnapshotError(snapshot.error); }
                     const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.digest);
                     if (!digest.success) { close(); return errorPayload('unavailable', 'plugin_resource_digest_invalid'); }
                     lastDigest = digest.data;
@@ -259,7 +267,7 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                         ? error.code : 'plugin_resource_unavailable');
                 }
             }
-            const reference = readPluginSurfaceResourceReference(
+            const reference = readAuthority.success ? readAuthority.data.readAuthority.consumer : readPluginSurfaceResourceReference(
                 input.pluginId,
                 parsed.data.resource as PluginUiJsonValueV1,
             );
@@ -272,7 +280,8 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             // One issued watch retains its admitted owner across awaits. A
             // committed binding update may retire it, never redirect it.
             const admittedOwner = owner;
-            if (!admittedOwner || input.isDaemonAvailable?.() === false) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
+            if (!admittedOwner || (input.isDaemonAvailable?.() === false && (readAuthority.success
+                || resource?.store?.requiresMachine?.(reference) !== false))) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
             if (input.isCurrent?.() === false) {
                 return errorPayload('unavailable', 'plugin_surface_retired');
             }
@@ -284,11 +293,13 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                 const opened = await admittedOwner.open({
                     subscriptionId,
                     resourceId: reference.localId,
+                    ...(readAuthority.success ? { readAuthority: readAuthority.data.readAuthority } : {}),
                     deliver: input.deliver,
                     ...(signal === undefined ? {} : { signal }),
                 });
                 if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
-                if (!opened.ok) return errorPayload('unavailable', opened.reason);
+                if (!opened.ok) return createPluginSurfaceHostApiError(opened.reason, [opened.reason], undefined,
+                    { ...opened.metadata, retryable: !opened.terminal });
                 if (input.isCurrent?.() === false) {
                     admittedOwner.retire(subscriptionId);
                     return resourceAbortPayload(input.isCurrent);

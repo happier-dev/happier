@@ -86,6 +86,7 @@ function targetAdmission(target: PluginUiProjectedClientExecutableTarget): Plugi
 /** Same normalization and composition fingerprint as adoption, without acquiring bytes. */
 export function retainProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
+    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     voiceProjection?: PluginUiClientExecutableProjectionSource | null;
     voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
@@ -284,6 +285,7 @@ async function createAcquiredClientExecutableActivation(input: Readonly<{
  */
 export async function reconcileProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
+    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     voiceProjection?: PluginUiClientExecutableProjectionSource | null;
     voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
@@ -300,6 +302,7 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
     const composition = getPluginUiClientExecutableComposition(executableHost);
     const targets = resolveProjectedPluginUiClientExecutables({
         actionProjection: input.actionProjection,
+        mountedActionProjections: input.mountedActionProjections,
         voiceProjection: input.voiceProjection,
         voiceProviderIds: input.voiceProviderIds,
         platform: input.platform,

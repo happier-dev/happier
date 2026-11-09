@@ -2,19 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import {
     ComposerSurfaceMountBindingV1Schema,
+    PluginUiMountContextV1Schema,
     normalizePluginUiDestinationBindingV1,
     normalizePluginUiInlineSurfaceBindingV1,
     type PluginUiDestinationBindingV1,
     type PluginUiInlineSurfaceBindingV1,
     type PluginUiHostMethodV1,
     type PluginUiTargetedContributionSurfaceV1,
+    type PluginUiHostApiSurfaceTargetV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
     DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     DaemonPluginUiTargetedSurfaceMountV1,
-} from '@happier-dev/protocol';
-import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
 
 import {
     createPluginSurfaceComposerMountContext,
@@ -26,8 +28,49 @@ import {
     readPluginSurfaceMountBinding,
     readPluginSurfaceTargetedMountBinding,
 } from './pluginSurfaceMountBinding';
+import * as mountBindings from './pluginSurfaceMountBinding';
+
+it('shares a singleton sidebar Resource context between unopened chrome and its pane with exact target isolation', () => {
+    expect(mountBindings).toHaveProperty('resolvePluginSidebarResourceContext');
+    const resolveContext = Reflect.get(mountBindings, 'resolvePluginSidebarResourceContext') as (input: {
+        binding: PluginUiDestinationBindingV1; sessionId?: string; target?: PluginUiHostApiSurfaceTargetV1;
+    }) => unknown;
+    const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.reviews', destinationId: 'reviews',
+        rendererId: 'native', container: 'rightSidebarTab', target: { kind: 'project' } })!;
+    const target = { kind: 'project' as const, projectKey: 'project-a', repository: {
+        kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo',
+    }, branch: 'feature/ci' };
+    const project = resolveContext({ binding, target });
+    expect(project).toEqual(resolveContext({ binding, target: structuredClone(target) }));
+    expect(project).toMatchObject({ kind: 'surface', launchInput: null, target });
+    expect(project).not.toEqual(resolveContext({ binding, target: { ...target, projectKey: 'project-b' } }));
+    expect(project).not.toEqual(resolveContext({ binding, target: { ...target, branch: 'other-branch' } }));
+    expect(resolveContext({ binding })).toBeNull();
+    const appBinding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.reviews', destinationId: 'reviews',
+        rendererId: 'native', container: 'rightSidebarTab', target: { kind: 'app' } })!;
+    expect(resolveContext({ binding: appBinding, sessionId: 'containing-session' })).toEqual(resolveContext({ binding: appBinding }));
+    expect(resolveContext({ binding: appBinding })).not.toEqual(project);
+    const page = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.reviews', destinationId: 'reviews',
+        rendererId: 'native', container: 'appPage', target: { kind: 'project' } })!;
+    expect(resolveContext({ binding: page, target })).toMatchObject({ kind: 'surface', launchInput: null, target });
+    expect(resolveContext({ binding: page, target: { kind: 'session', sessionId: 'foreign' } })).toBeNull();
+});
 
 const noRequiredHostMethods: PluginUiHostMethodV1[] = [];
+
+it('exposes the retained destination instance key without inventing restored launch input', () => {
+    const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.reviews', destinationId: 'resource',
+        rendererId: 'native', container: 'detailsTab', target: { kind: 'session' }, instancePolicy: 'multiple' });
+    if (!binding) throw new Error('Resource destination binding unavailable');
+    const mount = { kind: 'destination' as const, descriptor: { pluginId: 'acme.reviews', descriptorId: 'resource' },
+        renderer: { kind: 'reactNative', contributionId: 'native' }, destinationBinding: binding };
+    const instanceKey = 'https://forge.example/acme/widgets/pull/42';
+    expect(PluginUiMountContextV1Schema.parse(createPluginSurfaceDestinationMountContext(mount, instanceKey)))
+        .toEqual({ kind: 'destination', destination: binding.destination, container: 'detailsTab', instanceKey });
+    expect(createPluginSurfaceDestinationMountContext(mount)).toEqual({
+        kind: 'destination', destination: binding.destination, container: 'detailsTab',
+    });
+});
 
 function eventSetupSurface(
     renderer: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1['selectedRenderer']['renderer'],
@@ -406,13 +449,15 @@ describe('readPluginSurfaceComposerMountBinding', () => {
         });
     });
 
-    it('fails closed for stale generation, changed renderer provenance, malformed host input, and ambiguous catalog entries', () => {
+    it('fails closed for wrong role/id, stale generation, changed renderer provenance, malformed host input, and ambiguous catalog entries', () => {
         const mount = composerSurfaceMount();
         const catalogEntry = composerSurfaceCatalogEntry();
         const read = (catalogEntries: readonly DaemonPluginUiComposerSurfaceCatalogEntryV1[]) => (
             readPluginSurfaceComposerMountBinding({ mount, catalogEntries })
         );
 
+        expect(read([{ ...catalogEntry, role: 'controlCompact' }])).toBeNull();
+        expect(read([{ ...catalogEntry, contribution: { ...catalogEntry.contribution, localId: 'other-region' } }])).toBeNull();
         expect(read([{
             ...catalogEntry,
             occurrenceId: 'review-generation-b',

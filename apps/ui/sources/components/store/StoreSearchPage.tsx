@@ -21,6 +21,8 @@ import {
   buildPluginsHomeRoute,
 } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { StoreBrowserExtensionLinkResult } from './StoreBrowserExtensionLinkResult';
+import { readWebStoreExtensionId } from './catalog/storeBrowserExtensions';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -50,6 +52,7 @@ import {
   useProviderRows,
   useRegistryRows,
   useSourceTitle,
+  STORE_SECTION_PREVIEW_ROWS,
   type DirectoryGroup,
   type DirectoryList,
   type DirectoryRow,
@@ -59,11 +62,10 @@ import { StoreDirectory, type StoreSearchState } from './StoreSearch';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { StoreListingPaneHost, useOpenStoreListing } from './StoreListing';
 import { StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 /** Search reads in this order: the kinds people add most first, Plugins last (lab `h:search`). */
 const KIND_ORDER = STORE_KIND_ORDER;
-/** All kinds at once: rows each kind previews before its All N › (two rows of the wide page's two columns). */
-const KIND_PREVIEW_ROWS = 4;
 const ROW_MARK_PX = 26;
 const NO_CURATION: RegistryCuration['curation'] = [];
 const STATED_KIND: readonly StoreColumnField[] = ['kind'];
@@ -78,10 +80,16 @@ export function StoreSearchPage(
   props: Readonly<{ presented: boolean }>,
 ): React.ReactNode {
   const params = useLocalSearchParams<{ softwareTarget?: string }>();
+  const scope = useAccountSettingsScope();
   const softwareTarget = React.useMemo(() => {
-    if (typeof params.softwareTarget !== 'string') return null;
-    try { return readStoreSoftwareTarget(JSON.parse(params.softwareTarget)); } catch { return null; }
-  }, [params.softwareTarget]);
+    if (typeof params.softwareTarget === 'string') {
+      try {
+        const routed = readStoreSoftwareTarget(JSON.parse(params.softwareTarget));
+        if (routed) return routed;
+      } catch { /* An invalid route falls back to the Account's inert offerings. */ }
+    }
+    return { scope, machine: null };
+  }, [params.softwareTarget, scope]);
   const demand = React.useMemo(
     () => ({ presented: props.presented }),
     [props.presented],
@@ -184,11 +192,7 @@ function SearchResults(
   const mcpAdded = useMcpAdded(props.presented);
   const skillAdded = useSkillAdded(props.presented);
   const agentAdded = useAgentAdded(props.presented);
-  const mcpTitle = useSourceTitle('mcpServer');
-  const skillTitle = useSourceTitle('skill');
-  const agentTitle = useSourceTitle('agent');
-  const appTitle = useSourceTitle('app');
-  const browserExtensionTitle = useSourceTitle('browserExtension');
+  const sourceTitle = useSourceTitle();
   const pick = <Item,>(items: readonly Item[] | undefined): readonly Item[] =>
     (items ?? []).filter((item) => visible.has(item));
   const mcpItems = React.useMemo(
@@ -223,23 +227,23 @@ function SearchResults(
   const mcp = useRegistryRows(
     { items: mcpItems, curation: NO_CURATION },
     openRegistry,
-    mcpTitle,
+    sourceTitle,
     mcpAdded,
     addRegistry,
   );
-  const app = useRegistryRows({ items: appItems, curation: NO_CURATION }, openRegistry, appTitle, undefined, addRegistry);
-  const browserExtension = useRegistryRows({ items: browserExtensionItems, curation: NO_CURATION }, openRegistry, browserExtensionTitle, undefined, addRegistry);
+  const app = useRegistryRows({ items: appItems, curation: NO_CURATION }, openRegistry, sourceTitle, undefined, addRegistry);
+  const browserExtension = useRegistryRows({ items: browserExtensionItems, curation: NO_CURATION }, openRegistry, sourceTitle, undefined, addRegistry);
   const skill = useRegistryRows(
     { items: skillItems, curation: NO_CURATION },
     openRegistry,
-    skillTitle,
+    sourceTitle,
     skillAdded,
     addRegistry,
   );
   const agent = useRegistryRows(
     { items: registryAgents, curation: NO_CURATION },
     openRegistry,
-    agentTitle,
+    sourceTitle,
     agentAdded,
     addRegistry,
   );
@@ -272,7 +276,8 @@ function SearchResults(
   const software = React.useMemo(() => pick(lists.software?.items).map((item): DirectoryRow => ({
     key: actionInputOptionValueKey(item.value), title: item.label, description: item.description ?? null, group: 'software',
     open: () => {
-      const reference = readStoreListingReference({ type: 'software', target: props.softwareTarget, value: item.value });
+      const reference = readStoreListingReference({ type: 'software',
+        ...(props.softwareTarget?.machine ? { target: props.softwareTarget } : {}), value: item.value });
       if (reference) openListing(reference);
     },
     addLabel: t('capabilities.store.softwarePage.installOn'),
@@ -322,7 +327,7 @@ function SearchResults(
   const rows = React.useMemo(
     () =>
       sections.flatMap((kind) =>
-        (preview ? byKind[kind].slice(0, KIND_PREVIEW_ROWS) : byKind[kind]).map((row) => ({ ...row, group: kind })),
+        (preview ? byKind[kind].slice(0, STORE_SECTION_PREVIEW_ROWS) : byKind[kind]).map((row) => ({ ...row, group: kind })),
       ),
     [byKind, preview, sections.join('|')],
   );
@@ -331,7 +336,7 @@ function SearchResults(
     const kind = KIND_ORDER.find((candidate) => candidate === groupKey);
     if (!kind) return null;
     const known = knownKinds.split('|').includes(kind);
-    if (known && byKind[kind].length <= KIND_PREVIEW_ROWS) return null;
+    if (known && byKind[kind].length <= STORE_SECTION_PREVIEW_ROWS) return null;
     return {
       label: known ? t('capabilities.store.search.allOf', { count: byKind[kind].length }) : t('capabilities.store.search.all'),
       onPress: () => setKind(kind),
@@ -358,13 +363,6 @@ function SearchResults(
   const failedReads = ([['app', lists.app], ['browserExtension', lists.browserExtension], ['mcpServer', lists.mcpServer], ['skill', lists.skill], ['agent', lists.agent]] as const)
     .flatMap(([kind, list]) => list?.error && !list.loading && list.sourceFailures.length === 0
       ? [{ title: describeRegistrySourceFailure(list.status, kindCopy(kind).title), retry: list.refresh }] : []);
-  const sourceTitle = React.useCallback(
-    (sourceId: string) =>
-      [appTitle, browserExtensionTitle, mcpTitle, skillTitle, agentTitle]
-        .map((title) => title(sourceId))
-        .find((title) => title !== sourceId) ?? sourceId,
-    [appTitle, browserExtensionTitle, agentTitle, mcpTitle, skillTitle],
-  );
   const list: DirectoryList = {
       loading,
       hasNextPage: continuations.length > 0,
@@ -466,6 +464,8 @@ function SearchResults(
           <View style={styles.inset}>{filter.tokenRow}</View>
         ) : null}
         {lists.software ? <SoftwareSource list={lists.software} target={props.softwareTarget} /> : null}
+        {/* A pasted Chrome Web Store link or ID is one result: install that extension. */}
+        {selectedKind === 'all' || selectedKind === 'browserExtension' ? <StoreBrowserExtensionLinkResult query={query} /> : null}
         <Directory
           kind="search"
           label={t('capabilities.store.discover.title')}
@@ -476,7 +476,7 @@ function SearchResults(
           onClear={clearAll}
           moreNote={partial ? t('capabilities.store.search.partial') : null}
           sourceTitle={sourceTitle}
-          showEmptyState={contributedKinds.length === 0}
+          showEmptyState={contributedKinds.length === 0 && readWebStoreExtensionId(query) === null}
           {...(preview ? { groupAction } : {})}
         />
         <ContributedStoreKindSections kinds={contributedKinds} mode="search" presented={props.presented} query={query} filters={filter.filters} />
@@ -487,8 +487,8 @@ function SearchResults(
 }
 
 /**
- * Which Machine's Software this search includes: the route's exact target, chosen here (never guessed). With no
- * Machine on the Account it says so; a chosen Machine that can't be read says why.
+ * An optional Machine narrows the Account's inert offerings to its supported Software. The route owns that choice;
+ * a chosen Machine that can't be read says why.
  */
 function SoftwareSource(props: Readonly<{
   list: NonNullable<StoreSearchState['lists']['software']>;

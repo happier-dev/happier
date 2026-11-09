@@ -12,7 +12,7 @@ import {
 } from './projectionInvalidation';
 import { getPluginUiClientExecutableComposition } from './clientExecutableContributions';
 import { createPluginUiCommonJsLoaderBackend } from './commonJsLoaderBackend';
-import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { settleAppShellPluginRuntimeUpdate } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import {

@@ -1,10 +1,10 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
-const { useRegistryRows } = await import('./StoreKindPage');
+const { useRegistryRows, previewSourceSections, STORE_SECTION_PREVIEW_ROWS } = await import('./StoreKindPage');
 
 afterEach(standardCleanup);
 
@@ -121,4 +121,47 @@ it('keeps the curated exact version for opening and adding after a newer listing
     await hook.rerender([exact]);
     hook.getCurrent().rows[0]!.open();
     expect(open).toHaveBeenLastCalledWith(exact);
+});
+
+describe('previewSourceSections', () => {
+  const row = (group: string, index: number) => ({ key: `${group}:${index}`, title: `${group} ${index}`, description: null, mark: null, group, open: () => {} });
+  const many = (group: string, count: number) => Array.from({ length: count }, (_, index) => row(group, index));
+  const groups = (...keys: string[]) => keys.map(key => ({ key, title: key }));
+  const pages = (entries: Record<string, string | null>) => Object.entries(entries).map(([sourceId, nextCursor]) => ({ sourceId, nextCursor }));
+  const over = STORE_SECTION_PREVIEW_ROWS + 3;
+
+  it('caps each catalog section to its preview and offers All N through the catalog condition', () => {
+    const onSeeSource = vi.fn();
+    const preview = previewSourceSections({
+      rows: [...many('category:x', over), ...many('source:a', over), ...many('source:b', 2)],
+      groups: groups('category:x', 'source:a', 'source:b'),
+      pages: pages({ a: null, b: null }),
+      onSeeSource,
+    });
+    expect(preview.rows.filter(entry => entry.group === 'source:a')).toHaveLength(STORE_SECTION_PREVIEW_ROWS);
+    // Curated sections and sections that already fit are left alone.
+    expect(preview.rows.filter(entry => entry.group === 'category:x')).toHaveLength(over);
+    expect(preview.rows.filter(entry => entry.group === 'source:b')).toHaveLength(2);
+    expect(preview.groupAction?.('source:b')).toBeNull();
+    const action = preview.groupAction?.('source:a');
+    expect(action).toMatchObject({ kind: 'link' });
+    action?.onPress();
+    expect(onSeeSource).toHaveBeenCalledWith('a');
+    expect(preview.capped).toBe(true);
+  });
+
+  it('says a section\'s count only when its catalog has no further page', () => {
+    const preview = previewSourceSections({ rows: [...many('source:a', over), ...many('source:b', over)], groups: groups('source:a', 'source:b'),
+      pages: pages({ a: 'next', b: null }), onSeeSource: () => {} });
+    expect(preview.groupAction?.('source:a')?.label).not.toBe(preview.groupAction?.('source:b')?.label);
+    expect(String(preview.groupAction?.('source:b')?.label)).toContain(String(over));
+  });
+
+  it('leaves a page whose only section is that catalog, and any condition, in full', () => {
+    const rows = many('source:a', over);
+    expect(previewSourceSections({ rows, groups: groups('source:a'), pages: pages({ a: null }), onSeeSource: () => {} }))
+      .toMatchObject({ rows, capped: false, groupAction: undefined });
+    expect(previewSourceSections({ rows: [...rows, ...many('source:b', over)], groups: groups('source:a', 'source:b'), pages: pages({}), onSeeSource: null }))
+      .toMatchObject({ capped: false, groupAction: undefined });
+  });
 });

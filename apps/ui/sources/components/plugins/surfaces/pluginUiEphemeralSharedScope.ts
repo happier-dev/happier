@@ -1,9 +1,10 @@
 import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { useLayoutEffect, useState } from 'react';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { PluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
 type SharedValueEntry = {
@@ -26,9 +27,9 @@ type OccurrenceScope = {
 };
 
 type PluginScopeRecord = {
-    /** Per-transport currentness fences; these never participate in value identity. */
+    /** Per-transport currentness fences; execution-bound acquisitions also qualify by this origin. */
     readonly origins: Map<string, { current: OccurrenceScope | null }>;
-    /** Opaque values belong to the Account, plugin and execution occurrence or admitted UI artifact. */
+    /** Opaque values belong to the Account, plugin and admitted plugin generation or UI artifact. */
     readonly occurrences: Map<string, OccurrenceScope>;
 };
 
@@ -70,9 +71,24 @@ function retireAccount(record: AccountScopeRecord): void {
     record.lifetimes.clear();
 }
 
-function readExecutionOriginSlot(executionOrigin: PluginMachineExecutionOriginV1 | null | undefined): string {
-    if (!executionOrigin) return 'unqualified';
-    return JSON.stringify(executionOrigin);
+function readExecutionOriginSlot(input: Readonly<{
+    accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
+}>): string {
+    // An Account renderer may carry a Machine placement hint. Its callbacks
+    // still belong to the same admitted Account custody as its client Actions.
+    if (input.accountExecutionOrigin) return 'account';
+    if (!input.executionOrigin) return 'unqualified';
+    return JSON.stringify(input.executionOrigin);
+}
+
+/**
+ * One admitted Account plugin generation has one execution-bound slot, whichever projection placed the borrower:
+ * a Session Details mount carries a Machine origin, yet its Action, resolved by name from the Account catalog,
+ * must find the callback that mount registered. Without an admitted generation the exact origin still isolates.
+ */
+function readExecutionBoundSlot(input: Parameters<typeof readExecutionOriginSlot>[0] & Readonly<{ pluginGenerationId?: string }>): string {
+    return input.pluginGenerationId ? 'account' : readExecutionOriginSlot(input);
 }
 
 function readAccountRecord(
@@ -109,7 +125,7 @@ function createOccurrenceFacade(input: Readonly<{
     executionOriginKey: string;
     isCurrent(): boolean;
 }>): PluginUiEphemeralSharedScope {
-    return Object.freeze({
+    const shared: PluginUiEphemeralSharedScope = Object.freeze({
         acquire<T>(
             localKey: string,
             create: () => Readonly<{
@@ -163,6 +179,11 @@ function createOccurrenceFacade(input: Readonly<{
             const leasedEntry = entry;
             return Object.freeze({
                 value: leasedEntry.value as T,
+                retire(): void {
+                    if (input.occurrence.values.get(localKey) !== leasedEntry) return;
+                    input.occurrence.values.delete(localKey);
+                    disposeSharedValue(leasedEntry);
+                },
                 release(): void {
                     if (released) return;
                     released = true;
@@ -198,22 +219,34 @@ function createOccurrenceFacade(input: Readonly<{
             });
         },
     });
+    return shared;
 }
 
-/**
- * Resolve one host-owned, in-process sharing scope for a mounted plugin
- * occurrence. Account and occurrence replacement retire every opaque value;
- * the caller's incumbent mount currentness fences stale overlapping renders.
- */
-export function getPluginUiEphemeralSharedScope(input: Readonly<{
+type SharedScopeInput = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
-    occurrenceId: string;
-    /** Exact transport participant; it fences currentness but never keys the value. */
+    occurrenceId?: string;
+    /** Canonical Account selection's plugin-wide custody, shared by sibling UI Artifacts. */
+    pluginGenerationId?: string;
+    /** Admitted presentation bytes, not executable currentness or custody. */
+    artifactDigest?: PluginUiArtifactDigestV1;
+    accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
+    /** Fences mount currentness and qualifies execution-bound values independently of presentation. */
     executionOrigin?: PluginMachineExecutionOriginV1 | null;
     isCurrent(): boolean;
-}>): PluginUiEphemeralSharedScope | null {
+}>;
+
+function resolveSharedValueOwner(input: SharedScopeInput, namespace: 'presentation' | 'execution'): PluginUiEphemeralSharedScope | null {
     if (!input.accountLifetime || !input.isCurrent()) return null;
+    // Renderer and client registration occurrences are different lifecycle
+    // facts. Their admitted Account plugin generation is the common custody;
+    // without one, the full execution origin below isolates executable values.
+    const pluginGenerationId = input.accountExecutionOrigin?.custodyId ?? input.pluginGenerationId;
+    const generation = namespace === 'execution'
+        ? pluginGenerationId ? `plugin:${pluginGenerationId}` : input.occurrenceId
+        : readSharedScopeIdentity(input);
+    const scopeIdentity = generation ? JSON.stringify([namespace, generation]) : undefined;
+    if (!scopeIdentity) return null;
     const account = readAccountRecord(input.accountLifetime);
     if (!account || !input.isCurrent()) return null;
 
@@ -223,20 +256,21 @@ export function getPluginUiEphemeralSharedScope(input: Readonly<{
         account.plugins.set(input.pluginId, plugin);
     }
 
-    const executionOriginKey = readExecutionOriginSlot(input.executionOrigin);
-    let slot = plugin.origins.get(executionOriginKey);
+    const executionOriginKey = namespace === 'execution' ? readExecutionBoundSlot(input) : readExecutionOriginSlot(input);
+    const slotKey = JSON.stringify([namespace, executionOriginKey]);
+    let slot = plugin.origins.get(slotKey);
     if (!slot) {
         slot = { current: null };
-        plugin.origins.set(executionOriginKey, slot);
+        plugin.origins.set(slotKey, slot);
     }
-    let occurrence = plugin.occurrences.get(input.occurrenceId);
+    let occurrence = plugin.occurrences.get(scopeIdentity);
     if (!occurrence || occurrence.retired) {
         occurrence = {
-            occurrenceId: input.occurrenceId,
+            occurrenceId: scopeIdentity,
             values: new Map(),
             retired: false,
         };
-        plugin.occurrences.set(input.occurrenceId, occurrence);
+        plugin.occurrences.set(scopeIdentity, occurrence);
     }
     const precedingOccurrence = slot.current;
     if (precedingOccurrence !== occurrence) {
@@ -260,6 +294,36 @@ export function getPluginUiEphemeralSharedScope(input: Readonly<{
         executionOriginKey,
         isCurrent: input.isCurrent,
     });
+}
+
+/**
+ * Presentation values follow admitted bytes. Execution-bound callbacks follow
+ * the admitted plugin generation across renderer/client occurrences and sibling
+ * Artifacts, under admitted Account custody.
+ * Without Account generation admission, execution sharing requires a Machine
+ * origin and remains confined to the exact occurrence.
+ * Bind only the namespace the borrower uses: creating a client Action facade
+ * must not replace the mounted renderer's presentation generation.
+ */
+export function getPluginUiEphemeralSharedScope(input: SharedScopeInput): PluginUiEphemeralSharedScope | null {
+    if (!input.accountLifetime || !input.isCurrent() || !readSharedScopeIdentity(input)) return null;
+    if (!readAccountRecord(input.accountLifetime)) return null;
+    // A single-identity borrower keeps the incumbent immediate retirement
+    // semantics. With both identities, its first acquisition chooses whether
+    // it is borrowing presentation state or executable state.
+    let presentation = !input.artifactDigest || !input.occurrenceId
+        ? resolveSharedValueOwner(input, 'presentation') : undefined;
+    let execution: PluginUiEphemeralSharedScope | null | undefined;
+    const acquire: PluginUiEphemeralSharedScope['acquire'] = (localKey, create) => {
+        if (presentation === undefined) presentation = resolveSharedValueOwner(input, 'presentation');
+        return presentation?.acquire(localKey, create) ?? null;
+    };
+    const acquireExecutionBound: PluginUiEphemeralSharedScope['acquire'] = (localKey, create) => {
+        if (!input.occurrenceId || (!input.executionOrigin && !input.accountExecutionOrigin && !input.pluginGenerationId)) return null;
+        if (execution === undefined) execution = resolveSharedValueOwner(input, 'execution');
+        return execution?.acquire(JSON.stringify([readExecutionBoundSlot(input), localKey]), create) ?? null;
+    };
+    return Object.freeze({ acquire, acquireExecutionBound });
 }
 
 /**
@@ -293,8 +357,10 @@ type MountedScopeInput = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
     occurrenceId?: string;
-    /** Verified presentation identity when this page has no executable occurrence. */
+    pluginGenerationId?: string;
+    /** Admitted presentation bytes, not executable currentness or custody. */
     artifactDigest?: PluginUiArtifactDigestV1;
+    accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
     executionOrigin?: PluginMachineExecutionOriginV1 | null;
     mountLifetime: Readonly<{ isCurrent(): boolean }>;
 }>;
@@ -303,19 +369,26 @@ type MountedScopeState = MountedScopeInput & Readonly<{
     scope: PluginUiEphemeralSharedScope | null;
 }>;
 
-function mountedScopeIdentity(input: MountedScopeInput): string | undefined {
-    // This is only a private sharing key, never executable currentness or
-    // mounted caller custody. The admitted artifact is the immutable plugin UI
-    // generation shared by page, Composer and other mounts; an execution
-    // occurrence is only the fallback for callers without an artifact identity.
-    return input.artifactDigest ? `artifact:${input.artifactDigest}` : input.occurrenceId;
+function readSharedScopeIdentity(input: Readonly<{
+    occurrenceId?: string;
+    pluginGenerationId?: string;
+    artifactDigest?: PluginUiArtifactDigestV1;
+    accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
+}>): string | undefined {
+    // A renderer's digest covers one entry point. Sibling renderers (page,
+    // picker, Action) share the Account-selected plugin generation, not bytes.
+    // Mounts without an Account selection retain their exact Artifact scope.
+    const pluginGenerationId = input.accountExecutionOrigin?.custodyId ?? input.pluginGenerationId;
+    return pluginGenerationId ? `plugin:${pluginGenerationId}`
+        : input.artifactDigest ? `artifact:${input.artifactDigest}` : input.occurrenceId;
 }
 
 function isSameMountedScopeInput(state: MountedScopeState, input: MountedScopeInput): boolean {
     return state.accountLifetime === input.accountLifetime
         && state.pluginId === input.pluginId
-        && mountedScopeIdentity(state) === mountedScopeIdentity(input)
-        && readExecutionOriginSlot(state.executionOrigin) === readExecutionOriginSlot(input.executionOrigin)
+        && state.occurrenceId === input.occurrenceId
+        && readSharedScopeIdentity(state) === readSharedScopeIdentity(input)
+        && readExecutionOriginSlot(state) === readExecutionOriginSlot(input)
         && state.mountLifetime === input.mountLifetime;
 }
 
@@ -327,8 +400,8 @@ function isSameMountedScopeInput(state: MountedScopeState, input: MountedScopeIn
 export function usePluginUiEphemeralSharedScopeBinding(
     input: MountedScopeInput,
 ): PluginUiEphemeralSharedScope | null {
-    const executionOriginSlot = readExecutionOriginSlot(input.executionOrigin);
-    const scopeIdentity = mountedScopeIdentity(input);
+    const executionOriginSlot = readExecutionOriginSlot(input);
+    const scopeIdentity = readSharedScopeIdentity(input);
     const [state, setState] = useState<MountedScopeState>(() => ({ ...input, scope: null }));
     if (!isSameMountedScopeInput(state, input)) {
         setState({ ...input, scope: null });
@@ -341,14 +414,17 @@ export function usePluginUiEphemeralSharedScopeBinding(
         const scope = scopeIdentity ? getPluginUiEphemeralSharedScope({
             accountLifetime: input.accountLifetime,
             pluginId: input.pluginId,
-            occurrenceId: scopeIdentity,
+            ...(input.occurrenceId === undefined ? {} : { occurrenceId: input.occurrenceId }),
+            ...(input.pluginGenerationId === undefined ? {} : { pluginGenerationId: input.pluginGenerationId }),
+            ...(input.artifactDigest === undefined ? {} : { artifactDigest: input.artifactDigest }),
+            accountExecutionOrigin: input.accountExecutionOrigin,
             executionOrigin: input.executionOrigin,
             isCurrent: input.mountLifetime.isCurrent,
         }) : null;
         setState((current) => isSameMountedScopeInput(current, input)
             ? { ...input, scope }
             : current);
-    }, [executionOriginSlot, input.accountLifetime, scopeIdentity, input.mountLifetime, input.pluginId]);
+    }, [executionOriginSlot, input.accountLifetime, scopeIdentity, input.mountLifetime, input.occurrenceId, input.pluginId]);
 
     return effectiveState.scope;
 }

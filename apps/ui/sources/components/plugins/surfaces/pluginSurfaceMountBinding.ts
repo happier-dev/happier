@@ -11,9 +11,41 @@ import {
 import type {
     DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readDaemonPluginUiTargetedSurfaceMountV1, type PluginUiTargetedSurfaceMountCoreV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
+import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import type { PluginUiInstanceKeyV1, PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
+import { buildPluginSurfacePaneLaunchKey } from './pluginSurfaceDestinationNavigation';
+import { getPluginSurfaceTargetMountKey, resolvePluginSurfaceTarget } from './pluginSurfaceContext';
+
+/**
+ * A singleton sidebar and its unopened chrome share the same ordinary surface
+ * Resource context. Explicit instance/input handoffs retain their existing values.
+ * The digest represents the existing pane key plus exact target inside the
+ * Resource protocol's bounded opaque instance-key field.
+ */
+export function resolvePluginSidebarResourceContext(input: Readonly<{
+    binding: PluginUiDestinationBindingV1;
+    sessionId?: string;
+    target?: PluginUiHostApiSurfaceTargetV1;
+    mountInstanceKey?: string;
+    launchInput?: PluginUiLaunchInputV1;
+}>): Extract<PluginResourceContextV1, { kind: 'surface' }> | null {
+    if (input.binding.container !== 'rightSidebarTab' && input.binding.container !== 'appPage') return null;
+    if (input.target && (input.target.kind !== input.binding.targetKind
+        || input.target.kind === 'session' && input.sessionId !== undefined && input.target.sessionId !== input.sessionId)) return null;
+    const target = input.target ? { resolved: true as const, target: input.target }
+        : resolvePluginSurfaceTarget({ targetKind: input.binding.targetKind, sessionId: input.sessionId });
+    if (!target.resolved) return null;
+    const paneKey = buildPluginSurfacePaneLaunchKey({ container: input.binding.container, destination: input.binding.destination });
+    const mountInstanceKey = input.mountInstanceKey
+        ?? `sidebar:${bytesToHex(sha256(new TextEncoder().encode(JSON.stringify([paneKey, getPluginSurfaceTargetMountKey(target.target)]))))}`;
+    return Object.freeze({ kind: 'surface', mountInstanceKey, launchInput: input.launchInput ?? null, target: target.target });
+}
 
 /**
  * The minimum producer facts the host needs to verify a destination mount.
@@ -113,11 +145,13 @@ export function createPluginSurfaceDestinationMountContext<
     TDescriptor extends PluginSurfaceMountDescriptor,
 >(
     mount: PluginSurfaceDestinationMountBinding<TDescriptor>,
+    instanceKey?: PluginUiInstanceKeyV1,
 ): PluginUiMountContextV1 {
     return Object.freeze({
         kind: 'destination',
         destination: mount.destinationBinding.destination,
         container: mount.destinationBinding.container,
+        ...(instanceKey === undefined ? {} : { instanceKey }),
     });
 }
 

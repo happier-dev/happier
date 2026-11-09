@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
-import { createActionExecutor, isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1,
-    type ApprovalRequest, type SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import {
+    type ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { type SessionImageMediaReferenceV1 } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import { PluginHostedWebBridgeEnvelopeV1Schema, PluginUiJsonValueV1Schema,
     type PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';

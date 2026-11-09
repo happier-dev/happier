@@ -34,7 +34,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
-import { useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { useStoreBrowserProfileScope, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
 
 import {
@@ -63,6 +63,7 @@ export function useOpenStoreListing(): (
   const router = useRouter();
   const { project } = useStoreProjectScope();
   const machine = useStoreMachineScope();
+  const browserProfile = useStoreBrowserProfileScope();
   const navigateWithFocusReturn = useNavigationFocusReturn();
   return React.useCallback(
     (reference) => {
@@ -71,12 +72,12 @@ export function useOpenStoreListing(): (
         return;
       }
       const result = runGuardedNavigation(() =>
-        navigateWithFocusReturn(() => router.pushRetainingCurrent(buildStoreListingRoute(reference, project, undefined, machine))),
+        navigateWithFocusReturn(() => router.pushRetainingCurrent(buildStoreListingRoute(reference, project, undefined, machine, browserProfile))),
       );
       if (result !== true)
         fireAndForget(result, { tag: 'useOpenStoreListing' });
     },
-    [besidePage, openStore, router, project, machine, navigateWithFocusReturn],
+    [besidePage, openStore, router, project, machine, browserProfile, navigateWithFocusReturn],
   );
 }
 

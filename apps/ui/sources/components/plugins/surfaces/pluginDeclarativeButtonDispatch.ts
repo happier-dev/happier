@@ -1,7 +1,7 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginDeclarativeButtonV1 } from '@happier-dev/protocol/plugins/contributions/declarativeButtonsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -44,29 +44,26 @@ export async function dispatchPluginDeclarativeButton(input: PluginDeclarativeBu
     const readProjection = () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true });
     const action = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(effect.invocation.action);
     if (!action?.occurrenceId) return unavailable();
+    // An invocation always owns a cancellation signal, including on native
+    // where the confirmation presenter needs it to use a dismissible dialog.
     const controller = new AbortController();
     const abort = () => controller.abort();
     input.signal?.addEventListener('abort', abort, { once: true });
-    const isCurrent = () => !controller.signal.aborted && input.isCurrent()
-        && createPluginUiProjectedActionResolver(readProjection()?.actionsById)(effect.invocation.action) === action;
-    const unsubscribe = subscribeCommittedAppShellPluginUiProjection(() => { if (!isCurrent()) abort(); });
     try {
         const prepared = await createFrontDoorActionExecute().prepare('action.invoke', {
             action: effect.invocation.action, input: input.input === undefined ? effect.invocation.input : input.input,
         }, {
             surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
             expectedContributedActionOccurrenceId: action.occurrenceId, signal: controller.signal,
-            verifyMachineAdmissionCurrent: async () => isCurrent(),
             ...(input.interactivePresentation ? { interactivePresentation: input.interactivePresentation } : {}),
             ...(input.actionRequestId ? { actionRequestId: input.actionRequestId } : {}),
             ...(input.sessionId ? { defaultSessionId: input.sessionId } : {}),
         });
-        if (!isCurrent()) return unavailable();
+        if (controller.signal.aborted) return unavailable();
         return { kind: 'action', result: prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result };
     } catch {
         return unavailable();
     } finally {
-        unsubscribe();
         input.signal?.removeEventListener('abort', abort);
     }
 }

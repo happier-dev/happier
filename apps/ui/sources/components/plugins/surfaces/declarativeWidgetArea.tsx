@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { PluginUiWidgetAreaResultV1Schema, type PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
-import type { JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginUiWidgetAreaPortV1 } from '@happier-dev/plugin-ui/hostApi';
 
 import { PluginPageWidgetArea } from '@/components/widgets/area/PluginPageWidgetArea';

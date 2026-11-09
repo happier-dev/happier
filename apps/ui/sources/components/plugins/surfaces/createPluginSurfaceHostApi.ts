@@ -15,7 +15,9 @@ import {
     type PluginUiTargetedContributionOperationV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { isPluginError, type PluginErrorData } from '@happier-dev/plugin-sdk';
+import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { createPluginConnectionSettlement } from './connectionSettlement';
 
 /**
  * The CALLER's cancellation for one in-flight request (§3.4).
@@ -37,13 +39,14 @@ export type PluginSurfaceHostApiRequestOptions = Readonly<{
         publish: (event: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1) => void;
         retain: (release: () => void) => void;
     }>;
-
     /** The existing subscription carrier owns delivery and release, never author JSON. */
     entityDragDropSubscription?: Readonly<{
         publish: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => void;
         retain: (release: () => void) => void;
     }>;
     signal?: AbortSignal;
+    /** Incumbent host declaration held only beside pre-invocation settlement, never author JSON. */
+    expectedContributedAction?: PluginUiActionProjection;
     /** Physical iframe/WebView embedding, measured by its host rather than authored JSON. */
     getHostedFrameBounds?: () => Promise<import('@/components/ui/treeDragDrop/treeDragDropTypes').WindowBounds | null>;
     /** Host-private one-use proof minted by the exact physical frame. */
@@ -170,7 +173,7 @@ export function createPluginSurfaceHostApiPluginErrorData(
     code: string,
     diagnostics: readonly string[] = [],
     message?: string,
-    metadata?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'>,
+    metadata?: Pick<PluginUiHostApiErrorPayloadV1, 'layer' | 'phase' | 'retryable'> & Readonly<{ requestId?: string }>,
 ): PluginErrorData {
     return {
         name: 'PluginError',
@@ -178,7 +181,8 @@ export function createPluginSurfaceHostApiPluginErrorData(
         ...(message === undefined ? {} : { message }),
         // A coarse wrapper code says nothing about whether an effect entered.
         retryable: metadata?.retryable ?? false,
-        ...(metadata && (metadata.layer !== undefined || metadata.phase !== undefined) ? { details: {
+        ...(metadata && (metadata.layer !== undefined || metadata.phase !== undefined || metadata.requestId !== undefined) ? { details: {
+            ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
             ...(metadata.layer === undefined ? {} : { layer: metadata.layer }),
             ...(metadata.phase === undefined ? {} : { phase: metadata.phase }),
         } } : {}),
@@ -280,7 +284,8 @@ export type CreatePluginSurfaceHostApiInput = Readonly<{
     /** Host-private context for an existing provenance-tagged unavailable result. */
     resolveUnavailableError?: (error: PluginUiHostApiErrorPayloadV1, request: PluginUiHostApiRequestEnvelopeV1) => PluginUiHostApiErrorPayloadV1 | undefined;
     /** Positive host readiness observation; unrelated or settled refusals remain terminal. */
-    isConnectionPending?: (error: PluginUiHostApiErrorPayloadV1, request: PluginUiHostApiRequestEnvelopeV1) => boolean;
+    isConnectionPending?: (error: PluginUiHostApiErrorPayloadV1, request: PluginUiHostApiRequestEnvelopeV1,
+        options?: PluginSurfaceHostApiRequestOptions) => boolean;
     /** Called once when the mount retires this host API. */
     onDispose?: () => void;
 }>;
@@ -339,22 +344,13 @@ export function createPluginSurfaceHostApi(
     };
     const isMethodAvailable = input.isMethodAvailable;
     let disposed = false;
-    const connectionWaiters = new Set<() => void>();
+    const connectionSettlement = createPluginConnectionSettlement();
     const waitForConnectionSettlement: NonNullable<PluginSurfaceHostApiV1['waitForConnectionSettlement']> = (error, request, options) => {
-        if (input.isConnectionPending?.(error, request) !== true) return null;
-        if (disposed || input.isCurrent?.() === false || options?.signal?.aborted) return Promise.resolve();
-        return new Promise<void>(resolve => {
-            const finish = () => {
-                connectionWaiters.delete(resume);
-                options?.signal?.removeEventListener('abort', finish);
-                resolve();
-            };
-            const resume = () => {
-                if (!disposed && input.isCurrent?.() !== false && input.isConnectionPending?.(error, request) === true) return;
-                finish();
-            };
-            connectionWaiters.add(resume);
-            options?.signal?.addEventListener('abort', finish, { once: true });
+        if (error.retryable === false) return null;
+        return connectionSettlement.wait({
+            isPending: () => input.isConnectionPending?.(error, request, options) === true,
+            isCurrent: () => !disposed && input.isCurrent?.() !== false,
+            signal: options?.signal,
         });
     };
     const enrichUnavailable = (result: PluginUiJsonValueV1, request: PluginUiHostApiRequestEnvelopeV1,
@@ -438,9 +434,7 @@ export function createPluginSurfaceHostApi(
             [`host_api_method_not_installed:${request.method}`],
         );
     }
-    const notifyConnectionSettled = () => {
-        for (const resume of [...connectionWaiters]) resume();
-    };
+    const notifyConnectionSettled = connectionSettlement.notify;
     return Object.freeze({
         platform: surfaceContext.platform,
         channel: surfaceContext.channel,
@@ -454,7 +448,7 @@ export function createPluginSurfaceHostApi(
         dispose: (): void => {
             if (disposed) return;
             disposed = true;
-            notifyConnectionSettled();
+            connectionSettlement.dispose();
             onDispose?.();
         },
     });

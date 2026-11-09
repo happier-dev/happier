@@ -1,17 +1,15 @@
 import * as React from 'react';
 import type { MarketplaceCatalogReferenceV1 } from '@happier-dev/protocol/marketplace';
 import type { RegistryItemV1 } from '@happier-dev/protocol/registries';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { CapabilityAddDetailAction, type CapabilityListingConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
-import { createActionInputForm } from '@/components/plugins/actions/actionInputForm';
-import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useStoreBrowserProfileScope, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -21,7 +19,7 @@ import { StoreAgentListing, type StoreAgentListingState } from './StoreAgentList
 import { StorePluginListing, type StorePluginListingState } from './StorePluginListing';
 import { resolveStoreContributionRoute } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
-import { submitBrowserExtensionMutation } from './submitBrowserExtensionMutation';
+import { presentBrowserExtensionInstallForm } from './submitBrowserExtensionMutation';
 
 type BrowserExtensionListingState = Readonly<{
     config: CapabilityListingConfig<RegistryItemV1>;
@@ -36,6 +34,10 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
         itemId: selected?.itemId ?? '', ...(selected?.version ? { version: selected.version } : {}) }, selected !== null);
     const scope = useAccountSettingsScope();
     const execution = useMountedActionExecution(scope);
+    const { binding, execute, getSignal } = execution;
+    // A profile's Extensions section opened the Store for one Machine and profile: the form starts there.
+    const seedMachineId = useStoreMachineScope()?.machineId ?? null;
+    const seedProfileId = useStoreBrowserProfileScope();
     const config = React.useMemo<CapabilityListingConfig<RegistryItemV1>>(() => ({
         catalog: { itemKey: item => item.summary.itemId },
         renderDetail: item => <><CapabilityDetailHeader title={item.summary.title} purpose={item.summary.description}
@@ -45,26 +47,13 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
         detailFooter: item => ({ primary: { label: t('capabilities.store.add'),
             ...(!execution.ready ? { disabledReason: t('common.loading') } : {}),
             onPress: async () => {
-                if (item.payload.kind !== 'browserExtension' || !execution.binding) return null;
-                const source = item.payload.extension;
-                const spec = getActionSpec('browser.extensions.install');
-                const inputHints = spec.inputHints!;
-                const form = createActionInputForm({
-                    presentation: { title: item.summary.title, description: item.summary.description ?? null,
-                        inputHints: { ...inputHints, fields: inputHints.fields.filter(field =>
-                            field.path === 'machineId' || field.path === 'profileId') } },
-                    accountLifetime: execution.binding, signal: execution.getSignal(),
-                    submit: (candidate, { signal }) => submitBrowserExtensionMutation({
-                        actionId: 'browser.extensions.install', input: { ...candidate, source },
-                        machineId: typeof candidate.machineId === 'string' ? candidate.machineId : '',
-                        execute: execution.execute, signal, confirmText: t('capabilities.store.add'),
-                    }),
-                });
-                presentActionInputForm({ form, signal: execution.getSignal(), actionId: spec.id });
+                if (item.payload.kind !== 'browserExtension') return null;
+                presentBrowserExtensionInstallForm({ title: item.summary.title, description: item.summary.description ?? null,
+                    source: item.payload.extension, execution: { binding, execute, getSignal }, seedMachineId, seedProfileId });
                 return null;
             } } }),
         testID: 'store.browserExtension',
-    }), [read.item, read.loading, execution.ready, execution.binding, execution.execute, execution.getSignal]);
+    }), [read.item, read.loading, execution.ready, binding, execute, getSignal, seedMachineId, seedProfileId]);
     return { config, item: read.item, resolving: read.loading };
 }
 

@@ -36,10 +36,21 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
+const viewport = vi.hoisted(() => ({ width: 1440, height: 900 }));
+
 // The real Registry read, App preparation hook, Action front door and Store listing body run; only the Home's
 // HTTP boundary answers (the same harness as the App data owner's own test).
 installPromptRegistriesCommonModuleMocks({
   storage: (original) => original(),
+  reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      View: 'View', ScrollView: 'ScrollView', TextInput: 'TextInput',
+      Platform: { OS: 'web', select: (values: Record<string, unknown>) => values.web ?? values.default },
+      // Window geometry is a platform boundary; pane routing and retention stay real.
+      useWindowDimensions: () => ({ width: viewport.width, height: viewport.height }),
+    });
+  },
   text: () => vi.importActual('@/text'),
 });
 const { t } = await import('@/text');
@@ -58,7 +69,7 @@ const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/de
 const { StoreListingBody } = await import('./StoreListing');
 const { StoreKindSurface } = await import('./StoreKindSurface');
 const { useStoreAppListing } = await import('./useStoreAppListing');
-beforeEach(() => homes.reset());
+beforeEach(() => { homes.reset(); viewport.width = 1440; viewport.height = 900; });
 afterEach(standardCleanup);
 
 let sequence = 0;
@@ -419,6 +430,85 @@ async function nameIt(
 const hasProjectChoice = (screen: Parameters<typeof projectSelect>[0], id: string) =>
   ((projectSelect(screen)?.props.items ?? []) as readonly { id: string }[]).some((item) => item.id === id);
 
+it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and its $0 result across review remounts', async outcome => {
+  const { showStoreAppPreparation } = await import('./StoreAppPreparation');
+  const { Modal } = await import('@/modal');
+  const fixture = await createFixture();
+  const installs: unknown[] = [];
+  let finish: (() => void) | undefined;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'domains',
+    errorCode: 'native_effect_failed', environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
+    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+    deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } });
+  await answerExternalActionAccountForHome(homes, fixture.lifetime.scope.serverId, {
+    actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0,
+    failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+    execute: async raw => {
+      const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
+      if (input.mode === 'preview') return { kind: 'preview', review: { templateRef: input.templateRef,
+        profiles: [], services: ['kuma'], bindings: [], generatedSecrets: [], domains: [], deploy: { requestKey: 'install-deploy' } } };
+      installs.push(input);
+      await pending;
+      return outcome === 'domain-failure' ? partial : { kind: 'applied', environmentId: 'status-page', revision: 4,
+        targetLinkId: 'target-link', savedSecrets: [], definition: partial.definition };
+    },
+  });
+  let open: (() => void) | undefined;
+  function Listing() {
+    const ready = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true } });
+    if (ready.kind === 'ready') open = () => { showStoreAppPreparation({ ready, lifetime: fixture.lifetime, name: 'Uptime Kuma' }); };
+    return null;
+  }
+  const listing = await renderScreen(<Listing />);
+  let review: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  const closed = vi.fn();
+  try {
+    await waitForHomeGovernance(() => expect(open).toBeTypeOf('function'));
+    await act(async () => { open!(); });
+    const config = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+    const Component = config.component;
+    const tree = (key: string) => <Component key={key} {...config.props} onClose={closed} />;
+    review = await renderScreen(tree('wide'));
+    await waitForHomeGovernance(() => expect(hasProjectChoice(review!, 'storefront')).toBe(true));
+    await chooseMachine(review, 'target');
+    await chooseProject(review, 'storefront');
+    await nameIt(review);
+    await review.pressByTestIdAsync('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(review!.findHostByTestId('store.app.prepare.confirm')).toBeTruthy());
+    await review.pressByTestIdAsync('store.app.prepare.confirm');
+    await waitForHomeGovernance(() => expect(installs).toHaveLength(1));
+    await review.update(tree('phone'));
+    expect(review.findHostByTestId('store.app.prepare.confirm')?.props.disabled).toBe(true);
+    expect(review.findHostByTestId('store.app.prepare.back')).toBeNull();
+    expect(review.getTextContent()).not.toContain(t('capabilities.store.appPage.preparedTitle'));
+    expect(review.getTextContent()).not.toContain(t('capabilities.store.appPage.prepareDescription'));
+    await review.pressByTestIdAsync('store.app.prepare.confirm');
+    expect(installs).toHaveLength(1);
+    await act(async () => { finish!(); });
+    if (outcome === 'applied') {
+      await waitForHomeGovernance(() => expect(closed).toHaveBeenCalledOnce());
+      expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('deploymentEnvironment=status-page'));
+    } else {
+      await waitForHomeGovernance(() => expect(review!.findHostByTestId('store.app.prepare.progress')).toBeTruthy());
+      await review.update(tree('wide-result'));
+      expect(review.findHostByTestId('store.app.prepare.progress')).toBeTruthy();
+      await review.pressByTestIdAsync('store.app.prepare.progress.failed.details');
+      expect(review.getTextContent()).toContain('native_effect_failed');
+      expect(review.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+      expect(review.findHostByTestId('store.app.prepare.confirm')).toBeNull();
+      expect(installs).toHaveLength(1);
+      expect(closed).not.toHaveBeenCalled();
+    }
+  } finally {
+    finish?.();
+    await review?.unmount();
+    await listing.unmount();
+    await fixture.dispose();
+  }
+});
+
 it('installs from the person’s Store confirmation without a self-approval Artifact', async () => {
   const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
   const fixture = await createFixture([], { receivingTemplate: true });
@@ -502,6 +592,50 @@ it('opens an App through the Store listing body in its native ready, needs-revie
       expect(screen.findHostByTestId('store.listing.failed')).toBeTruthy(),
     );
     expect(fixture.preparations).toEqual([]);
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
+it('keeps the selected App and its open install sheet when its pane becomes phone-sized', async () => {
+  const { Modal } = await import('@/modal');
+  const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+  const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+  const { StoreListingPaneHost } = await import('./StoreListing');
+  const fixture = await createFixture();
+  const reference = { type: 'registryItem', kind: 'app', sourceId: fixture.sourceId, itemId: 'uptime-kuma' } as const;
+  const navigation = { push: vi.fn(), pushRetainingCurrent: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() };
+  const tree = () => <DestinationInstanceHost tabId="store" ref={{ kind: 'plugins', params: { selection: JSON.stringify(reference) } }}
+    pathname="/plugins" focused visible navigation={navigation}>
+    <AppPaneProvider><StoreListingPaneHost title="Store" testID="store">
+      {React.createElement('View', { testID: 'store.directory' })}
+    </StoreListingPaneHost></AppPaneProvider>
+  </DestinationInstanceHost>;
+  const show = vi.mocked(Modal.show);
+  const hide = vi.mocked(Modal.hide);
+  show.mockClear(); hide.mockClear();
+  const screen = await renderScreen(tree());
+  try {
+    await waitForHomeGovernance(async () => {
+      const primary = screen.findHostByTestId('store.app.listing:primary');
+      expect(primary).toBeTruthy();
+      await act(async () => { await primary!.props.onPress?.(); });
+      expect(show).toHaveBeenCalledTimes(1);
+    });
+    const listing = screen.findHostByTestId('store.app.listing:primary');
+    viewport.width = 390;
+    await screen.update(tree());
+    await act(async () => {
+      const host = screen.root.findAllByType('View').find(node => typeof node.props.onLayout === 'function');
+      expect(host).toBeDefined();
+      host!.props.onLayout({ nativeEvent: { layout: { width: viewport.width, height: viewport.height } } });
+    });
+    await flushHookEffects();
+    expect(screen.findHostByTestId('store.app.listing:primary')).toBe(listing);
+    expect(hide).not.toHaveBeenCalled();
+    expect(navigation.pushRetainingCurrent).not.toHaveBeenCalled();
+    expect(screen.findByTestId('multi-pane-details-modal')).not.toBeNull();
   } finally {
     await screen.unmount();
     await fixture.dispose();

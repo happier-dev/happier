@@ -1,7 +1,12 @@
 import * as React from 'react';
-import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
+import '@/sync/ops/actions/defaultActionExecutor';
+// Compile the real lazy guest payload before assertions about native lifecycle settlement.
+import './guestBootstrap.generated';
 
 type NativeViewTestProps = Readonly<{
     artifactHandleToken?: string;
@@ -36,13 +41,16 @@ const randomIds = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-modules-core', () => ({
+    // Optional platform modules are absent in this renderer boundary.
+    requireOptionalNativeModule: () => null,
     requireNativeModule: requireNativeModuleMock,
     requireNativeViewManager: requireNativeViewManagerMock,
 }));
-vi.mock('react-native', () => ({
-    Linking: { openURL: openExternalUrlMock },
-    Platform: { OS: 'ios' },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    const native = await createReactNativeNativeMock({ platformOS: 'ios' });
+    return { ...native, Linking: { ...native.Linking, openURL: openExternalUrlMock } };
+});
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => {
         const next = randomIds.values.shift();
@@ -52,7 +60,9 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('HostedArtifactFrame native adapter', () => {
+    let restoreAuth: () => void;
     beforeEach(() => {
+        restoreAuth = installSignedOutAuthForTest();
         nativeModuleMock.goBack.mockReset();
         nativeModuleMock.goBack.mockResolvedValue(true);
         nativeModuleMock.postHostMessage.mockReset();
@@ -75,6 +85,7 @@ describe('HostedArtifactFrame native adapter', () => {
         requireNativeViewManagerMock.mockReset();
         requireNativeViewManagerMock.mockReturnValue(nativeViewMock);
     });
+    afterEach(() => restoreAuth());
 
     it('renders only an opaque registered token and lends the native delivery primitive while mounted', async () => {
         const attachHostMessages = vi.fn<(send: (message: unknown) => void) => () => void>();
@@ -155,7 +166,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             await Promise.resolve();
         });
-        expect(openExternalUrlMock).toHaveBeenCalledWith('https://callback.example.test/complete');
+        await vi.waitFor(() => expect(openExternalUrlMock).toHaveBeenCalledWith('https://callback.example.test/complete'));
 
         await act(async () => {
             root?.unmount();

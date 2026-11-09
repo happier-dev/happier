@@ -60,8 +60,8 @@ export function createPluginSurfaceOpenSurfaceHandler(
             return createPluginSurfaceHostApiError('invalid_payload', ['plugin_surface_open_payload_invalid']);
         }
 
-        // The placement's outcome is the authoritative settlement of an
-        // outward effect (§3.5, `hostApi/outwardEffectSettlement.ts`): by the
+        // The placement's outcome is the authoritative settlement of work
+        // admitted at the request's natural boundary: by the
         // time it resolves, the destination was either opened or refused. It is
         // deliberately NOT re-fenced against currentness here — a successful
         // open routinely retires this very mount, and answering that with

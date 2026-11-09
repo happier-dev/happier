@@ -5,6 +5,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     PluginSurfaceCompanionContext,
     PluginSurfaceInteractionAvailabilityContext,
+    PluginSurfaceMachineRecoveryContext,
     PluginSurfacePageHeaderContext,
     useOfflineSurfaceNotice,
 } from './pluginSurfaceInteractionAvailability';
@@ -47,6 +48,7 @@ export function PluginSurfaceInteractionBoundary(
     const offlineNotice = useOfflineSurfaceNotice(props.enabled, props.snapshotTitle, props.hasContent);
     const companion = React.useContext(PluginSurfaceCompanionContext);
     const pageIdentity = React.useContext(PluginSurfacePageHeaderContext);
+    const machineRecovery = React.useContext(PluginSurfaceMachineRecoveryContext);
     const interactionEnabled = props.enabled && props.focusEligible !== false;
     const wasEnabledRef = React.useRef(props.enabled);
     const wasInteractionEnabledRef = React.useRef(interactionEnabled);
@@ -101,6 +103,16 @@ export function PluginSurfaceInteractionBoundary(
 
     return (
         <>
+            {!offlineNotice.nothingLoaded && machineRecovery && !companion ? (
+                <SurfaceStateCard
+                    testID={`plugin-surface-machine-unavailable:${props.surfaceId}`}
+                    kind="unavailable" size="line"
+                    title={offlineNotice.title}
+                    reason={offlineNotice.reason}
+                    action={machineRecovery.retry}
+                    secondaryAction={machineRecovery.chooseMachine}
+                />
+            ) : null}
             <div
                 ref={containerRef}
                 data-testid={`plugin-surface-interaction-boundary:${props.surfaceId}`}
@@ -139,8 +151,10 @@ export function PluginSurfaceInteractionBoundary(
                     replacesContent
                     title={offlineNotice.title}
                     reason={offlineNotice.reason}
+                    action={offlineNotice.kind === 'unavailable' ? machineRecovery?.retry : undefined}
+                    secondaryAction={offlineNotice.kind === 'unavailable' ? machineRecovery?.chooseMachine : undefined}
                 />
-            ) : !props.enabled ? (
+            ) : !props.enabled && !machineRecovery ? (
                 <div
                     data-testid={`plugin-surface-offline-summary:${props.surfaceId}`}
                     role="status"

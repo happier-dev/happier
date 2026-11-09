@@ -4,6 +4,7 @@ import { readPluginResourceStoreSnapshot, type PluginContextualResourceBinding }
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 
 type ActionReadWatch = Readonly<{
     request: DaemonPluginStructuredMessageActionExecuteRequest;
@@ -75,6 +76,28 @@ function waitForReconnectBackoff(ms: number, signal: AbortSignal): Promise<void>
         // The signal could have retired between the first check and listener
         // installation. Resolve through the same cleanup path in that case.
         if (signal.aborted) settle();
+    });
+}
+
+/**
+ * Parks the pump while the runtime is inactive (hidden page, backgrounded app).
+ * Resolves when the runtime is active again or the watch retires.
+ */
+function waitForRuntimeActive(signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+        if (signal.aborted || isRuntimeActive()) {
+            resolve();
+            return;
+        }
+        let stopListening: (() => void) | null = null;
+        const settle = (): void => {
+            stopListening?.();
+            stopListening = null;
+            signal.removeEventListener('abort', settle);
+            resolve();
+        };
+        stopListening = subscribeToRuntimeActiveChange(() => { if (isRuntimeActive()) settle(); });
+        signal.addEventListener('abort', settle, { once: true });
     });
 }
 
@@ -172,21 +195,91 @@ export function createContextualResourceWatchOwner(input: Readonly<{
     }
 
     /**
+     * Re-establishes a subscription after a delivery gap and tells the observer
+     * only when the digest it last held actually moved.
+     */
+    async function resynchronize(watch: ActiveWatch): Promise<'reopened' | 'retry' | 'stop'> {
+        if (input.resource.store) { retireOrdinaryWatches(); return 'stop'; }
+        const reopened = await openAtDaemon(
+            watch.subscriptionId,
+            watch.resourceId,
+            watch.controller.signal,
+        );
+        if (watch.closed || !isCurrent()) return 'stop';
+        if (input.resource.store) { retireOrdinaryWatches(); return 'stop'; }
+        if (!reopened.ok) {
+            if (!reopened.terminal) return 'retry';
+            watch.closed = true;
+            watches.delete(watch.subscriptionId);
+            watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', reopened.reason));
+            return 'stop';
+        }
+        if (reopened.digest !== undefined && reopened.digest !== watch.lastDigest) {
+            watch.lastDigest = reopened.digest;
+            watch.deliver(invalidatedEvent(watch.subscriptionId, reopened.digest));
+        }
+        return 'reopened';
+    }
+
+    /**
      * The long-poll pump for one subscription. It is the only place that decides
      * whether an outcome is a change, a retry or the end of the subscription.
+     *
+     * A parked poll is not work in flight: it follows runtime activity. Hiding
+     * the page (or backgrounding the app) cancels the parked poll at once, so it
+     * never holds the socket's user-request lease past hide, and no poll,
+     * re-open or backoff runs while inactive. On return the pump re-opens and
+     * reports a change only if the digest moved while away.
      */
     function pump(watch: ActiveWatch): void {
         void (async () => {
             let consecutiveFailures = 0;
+            // Set when a hide cancelled the parked poll: the daemon released that
+            // subscription, so the next active iteration must re-open first.
+            let pausedByInactivity = false;
             while (!watch.closed && isCurrent()) {
-                const outcome = await next(requireMachineId(), {
-                    serverId: daemon.serverId,
-                    ...accountTarget,
-                    ...('hostResource' in input.resource ? { resource: input.resource.hostResource } : pluginBinding()),
-                    subscriptionId: watch.subscriptionId,
-                    signal: watch.controller.signal,
+                if (!isRuntimeActive()) {
+                    await waitForRuntimeActive(watch.controller.signal);
+                    if (watch.closed || !isCurrent()) return;
+                    pausedByInactivity = true;
+                }
+                if (pausedByInactivity) {
+                    pausedByInactivity = false;
+                    if (watch.readAuthority || watch.actionRead) {
+                        // The daemon released the cancelled poll's subscription; a
+                        // delivery gap withdraws retained authority (see below).
+                        retire(watch.subscriptionId);
+                        watch.deliver(terminalEvent(watch.subscriptionId, 'expired_resource', watch.actionRead
+                            ? 'plugin_action_read_observation_lost' : 'plugin_read_authority_observation_lost'));
+                        return;
+                    }
+                    const resumed = await resynchronize(watch);
+                    if (resumed === 'stop') return;
+                    if (resumed === 'reopened') consecutiveFailures = 0;
+                    continue;
+                }
+                const poll = new AbortController();
+                const cancelPoll = (): void => { poll.abort(); };
+                watch.controller.signal.addEventListener('abort', cancelPoll, { once: true });
+                const stopFollowingActivity = subscribeToRuntimeActiveChange(() => {
+                    if (!isRuntimeActive()) poll.abort();
                 });
+                let outcome: Awaited<ReturnType<typeof next>>;
+                try {
+                    outcome = await next(requireMachineId(), {
+                        serverId: daemon.serverId,
+                        ...accountTarget,
+                        ...('hostResource' in input.resource ? { resource: input.resource.hostResource } : pluginBinding()),
+                        subscriptionId: watch.subscriptionId,
+                        signal: poll.signal,
+                    });
+                } finally {
+                    stopFollowingActivity();
+                    watch.controller.signal.removeEventListener('abort', cancelPoll);
+                }
                 if (watch.closed || !isCurrent()) return;
+                // Cancelled by hide: the top of the loop waits for return, then re-opens.
+                if (poll.signal.aborted) { pausedByInactivity = true; continue; }
                 if (input.resource.store && !watch.readAuthority && !watch.actionRead) { retireOrdinaryWatches(); return; }
 
                 if (outcome.supported && outcome.result.ok) {
@@ -250,26 +343,11 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 );
                 consecutiveFailures += 1;
                 if (watch.closed || !isCurrent()) return;
-                if (input.resource.store) { retireOrdinaryWatches(); return; }
-                const reopened = await openAtDaemon(
-                    watch.subscriptionId,
-                    watch.resourceId,
-                    watch.controller.signal,
-                );
-                if (watch.closed || !isCurrent()) return;
-                if (input.resource.store) { retireOrdinaryWatches(); return; }
-                if (!reopened.ok) {
-                    if (!reopened.terminal) continue;
-                    watch.closed = true;
-                    watches.delete(watch.subscriptionId);
-                    watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', reopened.reason));
-                    return;
-                }
-                consecutiveFailures = 0;
-                if (reopened.digest !== undefined && reopened.digest !== watch.lastDigest) {
-                    watch.lastDigest = reopened.digest;
-                    watch.deliver(invalidatedEvent(watch.subscriptionId, reopened.digest));
-                }
+                // Hidden during the backoff: the return path re-opens instead.
+                if (!isRuntimeActive()) continue;
+                const resynchronized = await resynchronize(watch);
+                if (resynchronized === 'stop') return;
+                if (resynchronized === 'reopened') consecutiveFailures = 0;
             }
         })();
     }
@@ -421,3 +499,5 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         },
     });
 }
+
+

@@ -1,18 +1,16 @@
-import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
-import { PluginUiActionOperationHostReadResultV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, onTestFailed } from 'vitest';
-import { createActionExecutor, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
+import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageExportInputSchema, UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { PluginUiHostApiWireEnvelopeV1Schema, PluginUiJsonValueV1Schema, type PluginUiJsonObjectV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiActionOperationHostReadResultV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiJsonValueV1Schema, type PluginUiJsonObjectV1 } from '@happier-dev/protocol/plugins/ui';
 import { useLivePluginResource, type PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import type { PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
 import { PluginHostApiProviderInternal } from '../../../../../../packages/plugin-ui/src/hostApi/context';
-import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -23,7 +21,21 @@ import { decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQu
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import { createPluginHostedWebHostApiBridgeHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
-import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol';
+import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { createDiscussionActionAdapter, createDiscussionClient } from '@/sync/api/discussions/discussionActions';
+import { clearDiscussionRepositoryRegistryForTests, getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
+import { DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { DiscussionDetailsResponseV1Schema } from '@happier-dev/protocol/discussions/api';
+import { publishMountedDiscussionChanges } from '@/sync/domains/discussions/discussionChangeWatch';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { sync } from '@/sync/sync';
 
 const reference = { hostRead: 'usage.query' as const, input: { queries: [{}] } };
 const quotaReference = { hostRead: 'connectedServices.quota.get' as const, input: { source: { bindingKind: 'account' as const,
@@ -35,39 +47,56 @@ let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 const controllers: ReturnType<typeof createBoundPluginSurfaceController>[] = [];
 afterEach(async () => {
     standardCleanup();
-    actionOperationStore.reset();
     for (const controller of controllers.splice(0)) controller.dispose();
+    clearDiscussionRepositoryRegistryForTests();
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
+    actionOperationStore.reset();
 });
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], enabled: boolean | (() => boolean) = true,
-    resource = reference) {
-    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://mounted-usage.test', accountId: 'account-a' }], route });
+    resource: PluginUiHostReadReferenceV1 = reference, serverIdentityId?: string) {
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://mounted-usage.test', accountId: 'account-a',
+        ...(serverIdentityId ? { serverIdentityId } : {}) }], route: async request => await route(request)
+            ?? createEmptyAccountBootstrapHttpResponse(request.url.pathname + request.url.search, { method: request.method }) ?? undefined });
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
+    // Bootstrap's Session corpus starts after foreground Settings/route acquisition
+    // (syncEngine.ts:8373–8385). Settle that real HTTP owner before counting unrelated IO.
+    await sync.awaitBootstrapForegroundAcquisition();
+    await sync.refreshSessions();
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing captured test Account');
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ isActionEnabled: () => typeof enabled === 'function' ? enabled() : enabled,
+        discussionAction: async args => {
+            const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
+            try {
+                return await createDiscussionActionAdapter({ scope: lifetime.scope, request: account.request,
+                    accountMode: 'plain', encryption: null, availability: 'available', assertCurrent: account.assertCurrent })(args);
+            } finally { account.dispose(); }
+        },
         usageActions: { query: async (input, options) => {
             const context = await captureLazyActionAccountContext(lifetime.scope.serverId);
             try { return await readUiUsageQueryBatch(context, input, options.signal); }
             finally { context.dispose(); }
         } },
     }));
-    const controller = createBoundPluginSurfaceController({ facts: {
+    const mountController = () => createBoundPluginSurfaceController({ facts: {
         pluginId: 'acme.usage', contributionId: 'summary', surfaceId: 'usage-mount', placement: 'browserSurface', platform: 'web',
         machineId: 'machine-1', occurrenceId: 'bundled-summary-current', serverId: lifetime.scope.serverId,
         accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: false,
     }, binding: { executeHostAction: Object.assign(executor.execute, { prepare: executor.prepare }) } });
+    const controller = mountController();
     controllers.push(controller);
     const context = await captureLazyActionAccountContext(lifetime.scope.serverId);
-    const hostEntry = getUsageQueryResourceStore(context).getEntry(resource);
+    const hostEntry = resource.hostRead === 'discussion.get' || resource.hostRead === 'machines.managed.list'
+        ? controller.resourceStore!.getEntry(resource) : getUsageQueryResourceStore(context).getEntry(resource);
     context.dispose();
     const native = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({
         mount: { kind: 'destination', destination: { pluginId: 'acme.usage', localId: 'summary' }, container: 'appPage' }, target: { kind: 'app' },
-    }), requestSurface: controller.surfaceContext, requestIdPrefix: 'usage-native', handleRequest: controller.hostApi.handleRequest,
+    }), requestSurface: controller.surfaceContext, handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.installedMethods });
     const unwatchNative = controller.subscribeResourceInvalidations(event => native.publishResourceSubscriptionEvent(event));
-    return { controller, native: { ...native, dispose() { unwatchNative(); native.dispose(); } }, hostEntry, lifetime };
+    return { controller, native: { ...native, dispose() { unwatchNative(); native.dispose(); } }, hostEntry, lifetime,
+        mountAnotherController() { const next = mountController(); controllers.push(next); return next; }, executor };
 }
 
 function hosted(controller: ReturnType<typeof createBoundPluginSurfaceController>) {
@@ -104,6 +133,117 @@ async function settleUsageDetail(entry: PluginUiResourceEntry) {
 }
 
 describe('mounted native and hosted host reads', () => {
+    it('does not admit or read the disabled managed inventory binding of an older Machine target', async () => {
+        const { controller, native, lifetime } = await mount(() => undefined);
+        const resource = { hostRead: 'machines.managed.list', input: { homeId: '' } } as const;
+        function Probe() { useLivePluginResource(resource, { enabled: false }); return null; }
+        const screen = await renderScreen(<PluginHostApiProviderInternal hostApi={native.api} resourceStore={controller.resourceStore}
+            accountLifetime={lifetime} mountedPluginId="acme.usage"><Probe /></PluginHostApiProviderInternal>);
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(home!.requests.filter(request => request.path === '/v1/machines/managed/actions/list')).toHaveLength(0);
+        } finally { await act(async () => screen.tree.unmount()); native.dispose(); }
+    });
+
+    it('observes cross-entry managed inventory changes through one shared reader without equal or idle work', async () => {
+        const homeId = 'srv_managed_observation';
+        const resource = { hostRead: 'machines.managed.list', input: { homeId } } as const;
+        let enabled = true;
+        let failList = false;
+        let machines = Array.from({ length: 128 }, (_, index) => ManagedMachineV1Schema.parse({
+            id: `sandbox-${index}`, homeId, custodianAccountId: 'account-a',
+            launch: { provider: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' },
+                schemaVersion: 1, name: `Sandbox ${index}`, choices: { name: `sandbox-${index}` } },
+            controller: { machineId: 'machine-1', installationId: 'installation-1' },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            resource: { contributionRef: { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' },
+                schemaVersion: 1, value: { sandboxName: `sandbox-${index}` } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 1, availability: 'present', power: 'running' },
+        }));
+        const { controller, native, hostEntry, lifetime } = await mount(request =>
+            request.path === '/v1/machines/managed/actions/list' ? failList
+                ? Response.json({ code: 'provider_unavailable' }, { status: 503 }) : Response.json({ machines }) : undefined,
+            () => enabled, resource, homeId);
+        const host = await renderHook(() => useManagedMachineInventory([lifetime.scope.serverId]), { flushOptions: { cycles: 30 } });
+        await expect.poll(() => host.getCurrent().entries[lifetime.scope.serverId]?.status).toBe('ready');
+        await flushHookEffects({ cycles: 30 });
+        const lists = () => home!.requests.filter(request => request.path === '/v1/machines/managed/actions/list');
+        const warmReads = lists().length;
+        // The inventory owner revalidates real Home wakes (useManagedMachineInventory.ts:179–183).
+        // Initial sync can publish snapshot recovery (syncEngine.ts:8463) before this new plugin demand.
+        // The shared-reader contract is zero additional IO when the plugin joins the warm exact input.
+        const snapshots: PluginUiResourceSnapshot[] = [];
+        function Probe() { snapshots.push(useLivePluginResource(resource).resource); return null; }
+        const screen = await renderScreen(<PluginHostApiProviderInternal hostApi={native.api} resourceStore={controller.resourceStore}
+            accountLifetime={lifetime} mountedPluginId="acme.usage"><Probe /></PluginHostApiProviderInternal>);
+        const readRows = () => {
+            const value = snapshots.at(-1)?.value;
+            return value ? JSON.parse(new TextDecoder().decode(value.bytes)) as { machines: typeof machines } : null;
+        };
+        try {
+            await expect.poll(() => host.getCurrent().entries[lifetime.scope.serverId]?.status).toBe('ready');
+            await expect.poll(() => hostEntry.getSnapshot().value).toBeDefined();
+            await flushHookEffects({ cycles: 30 });
+            expect(readRows()?.machines).toHaveLength(128);
+            expect(lists()).toHaveLength(warmReads);
+            snapshots.length = 0;
+            await act(async () => publishHomeAccountChange(lifetime.scope.serverId));
+            await expect.poll(() => lists().length).toBe(warmReads + 1);
+            await flushHookEffects({ cycles: 30 });
+            expect(snapshots).toHaveLength(0);
+            for (let index = 0; index < 128; index += 1) publishHomeAccountChange('another-home');
+            publishHomeAccountChange(lifetime.scope.serverId, ['unrelated-artifact'], { changeKinds: ['artifact'] });
+            await flushHookEffects({ cycles: 30 });
+            expect(lists()).toHaveLength(warmReads + 1);
+            vi.useFakeTimers();
+            try { await act(async () => { await vi.advanceTimersByTimeAsync(60_000); }); }
+            finally { vi.useRealTimers(); }
+            expect(lists()).toHaveLength(warmReads + 1);
+
+            // Another entry changes one admitted row; the already-mounted plugin and host must both see it.
+            machines = machines.map((machine, index): typeof machine => index === 64 ? { ...machine,
+                observation: { observedAt: 2, availability: 'present', power: 'stopped' } } : machine);
+            await act(async () => publishHomeAccountChange(lifetime.scope.serverId));
+            await expect.poll(() => host.getCurrent().machinesByServerId[lifetime.scope.serverId]?.[64]?.observation?.power).toBe('stopped');
+            await expect.poll(() => readRows()?.machines[64]?.observation?.power).toBe('stopped');
+            expect(lists()).toHaveLength(warmReads + 2);
+
+            failList = true;
+            await act(async () => { await hostEntry.refresh(); });
+            await flushHookEffects({ cycles: 30 });
+            expect(hostEntry.getSnapshot()).toMatchObject({ freshness: 'stale', error: expect.anything(), value: expect.anything() });
+            expect(readRows()?.machines[64]?.observation?.power).toBe('stopped');
+            expect(lists()).toHaveLength(warmReads + 3);
+            failList = false;
+            await act(async () => { await hostEntry.refresh(); });
+            await flushHookEffects({ cycles: 30 });
+            expect(hostEntry.getSnapshot()).toMatchObject({ freshness: 'fresh', pending: 'idle' });
+            expect(hostEntry.getSnapshot().error).toBeUndefined();
+            expect(lists()).toHaveLength(warmReads + 4);
+
+            // A warm host receipt is not authority after the plugin's Action admission changes.
+            enabled = false;
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'action_disabled' });
+            expect(lists()).toHaveLength(warmReads + 4);
+            enabled = true;
+            await expect(native.api.readResource(resource)).resolves.toMatchObject({ contentType: 'application/json' });
+            expect(lists()).toHaveLength(warmReads + 4);
+            retireActiveServerAccountScopeLifetime();
+            expect(hostEntry.getSnapshot().value).toBeUndefined();
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'stale_surface' });
+        } finally {
+            vi.useRealTimers();
+            await act(async () => screen.tree.unmount());
+            await host.unmount();
+            native.dispose();
+        }
+        const settledReads = lists().length;
+        publishHomeAccountChange(lifetime.scope.serverId);
+        await flushHookEffects({ cycles: 30 });
+        expect(lists()).toHaveLength(settledReads);
+    });
+
     it('shares the qualified operation owner with native and hosted readers without unrelated invalidations or stale disclosure', async () => {
         let phase = 'mount';
         onTestFailed(() => { console.error('Qualified operation host-read failed during:', phase); });
@@ -199,7 +339,88 @@ describe('mounted native and hosted host reads', () => {
         } finally { phase = `cleanup after ${phase}`; await watch?.dispose(); frame.dispose(); native.dispose(); }
     });
 
-
+    it('publishes one content-free Discussion invalidation to both SDK transports, with no unrelated work and no out-of-scope read', async () => {
+        const resource = { hostRead: 'discussion.get', input: { discussionId: 'discussion-a' } } as const;
+        let readable = true;
+        const { controller, native, lifetime, mountAnotherController, executor } = await mount(request => {
+            if (!request.path.startsWith('/v1/discussions/')) return undefined;
+            if (!readable || request.path !== '/v1/discussions/discussion-a') {
+                return Response.json({ error: 'discussion_not_found' }, { status: 404 });
+            }
+            return Response.json(DiscussionDetailsResponseV1Schema.parse({ discussion: {
+                id: 'discussion-a', ownerAccountId: 'account-a', encryptionMode: 'plain', anchor: null,
+                access: 'owner', keyReadiness: true, dataEncryptionKey: null, creationLocalId: null,
+                titleContent: { t: 'plain', v: { v: 1, title: 'Private title' } },
+                latestMessage: { id: 'message-a', localId: null, seq: 1, authorAccountId: 'account-a',
+                    accountActor: { v: 1, accountId: 'account-a', profile: null }, producerV1: null, createdAt: 1 },
+                messageSeq: 1, lastReadSeq: null, unreadCount: 1, unreadMentionCount: 0,
+                recentAuthorAccountIds: ['account-a'], archivedAt: null,
+                capabilities: { postMessages: true, rename: true, archive: true, restore: false,
+                    askAgent: true, sendToSession: true, manageAccess: true, leave: false },
+            } }));
+        }, true, resource);
+        // The real Action/HTTP adapter is the system boundary for the core reader;
+        // every plugin mount must borrow this Account/Home repository's reads.
+        const repository = getDiscussionRepository({ scope: lifetime.scope, address: lifetime.scope,
+            client: { ...createDiscussionClient({ scope: lifetime.scope, availability: 'available' }),
+                async get(discussionId, signal) {
+                    const result = await executor.execute('discussion.get', { discussionId }, { surface: 'ui', serverId: lifetime.scope.serverId, signal });
+                    return result.ok ? { kind: 'succeeded', value: DiscussionDetailsResultV1Schema.parse(result.result) }
+                        : { kind: 'failed', errorCode: result.errorCode };
+                } } });
+        await repository.refreshSummary('discussion-a');
+        const leaveCore = repository.mount({ discussionId: 'discussion-a', projection: 'summary' });
+        const siblingWatches: (() => void)[] = [];
+        for (let index = 0; index < 3; index++) siblingWatches.push(mountAnotherController().resourceStore!.getEntry(resource).subscribe(() => {}, true));
+        const frame = hosted(controller);
+        const events: unknown[] = [];
+        let watch: Awaited<ReturnType<typeof native.api.watchResource>> | undefined;
+        const publish = (cursor: number, entityId = 'discussion-a', accountId = 'account-a', kind: 'discussion' | 'session' = 'discussion') =>
+            publishMountedDiscussionChanges({ serverId: lifetime.scope.serverId, accountId,
+                changes: [{ cursor, kind, entityId, changedAt: cursor }] });
+        const invalidations = () => frame.pushes.filter(value => value && typeof value === 'object'
+            && 'payload' in value && JSON.stringify(value).includes('"kind":"invalidated"'));
+        try {
+            const initial = await native.api.readResource(resource).catch((error: unknown) => {
+                if (isPluginError(error)) throw new Error(JSON.stringify(error.data), { cause: error });
+                throw error;
+            });
+            expect(JSON.parse(new TextDecoder().decode(initial.bytes))).toEqual({ discussionId: 'discussion-a', revision: 0 });
+            watch = await native.api.watchResource(resource, event => { events.push(event); });
+            await frame.send({ kind: 'negotiate', apiRange: '*' });
+            expect((await frame.send({ kind: 'subscribe', method: 'watchResource', requestId: 'discussion-watch',
+                subscriptionId: 'discussion-watch', payload: { resource } })).payload).toMatchObject({ kind: 'result' });
+            const readsBefore = home!.requests.filter(request => request.path.startsWith('/v1/discussions/')).length;
+            for (let index = 1; index <= 1000; index++) publish(index, 'other-discussion');
+            publish(1001, 'discussion-a', 'other-account');
+            publish(1002, 'discussion-a', 'account-a', 'session');
+            await flushHookEffects();
+            expect(events).toHaveLength(0);
+            expect(invalidations()).toHaveLength(0);
+            expect(home!.requests.filter(request => request.path.startsWith('/v1/discussions/'))).toHaveLength(readsBefore);
+            publish(1003);
+            await expect.poll(() => events.length).toBe(1);
+            await expect.poll(() => invalidations().length).toBe(1);
+            expect(events[0]).toMatchObject({ kind: 'invalidated' });
+            const updated = await native.api.readResource(resource);
+            expect(JSON.parse(new TextDecoder().decode(updated.bytes))).toEqual({ discussionId: 'discussion-a', revision: 1003 });
+            expect(updated.digest).not.toBe(initial.digest);
+            expect(JSON.stringify(frame.pushes)).not.toContain('Private title');
+            expect(home!.requests.filter(request => request.path === '/v1/discussions/discussion-a')).toHaveLength(readsBefore + 1);
+            await expect(native.api.watchResource({ hostRead: 'discussion.get', input: { discussionId: 'outsider' } }, () => {})).rejects.toMatchObject({ code: 'plugin_resource_not_found' });
+            expect((await frame.send({ kind: 'subscribe', method: 'watchResource', requestId: 'outside',
+                subscriptionId: 'outside', payload: { resource: { hostRead: 'discussion.get', input: { discussionId: 'outsider' } } } })).payload)
+                .toMatchObject({ kind: 'error', error: { code: 'plugin_resource_not_found' } });
+            readable = false;
+            publish(1004);
+            await expect.poll(() => events.length).toBe(2);
+            expect(events[1]).toMatchObject({ kind: 'error' });
+            expect(invalidations()).toHaveLength(1);
+            controller.dispose();
+            publish(1005);
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'stale_surface' });
+        } finally { leaveCore(); siblingWatches.forEach(release => release()); await watch?.dispose(); frame.dispose(); native.dispose(); }
+    });
     it('exports only selected fields through native and hosted executeAction, and refuses denied or retired mounts', async () => {
         let enabled = true;
         const { controller, native } = await mount(request => request.path === '/v2/usage/query'
@@ -321,8 +542,8 @@ describe('mounted native and hosted host reads', () => {
     it('refuses native and hosted reads and watches when canonical Action settings deny admission', async () => {
         const { controller, native } = await mount(() => undefined, false);
         for (const resource of [reference, quotaReference]) {
-            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'unavailable' });
-            await expect(native.api.watchResource(resource, () => {})).rejects.toMatchObject({ code: 'unavailable' });
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'action_disabled' });
+            await expect(native.api.watchResource(resource, () => {})).rejects.toMatchObject({ code: 'action_disabled' });
             const snapshot = await controller.resourceStore!.getEntry(resource).refresh();
             expect(snapshot).toMatchObject({ error: { code: 'action_disabled' } });
             expect(snapshot.value).toBeUndefined();
@@ -337,7 +558,7 @@ describe('mounted native and hosted host reads', () => {
                 ];
                 for (const message of deniedMessages) {
                     const result = await frame.send(message);
-                    expect(result.payload).toMatchObject({ kind: 'error', error: { code: 'unavailable' } });
+                    expect(result.payload).toMatchObject({ kind: 'error', error: { code: 'action_disabled' } });
                 }
             }
             expect(home!.requests.filter(request => request.path === '/v2/usage/query' || request.path.includes('/provider-account-usage/'))).toEqual([]);
@@ -410,12 +631,12 @@ describe('mounted native and hosted host reads', () => {
         await native.api.readResource(reference);
         const queriesBefore = home!.requests.filter(request => request.path === '/v2/usage/query').length;
         enabled = false;
-        await expect(native.api.readResource(reference)).rejects.toMatchObject({ code: 'unavailable' });
+        await expect(native.api.readResource(reference)).rejects.toMatchObject({ code: 'action_disabled' });
         const frame = hosted(controller);
         try {
             await frame.send({ kind: 'negotiate', apiRange: '*' });
             const result = await frame.send({ kind: 'request', method: 'readResource', requestId: 'cached-read', payload: { resource: reference } });
-            expect(result.payload).toMatchObject({ kind: 'error', error: { code: 'unavailable' } });
+            expect(result.payload).toMatchObject({ kind: 'error', error: { code: 'action_disabled' } });
             expect(home!.requests.filter(request => request.path === '/v2/usage/query')).toHaveLength(queriesBefore);
         } finally { frame.dispose(); native.dispose(); unwatchHost(); }
     });

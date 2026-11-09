@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    PluginContributesV2Schema,
-    PluginProjectionV2Schema,
+    PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
+    PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
     type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
 } from '@happier-dev/protocol/plugins/ui';
@@ -173,8 +175,8 @@ function projection(input: Readonly<{
         ? Object.freeze({})
         : Object.freeze(Object.fromEntries(Object.entries(normalizePluginUiProjection(PluginProjectionV2Schema.parse({
             v: 2, generation: input.generation,
-            installedPackagesById: {}, agentsById: {}, actionsById: {},
-             resourcesById: {}, settingsById: {}, diagnostics: [],
+            installedPackagesById: {}, agentsById: {}, actionsById: {}, 
+            resourcesById: {}, settingsById: {}, diagnostics: [],
             familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: {
               [`${pluginId}/${voice.id}`]: {
                 id: `${pluginId}/${voice.id}`,

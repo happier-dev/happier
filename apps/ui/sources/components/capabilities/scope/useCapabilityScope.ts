@@ -37,13 +37,14 @@ import {
 } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { useFoundSkillsCache } from '@/sync/domains/skills/useFoundSkills';
 import { useSkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { capabilityDismissalState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
   SCOPE_ROW_LIMIT,
+  listsWaitOnMachine,
   machinesNeedingOfflineNote,
   migratedProjectRuleItems,
   orderScopeRows,
@@ -77,8 +78,8 @@ export type CapabilityScopeData = Readonly<{
   machines: readonly ScopeMachine[];
   /** Covered machines that cannot be reached right now, by name. */
   offlineNames: readonly string[];
-  /** The name of a covered machine that cannot be reached now (its checkout banner may already say so): the lists wait for it. */
-  unreachableMachineName: string | null;
+  /** The covered machine the lists wait for; `announced` when the page above already says it is not answering. */
+  unreachableMachine: Readonly<{ name: string; announced: boolean }> | null;
   names: WhereItsOnNames;
   skills: ScopeListData;
   mcp: ScopeListData;
@@ -180,19 +181,7 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
       ),
     [machines, reach.machines],
   );
-  const placeMachines = React.useMemo(
-    () =>
-      reach.machines.map((machine) => ({
-        machineId: machine.machineId,
-        name: machine.name ?? machine.machineId,
-      })),
-    [reach.machines],
-  );
-  const agentIds = React.useMemo(
-    () => [...new Set(reach.machines.flatMap((machine) => machine.agentIds))],
-    [reach.machines],
-  );
-  const { names } = useWhereItsOnNames({ agentIds, machines: placeMachines });
+  const { names } = useWhereItsOnNames({ agentIds: reach.agentIds, machines: reach.placeMachines });
   const announcedMachineId = useAnnouncedCheckoutMachine()?.machineId ?? null;
   const offlineNames = React.useMemo(
     () =>
@@ -202,10 +191,10 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
     [announcedMachineId, coveredMachines, names],
   );
 
-  const unreachableMachineName = React.useMemo(() => {
-    const offline = coveredMachines.find((machine) => machine.offline === true);
-    return offline ? names.machineName(offline.machineId) : null;
-  }, [coveredMachines, names]);
+  const unreachableMachine = React.useMemo(() => {
+    const waiting = listsWaitOnMachine(coveredMachines, announcedMachineId);
+    return waiting ? { name: names.machineName(waiting.machine.machineId), announced: waiting.announced } : null;
+  }, [announcedMachineId, coveredMachines, names]);
 
   const open = React.useCallback(
     (href: string) => {
@@ -274,14 +263,9 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
 
   // MCP servers: the Account's catalog and the plugins' servers, each with the sign-in / key status its owner reads.
   const grants = getStorage()((state) => state.profile.connectedAccountsV4);
-  const diagnosticMachine =
-    coveredMachines.find((machine) => machine.online)?.machineId ??
-    coveredMachines[0]?.machineId ??
-    null;
   const diagnostics = useMcpSignInGrantDiagnostics(
     grants,
     scope,
-    diagnosticMachine,
   );
   const savedSecretCatalog = useSavedSecretCatalog({ scope });
   const anyOnline = aggregateMcpMachineOnline(coveredMachines);
@@ -344,9 +328,7 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
   ]);
   const orderedMcp = useStableScopeOrder(placeKey, mcpRows);
 
-  const migrationSeenAt = useLocalSetting(
-    'projectSkillsMigrationNoteSeenAt',
-  );
+  const migrationSeenAt = usePersistentUiStateValue(capabilityDismissalState, 'projectSkillsMigrationNoteSeenAt') ?? null;
   const migratedNames = React.useMemo(() => {
     if (place.t !== 'project' || migrationSeenAt !== null)
       return [] as readonly string[];
@@ -356,7 +338,7 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
     ].map((row) => row.name);
   }, [mcpRows, migrationSeenAt, place, skillRows]);
   const dismiss = React.useCallback(
-    () => getStorage().getState().applyLocalSettings({ projectSkillsMigrationNoteSeenAt: Date.now() }, { source: 'ui' }),
+    () => capabilityDismissalState.set('projectSkillsMigrationNoteSeenAt', Date.now()),
     [],
   );
 
@@ -400,14 +382,14 @@ export function useCapabilityScope(place: ScopePlace): CapabilityScopeData {
     () => ({
       machines,
       offlineNames,
-      unreachableMachineName,
+      unreachableMachine,
       names,
       skills,
       mcp,
       migrated: { names: migratedNames, dismiss },
       open,
     }),
-    [dismiss, machines, mcp, migratedNames, names, offlineNames, open, skills, unreachableMachineName],
+    [dismiss, machines, mcp, migratedNames, names, offlineNames, open, skills, unreachableMachine],
   );
 }
 

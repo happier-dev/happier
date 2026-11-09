@@ -9,6 +9,7 @@ import { resolvePluginUiFrameworkTranslations } from './pluginUiFrameworkTransla
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
 import { usePluginUiHostPalette } from './pluginUiThemeProjection';
 import { usePluginUiMediaStage } from './usePluginUiMediaStage';
+import { renderCoreDestinationRow } from '@/components/appShell/workspace/usePluginDestinationRowRenderer';
 
 /** Core uses the same public presenters and real platform bindings as an installed plugin, without plugin state. */
 export function CorePluginUiPresentationScope(props: Readonly<{
@@ -30,6 +31,7 @@ export function CorePluginUiPresentationScope(props: Readonly<{
       direction: surface.direction,
       palette,
       mediaStage,
+      renderDestinationRow: renderCoreDestinationRow,
     }),
     ...(renderPageScroller === undefined ? {} : { renderPageScroller }),
   }) as unknown as PluginUiPresentationHost, [mediaStage, palette, renderPageScroller, surface.direction]);

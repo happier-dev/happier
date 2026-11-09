@@ -15,7 +15,7 @@ it('retains the current API through StrictMode replay and fences only the exact 
     const host = createPluginSurfaceHostApi({ surfaceContext: requestSurface });
     expect(host.installedMethods).toContain('context');
     const createAdapter = () => createCanonicalPluginReactNativeHostApiAdapter({
-        surface: createPluginSurfaceContextFixture(), requestSurface, requestIdPrefix: 'detail',
+        surface: createPluginSurfaceContextFixture(), requestSurface,
         handleRequest: host.handleRequest, installedMethods: host.installedMethods,
     });
     const first = createAdapter();

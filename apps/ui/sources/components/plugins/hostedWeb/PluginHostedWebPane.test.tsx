@@ -353,7 +353,7 @@ describe('PluginHostedWebPane', () => {
         await act(async () => {
             screen.pressByTestId('plugin-hosted-web-unavailable-action');
         });
-        expect(onRetry).toHaveBeenCalledExactlyOnceWith();
+        expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
     it('fails closed when a bound mount supplies a null selected hosted-web renderer', async () => {
@@ -494,7 +494,8 @@ describe('PluginHostedWebPane', () => {
         expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
     });
 
-    it('uses an exact projected daemon endpoint even when packaged-frame admission is unavailable', async () => {
+    it.each(['hosted_web_frame_adapter_unavailable', 'hosted_web_frame_adapter_unknown'] as const)(
+        'uses an exact projected daemon endpoint when packaged-frame admission is %s', async (reason) => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const daemonPreviewProjection: PluginUiProjectionModel = {
             ...projection,
@@ -505,11 +506,11 @@ describe('PluginHostedWebPane', () => {
                     service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
                     runtime: {
                         state: 'fallback',
-                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        diagnostics: [reason],
                         decision: {
                             state: 'fallback',
-                            reason: 'hosted_web_frame_adapter_unavailable',
-                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                            reason,
+                            diagnostics: [reason],
                         },
                     },
                 },
@@ -528,7 +529,8 @@ describe('PluginHostedWebPane', () => {
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
     });
 
-    it('does not let a bypassed packaged-frame fallback hide a later local security refusal', async () => {
+    it.each(['hosted_web_frame_adapter_unavailable', 'hosted_web_frame_adapter_unknown'] as const)(
+        'does not let %s hide a later local security refusal', async (reason) => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const { security: _security, ...descriptorWithoutSecurity } = projection.hostedWebById['hostedWeb:acme.preview:preview-web'];
         const daemonPreviewProjection: PluginUiProjectionModel = {
@@ -540,11 +542,11 @@ describe('PluginHostedWebPane', () => {
                     service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
                     runtime: {
                         state: 'fallback',
-                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        diagnostics: [reason],
                         decision: {
                             state: 'fallback',
-                            reason: 'hosted_web_frame_adapter_unavailable',
-                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                            reason,
+                            diagnostics: [reason],
                         },
                     },
                 },
@@ -1078,7 +1080,6 @@ describe('PluginHostedWebPane', () => {
                 endpointUrl="https://preview.happier.test/plugin/acme/"
                 platform="web"
                 hostApi={hostApi}
-                readyTimeoutMs={10}
             />
         );
 
@@ -1098,7 +1099,8 @@ describe('PluginHostedWebPane', () => {
             await vi.advanceTimersByTimeAsync(5);
         });
 
-        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
     });
 
     it('does not admit a predecessor direct host-method bridge envelope', async () => {
@@ -1304,10 +1306,19 @@ describe('PluginHostedWebPane', () => {
         }
     });
 
-    it.each(['url', 'inlineHtml'] as const)('falls back when %s bridge ready is not received before the host timeout', async (sourceKind) => {
-        if (sourceKind === 'inlineHtml') {
+    it.each(['url', 'inlineHtml'] as const)('keeps %s available while bridge readiness is pending', async (sourceKind) => {
+        const inlineDocument = sourceKind === 'inlineHtml' ? artifactHtmlBundleFromBodyV1('<p>No SDK</p>') : undefined;
+        if (inlineDocument !== undefined) {
             const { loadPluginUiHostSupport } = await import('@/components/plugins/hostApi/loadPluginUiHostSupport');
             await loadPluginUiHostSupport();
+            const { buildHostedHtmlDocument } = await import('./buildHostedHtmlDocument');
+            // Finish the real generated guest's module load before starting the
+            // readiness clock. The Pane still prepares its own nonce-bound document.
+            await buildHostedHtmlDocument(inlineDocument, {
+                identity: { instanceId: 'timeout-document-preload', mountNonce: 'timeout-document-preload' },
+                frameOrigin: 'null',
+                hostOrigin: 'https://app.happier.test',
+            });
         }
         vi.useFakeTimers();
         const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
@@ -1326,8 +1337,8 @@ describe('PluginHostedWebPane', () => {
             surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
-            {...(sourceKind === 'inlineHtml' ? {
-                inlineDocument: artifactHtmlBundleFromBodyV1('<p>No SDK</p>'),
+            {...(inlineDocument !== undefined ? {
+                inlineDocument,
                 projectedContribution: null,
             } : {})}
             platform="web"
@@ -1336,14 +1347,10 @@ describe('PluginHostedWebPane', () => {
                 channel: 'internal',
                 handleRequest,
             }}
-            readyTimeoutMs={5}
         />);
 
         expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
 
-        await act(async () => {
-            await Promise.resolve();
-        });
         if (sourceKind === 'inlineHtml') {
             const shell = screen.root.findAllByType('iframe').find((node) => (
                 node.props['data-testid'] === 'plugin-hosted-web-frame-navigation-shell'
@@ -1360,17 +1367,15 @@ describe('PluginHostedWebPane', () => {
         });
 
         await act(async () => {
-            await vi.advanceTimersByTimeAsync(5);
+            await vi.advanceTimersByTimeAsync(60_000);
         });
 
-        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
-        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_bridge_timeout')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebBridgeTimeout');
-        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
         expect(handleRequest).not.toHaveBeenCalled();
     });
 
-    it('keeps the targeted caller fallback when hosted-web bridge readiness times out', async () => {
+    it('keeps the physical frame instead of showing a fallback for pending readiness', async () => {
         vi.useFakeTimers();
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const screen = await renderScreen(<PluginHostedWebPane mountLifetime={mountLifetime} interactionEnabled
@@ -1384,7 +1389,6 @@ describe('PluginHostedWebPane', () => {
                 channel: 'internal',
                 handleRequest: vi.fn(),
             }}
-            readyTimeoutMs={5}
             targetedFallback={React.createElement('TargetedHostedFallback', {
                 testID: 'targeted-hosted-ready-timeout-fallback',
             })}
@@ -1395,12 +1399,12 @@ describe('PluginHostedWebPane', () => {
         });
 
         await act(async () => {
-            await vi.advanceTimersByTimeAsync(5);
+            await vi.advanceTimersByTimeAsync(60_000);
         });
 
-        expect(screen.findByTestId('targeted-hosted-ready-timeout-fallback')).toBeTruthy();
+        expect(screen.findByTestId('targeted-hosted-ready-timeout-fallback')).toBeNull();
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
-        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
     });
 
     it('presents an origin-less URL implementation with its own recovery guidance while retaining its bounded diagnostic', async () => {
@@ -1620,14 +1624,14 @@ describe('PluginHostedWebPane', () => {
         ));
         expect(events()).toContainEqual(expect.objectContaining({
             subscriptionId: 'retained-context', event: expect.objectContaining({
-                surface: expect.objectContaining({ translations: { title: 'subscribed' } }),
+                surface: expect.objectContaining({ mountId: identity.instanceId, translations: { title: 'subscribed' } }),
             }),
         }));
         await screen.update(pane(false, 'hidden'));
         await screen.update(pane(false, 'settled while hidden'));
         expect(events()).toContainEqual(expect.objectContaining({
             subscriptionId: 'retained-context', event: expect.objectContaining({
-                surface: expect.objectContaining({ translations: { title: 'settled while hidden' } }),
+                surface: expect.objectContaining({ mountId: identity.instanceId, translations: { title: 'settled while hidden' } }),
             }),
         }));
         await screen.update(pane(true, 'revealed'));
@@ -1635,7 +1639,7 @@ describe('PluginHostedWebPane', () => {
         expect(frameMounts).toBe(1);
         expect(events()).toContainEqual(expect.objectContaining({
             subscriptionId: 'retained-context', event: expect.objectContaining({
-                surface: expect.objectContaining({ translations: { title: 'revealed' } }),
+                surface: expect.objectContaining({ mountId: identity.instanceId, translations: { title: 'revealed' } }),
             }),
         }));
         await screen.unmount();
@@ -2060,7 +2064,7 @@ describe('PluginHostedWebPane', () => {
         onTestFinished(() => { vi.useRealTimers(); });
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
-        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const iframeSource = { postMessage: vi.fn(), document: new EventTarget() } as unknown as WindowProxy;
         const previousWindow = (globalThis as any).window;
         const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
         (globalThis as any).window = {
@@ -2334,7 +2338,7 @@ describe('PluginHostedWebPane', () => {
     it('retires an opaque Artifact resource bridge before a replacement document can receive host traffic', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
-        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const iframeSource = { postMessage: vi.fn(), document: new EventTarget() } as unknown as WindowProxy;
         const handleRequest = vi.fn(async () => null);
         const previousWindow = (globalThis as any).window;
         const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
@@ -2513,7 +2517,7 @@ describe('PluginHostedWebPane', () => {
     ])('delivers canonical disconnect during teardown when $label', async ({ closeBeforeReplacement }) => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
-        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const iframeSource = { postMessage: vi.fn(), document: new EventTarget() } as unknown as WindowProxy;
         const previousWindow = (globalThis as any).window;
         const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
         let current = true;
@@ -2880,6 +2884,7 @@ describe('PluginHostedWebPane', () => {
                 hostApi={hostApi}
                 canonicalHostApi={canonicalHostApi}
                 launchInput={launchInput}
+                launch={{ kind: 'explicit', input: launchInput }}
                 mountInstanceKey="review-42"
             />
         );
@@ -2953,6 +2958,7 @@ describe('PluginHostedWebPane', () => {
                 payload: expect.objectContaining({
                     identity: readFrameWireIdentity(screen),
                     launchInput: { filter: 'open' },
+                    launch: { kind: 'explicit', input: { filter: 'open' } },
                 }),
             }), 'https://preview.happier.test'));
             expect(firstIframeSource.postMessage).not.toHaveBeenCalled();

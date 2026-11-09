@@ -13,6 +13,7 @@ import { HAPPIER_TYPE_SCALE, HAPPIER_TYPE_WEIGHT } from '@happier-dev/plugin-ui/
 import { getMonoFont, Typography } from '@/constants/Typography';
 import { resolveThemeCardEdge, resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
+import { resolveAttentionStateColors } from '@/components/ui/status/StatusPill';
 import { shadowLevelStyle } from '@/shadowElevation';
 import type { Theme } from '@/theme';
 import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinitions';
@@ -27,7 +28,10 @@ import type { ThemeColorTokenId } from '@/theme/tokens/themeColorTokenDefinition
  *
  * Every colour field names the exact canonical editable token it projects in
  * {@link PLUGIN_UI_THEME_COLOR_TOKEN_IDS} and reads that token's own path off the
- * theme. No palette is authored here: this file contains no colour literal, and
+ * theme. `blue` and `purple` are the exceptions to the editable-token map: they project the
+ * theme's named-hue palette (`accent.blue`/`accent.purple`, the hues a session's colour presets
+ * use), which is internal rather than editable, so a label a person colours Blue or Purple
+ * reads as that hue in every profile. No palette is authored here: this file contains no colour literal, and
  * `pluginUiThemeProjection.test.ts` proves each field equals the value the theme
  * token registry resolves for its named id, for every built-in profile.
  */
@@ -62,7 +66,7 @@ export const PLUGIN_UI_THEME_COLOR_TOKEN_IDS = Object.freeze({
     control: 'surface.elevated',
     controlDisabled: 'control.button.primary.disabled',
     overlay: 'overlay.scrim',
-} as const satisfies Readonly<Record<keyof PluginUiThemeV1['colors'], ThemeColorTokenId>>);
+} as const satisfies Readonly<Record<Exclude<keyof PluginUiThemeV1['colors'], 'blue' | 'purple'>, ThemeColorTokenId>>);
 
 /**
  * Plugin surfaces render pill-shaped controls with the same geometry the app
@@ -216,6 +220,14 @@ export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['sp
             info: theme.colors.state.info.textForeground,
             neutral: theme.colors.state.neutral.textForeground,
         }),
+        statusTint: Object.freeze({
+            success: theme.colors.state.success.background,
+            warning: theme.colors.state.warning.background,
+            attention: resolveAttentionStateColors(theme.colors.state).background,
+            danger: theme.colors.state.danger.background,
+            info: theme.colors.state.info.background,
+            neutral: theme.colors.state.neutral.background,
+        }),
         colors: Object.freeze({
             canvas: theme.colors.background.canvas,
             surface: theme.colors.surface.base,
@@ -229,6 +241,8 @@ export function projectPluginUiTheme(theme: Theme, spinner?: PluginUiThemeV1['sp
             accent: theme.colors.button.primary.background,
             onAccent: theme.colors.button.primary.tint,
             dataAccent: theme.colors.text.link,
+            blue: theme.colors.accent.blue,
+            purple: theme.colors.accent.purple,
             success: theme.colors.state.success.foreground,
             warning: theme.colors.state.warning.foreground,
             attention: theme.colors.state.attention.foreground,
@@ -308,7 +322,7 @@ export function projectPluginUiHostPalette(theme: Pick<Theme, 'colors' | 'dark'>
         // A navigation column's rows on the shell plane: the same chip and hover core rows draw
         // (`HAPPIER_COLLECTION_LIST_ROW_STYLE` over `Item`).
         navigationSelected: colors.surface.elevated,
-        navigationHover: colors.surface.pressed,
+        navigationHover: colors.surface.hover,
         // The page-tab selection core's plain SegmentedTabBar draws (`surface.selected`).
         pageTabSelected: colors.surface.selected,
         inset: colors.surface.inset,

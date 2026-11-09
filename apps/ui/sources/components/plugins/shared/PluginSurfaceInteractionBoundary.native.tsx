@@ -6,6 +6,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     PluginSurfaceCompanionContext,
     PluginSurfaceInteractionAvailabilityContext,
+    PluginSurfaceMachineRecoveryContext,
     PluginSurfacePageHeaderContext,
     useOfflineSurfaceNotice,
 } from './pluginSurfaceInteractionAvailability';
@@ -45,6 +46,7 @@ export function PluginSurfaceInteractionBoundary(
     const offlineNotice = useOfflineSurfaceNotice(props.enabled, props.snapshotTitle, props.hasContent);
     const companion = React.useContext(PluginSurfaceCompanionContext);
     const pageIdentity = React.useContext(PluginSurfacePageHeaderContext);
+    const machineRecovery = React.useContext(PluginSurfaceMachineRecoveryContext);
     const interactionEnabled = props.enabled && props.focusEligible !== false;
     const wasEnabledRef = React.useRef(props.enabled);
     const wasInteractionEnabledRef = React.useRef(interactionEnabled);
@@ -114,6 +116,16 @@ export function PluginSurfaceInteractionBoundary(
             testID={`plugin-surface-interaction-boundary:${props.surfaceId}`}
             style={styles.root}
         >
+            {!offlineNotice.nothingLoaded && machineRecovery && !companion ? (
+                <SurfaceStateCard
+                    testID={`plugin-surface-machine-unavailable:${props.surfaceId}`}
+                    kind="unavailable" size="line"
+                    title={offlineNotice.title}
+                    reason={offlineNotice.reason}
+                    action={machineRecovery.retry}
+                    secondaryAction={machineRecovery.chooseMachine}
+                />
+            ) : null}
             <View
                 testID={`plugin-surface-snapshot:${props.surfaceId}`}
                 pointerEvents={interactionEnabled ? 'auto' : 'none'}
@@ -139,6 +151,8 @@ export function PluginSurfaceInteractionBoundary(
                         replacesContent
                         title={offlineNotice.title}
                         reason={offlineNotice.reason}
+                        action={offlineNotice.kind === 'unavailable' ? machineRecovery?.retry : undefined}
+                        secondaryAction={offlineNotice.kind === 'unavailable' ? machineRecovery?.chooseMachine : undefined}
                     />
                 </>
             ) : null}
@@ -152,7 +166,7 @@ export function PluginSurfaceInteractionBoundary(
                     style={styles.loadedRuntimeMarker}
                 />
             ) : null}
-            {!props.enabled && !offlineNotice.nothingLoaded ? (
+            {!props.enabled && !offlineNotice.nothingLoaded && !machineRecovery ? (
                 <View
                     testID={`plugin-surface-offline-summary:${props.surfaceId}`}
                     accessible

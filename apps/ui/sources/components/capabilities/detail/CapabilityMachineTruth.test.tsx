@@ -43,6 +43,14 @@ describe('CapabilityMachineTruth', () => {
         expect(screen.getTextContent()).toContain('last known Oct 9');
     });
 
+    it('reads as loading, never as nowhere, while the rules that decide the machines are unread', async () => {
+        const screen = await renderScreen(
+            <CapabilityMachineTruth testID="mt" rows={[]} summary="" emptyLabel="Not on any machine yet" loading />,
+        );
+        expect(screen.findAllByTestId('mt:loading').length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).not.toContain('Not on any machine yet');
+    });
+
     it('lists every machine at once in list form, and opens one row into its own detail', async () => {
         const opened: Array<string | null> = [];
         const rows = ROWS.map((row) => ({ ...row, detail: <React.Fragment>{`setup for ${row.machineName}`}</React.Fragment> }));

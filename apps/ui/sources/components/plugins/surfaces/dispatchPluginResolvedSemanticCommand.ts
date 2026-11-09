@@ -1,17 +1,24 @@
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiResolvedSemanticCommandV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import {
     createPluginUiProjectedActionResolver,
     isPluginProjectedActionExecutable,
     type PluginUiActionProjection,
+    type PluginUiProjectedActionResolver,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import {
     PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY,
     readPluginUiContributionOrigin,
+    resolvePluginUiExecutionDeclaration,
 } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
+import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { launchPluginSurfaceAction } from './launchPluginSurfaceAction';
 import type { PluginSurfaceScopedLaunchFacts } from './pluginSurfaceLaunchAuthority';
 import type {
@@ -110,10 +117,13 @@ function resolveProjectedActionExecutionScope(
 }
 
 export type DispatchPluginResolvedSemanticCommandInput = Readonly<{
+    actionInputAnchor?: PopoverAnchor;
     projection: PluginUiProjectionModel;
     /** The plugin whose contribution the reader activated. */
     callerPluginId: string;
     command: PluginUiResolvedSemanticCommandV1;
+    /** An already-captured query execution; retirement cannot silently select its replacement. */
+    expectedAction?: PluginUiActionProjection;
     scopedLaunchFacts?: PluginSurfaceScopedLaunchFacts | null;
     /** Existing Account-lifetime predicate; never reconstructed by this router. */
     scopeIsCurrent?: (() => boolean) | null;
@@ -148,17 +158,42 @@ export async function dispatchPluginResolvedSemanticCommand(
             ...(command.input === undefined ? {} : { input: command.input }),
             ...(command.subPath === undefined ? {} : { subPath: command.subPath }),
             ...(command.instanceKey === undefined ? {} : { instanceKey: command.instanceKey }),
+            ...(command.presentation === undefined ? {} : { presentation: command.presentation }),
         });
     }
 
-    const resolveContributedAction = createPluginUiProjectedActionResolver(projection.actionsById);
-    const projectedAction = resolveContributedAction(command.action);
+    const resolveDeclaration = createPluginUiProjectedActionResolver(projection.actionsById);
+    const expectedAction = input.expectedAction;
+    const isExpectedAction = (identity: PluginContributionIdentityV1) => expectedAction !== undefined
+        && expectedAction.pluginId === identity.pluginId && expectedAction.id === identity.localId;
+    const readAccountDeclaration: PluginUiProjectedActionResolver = identity => {
+        if (!input.accountLifetime?.isCurrent()) return null;
+        const current = createPluginUiProjectedActionResolver(readCurrentAppShellPluginUiProjection({
+            scope: input.accountLifetime.scope, declarationsOnly: true,
+        })?.actionsById)(identity);
+        return current?.hostAccountOrigin ? current : null;
+    };
+    const resolveContributedAction: PluginUiProjectedActionResolver = identity => {
+        const declaration = resolveDeclaration(identity) ?? readAccountDeclaration(identity);
+        if (!declaration) return null;
+        const expected = isExpectedAction(identity) ? expectedAction : undefined;
+        if (declaration.execution.target !== 'account' || !input.accountLifetime
+            || readPluginUiAccountExecutableOrigin(declaration)) {
+            return expected ? resolvePluginUiExecutionDeclaration(expected, { current: declaration }) : declaration;
+        }
+        return resolvePluginUiExecutionDeclaration(expected ?? declaration, { current: readAccountDeclaration(identity) });
+    };
+    // A captured query fixes the original intent, not the identities of the
+    // independently admitted Actions its handler may call.
+    const projectedAction = expectedAction && !isExpectedAction(command.action)
+        ? null : resolveContributedAction(command.action);
     if (!isPluginProjectedActionExecutable(projectedAction)) {
         return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
     }
     // Account code stays local; an explicit current Machine is only a borrowed
     // address for nested source operations, never the Account artifact supplier.
-    const scopedAuthority = projectedAction.execution.target === 'account'
+    const accountOrigin = readPluginUiAccountExecutableOrigin(projectedAction);
+    const scopedAuthority = accountOrigin
         ? resolveCurrentPluginSemanticCommandScope(projection, input.scopedLaunchFacts)
         : resolveProjectedActionExecutionScope(projection, projectedAction, input.scopedLaunchFacts);
     const scopedMachineId = scopedAuthority?.machineId;
@@ -169,6 +204,7 @@ export async function dispatchPluginResolvedSemanticCommand(
         return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
     }
     const launched = await launchPluginSurfaceAction({
+        actionInputAnchor: input.actionInputAnchor,
         callerPluginId: input.callerPluginId,
         // Structured, never the qualified string: a bare string would be offered
         // to the dispatcher's host ActionSpec branch first, so a plugin whose
@@ -178,14 +214,24 @@ export async function dispatchPluginResolvedSemanticCommand(
         ...(command.input === undefined ? {} : { input: command.input }),
         resolveContributedAction,
         pluginUiProjection: projection,
+        ...(accountOrigin && input.accountLifetime ? {
+            hostAction: {
+                execute: scopedHomeActionExecutor(input.accountLifetime.scope),
+                context: {
+                    serverId: input.accountLifetime.scope.serverId,
+                    expectedAccountId: input.accountLifetime.scope.accountId,
+                    ...(input.sessionId ? { defaultSessionId: input.sessionId } : {}),
+                },
+            },
+        } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...((projectedAction.execution.target === 'daemon'
-            || (projectedAction.execution.target === 'account' && scopedMachineId))
+            || (accountOrigin && scopedMachineId))
             ? {
                 contributedAction: {
                     machineId: scopedMachineId!,
                     serverId: scopedAuthority!.serverId,
-                    ...(projectedAction.execution.target === 'account' && input.accountLifetime
+                    ...(accountOrigin && input.accountLifetime
                         ? { accountLifetime: input.accountLifetime } : {}),
                     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
                     ...(input.execute ? { execute: input.execute } : {}),

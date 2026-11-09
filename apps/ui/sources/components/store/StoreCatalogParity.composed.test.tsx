@@ -257,3 +257,36 @@ it.each([
     await waitForHomeGovernance(() => expect(screen.findAllByType(HappierBrandMark).map(mark => mark.props.brand.light))
         .toEqual(Array.from({ length: 3 }, () => ({ uri: iconUrl }))));
 });
+
+it('a pasted Chrome Web Store link in Store search installs that extension through the same install form', async () => {
+    dialogs.confirm.mockResolvedValue(true);
+    const { serve, serverUrl, serverIdentityId } = await setup('extension-link', 'browserExtension');
+    const { StoreBrowserExtensionLinkResult } = await import('./StoreBrowserExtensionLinkResult');
+    const extensionId = 'c'.repeat(32);
+    const machineId = 'machine-a';
+    const requests: unknown[] = [];
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'alice',
+        machineId, actionId: 'browser.extensions.install', tokenEpoch: 0, requesterInvocation: 'none',
+        execute: input => {
+            requests.push(input);
+            return { status: 'updated', restartRequired: true, entry: { profileId: 'work', restartRequired: true, extension: {
+                id: extensionId, name: 'Reader', version: '2.0', enabled: true, permissions: [], hostPermissions: [],
+                directory: '/browser/extensions/reader', source: { kind: 'webStore', extensionId } } } };
+        } });
+    serve((path, init) => boundary.handle(new URL(path, serverUrl), init));
+    // Ordinary search text is not a link and adds nothing.
+    const plain = await renderScreen(<StoreBrowserExtensionLinkResult query="Reader" />);
+    expect(plain.findHostByTestId('store.browserExtension.link.add')).toBeNull();
+    await plain.unmount();
+    const screen = await renderScreen(<StoreBrowserExtensionLinkResult query={` https://chromewebstore.google.com/detail/reader/${extensionId}?hl=en `} />);
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.browserExtension.link.add')?.props.accessibilityState?.disabled).not.toBe(true));
+    await screen.pressByTestIdAsync('store.browserExtension.link.add');
+    const presented = dialogs.show.mock.calls.at(-1)?.[0] as unknown as { props: { form: ActionInputForm } };
+    const form = presented.props.form;
+    expect(form.getFields().map(field => field.path)).toEqual(['machineId', 'profileId']);
+    form.replaceInput({ ...form.getInput(), machineId, profileId: 'work' });
+    let outcome: Awaited<ReturnType<typeof form.submit>> | undefined;
+    await act(async () => { outcome = await form.submit(); });
+    expect(outcome).toMatchObject({ kind: 'settled', outcome: { ok: true } });
+    expect(requests).toEqual([expect.objectContaining({ machineId, profileId: 'work', source: { kind: 'webStore', extensionId } })]);
+});

@@ -5,13 +5,14 @@ import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
-import { setPreferredLanguageFromSettings } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 import { normalizeInputHintsText } from '@happier-dev/protocol/inputs/inputFields';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { EMAIL_SETUP_INPUT_SCHEMA } from '../../../../../../packages/plugins/channel-email/src/config';
 import { EMAIL_CHANNEL_ACTION_IDS } from '../../../../../../packages/plugins/channel-email/src/constants';
 import emittedEmailManifest from '../../../../../../apps/cli/assets/bundled-plugin-manifests/channel-email.json';
-import type { PluginLocalizedStringV2, PluginProjectedActionV2 } from '@happier-dev/protocol';
+import type { PluginLocalizedStringV2} from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type {
     PluginUiTargetedContributionOperationV1,
@@ -332,6 +333,7 @@ describe('plugin Action input selection Host API producer', () => {
     });
 
     it('resolves localized Action form presentation from the mounted projection', async () => {
+        await preloadTranslations('es');
         setPreferredLanguageFromSettings('es');
         try {
             const projected = projection();

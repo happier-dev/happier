@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { DaemonPluginStoredImageReadResponse, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
+import type { DaemonPluginStoredImageReadResponse} from '@happier-dev/protocol/daemon/pluginStoredImage';
+import type { SessionImageMediaReferenceV1 } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import { PluginUiSurfaceContextV1Schema, type PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginSurfaceStoredImageOwner } from './pluginSurfaceStoredImage';
 

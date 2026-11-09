@@ -1,4 +1,4 @@
-import type { PluginResourceContextV1 } from '@happier-dev/protocol';
+import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import {
     type
     PluginUiResourceSubscriptionEventV1,
@@ -150,6 +150,7 @@ function createFakeDaemon(): FakeDaemon {
 async function createMountedSurface(
     daemon: FakeDaemon,
     resourceContext?: PluginResourceContextV1,
+    resourceCapability = { readable: true, dynamic: true },
 ) {
     const facts = {
         pluginId: surfaceContext.pluginId,
@@ -163,7 +164,7 @@ async function createMountedSurface(
         serverId: null,
         projectionGeneration: 7,
         occurrenceId: 'occurrence-7',
-        resourceCapability: { readable: true, dynamic: true },
+        resourceCapability,
         accountLifetime: CURRENT_ACCOUNT_LIFETIME,
         interactionEnabled: true,
         daemonInteractionEnabled: true,
@@ -176,7 +177,6 @@ async function createMountedSurface(
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
         surface: canonicalSurface,
         requestSurface: controller.surfaceContext,
-        requestIdPrefix: 'rn-watch',
         handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.hostApi.installedMethods,
     });
@@ -189,6 +189,47 @@ async function createMountedSurface(
 }
 
 describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
+    it('withdraws read authority when its mounted transport binding is replaced', async () => {
+        const daemon = createFakeDaemon();
+        daemon.setOpenResult({ supported: true, result: { ok: true, subscriptionId: 'authority' } });
+        const events: PluginUiResourceSubscriptionEventV1[] = [];
+        const resource = { machineId: 'machine-1', serverId: 'server-1', expectedCallerOccurrenceId: 'source-1' };
+        const handlers = createPluginSurfaceResourceWatchHandlers({ pluginId: 'acme.preview', resource,
+            canWatchPluginResources: () => false, transport: daemon.transport, deliver: event => { events.push(event); } });
+        try {
+            await handlers.watchResource({ requestId: 'authority', method: 'watchResource', payload: {
+                subscriptionId: 'authority', resource: { readAuthority: { consumer: { pluginId: 'acme.preview', localId: 'read-ci' },
+                    purpose: 'github', input: {} } },
+            } });
+            handlers.updateResource({ ...resource, context: TARGETED_RESOURCE_CONTEXT });
+            expect(events).toEqual([expect.objectContaining({ kind: 'error', code: 'expired_resource' })]);
+            expect(daemon.nextSignals[0]?.aborted).toBe(true);
+            expect(daemon.opens).toHaveLength(1);
+        } finally { handlers.dispose(); }
+    });
+    it('withdraws an exact-purpose authority watch through the mounted host without declaring a Resource', async () => {
+        const daemon = createFakeDaemon();
+        daemon.setOpenResult({ supported: true, result: { ok: true, subscriptionId: 'authority' } });
+        const mounted = await createMountedSurface(daemon, undefined, { readable: false, dynamic: false });
+        const resource = { readAuthority: { consumer: { pluginId: 'acme.preview', localId: 'read-ci' }, purpose: 'github', input: {} } };
+        const events: ResourceSubscriptionEvent[] = [];
+        try {
+            const subscription = await mounted.adapter.api.watchResource(resource, event => events.push(event));
+            expect(subscription).not.toHaveProperty('admittedDigest');
+            expect(daemon.opens).toHaveLength(1);
+            expect(daemon.opens[0]!.resource).toEqual(resource);
+            await expect(mounted.adapter.api.watchResource('undeclared', () => {})).rejects.toMatchObject({ code: 'unavailable' });
+            expect(daemon.opens).toHaveLength(1);
+            const subscriptionId = daemon.opens[0]!.subscriptionId;
+            await daemon.answerNext({ supported: true, result: { ok: true, status: 'event', event: {
+                version: 1, subscriptionId, kind: 'error', code: 'expired_resource', diagnostics: [],
+            } } });
+            await vi.waitFor(() => expect(events).toEqual([expect.objectContaining({ kind: 'error', code: 'expired_resource' })]));
+            await subscription.dispose();
+            expect(daemon.opens).toHaveLength(1);
+            expect(daemon.nextSignals).toHaveLength(1);
+        } finally { mounted.unsubscribe(); mounted.adapter.dispose(); mounted.controller.dispose(); }
+    });
     it('hydrates and withdraws a contextual Machine watch without retiring an admitted Account watch', async () => {
         const settled = createDeferred<ResourceContent>();
         let progress: ((value: ResourceContent) => void) | undefined;
@@ -679,7 +720,7 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
         });
         const mounted = await createMountedSurface(daemon);
         await expect(mounted.adapter.api.watchResource('packaged-doc', () => undefined))
-            .rejects.toMatchObject({ code: 'unavailable' });
+            .rejects.toMatchObject({ code: 'plugin_resource_watch_unavailable' });
         expect(daemon.closes).toHaveLength(0);
         mounted.unsubscribe();
         mounted.controller.dispose();

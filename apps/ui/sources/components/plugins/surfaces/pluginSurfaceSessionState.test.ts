@@ -1,12 +1,16 @@
-import { router } from 'expo-router';
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
-import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
-import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { PluginUiSessionStateV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+import { router } from 'expo-router';
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -89,7 +93,6 @@ function mountSurface(accountScope = CURRENT_ACCOUNT_LIFETIME.scope) {
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
         surface: canonicalSurface,
         requestSurface: controller.surfaceContext,
-        requestIdPrefix: 'rn-session',
         handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.hostApi.installedMethods,
     });
@@ -288,7 +291,9 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
     });
 
     it('reads what a waiting Session wants to run, where, and which answers the viewer may give', async () => {
-        storage.getState().applySessions([waitingSession()]);
+        storage.getState().applySessions([waitingSession({ viewer: createSessionViewerFixture({
+            attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' },
+        }) })]);
         const mounted = mountSurface();
 
         const state = await mounted.api.readSession('linked-1');
@@ -309,6 +314,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
                 answers: ['allowOnce', 'allowForSession', 'deny'],
             }],
         });
+        expect(PluginUiSessionStateV1Schema.parse(state).workStatus).toEqual(state?.workStatus);
         mounted.dispose();
     });
 
@@ -329,22 +335,81 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         } finally { subscription.dispose(); mounted.dispose(); }
     });
 
-    it.each(['read', 'watch'] as const)('hydrates a reachable linked Session outside the loaded client window before %s', async (method) => {
-        const serverId = await homes.addHome({ name: 'Cold linked Session', serverUrl: 'https://cold-linked-session.test', accountId: 'account-a' });
-        installSessionActionFixture({ homes, storage, serverId, session: waitingSession({ id: 'cold-linked' }) });
-        storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+    it('keeps missing credential readiness distinct from terminal Session absence', async () => {
+        const serverId = await homes.addHome({ name: 'Credentials pending', serverUrl: 'https://credentials-pending.test', accountId: null });
         const mounted = mountSurface({ serverId, accountId: 'account-a' });
         try {
-            if (method === 'watch') {
-                const watch = await mounted.api.watchSession('cold-linked', () => {});
-                watch.dispose();
-            }
-            await expect(mounted.api.readSession('cold-linked')).resolves.toMatchObject({
-                sessionId: 'cold-linked', serverId,
-            });
-            expect(storage.getState().sessions['cold-linked']).toBeDefined();
+            await expect(mounted.api.readSession('credential-pending-session')).rejects.toMatchObject({ code: 'unavailable', retryable: true });
+            expect(homes.requests.filter(request => request.path.startsWith('/v2/sessions/'))).toEqual([]);
+        } finally { mounted.dispose(); }
+    });
+
+    it.each([404, 403, 503] as const)('distinguishes terminal missing Sessions from a retryable HTTP %s hydration failure', async (status) => {
+        const serverId = await homes.addHome({ name: 'Missing linked Session', serverUrl: 'https://missing-linked-session.test', accountId: 'account-a' });
+        const sessionId = `missing-linked-${status}`;
+        const body = status === 404 ? V2SessionByIdNotFoundSchema.parse({ error: 'Session not found' })
+            : { error: status === 503 ? 'server_unavailable' : 'forbidden' };
+        homes.answer(serverId, `/v2/sessions/${sessionId}`, { status, body });
+        homes.answer(serverId, `/v2/sessions/${sessionId}?accessProjectionVersion=1`, { status, body });
+        if (status === 404) storage.getState().applySessions([waitingSession({ id: sessionId, serverId: 'other-home' })]);
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
+        try {
+            if (status === 503) await expect(mounted.api.readSession(sessionId)).rejects.toMatchObject({ code: 'http_error', retryable: true });
+            else await expect(mounted.api.readSession(sessionId)).resolves.toBeNull();
+            if (status === 404) expect(storage.getState().sessions[sessionId]?.serverId).toBe('other-home');
+            else expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        } finally { mounted.dispose(); }
+    });
+
+    it('keeps concurrent reads and watches pending until exact-Account hydration, then follows pushed changes', async () => {
+        const serverId = await homes.addHome({ name: 'Cold linked Session', serverUrl: 'https://cold-linked-session.test', accountId: 'account-a' });
+        const held = createDeferred<void>();
+        installSessionActionFixture({
+            homes: { ...homes, answer(serverId, path, answer) { homes.answer(serverId, path, { ...answer, respondAfter: held.promise }); } },
+            storage, serverId, session: waitingSession({ id: 'cold-linked', metadata: {
+                ...waitingSession().metadata!,
+                name: 'Verdant Supply',
+            } }),
+        });
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
+        const events: ResourceSubscriptionEvent[] = [];
+        let readSettled = false;
+        let watchSettled = false;
+        const read = mounted.api.readSession('cold-linked').finally(() => { readSettled = true; });
+        const watch = mounted.api.watchSession('cold-linked', event => events.push(event))
+            .finally(() => { watchSettled = true; });
+        // Observe rejection immediately too: a refused watch must fail this test, not become an unhandled rejection.
+        const outcomes = Promise.all([read, watch]);
+        void outcomes.catch(() => undefined);
+        try {
+            await vi.waitFor(() => expect(homes.requests.some(request => request.path.startsWith('/v2/sessions/cold-linked'))).toBe(true));
+            expect({ readSettled, watchSettled }).toEqual({ readSettled: false, watchSettled: false });
+            expect(storage.getState().sessions['cold-linked']).toBeUndefined();
+            expect(events).toEqual([]);
+            expect(homes.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v2/sessions/cold-linked')).toHaveLength(1);
+            held.resolve();
+            const [state, subscription] = await outcomes;
+            expect(state).toMatchObject({ sessionId: 'cold-linked', serverId, title: 'Verdant Supply' });
+
+            storage.getState().applySessions([waitingSession({ id: 'unrelated', serverId })]);
+            expect(events).toEqual([]);
+            const session = storage.getState().sessions['cold-linked']!;
+            const ownerField = session.metadataLayoutVersion === 1 ? 'ownerMetadataView' : 'metadata';
+            storage.getState().applySessions([{ ...session, [ownerField]: {
+                ...session[ownerField]!, name: 'Renamed Verdant Supply',
+            } }]);
+            expect(events).toMatchObject([{ kind: 'invalidated' }]);
+            await expect(mounted.api.readSession('cold-linked')).resolves.toMatchObject({ title: 'Renamed Verdant Supply' });
+            subscription.dispose();
+            storage.getState().applySessions([{ ...session, [ownerField]: {
+                ...session[ownerField]!, name: 'After disposal',
+            } }]);
+            expect(events).toHaveLength(1);
         } finally {
+            held.resolve();
             mounted.dispose();
+            await outcomes.catch(() => undefined);
         }
     });
 
@@ -377,8 +442,12 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         storage.getState().applySessions([
             waitingSession({ id: 'working', agentState: null, thinking: true, thinkingAt: NOW, latestTurnStatus: 'in_progress' }),
             waitingSession({ id: 'finished', agentState: null, latestTurnStatus: 'completed' }),
-            waitingSession({ id: 'lead', agentState: null, latestTurnStatus: 'completed', managedSessions: { total: 1, working: 1, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null } }),
-            waitingSession({ id: 'offline', agentState: null, active: false, activeAt: 1, presence: 1, latestTurnStatus: 'completed' }),
+            waitingSession({ id: 'lead', agentState: null, latestTurnStatus: 'completed', managedSessions: {
+                total: 1, finished: 0, attentionPrimary: null, working: 1, needsYou: 0, stalled: 0,
+            } }),
+            // Presence describes reachability; a completed turn remains settled after detachment.
+            waitingSession({ id: 'finished-offline', agentState: null, active: false, activeAt: 1, presence: 1, latestTurnStatus: 'completed' }),
+            waitingSession({ id: 'offline', agentState: null, active: false, activeAt: 1, presence: 1, latestTurnStatus: null }),
         ]);
         const mounted = mountSurface();
 
@@ -390,6 +459,10 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         });
         await expect(mounted.api.readSession('lead')).resolves.toMatchObject({
             workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null },
+        });
+        await expect(mounted.api.readSession('finished-offline')).resolves.toMatchObject({
+            runtime: 'offline',
+            workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null },
         });
         await expect(mounted.api.readSession('offline')).resolves.toMatchObject({
             workStatus: { state: 'disconnected', bucket: 'offline', tone: 'neutral', attentionType: null },
@@ -407,11 +480,77 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         try {
             await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({
                 agent: { agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' } },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             });
             expect(await mounted.api.readSession('unknown-agent')).not.toHaveProperty('agent');
+            expect(await mounted.api.readSession('unknown-agent')).not.toHaveProperty('agentTarget');
         } finally {
             mounted.dispose();
         }
+    });
+
+    it('reads an exact configured Agent definition from admitted creation metadata', async () => {
+        const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-a' } as const;
+        const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1,
+            sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'agent-target-read' }),
+            recipe: { execution: { machineId: 'machine-1', directory: { kind: 'path', path: '/work/repo' } },
+                organization: { folderId: null, tagIds: [] }, agentTarget, modelSelection: null, profileId: null,
+                requestedPermissionMode: null, agentModeId: null, configuration: null, connectedServices: null,
+                capabilitySelection: null, transcriptStorage: null, terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null,
+            } });
+        const base = waitingSession();
+        storage.getState().applySessions([waitingSession({ metadataLayoutVersion: 1,
+            metadata: SessionSharedMetadataV1Schema.parse({ v: 1, agentPresentation: { agentId: 'custom-acp' } }) as unknown as Session['metadata'],
+            ownerMetadataView: { ...base.metadata!, flavor: 'custom-acp', sessionCreationCorrespondenceV1: correspondence },
+        })]);
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readSession(base.id)).resolves.toMatchObject({ agentTarget });
+            storage.getState().applySessions([waitingSession({ metadataLayoutVersion: 1,
+                metadata: SessionSharedMetadataV1Schema.parse({ v: 1, agentPresentation: { agentId: 'custom-acp' } }) as unknown as Session['metadata'],
+                ownerMetadataView: null,
+            })]);
+            expect(await mounted.api.readSession(base.id)).not.toHaveProperty('agentTarget');
+        } finally { mounted.dispose(); }
+    });
+
+    it.each(['accepted', 'ambiguous', 'private', 'incomplete', 'wrongHome', 'wrongAccount'] as const)('exposes %s accepted checkout facts through the existing census owner', async (scenario) => {
+        const scope = CURRENT_ACCOUNT_LIFETIME.scope;
+        const censusScope = scenario === 'wrongAccount' ? { ...scope, accountId: 'other-account' } : scope;
+        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'example/repo' } as const;
+        const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'machine-1', rootPath: '/work/repo',
+            createdAtMs: 1, repositoryIdentity: repository };
+        const priorProfileScope = storage.getState().profileScope;
+        storage.setState({ profileScope: censusScope });
+        storage.getState().activateProjectAccountRowsScope(censusScope);
+        storage.getState().applyProjectAccountRowsForScope(censusScope, { scope: censusScope, status: 'ready',
+            coverage: scenario === 'incomplete' ? 'partial' : 'complete',
+            workspaceRefs: scenario === 'ambiguous' ? [checkout, { ...checkout, id: 'other-checkout' }]
+                : [{ ...checkout, ...(scenario === 'wrongHome' ? { serverId: 'different-home' } : {}) }],
+            relationships: [], organizations: [], revisionsByPhysicalKey: {},
+        });
+        const session = waitingSession({ ownerAccountId: scenario === 'private' ? 'someone-else' : scope.accountId,
+            ...(scenario === 'private' ? { access: createSessionAccessFixture('view') } : {}) });
+        storage.getState().applySessions([session]);
+        const mounted = mountSurface();
+        try {
+            const state = await mounted.api.readSession(session.id);
+            if (scenario === 'accepted') {
+                expect(state).toMatchObject({ acceptedWorkspace: { checkout: { serverId: scope.serverId, workspaceId: checkout.id,
+                    machineId: checkout.machineId, rootPath: checkout.rootPath }, repository } });
+                const events: ResourceSubscriptionEvent[] = [];
+                const subscription = await mounted.api.watchSession(session.id, event => { events.push(event); });
+                storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+                    workspaceRefs: [checkout], relationships: [], organizations: [{ key: {
+                        kind: 'project-organization', serverId: scope.serverId, projectKey: checkout.id,
+                    }, revision: 1, value: { pinned: true } }], revisionsByPhysicalKey: {} });
+                expect(events).toHaveLength(0);
+                storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked');
+                await vi.waitFor(() => expect(events).toHaveLength(1));
+                expect(await mounted.api.readSession(session.id)).not.toHaveProperty('acceptedWorkspace');
+                subscription.dispose();
+            } else expect(state).not.toHaveProperty('acceptedWorkspace');
+        } finally { mounted.dispose(); storage.setState({ profileScope: priorProfileScope }); }
     });
 
     it('resolves a cold installed Agent from its own catalog package, never its backing Agent', async () => {
@@ -433,7 +572,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
                     title: 'Acme Agent', channel: 'plugin', isBuiltIn: false,
                     catalogAgentId: 'codex', iconAgentId: 'codex', providerOwnedEnvironmentKeys: [],
                 } },
-                actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+                actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
             },
         });
         const mounted = mountSurface();
@@ -454,7 +593,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         const watch = await mounted.api.watchSession('linked-1', (event) => { events.push(event); });
         const invalidate = (machineId: string) => publishMachineContributionRegistryProjectionInvalidation({
             machineId, serverId: CURRENT_ACCOUNT_LIFETIME.scope.serverId,
-        });
+        }, 'authority');
         invalidate('machine-1');
         await vi.waitFor(() => expect(events).toHaveLength(1));
         storage.getState().applySessions([waitingSession({ metadata: { ...session.metadata!, machineId: 'machine-2' } })]);
@@ -523,6 +662,9 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
 
     it('refuses a Session the Account cannot reach, a request that is not pending, and an answer the viewer may not give', async () => {
         const serverId = await homes.addHome({ name: 'Missing linked Session', serverUrl: 'https://missing-linked-session.test', accountId: 'account-a' });
+        const missing = { status: 404, body: V2SessionByIdNotFoundSchema.parse({ error: 'Session not found' }) };
+        homes.answer(serverId, '/v2/sessions/unknown-session', missing);
+        homes.answer(serverId, '/v2/sessions/unknown-session?accessProjectionVersion=1', missing);
         storage.getState().applySessions([
             waitingSession({ serverId }),
             waitingSession({ serverId, id: 'view-only', canApprovePermissions: false, accessLevel: 'view' }),
@@ -578,7 +720,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
     it('invalidates when outstanding reports change the Work presentation without changing awareness', async () => {
         storage.getState().applySessions([waitingSession({
             agentState: null, latestTurnStatus: 'completed',
-            managedSessions: { total: 1, working: 1, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null },
+            managedSessions: { total: 1, finished: 0, attentionPrimary: null, working: 1, needsYou: 0, stalled: 0 },
         })]);
         const mounted = mountSurface();
         const events: ResourceSubscriptionEvent[] = [];
@@ -586,7 +728,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
 
         storage.getState().applySessions([waitingSession({
             agentState: null, latestTurnStatus: 'completed', updatedAt: NOW + 2,
-            managedSessions: { total: 1, working: 0, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null },
+            managedSessions: { total: 1, finished: 0, attentionPrimary: null, working: 0, needsYou: 0, stalled: 0 },
         })]);
 
         await vi.waitFor(() => expect(events).toHaveLength(1));
@@ -597,8 +739,11 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         mounted.dispose();
     });
 
-    it('refuses to watch a Session the Account cannot reach', async () => {
+    it.each([403, 404])('refuses to watch an inaccessible Session (HTTP %s)', async status => {
         const serverId = await homes.addHome({ name: 'Missing watched Session', serverUrl: 'https://missing-watched-session.test', accountId: 'account-a' });
+        const body = status === 404 ? V2SessionByIdNotFoundSchema.parse({ error: 'Session not found' }) : { error: 'forbidden' };
+        homes.answer(serverId, '/v2/sessions/unknown-session', { status, body });
+        homes.answer(serverId, '/v2/sessions/unknown-session?accessProjectionVersion=1', { status, body });
         const mounted = mountSurface({ serverId, accountId: 'account-a' });
         await expect(mounted.api.watchSession('unknown-session', () => undefined))
             .rejects.toMatchObject({ code: 'unavailable' });

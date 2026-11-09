@@ -2,21 +2,23 @@ import {
     PluginUiHostApiDiagnosticV1Schema,
     PluginUiHostApiOpenExternalLinkRequestV1Schema,
     PluginUiHostApiWriteClipboardRequestV1Schema,
+    PluginUiResourceIntentV1Schema,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiJsonValueV1,
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
+import { requestOpenResource, type OpenResourceContext } from '@/utils/url/openResource';
 import {
     getClipboardStringSafe,
-    setClipboardStringSafe,
+    writeClipboardStringFromUi,
 } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import {
     createPluginSurfaceHostApiError,
     type PluginSurfaceHostApiHandlers,
+    type PluginSurfaceHostApiMethodHandler,
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 
@@ -24,6 +26,9 @@ type LocalHostHandlerInput = Readonly<{
     surfaceContext: PluginUiSurfaceContextV1;
     /** The bound controller remains the only mount-currentness owner. */
     isCurrent?: () => boolean;
+    /** Reuse this mount's Action admission and plugin caller, never host UI authority. */
+    executeAction?: PluginSurfaceHostApiMethodHandler;
+    resourceContext?: Pick<OpenResourceContext, 'navigation' | 'projection'>;
 }>;
 
 function unavailable(reason: string): PluginUiJsonValueV1 {
@@ -60,9 +65,28 @@ export function createPluginSurfaceLocalHostHandlers(
     input: LocalHostHandlerInput,
 ): Pick<
     PluginSurfaceHostApiHandlers,
-    'diagnostic' | 'readClipboard' | 'writeClipboard' | 'openExternalLink'
+    'diagnostic' | 'readClipboard' | 'writeClipboard' | 'openExternalLink' | 'openResource'
 > {
     return Object.freeze({
+        openResource: async (request: PluginUiHostApiRequestEnvelopeV1, options?: PluginSurfaceHostApiRequestOptions): Promise<PluginUiJsonValueV1> => {
+            const parsed = PluginUiResourceIntentV1Schema.safeParse(request.payload);
+            if (!parsed.success) return invalidPayload('plugin_surface_resource_payload_invalid');
+            const refusal = preflight(input, options, 'plugin_surface_resource_open_cancelled');
+            if (refusal) return refusal;
+            let failure: PluginUiJsonValueV1 = unavailable('plugin_surface_resource_open_unavailable');
+            const opened = await requestOpenResource(parsed.data, {
+                ...input.resourceContext,
+                openExternal: async url => {
+                    if (!input.executeAction) return false;
+                    const result = await input.executeAction({ ...request, method: 'executeAction',
+                        payload: { action: 'links.openExternal', input: { url } } }, options);
+                    failure = result;
+                    return result !== null && typeof result === 'object' && !Array.isArray(result)
+                        && 'status' in result && result.status === 'opened';
+                },
+            });
+            return opened ? null : failure;
+        },
         diagnostic: (
             request: PluginUiHostApiRequestEnvelopeV1,
             options?: PluginSurfaceHostApiRequestOptions,
@@ -98,9 +122,17 @@ export function createPluginSurfaceLocalHostHandlers(
             if (refusal) return refusal;
             // A successful platform write is already an outward effect; do not
             // rewrite it as stale/cancelled after settlement and invite a retry.
-            return await setClipboardStringSafe(parsed.data.value)
-                ? null
-                : unavailable('plugin_surface_clipboard_unavailable');
+            let failure: PluginUiJsonValueV1 = unavailable('plugin_surface_clipboard_unavailable');
+            const copied = await writeClipboardStringFromUi(parsed.data.value, async (action, actionInput) => {
+                if (!input.executeAction) return { ok: false, errorCode: 'clipboard_unavailable', error: 'clipboard_unavailable' };
+                const result = await input.executeAction({ ...request, method: 'executeAction',
+                    payload: { action, input: actionInput } }, options);
+                if (result !== null && typeof result === 'object' && !Array.isArray(result)
+                    && 'status' in result && result.status === 'copied') return { ok: true, result };
+                failure = result ?? unavailable('plugin_surface_clipboard_unavailable');
+                return { ok: false, errorCode: 'clipboard_unavailable', error: 'clipboard_unavailable' };
+            });
+            return copied.ok ? null : failure;
         },
         openExternalLink: async (
             request: PluginUiHostApiRequestEnvelopeV1,
@@ -110,12 +142,11 @@ export function createPluginSurfaceLocalHostHandlers(
             if (!parsed.success) return invalidPayload('plugin_surface_external_link_payload_invalid');
             const refusal = preflight(input, options, 'plugin_surface_external_link_cancelled');
             if (refusal) return refusal;
-            // Opening an external URL is likewise authoritative once the host
-            // platform acknowledges it; retirement cannot safely turn it into a
-            // retryable non-effect.
-            return await openExternalUrl(parsed.data.url)
-                ? null
-                : unavailable('plugin_surface_external_link_unavailable');
+            if (!input.executeAction) return unavailable('plugin_surface_external_link_unavailable');
+            const result = await input.executeAction({ ...request, method: 'executeAction',
+                payload: { action: 'links.openExternal', input: { url: parsed.data.url } } }, options);
+            return result !== null && typeof result === 'object' && !Array.isArray(result)
+                && 'status' in result && result.status === 'opened' ? null : result;
         },
     });
 }

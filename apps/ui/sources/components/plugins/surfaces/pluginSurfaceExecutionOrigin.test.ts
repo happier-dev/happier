@@ -4,13 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { normalizePluginUiDestinationBindingV1, PluginUiDestinationBindingV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { EMPTY_PLUGIN_UI_PROJECTION, normalizePluginUiProjection, normalizePluginInstalledUiDeclarations, createPluginUiProjectedActionResolver, type PluginUiInstalledPackageProjection } from '@/sync/domains/plugins/ui/projection';
-import type { PluginProjectedActionV2 } from '@happier-dev/protocol';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { mergeInstalledPluginUiProjections, readPluginUiContributionSupplies, unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createDeferred, createMachineFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import { DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    DaemonContributionRegistryProjectionDescribeRequestSchema,
+    DaemonContributionRegistryProjectionDescribeResponseSchema,
+    DaemonPluginUiTargetedContributionsReadResponseSchema,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import * as machineRpcBoundary from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -19,7 +23,7 @@ import { useMountedTargetedContributions } from './mountedTargetedContributions'
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { isPluginSurfaceMachineBound, usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
+import { isPluginSurfaceMachineBound, readPluginSurfaceMachineDemand, usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -113,8 +117,8 @@ describe('plugin surface execution requirement', () => {
             sourceRef: { machineId, pluginId, sourceCustody } });
         const project = (occurrenceId: string, generation: number, phase: 'current' | 'establishing' | 'unavailable' = 'current',
             unavailableReasonCode?: string) => {
-            const model = normalizePluginUiProjection({ v: 2, generation, agentsById: {}, actionsById: {},
-                 resourcesById: {}, settingsById: {}, diagnostics: [],
+            const model = normalizePluginUiProjection({ v: 2, generation, agentsById: {}, actionsById: {}, 
+                resourcesById: {}, settingsById: {}, diagnostics: [],
                 installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Source surface', version: '1.0.0',
                     enabled: true, source: { kind: 'localPath', locator: 'surface-source-root' }, occurrenceId, sourceCustody, executionOrigin,
                     declaresContributionPoints: true,
@@ -261,6 +265,17 @@ describe('plugin surface execution requirement', () => {
             const targetedReply = createDeferred<unknown>();
             const targetSignals: AbortSignal[] = [];
             const transport = vi.spyOn(machineRpcBoundary, 'machineRpcWithServerScope').mockImplementation(async request => {
+                if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    const selection = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(request.payload);
+                    expect(selection).toMatchObject({ selection: 'mountedActions',
+                        callers: [{ pluginId, occurrenceId: 'occurrence-a', sourceCustody }], actions: [] });
+                    return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                        projection: { v: 2, generation: 1, installedPackagesById: {
+                            [pluginId]: { id: pluginId, displayName: 'Source surface', version: '1.0.0', enabled: true,
+                                source: { kind: 'localPath', locator: 'surface-source-root' },
+                                occurrenceId: 'occurrence-a', sourceCustody, executionOrigin },
+                        } } });
+                }
                 if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ || !request.signal) {
                     throw new Error('The diagnostic expects only a signal-bound targeted Machine read');
                 }
@@ -503,10 +518,13 @@ describe('plugin surface execution requirement', () => {
             const stalePicker = contextual.getCurrent().selection.selectOrigin;
             contextualMachineId = otherMachineId;
             await contextual.rerender();
+            expect(await invoke('plugins.execution_origin.list', { pluginId, contextualTarget })).toEqual({ status: 'unavailable',
+                reason: { code: 'contextual_target_unavailable', phase: 'selection', retryable: false } });
             expect(await invoke('plugins.execution_origin.clear', { pluginId, contextualTarget })).toEqual({ status: 'unavailable' });
             expect(await stalePicker(savedOtherOrigin)).toEqual({ status: 'unavailable' });
             await act(async () => { storage.setState({ settingsScope: { ...scope, accountId: 'other-account' } }); });
-            expect(await invoke('plugins.execution_origin.list', { pluginId, contextual: true })).toEqual({ status: 'unavailable' });
+            expect(await invoke('plugins.execution_origin.list', { pluginId, contextual: true })).toEqual({ status: 'unavailable',
+                reason: { code: 'account_scope_unavailable', phase: 'selection', retryable: false } });
             await act(async () => { storage.setState({ settingsScope: scope }); });
             await contextual.unmount();
             expect(await invoke('plugins.execution_origin.set', { pluginId, contextualTarget, origin: savedOtherOrigin })).toEqual({ status: 'unavailable' });
@@ -589,6 +607,28 @@ describe('plugin surface execution requirement', () => {
             projection: { ...projection, installedPackagesById: { [installed.id]: { ...installed,
                 declaredExecution: { daemonActions: false, contributionPoints: true } } } },
             surface: { renderer: { ...surface.renderer, requiredHostMethods: ['context'] } } })).toBe(true);
+    });
+    it('tells a surface that reads its own data on a Machine from one bound only by its plugin\'s Actions or contributed sources', () => {
+        // Triage's My tasks: Account Actions and contributed task sources; its plugin also has daemon Actions.
+        const surface = { renderer: { kind: 'hostedHtml', contributionId: 'tasks', requiredHostMethods: ['executeAction', 'openSurface'] } };
+        const installed = { id: 'acme.tasks', displayName: 'Tasks', enabled: true,
+            source: { kind: 'bundled', locator: 'app-bundle:acme.tasks' },
+            declaredExecution: { daemonActions: false, contributionPoints: true } } satisfies PluginUiInstalledPackageProjection;
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, installedPackagesById: { [installed.id]: installed } };
+        const withDaemonActions = { ...projection, installedPackagesById: {
+            [installed.id]: { ...installed, declaredExecution: { daemonActions: true, contributionPoints: true } } } };
+        expect(readPluginSurfaceMachineDemand({ pluginId: installed.id, projection, surface })).toBe('contributionPoints');
+        expect(readPluginSurfaceMachineDemand({ pluginId: installed.id, projection: withDaemonActions, surface })).toBe('actions');
+        // Still Machine-bound: contributed sources and daemon Actions run on the selected Machine.
+        expect(isPluginSurfaceMachineBound({ pluginId: installed.id, projection: withDaemonActions, surface })).toBe(true);
+        // Channels' Home widget: it declares the Resources it reads, before any supplier grants the capability.
+        expect(readPluginSurfaceMachineDemand({ pluginId: installed.id, projection: withDaemonActions,
+            surface: { ...surface, resources: [{ pluginId: installed.id, localId: 'bindings-v1' }] } })).toBe('data');
+        expect(readPluginSurfaceMachineDemand({ pluginId: installed.id, projection,
+            surface: { ...surface, runtime: { resourceCapability: { readable: true, dynamic: false } } } })).toBe('data');
+        // Declared Resources alone never make an unbound surface Machine-bound (Account-owned Resources).
+        expect(readPluginSurfaceMachineDemand({ pluginId: installed.id, projection: EMPTY_PLUGIN_UI_PROJECTION,
+            surface: { ...surface, resources: [{ pluginId: installed.id, localId: 'bindings-v1' }] } })).toBe('none');
     });
     it('derives Resource execution requirements from the selected surface descriptor', () => {
         const surface = {

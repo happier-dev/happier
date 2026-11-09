@@ -11,6 +11,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializations
 import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
 import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { widgetProjectionEntry } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -22,6 +23,7 @@ import { AppShellPluginUiProjectionProvider, AppShellPluginUiProjectionValueProv
     useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useConnectedServicesAgents } from '@/components/settings/connectedServices/model/useConnectedServicesAgents';
 import PluginStoreKindSurface from '@/components/store/StorePluginKindSurface';
+import { StoreDiscover } from '@/components/store/StoreDiscover';
 import { listStoreKindContributions } from '@/components/store/catalog/storeKindContributions';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
@@ -91,6 +93,22 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             })) },
         },
     });
+    // The cold Add census saw four Machines with 76/62/58/33 contributions.
+    // Account-admitted directory declarations must not hydrate those Machines'
+    // unrelated execution catalogues merely to present catalog choices.
+    const fleet = declaredDirectory ? [machine, ...Array.from({ length: 3 }, (_, index) =>
+        createMachineFixture({ id: `directory-machine-${index}`, activeAt: 0, storageMode: 'plain' }))] : [machine];
+    const rows = fleet.map(entry => entry.id === machine.id ? row
+        : createPlainMachineRowFixture({ id: entry.id, accountId, machine: entry }));
+    const counts = [76, 62, 58, 33];
+    const fleetMaterializations = fleet.map((entry, machineIndex) => Array.from({ length: declaredDirectory ? counts[machineIndex]! : 1 }, (_, index) => {
+        if (machineIndex === 0 && index === 0) return materialization;
+        const id = `acme.directory-${machineIndex}-${index}`;
+        return PluginMachineMaterializationV1Schema.parse({ ...materialization, machineId: entry.id,
+            pluginId: id, materializationId: `install-${machineIndex}-${index}`,
+            declaredManifest: { schemaVersion: 2, id, version: '1.0.0', displayName: id,
+                engines: { happier: '^1.0.0' }, contributes: {} } });
+    }));
     const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'e'.repeat(64),
         projection: PluginProjectionV2Schema.parse({ v: 2, generation: 41,
             installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Preview', version: '1.0.0',
@@ -115,7 +133,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
             if (!packet || typeof packet !== 'object' || !('method' in packet)
                 || typeof packet.method !== 'string' || !('params' in packet)) throw new Error('Invalid fixture RPC');
-            expect(packet.method).toBe(`${machine.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`);
+            expect(fleet.some(entry => packet.method === `${entry.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true);
             const content = { mode: 'plain' as const };
             const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(decoded.params);
@@ -128,32 +146,39 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     let availabilityCursor = 1;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
         serverIdentityId, accountId, accountMode: 'plain' }], route: request => {
-        if (request.path === '/v1/machines') return Response.json([row]);
+        if (request.path === '/v1/machines') return Response.json(rows);
         if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
-            id => id === machine.id ? row : null);
+            id => rows.find(entry => entry.id === id) ?? null);
         if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'])
             return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor,
-                snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] }] }));
+                snapshots: fleet.map((entry, index) => ({ serverIdentityId, machineId: entry.id,
+                    materializations: index === 0 ? [materialization, ...fleetMaterializations[index]!.slice(1)] : fleetMaterializations[index]! })) }));
         if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])
             return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor, pluginIds: [],
                 intentReads: [{ pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
                     hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [] }) }], failedPluginIds: [] }));
-        return undefined;
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
     } });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         const serverId = home.homes.home!.id;
-        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
-        observeMachinePresenceForTest({ serverId, accountId }, [machine.id]);
+        storage.getState().applyMachines(fleet, true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, fleet.map(entry => entry.id));
         const { sync } = await import('@/sync/sync');
         await sync.refreshPluginAccountAvailability();
         const lifetime = captureActiveServerAccountScopeLifetime()!;
-        if (declaredDirectory) expect(readPluginAccountAvailability(lifetime.scope).readInstalledPlugins()).toMatchObject({
-            kind: 'available', plugins: [{ pluginId, installations: [{ declarationState: 'known',
+        const installedDirectory = readPluginAccountAvailability(lifetime.scope).readInstalledPlugins();
+        if (declaredDirectory) {
+            expect(installedDirectory.kind).toBe('available');
+            if (installedDirectory.kind !== 'available') throw new Error('Expected directory declarations');
+            expect(installedDirectory.plugins).toHaveLength(229);
+            expect(installedDirectory.plugins.find(entry => entry.pluginId === pluginId)).toMatchObject({
+            pluginId, installations: [{ declarationState: 'known',
                 contributorDeclaration: { contributes: { storeKinds: [storeKind.definition] } },
-                uiModel: { storeKindsById: { [storeKind.id]: { id: storeKind.id } } } }] }],
-        });
+                uiModel: { storeKindsById: { [storeKind.id]: { id: storeKind.id } } } }],
+            });
+        }
         const target = { machineId: machine.id, serverId, accountLifetime: lifetime };
         const partial = declaredDirectory ? null : await loadDaemonMergedProjectionCacheEntry({ ...target, sections: [] });
         if (!declaredDirectory) expect(partial).toMatchObject({ kind: 'ready' });
@@ -168,8 +193,9 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         function Presented({ visible }: Readonly<{ visible: boolean }>) {
             current = usePluginUiProjectionCurrentness({ ...target, load: false });
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
-                <PluginSurfaceProjectionDemand accountScope={lifetime.scope} enabled={visible} />
-                <DeclaredDirectoryKinds />
+                <StoreDiscover demand={{ presented: visible }} project={null}>
+                    {() => <DeclaredDirectoryKinds />}
+                </StoreDiscover>
             </AppShellPluginUiProjectionProvider>;
             if (surface === 'store' || surface === 'store-directory') return <AppShellPluginUiProjectionValueProvider
                 value={{ ...current, reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' },
@@ -197,6 +223,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         if (declaredDirectory) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1));
             await flushHookEffects();
+            console.info('COLD_DIRECTORY_COST', { machines: fleet.length, declarations: fleetMaterializations.flat().length, describes: requests.length });
             expect(requests).toHaveLength(0);
             expect(current?.phase).toBe('establishing');
             await tree.update(<Presented visible={false} />);

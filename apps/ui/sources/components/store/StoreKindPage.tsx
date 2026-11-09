@@ -2,6 +2,7 @@ import type { MarketplaceCatalogReferenceV1 } from '@happier-dev/protocol/market
 import type { HappierCapabilityFactsInput } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { StoreProjectScopeChip } from './StoreProjectScopeChip';
+import { StoreAppDefinitionEntries } from './StoreAppDefinitionEntries';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -61,6 +62,8 @@ import { useDeviceType } from '@/utils/platform/responsive';
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
 export const ROW_MARK_PX = 26;
+/** Rows a long section previews before its All N › (two rows of the wide page's two columns). */
+export const STORE_SECTION_PREVIEW_ROWS = 4;
 /** The page is the scroller: the directory's Collection draws none of its own. */
 const passThroughScroller = (children: React.ReactNode) => children;
 
@@ -151,29 +154,29 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
       return frame(<><StoreBrowserExtensionLinkResult query={state.query} />{state.lists.browserExtension
         ? <RegistryDirectory kind="browserExtension" list={{ ...state.lists.browserExtension, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.browserExtension.sourceFailures],
-          items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing}
+          items: state.lists.browserExtension.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId}
           showEmptyState={readWebStoreExtensionId(state.query) === null} />
         : <Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null}
           showEmptyState={readWebStoreExtensionId(state.query) === null} />}</>);
     case 'app':
       if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.app.sourceFailures],
-        items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} />);
+        items: state.lists.app.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'mcpServer':
       if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.mcpServer.sourceFailures],
-        items: state.lists.mcpServer.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+        items: state.lists.mcpServer.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'skill':
       if (state.lists.skill) return frame(<SkillDirectory list={{ ...state.lists.skill, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.skill.sourceFailures],
-        items: state.lists.skill.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+        items: state.lists.skill.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'agent':
       if (state.lists.agent) return frame(<AgentDirectory list={{ ...state.lists.agent, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.agent.sourceFailures],
-        items: state.lists.agent.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} />);
+        items: state.lists.agent.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented} browsing={browsing} onSeeSource={setSourceId} />);
       break;
     case 'provider':
       if (state.lists.provider) return frame(<ProviderDirectory list={{ ...state.lists.provider,
@@ -220,9 +223,10 @@ export function StoreKindFrame(
       <PageContentColumn>
         {/* A phone's description keeps the line's width; the scope chip stands under it, as on Discover (TASTE-S4060 D8). */}
         {/* A phone's bar names the kind, with Back when the kind was opened from the Store (lab wp/kind); the body keeps the purpose line. */}
-        <PageHeader title={copy.title} description={copy.description} {...(stacked || !scoped ? {} : { actions: <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
+        <PageHeader title={copy.title} description={copy.description} {...(stacked || !scoped ? {} : { actions: props.kind === 'app'
+          ? <View style={styles.headerActions}><StoreAppDefinitionEntries /><StoreProjectScopeChip /></View> : <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
         {/* Everything that says what the page shows stands on one line; the search keeps its own. */}
-        {stacked ? <View style={styles.phoneScope}>{scoped ? <StoreProjectScopeChip /> : null}{accessory}</View> : null}
+        {stacked ? <View style={styles.phoneScope}>{scoped ? <StoreProjectScopeChip /> : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View> : null}
         <CompactSearchField
           placement="page"
           testID={`store.kind.${props.kind}.search`}
@@ -285,6 +289,41 @@ export function kindCopy(kind: StoreDirectoryKind | 'plugin' | 'software' | 'bot
     }
 }
 
+/**
+ * Browsing a kind with several sections: each catalog's section previews its first rows and keeps the rest behind its
+ * All N ›, which narrows this same page to that catalog (lab h:apps). A page whose only section is that catalog stays whole.
+ */
+export function previewSourceSections<Row extends Readonly<{ group: string }>>(input: Readonly<{
+  rows: readonly Row[];
+  groups: readonly Readonly<{ key: string }>[];
+  pages: readonly Readonly<{ sourceId: string; nextCursor: string | null }>[];
+  /** Null while conditions already narrow the page. */
+  onSeeSource: ((sourceId: string) => void) | null;
+}>): Readonly<{ rows: readonly Row[]; capped: boolean; groupAction?: (groupKey: string) => CollectionGroupAction | null }> {
+  const { rows, groups, pages, onSeeSource } = input;
+  if (!onSeeSource || groups.length < 2) return { rows, capped: false };
+  const counts = new Map<string, number>();
+  for (const row of rows) if (row.group.startsWith(SOURCE_GROUP_PREFIX)) counts.set(row.group, (counts.get(row.group) ?? 0) + 1);
+  const shown = new Map<string, number>();
+  const preview = rows.filter(row => {
+    if (!row.group.startsWith(SOURCE_GROUP_PREFIX)) return true;
+    const next = (shown.get(row.group) ?? 0) + 1;
+    shown.set(row.group, next);
+    return next <= STORE_SECTION_PREVIEW_ROWS;
+  });
+  if (preview.length === rows.length) return { rows, capped: false };
+  const groupAction = (groupKey: string): CollectionGroupAction | null => {
+    const count = counts.get(groupKey) ?? 0;
+    if (count <= STORE_SECTION_PREVIEW_ROWS || !groupKey.startsWith(SOURCE_GROUP_PREFIX)) return null;
+    const sourceId = groupKey.slice(SOURCE_GROUP_PREFIX.length);
+    const known = pages.find(page => page.sourceId === sourceId)?.nextCursor == null && pages.some(page => page.sourceId === sourceId);
+    return { label: known ? t('capabilities.store.search.allOf', { count }) : t('capabilities.store.search.all'),
+      onPress: () => onSeeSource(sourceId), kind: 'link' };
+  };
+  return { rows: preview, capped: true, groupAction };
+}
+
+const SOURCE_GROUP_PREFIX = 'source:';
 const EMPTY_CURATED: readonly RegistryCatalogItemSummary[] = [];
 const curatedIdentity = (item: RegistryCatalogItemSummary) => JSON.stringify([item.sourceId, item.itemId]);
 
@@ -382,7 +421,7 @@ export function useRegistryRows(
                   : {}),
               }
             : {
-                key: `source:${item.sourceId}`,
+                key: `${SOURCE_GROUP_PREFIX}${item.sourceId}`,
                 title: t('capabilities.store.fromSource', {
                   source: sourceTitle(item.sourceId),
                 }),
@@ -433,14 +472,12 @@ export function useRegistryRows(
   }, [list.curation, list.items, curatedItems, open, sourceTitle, isAdded, add]);
 }
 
-export function useSourceTitle(
-  kind: Parameters<typeof useRegistrySources>[0],
-): (sourceId: string) => string {
-  const registry = useRegistrySources(kind);
+/** A catalog's name, from every catalog the Account holds (a failed source may not serve this page's kind). */
+export function useSourceTitle(): (sourceId: string) => string {
+  const registry = useRegistrySources();
   return React.useCallback(
     (sourceId: string) =>
-      registry.sources.find((source) => source.id === sourceId)?.title ??
-      sourceId,
+      registry.sources.find((source) => source.id === sourceId)?.title ?? t('capabilities.store.unnamedCatalog'),
     [registry.sources],
   );
 }
@@ -453,23 +490,27 @@ function RegistryDirectory(
     browsing: boolean;
     isAdded?: (item: RegistryCatalogItemSummary) => boolean;
     showEmptyState?: boolean;
+    /** Narrows this page to one catalog: a long catalog section's All N ›. */
+    onSeeSource?: (sourceId: string) => void;
   }>,
 ): React.ReactNode {
   const open = useOpenRegistryItem();
   const add = useAddRegistryItem();
-  const sourceTitle = useSourceTitle(props.kind);
+  const sourceTitle = useSourceTitle();
   const curated = React.useMemo(() => ({ items: props.list.items, curation: props.list.curation,
     ...(props.browsing ? { curatedKind: props.kind } : {}) }), [props.list.items, props.list.curation, props.browsing, props.kind]);
   const { rows, groups } = useRegistryRows(curated, open, sourceTitle, props.isAdded, add);
+  const preview = useSourceSectionPreview(rows, groups, props.list, props.browsing ? props.onSeeSource : undefined);
   return (
     <Directory
       kind={props.kind}
-      rows={rows}
+      rows={preview.rows}
       groups={groups}
-      list={props.list}
+      list={preview.list}
       query={props.query}
       sourceTitle={sourceTitle}
       showEmptyState={props.showEmptyState}
+      {...(preview.groupAction ? { groupAction: preview.groupAction } : {})}
     />
   );
 }
@@ -550,14 +591,24 @@ export function directoryKeyOf(reference: StoreListingReference | null): string 
   return reference?.type === 'registryItem' ? `${reference.kind}|${reference.sourceId}|${reference.itemId}` : null;
 }
 
-function McpDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean }>): React.ReactNode {
-  const isAdded = useMcpAdded(props.presented);
-  return <RegistryDirectory kind="mcpServer" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} />;
+/** The kind page's reading of `previewSourceSections` over its loaded catalog pages; a preview hides Load more, since nothing it loads would show. */
+function useSourceSectionPreview<List extends Readonly<{ pages: readonly Readonly<{ sourceId: string; nextCursor: string | null }>[]; hasNextPage: boolean }>>(
+  rows: readonly DirectoryRow[], groups: readonly DirectoryGroup[], list: List, onSeeSource: ((sourceId: string) => void) | undefined,
+) {
+  return React.useMemo(() => {
+    const preview = previewSourceSections({ rows, groups, pages: list.pages, onSeeSource: onSeeSource ?? null });
+    return { ...preview, list: preview.capped ? { ...list, hasNextPage: false } : list };
+  }, [rows, groups, list, onSeeSource]);
 }
 
-function SkillDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean }>): React.ReactNode {
+function McpDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean; onSeeSource: (sourceId: string) => void }>): React.ReactNode {
+  const isAdded = useMcpAdded(props.presented);
+  return <RegistryDirectory kind="mcpServer" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} onSeeSource={props.onSeeSource} />;
+}
+
+function SkillDirectory(props: Readonly<{ list: RegistryList; query: string; presented: boolean; browsing: boolean; onSeeSource: (sourceId: string) => void }>): React.ReactNode {
   const isAdded = useSkillAdded(props.presented);
-  return <RegistryDirectory kind="skill" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} />;
+  return <RegistryDirectory kind="skill" list={props.list} query={props.query} browsing={props.browsing} isAdded={isAdded} onSeeSource={props.onSeeSource} />;
 }
 
 /** The Agents built into Happier: each opens its own Settings page through the Store's open owner (nothing to add). */
@@ -589,11 +640,11 @@ export function useBuiltInAgentRows(items: StoreKindList<'agent'>['items']): rea
 }
 
 function AgentDirectory(
-  props: Readonly<{ list: StoreKindList<'agent'>; query: string; presented: boolean; browsing: boolean }>,
+  props: Readonly<{ list: StoreKindList<'agent'>; query: string; presented: boolean; browsing: boolean; onSeeSource: (sourceId: string) => void }>,
 ): React.ReactNode {
   const openRegistry = useOpenRegistryItem();
   const addRegistry = useAddRegistryItem();
-  const sourceTitle = useSourceTitle('agent');
+  const sourceTitle = useSourceTitle();
   const isAdded = useAgentAdded(props.presented);
   const registryItems = React.useMemo(
     () =>
@@ -631,14 +682,16 @@ function AgentDirectory(
     ],
     [builtIn.length, registry.groups],
   );
+  const preview = useSourceSectionPreview(rows, groups, props.list, props.browsing ? props.onSeeSource : undefined);
   return (
     <Directory
       kind="agent"
-      rows={rows}
+      rows={preview.rows}
       groups={groups}
-      list={props.list}
+      list={preview.list}
       query={props.query}
       sourceTitle={sourceTitle}
+      {...(preview.groupAction ? { groupAction: preview.groupAction } : {})}
     />
   );
 }
@@ -807,6 +860,19 @@ export function Directory(
   const pageFailure = !props.list.loading && rows.length === 0 && failures.length > 0 && props.showEmptyState !== false && !section;
   return (
     <View style={styles.body}>
+      {/* Said once above the results (lab h:unreachable, as Discover does), so rows arriving later only ever land under it. */}
+      <RegistrySourcesUnavailable
+        testID={`store.kind.${props.kind}.failure`}
+        size={pageFailure ? 'page' : 'line'}
+        failures={failures.map((failure) => ({
+          key: failure.sourceId ?? 'index',
+          message: props.sourceTitle && failure.sourceId
+            ? `${props.sourceTitle(failure.sourceId)} · ${failure.message}`
+            : failure.message,
+          ...(props.sourceTitle && failure.sourceId ? { source: props.sourceTitle(failure.sourceId), reason: failure.message } : {}),
+          onRetry: failure.onRetry,
+        }))}
+      />
       {empty && props.showEmptyState === false ? null : empty && props.query ? (
         // The same inline no-match state Installed uses: what found nothing, and the way to clear it.
         <EmptyState
@@ -845,19 +911,6 @@ export function Directory(
           />
         </CoreCollectionScope>
       )}
-      {/* Results come first; the catalogs that didn't answer are said once under them (LV-JUDGE-1102 UI-FIX-D). */}
-      <RegistrySourcesUnavailable
-        testID={`store.kind.${props.kind}.failure`}
-        size={pageFailure ? 'page' : 'line'}
-        failures={failures.map((failure) => ({
-          key: failure.sourceId ?? 'index',
-          message: props.sourceTitle && failure.sourceId
-            ? `${props.sourceTitle(failure.sourceId)} · ${failure.message}`
-            : failure.message,
-          ...(props.sourceTitle && failure.sourceId ? { source: props.sourceTitle(failure.sourceId), reason: failure.message } : {}),
-          onRetry: failure.onRetry,
-        }))}
-      />
       {props.list.hasNextPage && loadMore ? (
         <View style={styles.more}>
           {props.moreNote ? (
@@ -883,6 +936,7 @@ export function Directory(
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), marginBottom: theme.space.s8 },
   // On the page text edge with the section titles above it.
   more: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s12,

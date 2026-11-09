@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { Platform } from 'react-native';
-import { ComposerControlStateV1Schema } from '@happier-dev/protocol';
+import { ComposerControlStateV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import { PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui';
 import { HappierComposerChip } from '@happier-dev/plugin-ui/presentation';
 import type {
@@ -9,7 +9,8 @@ import type {
     PluginProjectedComposerControlEntryV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
 
 const logSpy = vi.hoisted(() => vi.fn());
 
@@ -375,8 +376,8 @@ describe('plugin contributed composer Action chips', () => {
         });
 
         expect(chips.map((chip) => chip.controlId)).toEqual([
-            'plugin:acme.channels/static-action',
-            'plugin:acme.channels/dynamic-action',
+            'plugin:control:acme.channels/static-action',
+            'plugin:control:acme.channels/dynamic-action',
         ]);
         expect(renderControlResourceState).not.toHaveBeenCalled();
 
@@ -1471,7 +1472,7 @@ describe('plugin contributed composer Action chips', () => {
         );
     });
 
-    it('uses the controller’s exact semantic composer placements, then delegates selection back to the host presenter', () => {
+    it('uses declared composer placements as defaults while either Action can render and delegate to the host presenter', () => {
         const primary = Object.assign(descriptor({ localId: 'configure', placement: 'composer.primary' }), {
             icon: 'magic-wand',
             priority: -10,
@@ -1502,18 +1503,23 @@ describe('plugin contributed composer Action chips', () => {
         expect(list).toHaveBeenNthCalledWith(1, { placement: 'composer.primary', scope: 'session' });
         expect(list).toHaveBeenNthCalledWith(2, { placement: 'composer.more', scope: 'session' });
         expect(chips.map((chip) => chip.key)).toEqual([
-            'plugin-contributed-action:composer.primary:acme.channels/configure',
-            'plugin-contributed-action:composer.more:acme.channels/refresh',
+            'plugin-contributed-action:acme.channels/configure',
+            'plugin-contributed-action:acme.channels/refresh',
+        ]);
+        expect(chips.map((chip) => chip.placement)).toEqual([
+            { id: 'plugin:action:acme.channels/configure', title: primary.title, icon: 'magic-wand', defaultPlacement: 'pinned' },
+            { id: 'plugin:action:acme.channels/refresh', title: secondary.title, icon: 'arrow-right', defaultPlacement: 'overflow' },
         ]);
 
         const primaryChip = chips[0]!;
+        const primaryAnchorRef = React.createRef();
         const primaryNode = primaryChip.render({
             chipStyle: () => ({}),
             showLabel: true,
             iconColor: '#fff',
             textStyle: {},
             countTextStyle: {},
-            popoverAnchorRef: React.createRef(),
+            popoverAnchorRef: primaryAnchorRef,
         });
         if (!React.isValidElement(primaryNode)) throw new Error('expected primary Action chip');
         expect(primaryNode.type).toBe(HappierComposerChip);
@@ -1523,7 +1529,7 @@ describe('plugin contributed composer Action chips', () => {
         if (!React.isValidElement<{ name: string }>(primaryIcon)) throw new Error('expected primary Action icon');
         expect(primaryIcon.props.name).toBe('magic-wand');
         (primaryNode.props as Readonly<{ onPress: () => void }>).onPress();
-        expect(openAction).toHaveBeenCalledWith(primary);
+        expect(openAction).toHaveBeenCalledWith(primary, { kind: 'view', ref: primaryAnchorRef });
 
         const secondaryChip = chips[1]!;
         const dismiss = vi.fn();
@@ -1534,12 +1540,114 @@ describe('plugin contributed composer Action chips', () => {
             openCollapsedPopover: vi.fn(),
         });
         if (!collapsed || !('id' in collapsed)) throw new Error('expected one overflow Action');
-        expect(collapsed.id).toBe('plugin-contributed-action:composer.more:acme.channels/refresh');
+        expect(collapsed.id).toBe('plugin-contributed-action:acme.channels/refresh');
         if (!React.isValidElement<{ name: string }>(collapsed.icon)) throw new Error('expected overflow Action icon');
         expect(collapsed.icon.props.name).toBe('arrow-right');
         collapsed.onPress?.();
         expect(dismiss).toHaveBeenCalledTimes(1);
-        expect(openAction).toHaveBeenLastCalledWith(secondary);
+        expect(openAction).toHaveBeenLastCalledWith(secondary, undefined);
+        const secondaryNode = secondaryChip.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: React.createRef(),
+        });
+        if (!React.isValidElement(secondaryNode)) throw new Error('expected an overflow-default Action to support pinning');
+        expect(secondaryNode.type).toBe(HappierComposerChip);
+    });
+
+    it('dedupes both Action bindings before placement and keeps a same-id Control independently placeable without Resource demand', () => {
+        const primary = descriptor({ localId: 'configure', placement: 'composer.primary' });
+        const more = descriptor({ localId: 'configure', placement: 'composer.more' });
+        let primaryAvailable = true;
+        const controller = {
+            list: ({ placement }: Readonly<{ placement: string }>) => (
+                placement === 'composer.primary' ? primaryAvailable ? [primary] : [] : [more]
+            ),
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+        const control = composerControl({
+            localId: 'configure',
+            definition: {
+                label: 'Configure control',
+                icon: 'add',
+                state: { resource: 'control-state' },
+                interaction: { kind: 'action', action: 'refresh' },
+            },
+        });
+        const host = createComposerControlHost();
+        const project = () => createPluginContributedActionComposerChips({
+            controller,
+            openAction: vi.fn(),
+            composerControls: [control],
+            composerControlHost: host,
+        });
+        const chips = project();
+        expect(chips).toHaveLength(2);
+        expect(chips.map((chip) => chip.controlId)).toEqual([
+            'plugin:action:acme.channels/configure',
+            'plugin:control:acme.channels/configure',
+        ]);
+        const placements = chips.map((chip) => {
+            if (!chip.placement) throw new Error('expected individual plugin placement metadata');
+            return chip.placement;
+        });
+        const defaults = resolveNavigationPlacements(placements);
+        expect(defaults.pinned.map((item) => item.id)).toEqual(['plugin:action:acme.channels/configure']);
+        expect(defaults.overflow.map((item) => item.id)).toEqual(['plugin:control:acme.channels/configure']);
+        const customized = resolveNavigationPlacements(placements, {
+            orderedIds: ['plugin:control:acme.channels/configure', 'plugin:action:acme.channels/configure'],
+            placements: {
+                'plugin:action:acme.channels/configure': 'hidden',
+                'plugin:control:acme.channels/configure': 'pinned',
+            },
+        });
+        expect(customized.pinned.map((item) => item.id)).toEqual(['plugin:control:acme.channels/configure']);
+        expect(customized.hidden.map((item) => item.id)).toEqual(['plugin:action:acme.channels/configure']);
+        expect(host.renderControlResourceState).not.toHaveBeenCalled();
+        primaryAvailable = false;
+        const moreOnly = project();
+        expect(moreOnly[0]?.key).toBe(chips[0]?.key);
+        expect(moreOnly[0]?.placement?.defaultPlacement).toBe('overflow');
+    });
+
+    it('uses an admitted Control placement hint with a localized catalog label', () => {
+        const controller = {
+            list: () => [],
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+        const chip = createPluginContributedActionComposerChips({
+            controller,
+            openAction: vi.fn(),
+            composerControls: [composerControl({
+                localId: 'mode',
+                definition: {
+                    label: { key: 'acme.mode.label', fallback: 'Mode' },
+                    icon: 'add',
+                    defaultPlacement: 'pinned',
+                    interaction: { kind: 'action', action: 'refresh' },
+                },
+            })],
+            composerControlHost: createComposerControlHost(),
+        })[0];
+        expect(chip?.placement).toEqual({
+            id: 'plugin:control:acme.channels/mode',
+            title: 'Delivery mode',
+            icon: 'plus',
+            defaultPlacement: 'pinned',
+        });
     });
 
     it('keeps non-session Composer controls without consulting session Action placements', () => {
@@ -1575,7 +1683,7 @@ describe('plugin contributed composer Action chips', () => {
 
         expect(list).not.toHaveBeenCalled();
         expect(chips.map((chip) => chip.controlId)).toEqual([
-            'plugin:acme.channels/new-session-control',
+            'plugin:control:acme.channels/new-session-control',
         ]);
     });
 

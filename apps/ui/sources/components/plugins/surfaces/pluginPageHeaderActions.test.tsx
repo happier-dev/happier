@@ -27,6 +27,10 @@ const { PaneMainColumnContext } =
   await import('@/components/appShell/panes/mainColumn/usePaneMainColumn');
 const { PaneRegionProvider } =
   await import('@/components/appShell/panes/paneRegion');
+const { NavigationHeaderActions } =
+  await import('@/components/ui/layout/NavigationHeaderActions');
+const { NavigationTitleChromeProvider } =
+  await import('@/components/ui/layout/PageHeader');
 
 function isInside(node: ReactTestInstance, testID: string): boolean {
   for (let parent = node.parent; parent; parent = parent.parent) {
@@ -150,13 +154,22 @@ describe('plugin page header actions', () => {
    * the host's main column, exactly like a core page header; anywhere else (a side pane, no pane
    * host) it draws nothing.
    */
-  function mainColumnPage(region: 'main' | 'side' | null, setHidden: (hidden: boolean) => void) {
+  function mainColumnPage(
+    region: 'main' | 'side' | null,
+    setHidden: (hidden: boolean) => void,
+    entity?: Readonly<{ showsTitle: boolean }>,
+  ) {
     const main = {
       hidden: false, canHide: true, folded: false,
       labels: { hideLabel: 'Hide Acme', showLabel: 'Show Acme' }, identity: { name: 'Acme' },
-      setHidden, toggle: () => setHidden(true),
+      setHidden, requestHidden: setHidden, toggle: () => setHidden(true),
     };
-    const actions = renderPluginNavigationActions(null);
+    // An entity header (a leading mark) keeps its actions in the page: the `page` placement.
+    const actions = entity
+      ? <NavigationTitleChromeProvider showsTitle={entity.showsTitle}>
+          {renderPluginNavigationActions(<button data-testid="entity-action">Fix</button>, 'page')}
+        </NavigationTitleChromeProvider>
+      : renderPluginNavigationActions(null);
     return (
       <DestinationInstanceHost
         tabId="prs"
@@ -186,6 +199,21 @@ describe('plugin page header actions', () => {
     expect(side.findByTestId('pane-main-hide')).toBeNull();
     const isolated = await renderScreen(mainColumnPage(null, () => {}));
     expect(isolated.findByTestId('pane-main-hide')).toBeNull();
+  });
+
+  it('keeps Hide and the entity actions in the page row for an entity header, under any title chrome', async () => {
+    for (const showsTitle of [false, true]) {
+      const hidden: boolean[] = [];
+      const screen = await renderScreen(mainColumnPage('main', (value) => hidden.push(value), { showsTitle }));
+      const action = screen.root.findAllByProps({ 'data-testid': 'entity-action' });
+      expect(action).toHaveLength(1);
+      // Never hoisted into the navigation header: the entity's actions stay by its identity.
+      expect(screen.root.findAllByType(NavigationHeaderActions)).toHaveLength(0);
+      await screen.pressByTestIdAsync('pane-main-hide');
+      expect(hidden).toEqual([true]);
+    }
+    const side = await renderScreen(mainColumnPage('side', () => {}, { showsTitle: false }));
+    expect(side.findByTestId('pane-main-hide')).toBeNull();
   });
 });
 

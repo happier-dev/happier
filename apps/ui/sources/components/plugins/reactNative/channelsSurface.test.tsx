@@ -1,7 +1,9 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
@@ -214,11 +216,16 @@ function resourceDigest(digestCharacter: string): ResourceInvalidationDigest {
   return PluginUiArtifactDigestV1Schema.parse(`sha256:${digestCharacter.repeat(64)}`);
 }
 
-function connectionResourceContent(connections: readonly ConnectionResourceRow[], digestCharacter = 'c') {
+function connectionResourceContent(connections: readonly ConnectionResourceRow[], digestCharacter?: string) {
+  const bytes = new TextEncoder().encode(JSON.stringify({ connections }));
   return {
     contentType: 'application/json',
-    digest: resourceDigest(digestCharacter),
-    bytes: new TextEncoder().encode(JSON.stringify({ connections })),
+    // Changed bytes must not impersonate the retained Resource's digest. An
+    // explicit digest remains available for tests controlling invalidation hints.
+    digest: digestCharacter === undefined
+      ? PluginUiArtifactDigestV1Schema.parse(`sha256:${createHash('sha256').update(bytes).digest('hex')}`)
+      : resourceDigest(digestCharacter),
+    bytes,
   };
 }
 
@@ -624,7 +631,8 @@ function createOfflineChannelsDataClient(input: Readonly<{
   const deliveryQuery = vi.fn(async (
     request: Parameters<ChannelDeliveriesCollection['query']>[0],
   ): Promise<ChannelDeliveriesCollectionPage> => {
-    if (request.index !== CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention) {
+    if (request.index !== CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention
+      && request.index !== CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention) {
       throw new Error(`Unexpected direct delivery Collection index: ${request.index}.`);
     }
     if (request.limit !== undefined && request.limit > 200) {
@@ -751,7 +759,6 @@ function deliveryResolutionRow(input: Readonly<{
       content: { text: 'Private delivery body that must not reach the management surface.' },
       deliveryKey: 'private-delivery-key',
       replyContext: null,
-      mentionPolicy: 'suppress',
       linkPreviewPolicy: 'suppress',
       state: input.state,
       attemptCount: 1,
@@ -954,7 +961,6 @@ function createChannelsHostApi(input: Readonly<{
   const adapter = createCanonicalPluginReactNativeHostApiAdapter({
     surface: createChannelsSettingsSurfaceContextFixture(),
     requestSurface,
-    requestIdPrefix: 'channels-settings',
     handleRequest: owner.handleRequest,
     installedMethods: owner.installedMethods,
   });
@@ -982,6 +988,23 @@ function createChannelsHostApi(input: Readonly<{
 
 function findByTestId(node: ReactTestRenderer, testID: string) {
   return node.root.findAll((instance) => instance.props?.testID === testID);
+}
+
+/** Host decoding crosses an async import boundary; await the rendered contract, not a microtask count. */
+async function waitForChannelsSurface(
+  host: Pick<ReturnType<typeof createChannelsHostApi>, 'readResource'>,
+  assertion: () => void,
+): Promise<void> {
+  // Await the actual transport promises inside act so asynchronous decoding
+  // cannot publish between the assertion observer's attempts.
+  const reads = host.readResource.mock.results
+    .filter(result => result.type === 'return')
+    .map(result => result.value);
+  await act(async () => { await Promise.allSettled(reads); });
+  await vi.waitFor(async () => {
+    await flushHookEffects();
+    assertion();
+  });
 }
 
 function findPressableByTestId(node: ReactTestRenderer, testID: string) {
@@ -1343,9 +1366,12 @@ describe('Channels settings surface (real source, mounted)', () => {
       isMethodAvailable: (method) => method === 'context' || input.isDaemonReachable(),
     });
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
-      surface: createChannelsPageSurfaceContextFixture(),
+      surface: createChannelsPageSurfaceContextFixture({
+        machineConnectionPending: false,
+        machineExecutionReady: input.isDaemonReachable(),
+        requesterExecutionReady: true,
+      }),
       requestSurface,
-      requestIdPrefix: 'channels-page',
       handleRequest: host.handleRequest,
       installedMethods: host.installedMethods,
       getInstalledMethods: () => host.installedMethods,
@@ -2145,13 +2171,17 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeExplicitRefresh);
     expect(resolveReconciliationRead).toBeDefined();
+    expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile-binding-1').length).toBeGreaterThan(0);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-1').props.disabled).toBe(true);
     await act(async () => {
       resolveReconciliationRead?.(bindingResourceContent([binding]));
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile-binding-1')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-1').props.disabled).toBe(false);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-binding-outcome-unknown-reconcile-binding-1')).toHaveLength(0);
+      expect(findPressableByTestId(renderer!, 'channels-binding-pause-binding-1').props.disabled).toBe(false);
+    });
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-binding-pause-binding-1').props.onPress();
       await Promise.resolve();
@@ -2215,13 +2245,17 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(resolveReconciliationRead).toBeDefined();
+    expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile').length).toBeGreaterThan(0);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(true);
     await act(async () => {
       resolveReconciliationRead?.(bindingResourceContent(bindings, bindingDigestCharacter));
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(false);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-binding-outcome-unknown-reconcile')).toHaveLength(0);
+      expect(findPressableByTestId(renderer!, 'channels-binding-pause-binding-2').props.disabled).toBe(false);
+    });
   });
 
   it('keeps conversations joined to the exact bot when provider types differ', async () => {
@@ -2538,6 +2572,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         connectionId: 'connection-danger-bravo',
         integrationPrincipalLabel: 'Bravo',
         attention: {
+          outwardDelivery: { retryDue: false, notDelivered: false, partial: true, outcomeUnknown: false },
           historyGap: {
             reportedAt: 1_700_000_000_000,
             reason: 'applicationAdmissionLost',
@@ -2547,7 +2582,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       connectionFixture({
         connectionId: 'connection-warning-charlie',
         integrationPrincipalLabel: 'Charlie',
-        attention: { oldTransportStopUnconfirmed: true },
+        attention: { pollFailure: {
+          phase: 'blocked', attemptCount: 5, retryNotBeforeMs: null,
+          evidence: { kind: 'provider', reason: 'credentialInvalid' },
+        } },
       }),
     ];
     let digestCharacter = 'c';
@@ -2576,6 +2614,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         connectionId: 'connection-alpha',
         integrationPrincipalLabel: 'Alpha',
         attention: {
+          outwardDelivery: { retryDue: false, notDelivered: false, partial: true, outcomeUnknown: false },
           historyGap: {
             reportedAt: 1_700_000_000_000,
             reason: 'applicationAdmissionLost',
@@ -2594,7 +2633,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       connectionFixture({
         connectionId: 'connection-warning-charlie',
         integrationPrincipalLabel: 'Charlie',
-        attention: { oldTransportStopUnconfirmed: true },
+        attention: { pollFailure: {
+          phase: 'blocked', attemptCount: 5, retryNotBeforeMs: null,
+          evidence: { kind: 'provider', reason: 'credentialInvalid' },
+        } },
       }),
     ];
     digestCharacter = 'd';
@@ -2603,16 +2645,18 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    const refreshedRowOrder = [...new Set(renderedTestIds(renderer).filter(
-      (testID) => testID.startsWith('channels-connection-') && !testID.startsWith('channels-connection-status-'),
-    ))];
-    expect(refreshedRowOrder).toEqual([
-      'channels-connection-connection-alpha',
-      'channels-connection-connection-warning-charlie',
-      'channels-connection-connection-warning-zinnia',
-      'channels-connection-connection-danger-bravo',
-      'channels-connection-connection-zulu',
-    ]);
+    await waitForChannelsSurface(host, () => {
+      const refreshedRowOrder = [...new Set(renderedTestIds(renderer!).filter(
+        (testID) => testID.startsWith('channels-connection-') && !testID.startsWith('channels-connection-status-'),
+      ))];
+      expect(refreshedRowOrder).toEqual([
+        'channels-connection-connection-alpha',
+        'channels-connection-connection-warning-charlie',
+        'channels-connection-connection-warning-zinnia',
+        'channels-connection-connection-danger-bravo',
+        'channels-connection-connection-zulu',
+      ]);
+    });
   });
 
   it('unlocks an unknown update only after a requested fresh reread, even when its digest is unchanged', async () => {
@@ -2673,12 +2717,16 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeExplicitRefresh);
     expect(resolveReconciliationRead).toBeDefined();
     expect(findByTestId(renderer, 'channels-save-outcome-unknown').length).toBeGreaterThan(0);
+    expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
     await act(async () => {
       resolveReconciliationRead?.(connectionResourceContent([connection]));
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-save-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-save-outcome-unknown')).toHaveLength(0);
+      expect(findPressableByTestId(renderer!, 'channels-connection-save').props.disabled).toBe(false);
+    });
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-save').props.onPress();
     });
@@ -2736,12 +2784,16 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
     expect(resolveReconciliationRead).toBeDefined();
     expect(findByTestId(renderer, 'channels-save-outcome-unknown').length).toBeGreaterThan(0);
+    expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
     await act(async () => {
       resolveReconciliationRead?.(connectionResourceContent([connection]));
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-save-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-save-outcome-unknown')).toHaveLength(0);
+      expect(findPressableByTestId(renderer!, 'channels-connection-save').props.disabled).toBe(false);
+    });
   });
 
   it('keeps an unknown update locked across a live revision until the user requests a reread', async () => {
@@ -2787,7 +2839,9 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(findByTestId(renderer, 'channels-save-outcome-unknown').length).toBeGreaterThan(0);
     expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
-    expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
+    await waitForChannelsSurface(host, () => {
+      expect(findPressableByTestId(renderer!, 'channels-connection-enabled').props.checked).toBe(false);
+    });
 
     deferReconciliationRead = true;
     await act(async () => {
@@ -2800,7 +2854,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-save-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-save-outcome-unknown')).toHaveLength(0);
+    });
   });
 
   it('preserves a connection policy draft when its row collapses and reopens', async () => {
@@ -2856,8 +2912,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
-    expect(findByTestId(renderer, 'channels-connection-source-changed').length).toBeGreaterThan(0);
-    expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-connection-source-changed').length).toBeGreaterThan(0);
+      expect(findPressableByTestId(renderer!, 'channels-connection-save').props.disabled).toBe(true);
+    });
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-save').props.onPress();
     });
@@ -2910,7 +2968,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findByTestId(renderer, 'channels-save-outcome-unknown').length).toBeGreaterThan(0);
-    expect(deferredReads).toHaveLength(1);
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(deferredReads).toHaveLength(1);
+    });
     const resolveRequestedRead = deferredReads.shift();
     if (!resolveRequestedRead) throw new Error('Expected the requested Resource reread.');
     await act(async () => {
@@ -2918,7 +2979,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-save-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-save-outcome-unknown')).toHaveLength(0);
+    });
   });
 
   it('retains a last-known-good list and offers a refresh after a Resource refresh error', async () => {
@@ -3070,7 +3133,9 @@ describe('Channels settings surface (real source, mounted)', () => {
       expect.objectContaining({ signal: expect.anything() }),
     );
     expect(host.executeAction).not.toHaveBeenCalled();
-    expect(findByTestId(renderer, 'channels-provider-setup-selection-unavailable')).toHaveLength(0);
+    for (const state of ['stale', 'invalid', 'unavailable']) {
+      expect(findByTestId(renderer, `channels-provider-setup-selection-${state}`)).toHaveLength(0);
+    }
   });
 
   it.each([false, true])('prepares a submitted provider and presents its known failure (%s)', async (fails) => {
@@ -3235,7 +3300,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-provider-setup-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-provider-setup-outcome-unknown')).toHaveLength(0);
+    });
     expect(findPressableByTestId(
       renderer,
       'channels-provider-setup-example.channel.beta-provider',
@@ -3355,8 +3422,10 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(host.executeAction).toHaveBeenCalledTimes(2);
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeCreate);
-    expect(findByTestId(renderer, 'channels-connection-connection-created')).not.toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-connection-detail')).not.toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-connection-connection-created')).not.toHaveLength(0);
+      expect(findByTestId(renderer!, 'channels-connection-detail')).not.toHaveLength(0);
+    });
   });
 
   it('locks an ambiguous connection creation until an explicit fresh Resource reread completes', async () => {
@@ -3454,7 +3523,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-provider-setup-creation-outcome-unknown')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-provider-setup-creation-outcome-unknown')).toHaveLength(0);
+    });
     expect(findByTestId(renderer, 'channels-provider-setup-connection-form')).toHaveLength(0);
   });
 
@@ -3613,7 +3684,8 @@ describe('Channels settings surface (real source, mounted)', () => {
       methods: ['executeAction', 'readResource', 'selectActionInput', 'watchContext', 'watchResource'],
       readResource: async () => connectionResourceContent([]),
       selectActionInput: async () => {
-        throw Object.assign(new Error(diagnostic), { code: 'stale_surface' });
+        throw new PluginError({ code: 'stale_surface', message: diagnostic,
+          diagnostics: [{ code: 'action_retired', severity: 'error' }] });
       },
     });
 
@@ -3637,10 +3709,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       expect.objectContaining({ signal: expect.anything() }),
     );
     expect(host.executeAction).not.toHaveBeenCalled();
-    const unavailable = findByTestId(renderer, 'channels-provider-setup-selection-unavailable');
-    expect(unavailable.some((instance) => (
+    expect(findByTestId(renderer, 'channels-provider-setup-selection-stale').length).toBeGreaterThan(0);
+    expect(renderer!.root.findAll((instance) => (
       instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
-    ))).toBe(true);
+    )).length).toBeGreaterThan(0);
     expect(JSON.stringify(renderer.toJSON())).not.toContain(diagnostic);
   });
 
@@ -3667,7 +3739,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-connections-retry').length).toBeGreaterThan(0);
   });
 
-  it('shows a pending stop-reconciliation fact without treating it as transport quiescence', async () => {
+  it('keeps a retained pending deletion visible as explicit cleanup recovery', async () => {
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([
         connectionFixture({ deletionState: 'pendingStopReconciliation' }),
@@ -3677,7 +3749,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     renderer = await renderChannelsSurface(host.hostApi);
 
     expect(findByTestId(renderer, 'channels-connection-status-connection-1').length).toBeGreaterThan(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('Stop reconciliation pending');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Delete again to finish cleanup');
   });
 
   it('discloses a scheduled poll retry without offering a duplicate manual retry', async () => {
@@ -3718,7 +3790,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(host.executeAction).not.toHaveBeenCalled();
   });
 
-  it('retries only the exact blocked poll state through the present-user Action and rereads the connection', async () => {
+  it('retries the blocked connection through the owner Action and rereads its current state', async () => {
     let connection = connectionFixture({
       revision: 8,
       authorityEpoch: 5,
@@ -3736,10 +3808,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       readResource: async () => connectionResourceContent([connection], digestCharacter),
       executeAction: async (actionId, payload) => {
         expect(actionId).toBe(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry);
+        // The Action owner reads the current poll state; callers supply only
+        // its connection identity, never a competing revision/epoch check.
         expect(payload).toEqual({
           connectionId: 'connection-1',
-          expectedRevision: 8,
-          authorityEpoch: 5,
         });
         connection = connectionFixture({
           revision: 9,
@@ -3766,10 +3838,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(disclosure.some((instance) => (
       instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
     ))).toBe(true);
-    expect(JSON.stringify(renderer.toJSON())).toContain('Conversation polling needs attention');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Connection needs attention');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('credentialInvalid');
     const retry = findPressableByTestId(renderer, 'channels-connection-poll-retry');
-    expect(retry.props.accessibilityLabel).toBe('Retry polling');
+    expect(retry.props.accessibilityLabel).toBe('Retry connection');
 
     const readsBeforeRetry = host.readResource.mock.calls.length;
     await act(async () => {
@@ -3779,8 +3851,10 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(host.executeAction).toHaveBeenCalledTimes(1);
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeRetry);
-    expect(findByTestId(renderer, 'channels-poll-blocked-disclosure')).toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-connection-poll-retry')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-poll-blocked-disclosure')).toHaveLength(0);
+      expect(findByTestId(renderer!, 'channels-connection-poll-retry')).toHaveLength(0);
+    });
   });
 
   it('deletes an active connection through its canonical Action and rereads current lifecycle state', async () => {
@@ -3825,8 +3899,13 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-connection-lifecycle-confirmation')).toHaveLength(0);
     expect(host.executeAction).toHaveBeenCalledTimes(1);
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeDelete);
-    expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-connection-accept-loss').length).toBeGreaterThan(0);
+    await waitForChannelsSurface(host, () => {
+      // Pending cleanup is recovered by Delete again, never an accept-loss journey.
+      expect(JSON.stringify(renderer!.toJSON())).toContain('Delete again to finish cleanup');
+      expect(findByTestId(renderer!, 'channels-connection-delete').length).toBeGreaterThan(0);
+      expect(findByTestId(renderer!, 'channels-connection-accept-loss')).toHaveLength(0);
+      expect(findPressableByTestId(renderer!, 'channels-connection-save').props.disabled).toBe(true);
+    });
   });
 
   it('announces deletion once only after the post-Action Resource reread omits the connection', async () => {
@@ -3866,7 +3945,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-connections-empty').length).toBeGreaterThan(0);
   });
 
-  it('offers explicit accept-loss while pending deletion remains visibly and accessibly truthful', async () => {
+  it('recovers a retained pending deletion through explicit Delete without an accept-loss journey', async () => {
     let pendingConnection = connectionFixture({
       revision: 7,
       deletionState: 'pendingStopReconciliation',
@@ -3883,10 +3962,7 @@ describe('Channels settings surface (real source, mounted)', () => {
           authorityEpoch: 3,
           enabled: false,
           deletionState: 'finalizingDelete',
-          attention: {
-            oldTransportStopUnconfirmed: true,
-            acceptedPossibleLoss: true,
-          },
+          attention: {},
         });
         digestCharacter = 'd';
         return {
@@ -3894,7 +3970,7 @@ describe('Channels settings surface (real source, mounted)', () => {
           connectionId: 'connection-1',
           revision: 8,
           authorityEpoch: 3,
-          acceptedPossibleLoss: true,
+          acceptedPossibleLoss: false,
         };
       },
     });
@@ -3905,28 +3981,21 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
-    const acceptLoss = findPressableByTestId(renderer!, 'channels-connection-accept-loss');
-    expect(findByTestId(renderer, 'channels-connection-update-unavailable').some((instance) => (
-      instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
-    ))).toBe(true);
-    expect(findByTestId(renderer, 'channels-old-transport-stop-unconfirmed').some((instance) => (
-      instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
-    ))).toBe(true);
-    expect(JSON.stringify(renderer.toJSON())).toContain('Stop reconciliation pending');
-    expect(JSON.stringify(renderer.toJSON())).toContain('Previous transport may still be running');
+    const deleteConnection = findPressableByTestId(renderer!, 'channels-connection-delete');
+    expect(findByTestId(renderer, 'channels-connection-accept-loss')).toHaveLength(0);
+    expect(findByTestId(renderer, 'channels-old-transport-stop-unconfirmed')).toHaveLength(0);
 
     await act(async () => {
-      await acceptLoss.props.onPress();
+      await deleteConnection.props.onPress();
     });
     await flushHookEffects();
 
     expect(host.executeAction).toHaveBeenCalledTimes(1);
     expect(findByTestId(renderer, 'channels-connection-accept-loss')).toHaveLength(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('Possible message loss was accepted');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Deletion cleanup in progress');
   });
 
-  it('offers accept-loss for transfer custody and removes it after loss was accepted', async () => {
+  it('keeps retained transfer attention inert and presents only real deletion cleanup', async () => {
     const pendingTransfer = connectionFixture({
       revision: 7,
       attention: { oldTransportStopUnconfirmed: true },
@@ -3939,9 +4008,9 @@ describe('Channels settings surface (real source, mounted)', () => {
       findPressableByTestId(renderer!, 'channels-connection-connection-1').props.onPress();
     });
     await flushHookEffects();
-    expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-connection-accept-loss').length).toBeGreaterThan(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('Previous transport may still be running');
+    expect(findByTestId(renderer, 'channels-connection-delete').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-connection-accept-loss')).toHaveLength(0);
+    expect(findByTestId(renderer, 'channels-old-transport-stop-unconfirmed')).toHaveLength(0);
     expect(transferHost.executeAction).not.toHaveBeenCalled();
 
     act(() => renderer?.unmount());
@@ -3963,7 +4032,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
     expect(findByTestId(renderer, 'channels-connection-accept-loss')).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).toContain('Deletion cleanup in progress');
-    expect(JSON.stringify(renderer.toJSON())).toContain('Possible message loss was accepted');
+    expect(findByTestId(renderer, 'channels-old-transport-stop-unconfirmed')).toHaveLength(0);
     expect(finalizingHost.executeAction).not.toHaveBeenCalled();
   });
 
@@ -3986,8 +4055,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       host.invalidateResource(resourceDigest(digestCharacter));
     });
     await flushHookEffects();
-    expect(findByTestId(renderer, 'channels-connection-detail')).toHaveLength(0);
-    expect(findByTestId(renderer, 'channels-connections-empty').length).toBeGreaterThan(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-connection-detail')).toHaveLength(0);
+      expect(findByTestId(renderer!, 'channels-connections-empty').length).toBeGreaterThan(0);
+    });
 
     connections = [connectionFixture({ connectionId: 'connection-new', revision: 1 })];
     digestCharacter = 'e';
@@ -3995,9 +4066,11 @@ describe('Channels settings surface (real source, mounted)', () => {
       host.invalidateResource(resourceDigest(digestCharacter));
     });
     await flushHookEffects();
-    expect(findByTestId(renderer, 'channels-connection-connection-new').length).toBeGreaterThan(0);
-    expect(findPressableByTestId(renderer, 'channels-connection-connection-new').props.accessibilityExpanded).toBe(false);
-    expect(findByTestId(renderer, 'channels-connection-detail')).toHaveLength(0);
+    await waitForChannelsSurface(host, () => {
+      expect(findByTestId(renderer!, 'channels-connection-connection-new').length).toBeGreaterThan(0);
+      expect(findPressableByTestId(renderer!, 'channels-connection-connection-new').props.accessibilityExpanded).toBe(false);
+      expect(findByTestId(renderer!, 'channels-connection-detail')).toHaveLength(0);
+    });
   });
 
   it('keeps independent socket and history-gap continuity disclosures humanized and accessible', async () => {
@@ -4029,14 +4102,17 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(bestEffortDisclosure.some((instance) => (
       instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
     ))).toBe(true);
+    // A reported historical gap is informational, not a new actionable failure.
+    expect(historyGapDisclosure.some((instance) => instance.props?.role === 'alert')).toBe(false);
     expect(historyGapDisclosure.some((instance) => (
-      instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
+      instance.props?.role === 'status' && instance.props?.accessibilityLiveRegion === 'polite'
     ))).toBe(true);
 
     const rendered = JSON.stringify(renderer.toJSON());
     expect(rendered).toContain('Messages received through this live connection can be lost before Happier records their admission.');
-    expect(rendered).toContain('Happier could not confirm the admission of some received messages.');
-    expect(rendered).toContain(new Intl.DateTimeFormat(undefined, {
+    // OWNER-RULINGS TRI-05: reportedAt is observation time, not an imported-history cutoff.
+    expect(rendered).toContain('Older messages may not have been imported');
+    expect(rendered).not.toContain(new Intl.DateTimeFormat(undefined, {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(new Date(reportedAt)));
@@ -4464,7 +4540,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     ).props.disabled).toBe(false);
   });
 
-  it('discloses accepted old-transport loss custody without exposing transport details', async () => {
+  it('reads retained old-transport loss fields without projecting a stop journey or transport details', async () => {
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([connectionFixture({
         attention: {
@@ -4481,14 +4557,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     const disclosure = findByTestId(renderer, 'channels-old-transport-stop-unconfirmed');
-    expect(disclosure.length).toBeGreaterThan(0);
-    expect(disclosure.some((instance) => (
-      instance.props?.role === 'alert' && instance.props?.accessibilityLiveRegion === 'assertive'
-    ))).toBe(true);
+    expect(disclosure).toHaveLength(0);
 
     const rendered = JSON.stringify(renderer.toJSON());
-    expect(rendered).toContain('Possible message loss was accepted');
-    expect(rendered).toContain('Happier has not claimed the old transport stopped.');
+    expect(findByTestId(renderer, 'channels-connection-accept-loss')).toHaveLength(0);
     expect(rendered).not.toContain('materializationId');
     expect(rendered).not.toContain('serverIdentityId');
   });

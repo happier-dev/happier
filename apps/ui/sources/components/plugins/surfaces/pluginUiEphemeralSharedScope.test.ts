@@ -5,6 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { PluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 
 import {
     getPluginUiEphemeralSharedScope,
@@ -52,7 +53,277 @@ function executionOrigin(machineId: string) {
     });
 }
 
+function accountExecutionOrigin(custodyId: string): PluginUiAccountExecutableOrigin {
+    return { serverId: 'server-a', accountId: 'account-a', custodyId,
+        sourceCustody: { kind: 'bundled_first_party', packagedRuntime: {
+            kind: 'source_declaration', packageName: '@happier-dev/plugins-triage',
+        } } };
+}
+
 describe('plugin UI ephemeral shared scope', () => {
+    it.each([
+        { realm: 'Machine', origin: executionOrigin('machine-a'), accountOrigin: null },
+        { realm: 'Account', origin: null, accountOrigin: accountExecutionOrigin('installed-generation') },
+        { realm: 'Account with Machine placement', origin: executionOrigin('machine-a'), accountOrigin: accountExecutionOrigin('installed-generation') },
+    ])(
+        'keeps a mounted callback reachable across renderer and client occurrences of one admitted $realm plugin generation', async ({ origin, accountOrigin }) => {
+        const accountLifetime = createAccountLifetime();
+        const identity = { accountLifetime, pluginId: 'acme.external', pluginGenerationId: 'installed-generation',
+            executionOrigin: origin, accountExecutionOrigin: accountOrigin, isCurrent: () => true };
+        const page = getPluginUiEphemeralSharedScope({ ...identity, occurrenceId: 'renderer-occurrence', artifactDigest: `sha256:${'a'.repeat(64)}` });
+        const invoke = vi.fn(async () => ({ status: 'applied' }));
+        const mounted = page!.acquireExecutionBound!('mounted:page-1', () => ({ value: { invoke }, dispose() {} }));
+        const presentation = page!.acquire('window', () => ({ value: {}, dispose() {} }));
+        const action = getPluginUiEphemeralSharedScope({ ...identity, executionOrigin: accountOrigin ? null : origin,
+            occurrenceId: 'machine-action-occurrence', artifactDigest: `sha256:${'b'.repeat(64)}` });
+        const addressed = action!.acquireExecutionBound!<{ invoke: typeof invoke | null }>(
+            'mounted:page-1', () => ({ value: { invoke: null }, dispose() {} }));
+        expect(addressed?.value.invoke).toBe(invoke);
+        expect(await addressed?.value.invoke?.()).toEqual({ status: 'applied' });
+        expect(page!.acquire('window', () => { throw new Error('Mounted page must remain current'); })?.value).toBe(presentation?.value);
+        addressed?.release();
+        mounted?.release();
+        presentation?.release();
+    });
+    it.each([{ realm: 'Machine', origin: executionOrigin('machine-a') }, { realm: 'Account', origin: null }])(
+        'retires $realm executable callbacks when the admitted generation changes even if the raw occurrence and bytes do not', ({ origin }) => {
+        const accountLifetime = createAccountLifetime();
+        const input = { accountLifetime, pluginId: 'acme.external', occurrenceId: 'same-occurrence',
+            artifactDigest: `sha256:${'a'.repeat(64)}` as const, executionOrigin: origin, isCurrent: () => true };
+        const first = getPluginUiEphemeralSharedScope({ ...input, pluginGenerationId: 'release-a' })!;
+        const dispose = vi.fn();
+        const original = first.acquireExecutionBound!('mounted', () => ({ value: {}, dispose }))!;
+        const next = getPluginUiEphemeralSharedScope({ ...input, pluginGenerationId: 'release-b' })!;
+        const replacement = next.acquireExecutionBound!('mounted', () => ({ value: {}, dispose() {} }))!;
+        expect(replacement.value).not.toBe(original.value);
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(first.acquireExecutionBound!('mounted', () => { throw new Error('Retired package'); })).toBeNull();
+        original.release(); replacement.release();
+    });
+    it('retires executable callbacks on occurrence replacement without withdrawing the same presentation bytes', () => {
+        const accountLifetime = createAccountLifetime();
+        const identity = { accountLifetime, pluginId: 'acme.external', artifactDigest: `sha256:${'a'.repeat(64)}` as const,
+            executionOrigin: executionOrigin('machine-a'), isCurrent: () => true };
+        const mountLifetime = { isCurrent: () => true };
+        let observed: PluginUiEphemeralSharedScope | null = null;
+        function Probe({ occurrenceId }: Readonly<{ occurrenceId: string }>) {
+            observed = usePluginUiEphemeralSharedScopeBinding({ ...identity, occurrenceId, mountLifetime });
+            return null;
+        }
+        let mounted: ReturnType<typeof create> | undefined;
+        act(() => { mounted = create(createElement(Probe, { occurrenceId: 'generation-a' })); });
+        onTestFinished(() => { act(() => mounted?.unmount()); });
+        const first = observed as PluginUiEphemeralSharedScope | null;
+        if (!first) throw new Error('Missing first committed scope');
+        const dispose = vi.fn();
+        const callback = first.acquireExecutionBound!('mounted', () => ({ value: {}, dispose }));
+        const presentation = first.acquire('window', () => ({ value: {}, dispose() {} }));
+        act(() => { mounted?.update(createElement(Probe, { occurrenceId: 'generation-b' })); });
+        const replacement = observed as PluginUiEphemeralSharedScope | null;
+        if (!replacement) throw new Error('Missing replacement committed scope');
+        const next = replacement.acquireExecutionBound!('mounted', () => ({ value: {}, dispose() {} }));
+        expect(next?.value).not.toBe(callback?.value);
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(first.acquireExecutionBound!('mounted', () => { throw new Error('Retired generation'); })).toBeNull();
+        expect(first.acquire('window', () => { throw new Error('Presentation bytes did not change'); })?.value).toBe(presentation?.value);
+    });
+    it('retires an exact retained value for all borrowers without evicting its replacement or another purpose', () => {
+        const accountLifetime = createAccountLifetime();
+        const scope = getPluginUiEphemeralSharedScope({ accountLifetime, pluginId: 'acme.external',
+            occurrenceId: 'authority-test', executionOrigin: executionOrigin('machine-a'), isCurrent: () => true })!;
+        const disposed = vi.fn();
+        const createValue = () => ({ value: {}, dispose: disposed, retainWhenIdle: true as const });
+        const first = scope.acquireExecutionBound!('ci/github', createValue)!;
+        const peer = scope.acquireExecutionBound!('ci/github', createValue)!;
+        const other = scope.acquireExecutionBound!('ci/other-purpose', createValue)!;
+        expect(peer.value).toBe(first.value);
+        expect(first.retire).toBeTypeOf('function');
+        first.retire!();
+        expect(disposed).toHaveBeenCalledTimes(1);
+        const replacement = scope.acquireExecutionBound!('ci/github', createValue)!;
+        expect(replacement.value).not.toBe(first.value);
+        peer.retire!();
+        peer.release(); first.release();
+        expect(disposed).toHaveBeenCalledTimes(1);
+        expect(scope.acquireExecutionBound!('ci/github', createValue)!.value).toBe(replacement.value);
+        expect(scope.acquireExecutionBound!('ci/other-purpose', createValue)!.value).toBe(other.value);
+    });
+    it('partitions execution-bound values by the full admitted origin while preserving same-origin sharing', () => {
+        const account = createAccountLifetime();
+        const foreign = createAccountLifetime('account-b');
+        const originA = executionOrigin('machine-a');
+        const originB = executionOrigin('machine-b');
+        const replacement = { ...originA, materializationRef: { ...originA.materializationRef, materializationId: 'materialization-replacement' as const } };
+        const scope = (accountLifetime: TestAccountLifetime, origin: typeof originA) => getPluginUiEphemeralSharedScope({
+            accountLifetime, pluginId: 'acme.triage', occurrenceId: 'same-admitted-artifact', executionOrigin: origin, isCurrent: () => true,
+        })!;
+        const first = scope(account, originA).acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        expect(first).toBeDefined();
+        const peer = scope(account, originA).acquireExecutionBound?.('reads', () => { throw new Error('Same authority must share'); })!;
+        const other = scope(account, originB).acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        const replaced = scope(account, replacement).acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        const otherAccount = scope(foreign, originA).acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        expect(peer.value).toBe(first.value);
+        expect(other.value).not.toBe(first.value);
+        expect(replaced.value).not.toBe(first.value);
+        expect(otherAccount.value).not.toBe(first.value);
+        const unqualified = getPluginUiEphemeralSharedScope({ accountLifetime: account, pluginId: 'acme.triage',
+            occurrenceId: 'same-admitted-artifact', isCurrent: () => true })!;
+        expect(unqualified.acquireExecutionBound?.('reads', () => { throw new Error('Unqualified execution must refuse'); })).toBeNull();
+        first.release(); peer.release();
+        const surviving = scope(account, originB).acquireExecutionBound?.('reads', () => { throw new Error('Other origin must remain usable'); })!;
+        expect(surviving.value).toBe(other.value);
+        const reopened = scope(account, originA).acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        expect(reopened.value).not.toBe(first.value);
+        other.release(); surviving.release(); reopened.release(); replaced.release(); otherAccount.release();
+    });
+
+    // TL-C (READY159): a Session Details mount held its callback under Machine 3ca2 while its Action, named from the
+    // Account catalog, looked in the Account slot, so a published Refresh settled `unavailable`.
+    it('resolves a Machine-placed mount and its Account-custody Action to one slot within an admitted generation', () => {
+        const account = createAccountLifetime();
+        const generation = 'admitted-generation';
+        const origin = executionOrigin('machine-a');
+        const mount = getPluginUiEphemeralSharedScope({ accountLifetime: account, pluginId: 'acme.triage', occurrenceId: 'renderer-occurrence',
+            pluginGenerationId: generation, accountExecutionOrigin: null, executionOrigin: origin, isCurrent: () => true })!;
+        const callback = mount.acquireExecutionBound?.('mounted-ui:mount-1', () => ({ value: { invoke: 'bound' }, dispose() {} }))!;
+        expect(callback).toBeDefined();
+        const borrow = (input: Partial<Parameters<typeof getPluginUiEphemeralSharedScope>[0]>) => getPluginUiEphemeralSharedScope({
+            accountLifetime: account, pluginId: 'acme.triage', occurrenceId: generation, isCurrent: () => true, ...input,
+        })!.acquireExecutionBound?.('mounted-ui:mount-1', () => { throw new Error('The mounted callback must already be shared'); })!;
+        // The agent's command or direct Action, resolved from the Account catalog.
+        const accountAction = borrow({ pluginGenerationId: generation, executionOrigin: null,
+            accountExecutionOrigin: accountExecutionOrigin(generation) });
+        // The person's control, through the mount's own Machine-qualified Action.
+        const mountAction = borrow({ pluginGenerationId: generation, accountExecutionOrigin: null, executionOrigin: origin });
+        expect(accountAction.value).toBe(callback.value);
+        expect(mountAction.value).toBe(callback.value);
+        // Without an admitted generation, the exact origin still isolates.
+        const unadmitted = (machine: string) => getPluginUiEphemeralSharedScope({ accountLifetime: account, pluginId: 'acme.triage',
+            occurrenceId: 'machine-only', executionOrigin: executionOrigin(machine), isCurrent: () => true })!
+            .acquireExecutionBound?.('reads', () => ({ value: {}, dispose() {} }))!;
+        const machineA = unadmitted('machine-a');
+        const machineB = unadmitted('machine-b');
+        expect(machineB.value).not.toBe(machineA.value);
+        for (const lease of [callback, accountAction, mountAction, machineA, machineB]) lease.release();
+    });
+
+    it('shares a Triage page corpus across sibling artifacts of one admitted plugin generation and isolates another Account', () => {
+        const accountLifetime = createAccountLifetime('account-a');
+        const foreignAccountLifetime = createAccountLifetime('account-b');
+        // A renderer digest identifies one entry point, not the plugin: the
+        // list page, picker and client Actions are independently compiled.
+        const generation = { pluginGenerationId: 'triage-admitted-package-generation' };
+        const artifactDigest = `sha256:${'c'.repeat(64)}` as const;
+        const mountLifetime = Object.freeze({ isCurrent: () => true });
+        const scopes: Record<'page' | 'picker' | 'foreignPicker', PluginUiEphemeralSharedScope | null> = {
+            page: null, picker: null, foreignPicker: null,
+        };
+
+        function Probe(props: Readonly<{
+            account: ActiveServerAccountScopeLifetime;
+            occurrenceId: string;
+            role: 'page' | 'picker' | 'foreignPicker';
+        }>) {
+            const scope = usePluginUiEphemeralSharedScopeBinding({
+                accountLifetime: props.account,
+                pluginId: 'happier.triage',
+                occurrenceId: props.occurrenceId,
+                ...generation,
+                artifactDigest: props.role === 'page' ? artifactDigest : `sha256:${'d'.repeat(64)}`,
+                mountLifetime,
+            });
+            scopes[props.role] = scope;
+            return null;
+        }
+
+        let page: ReturnType<typeof create> | undefined;
+        let picker: ReturnType<typeof create> | undefined;
+        let foreignPicker: ReturnType<typeof create> | undefined;
+        try {
+            act(() => {
+                page = create(createElement(Probe, {
+                    account: accountLifetime,
+                    occurrenceId: 'triage-page-occurrence',
+                    role: 'page',
+                }));
+            });
+            const pageCorpus = scopes.page?.acquire('triage-list-window-v1', () => Object.freeze({
+                value: Object.freeze({ rows: Object.freeze(['entry-42']) }),
+                dispose(): void {},
+            }));
+            expect(pageCorpus).not.toBeNull();
+
+            act(() => {
+                picker = create(createElement(Probe, {
+                    account: accountLifetime,
+                    occurrenceId: 'triage-composer-picker-occurrence',
+                    role: 'picker',
+                }));
+                foreignPicker = create(createElement(Probe, {
+                    account: foreignAccountLifetime,
+                    occurrenceId: 'triage-composer-picker-occurrence',
+                    role: 'foreignPicker',
+                }));
+            });
+            const pickerCorpus = scopes.picker?.acquire('triage-list-window-v1', () => Object.freeze({
+                value: Object.freeze({ rows: Object.freeze(['cold-picker']) }),
+                dispose(): void {},
+            }));
+            const foreignCorpus = scopes.foreignPicker?.acquire('triage-list-window-v1', () => Object.freeze({
+                value: Object.freeze({ rows: Object.freeze(['foreign-entry']) }),
+                dispose(): void {},
+            }));
+
+            expect(pickerCorpus?.value).toBe(pageCorpus?.value);
+            expect(foreignCorpus?.value).not.toBe(pageCorpus?.value);
+            expect(foreignCorpus?.value.rows).toEqual(['foreign-entry']);
+
+            const actionIdentity = { accountLifetime, pluginId: 'happier.triage',
+                occurrenceId: 'triage-client-action-occurrence', ...generation,
+                artifactDigest: `sha256:${'e'.repeat(64)}` as const, isCurrent: () => true };
+            const actionScope = getPluginUiEphemeralSharedScope(actionIdentity);
+            const actionCorpus = actionScope?.acquire('triage-list-window-v1', () => Object.freeze({
+                value: Object.freeze({ rows: Object.freeze(['cold-action']) }),
+                dispose(): void {},
+            }));
+            expect(actionCorpus?.value).toBe(pageCorpus?.value);
+            const stillMountedCorpus = scopes.page?.acquire('triage-list-window-v1', () => Object.freeze({
+                value: Object.freeze({ rows: Object.freeze(['unexpected-retired-page']) }),
+                dispose(): void {},
+            }));
+            expect(stillMountedCorpus?.value).toBe(pageCorpus?.value);
+
+            pageCorpus?.release();
+            pickerCorpus?.release();
+            foreignCorpus?.release();
+            actionCorpus?.release();
+            stillMountedCorpus?.release();
+        } finally {
+            act(() => {
+                page?.unmount();
+                picker?.unmount();
+                foreignPicker?.unmount();
+            });
+        }
+    });
+
+    it('retires presentation state when the admitted plugin generation changes even if one renderer is unchanged', () => {
+        const accountLifetime = createAccountLifetime();
+        const input = { accountLifetime, pluginId: 'acme.triage',
+            artifactDigest: `sha256:${'c'.repeat(64)}` as const, isCurrent: () => true };
+        const first = getPluginUiEphemeralSharedScope({ ...input, pluginGenerationId: 'release-a' })!;
+        const dispose = vi.fn();
+        const initial = first.acquire('window.v1', () => ({ value: { rows: ['entry-42'] }, dispose }))!;
+        const second = getPluginUiEphemeralSharedScope({ ...input, pluginGenerationId: 'release-b' })!;
+        const replacement = second.acquire('window.v1', () => ({ value: { rows: ['entry-43'] }, dispose() {} }))!;
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(first.acquire('window.v1', () => { throw new Error('Retired release'); })).toBeNull();
+        expect(replacement.value).not.toBe(initial.value);
+        expect(replacement.value.rows).toEqual(['entry-43']);
+        initial.release(); replacement.release();
+    });
+
     it('presents the retained row after the last reader unmounts while its Account owner stays current', () => {
         const accountLifetime = createAccountLifetime('reopened-reader-account');
         const firstReader = Object.freeze({ ...createAccountLifetime('reopened-reader-account'), accountLifetime });

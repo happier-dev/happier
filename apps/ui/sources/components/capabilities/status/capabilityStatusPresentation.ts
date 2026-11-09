@@ -47,6 +47,8 @@ export const capabilityStatusLabels: HappierCapabilityStatusLabels = {
         return t('capabilities.status.signing');
       case 'update':
         return t('capabilities.status.update');
+      case 'removed':
+        return t('capabilities.status.removed');
       case 'modified':
         return t('capabilities.status.modified');
       case 'pinned':

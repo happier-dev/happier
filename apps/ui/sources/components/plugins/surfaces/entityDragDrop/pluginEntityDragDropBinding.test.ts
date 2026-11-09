@@ -3,8 +3,8 @@ import type { EntityDropAdmissionV1, PluginUiJsonValueV1 } from '@happier-dev/pr
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { createPluginEntityDragDropBinding, settlePluginEntityDropActionResult, type PluginEntityDragSourceRegistration, type PluginEntityDropTargetRegistration } from './pluginEntityDragDropBinding';
 import { createPluginSurfaceHostApiError } from '../createPluginSurfaceHostApi';
-import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol';
-import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol';
+import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
 import { createPluginUiClientExecutableRegistrationIndex, resolvePluginUiClientDragSourceRegistration, resolvePluginUiClientDropTargetRegistration } from '../../reactNative/clientExecutableContributions';
 import { plugin as authorPlugin, activate as activateAuthorPlugin } from '../../../../../../../packages/plugin-sdk/fixtures/authoring-inference/entityDragDrop';
 import { createHostedEntityDragDropHandlers } from '../../hostApi/hostedEntityDragDrop';

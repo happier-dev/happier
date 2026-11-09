@@ -13,11 +13,12 @@ import type {
 import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 
 import { renderScreen } from '@/dev/testkit';
+import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import { createPluginSurfaceMountLifetimeFixture } from '@/dev/testkit/fixtures/pluginSurfaceMountLifetimeFixture';
 
 let mountLifetime: ReturnType<typeof createPluginSurfaceMountLifetimeFixture>;
 beforeEach(() => { mountLifetime = createPluginSurfaceMountLifetimeFixture(); });
-afterEach(() => { mountLifetime.dispose(); });
+afterEach(() => { mountLifetime.dispose(); clearActiveUnsavedChangesGuard(); });
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { PluginNativeArtifactResourceHandle } from '@/sync/domains/plugins/availability/nativeArtifactResource';
 import type { PluginUiArtifactAdoption } from '@/sync/domains/plugins/ui/artifactAdoption';
@@ -596,10 +597,21 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         expect(nativeRouteBack.enabled).toBe(true);
 
         const blockedAction = { type: 'GO_BACK' };
+        const isDirtyRef = { current: true };
+        let decision: 'keepEditing' | 'discard' = 'keepEditing';
+        setActiveUnsavedChangesGuard({ isDirtyRef, requestDecision: async () => decision, tag: 'hosted-native-dirty-page' });
         await act(async () => {
             nativeRouteBack.callback?.({ data: { action: blockedAction } });
         });
+        await flushHookEffects({ cycles: 2 });
+        expect(frameProps.at(-1)?.navigationCommand).toBeUndefined();
+        expect(isDirtyRef.current).toBe(true);
+        decision = 'discard';
+        await act(async () => { nativeRouteBack.callback?.({ data: { action: blockedAction } }); });
+        await flushHookEffects({ cycles: 2 });
         expect(frameProps.at(-1)?.navigationCommand).toEqual(expect.objectContaining({ kind: 'goBack' }));
+        expect(isDirtyRef.current).toBe(false);
+        clearActiveUnsavedChangesGuard();
         expect(dispatch).not.toHaveBeenCalled();
 
         const goBackResult = frameProps.at(-1)?.onNativeArtifactGoBackResult as ((handled: boolean) => void) | undefined;

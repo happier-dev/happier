@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
@@ -10,6 +11,9 @@ import { formatAgentNameListParts, type AgentNameListPart } from './agentNameLis
 export { formatAgentNameList } from './agentNameList';
 
 const MARK_SIZE_PX = 13;
+// Web draws a mark nested in text inline-flex, whose baseline is its empty first box's top, so the mark hung below
+// the line; it sits on the text's middle instead. Native already lays an inline view on the line.
+const INLINE_MARK = Platform.OS === 'web' ? ({ verticalAlign: 'middle' } as unknown as ViewStyle) : null;
 
 /**
  * "Claude, Codex and OpenCode": each Agent's catalog mark before its name, joined as the reader's language
@@ -51,8 +55,10 @@ export function AgentNameRun(props: Readonly<{
                     const identity = identities[part.index]!;
                     return (
                         <Text key={`${identity.entry.backendTargetKey ?? identity.entry.qualifiedId}:${position}`}>
-                            <AgentCatalogIdentityIcon entry={identity.entry} machineId={props.machineId ?? null} serverId={props.serverId ?? null}
-                                current={identity.current} size={MARK_SIZE_PX} />
+                            <View style={INLINE_MARK}>
+                                <AgentCatalogIdentityIcon entry={identity.entry} machineId={props.machineId ?? null} serverId={props.serverId ?? null}
+                                    current={identity.current} size={MARK_SIZE_PX} />
+                            </View>
                             {`\u2009${identity.entry.title}`}
                         </Text>
                     );
@@ -67,8 +73,10 @@ export function AgentNameRun(props: Readonly<{
                 const identity = identities[part.index]!;
                 return (
                     <Text key={`${identity.entry.backendTargetKey ?? identity.entry.qualifiedId}:${position}`} style={[styles.name, { color }]}>
-                        <AgentCatalogIdentityIcon entry={identity.entry} machineId={props.machineId ?? null} serverId={props.serverId ?? null}
-                            current={identity.current} size={MARK_SIZE_PX} />
+                        <View style={INLINE_MARK}>
+                            <AgentCatalogIdentityIcon entry={identity.entry} machineId={props.machineId ?? null} serverId={props.serverId ?? null}
+                                current={identity.current} size={MARK_SIZE_PX} />
+                        </View>
                         {` ${identity.entry.title}`}
                     </Text>
                 );

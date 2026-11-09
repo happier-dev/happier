@@ -1,13 +1,13 @@
 import type {
     PluginResourceContextV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/v2';
 import type {
     PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
-import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -271,6 +271,13 @@ function errorPayload(
     return createPluginSurfaceHostApiError(code, [reason]);
 }
 
+/** Read/watch request adapters preserve the same Resource owner's failure. */
+export function createPluginSurfaceResourceSnapshotError(error: PluginUiResourceSnapshot['error']): PluginUiJsonValueV1 {
+    return error ? createPluginSurfaceHostApiError(error.code ?? 'plugin_resource_unavailable', error.diagnostics,
+        error.message, { ...readPluginSurfaceHostApiFailureMetadata(error.details), retryable: error.retryable })
+        : errorPayload('unavailable', 'plugin_resource_unavailable');
+}
+
 function resourceAbortPayload(isCurrent: (() => boolean) | undefined): PluginUiJsonValueV1 {
     return errorPayload(
         'unavailable',
@@ -300,9 +307,9 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
                 if (merged.signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
                 const entry = input.hostResourceStore.getEntry(hostReference.data);
                 await readPluginResourceStoreSnapshot(entry, merged.signal);
-                if (merged.signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                if (merged.signal?.aborted) return resourceAbortPayload(input.isCurrent);
                 const snapshot = entry.getSnapshot();
-                if (!snapshot.value) return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable');
+                if (!snapshot.value) return createPluginSurfaceResourceSnapshotError(snapshot.error);
                 return { contentType: snapshot.value.contentType, digest: snapshot.value.digest,
                     bytesBase64: encodeBase64(snapshot.value.bytes, 'base64') };
             } catch (error) {
@@ -335,15 +342,13 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
             try {
                 const entry = store.getEntry(reference);
                 await readPluginResourceStoreSnapshot(entry, signal, input.resource.refreshOnRead === true);
-                if (signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
-                // The physical caller survives declaration updates. Authority
-                // may have withdrawn while the cached read yielded.
+                if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
                 const snapshot = entry.getSnapshot();
-                if (snapshot.error || !snapshot.value) return errorPayload('unavailable', snapshot.error?.code ?? 'plugin_resource_unavailable');
+                if (snapshot.error || !snapshot.value) return createPluginSurfaceResourceSnapshotError(snapshot.error);
                 return { contentType: snapshot.value.contentType, digest: snapshot.value.digest,
                     bytesBase64: encodeBase64(snapshot.value.bytes, 'base64') };
             } catch (error) {
-                if (signal?.aborted || input.isCurrent?.() === false) return resourceAbortPayload(input.isCurrent);
+                if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
                 return errorPayload('unavailable', error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                     ? error.code : 'plugin_resource_unavailable');
             }
@@ -367,19 +372,15 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         }
         if (signal?.aborted || input.resource.store) return resourceAbortPayload(input.isCurrent);
         if (!outcome.supported) {
-            return errorPayload(
-                'unavailable',
-                mapMachinePluginUiResourceTransportFailure(outcome.reason).code,
-            );
+            const failure = mapMachinePluginUiResourceTransportFailure(outcome.reason);
+            return createPluginSurfaceHostApiError(failure.code, [failure.code], undefined,
+                { layer: 'transport', phase: 'invocation', retryable: failure.retryable });
         }
         if (!outcome.result.ok) {
             return errorPayload('unavailable', outcome.result.code);
         }
-        // Revalidate after the awaited round trip: a surface retired while the
-        // daemon was reading must not disclose the bytes it returned.
-        if (input.isCurrent?.() === false) {
-            return errorPayload('unavailable', 'plugin_surface_retired');
-        }
+        // Admission belongs to the request boundary. The mount/caller signal
+        // still drops a late reply when its physical consumer has gone away.
         return {
             contentType: outcome.result.contentType,
             digest: outcome.result.digest,

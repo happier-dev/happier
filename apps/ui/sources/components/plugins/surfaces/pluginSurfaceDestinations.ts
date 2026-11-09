@@ -11,14 +11,17 @@ import {
     type PluginUiIconDirection,
 } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { resolvePluginDisplayString } from '@/components/plugins/surfaces/resolvePluginDisplayString';
-import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import { resolvePluginLocalizedText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { evaluatePluginUiPolicy, type PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import { reconcilePluginUiProjectionValue } from '@/sync/domains/plugins/ui/projection';
 import type {
     PluginUiDestinationProjection,
     PluginUiPhysicalSurfacePlacementProjection,
+    PluginUiSettingsPageProjection,
     PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { PluginRightSidebarDefaultPlacement } from '@happier-dev/protocol/plugins/contributions/ui';
 
 /**
  * The projected-placement -> qualified selectable-destination core.
@@ -48,7 +51,13 @@ export type PluginSurfaceDestinationBadge = Readonly<{
     tone: PluginUiToneV1;
 }>;
 
+export type PluginSurfaceDestinationCounts = Readonly<{
+    resourceId: string;
+    items: readonly Readonly<{ field: string; label: string }>[];
+}>;
+
 export type PluginSurfaceDestination = Readonly<{
+    visible: boolean;
     /** Qualified selection id. Never a raw slug — two plugins may share one. */
     id: `plugin:${string}`;
     pluginId: string;
@@ -58,6 +67,10 @@ export type PluginSurfaceDestination = Readonly<{
     icon: IconName;
     /** Static author metadata after safe display resolution; never dynamic badge state. */
     badge?: PluginSurfaceDestinationBadge;
+    /** Sidebar presentation hints already admitted by the V2 declaration owner. */
+    defaultPlacement?: PluginRightSidebarDefaultPlacement;
+    countResourceId?: string;
+    counts?: PluginSurfaceDestinationCounts;
     /**
      * Where the author asked the shell to list it: the rail, or a named column. The host catalog
      * resolves it against the columns it has; absent means the rail.
@@ -72,6 +85,8 @@ export type PluginSurfaceDestination = Readonly<{
      * from one a plugin never declared.
      */
     disabledReason: string | null;
+    /** Diagnostic remains separate when disabledReason is authored human wording. */
+    disabledReasonCode?: string;
     placement: PluginUiSurfacePlacementProjection;
 }>;
 
@@ -83,6 +98,8 @@ export type PluginSurfaceDestinationSelection = Readonly<{
 }>;
 
 export type ResolvePluginSurfaceDestinationsInput = Readonly<{
+    /** Prior admitted output from this exact Account/target/policy/locale scope. */
+    baseline?: readonly PluginSurfaceDestination[];
     placements?: readonly PluginUiSurfacePlacementProjection[];
     /** The family's identity + inclusion rule. `null` excludes the placement. */
     select: (placement: PluginUiSurfacePlacementProjection) => PluginSurfaceDestinationSelection | null;
@@ -171,6 +188,7 @@ export function resolvePluginSurfaceDestinationIcon(
 export function resolvePluginSurfaceDestinationBadge(
     placement: PluginUiSurfacePlacementProjection,
     localize?: PluginLocalizedTextResolver,
+    admittedTone?: PluginUiToneV1,
 ): PluginSurfaceDestinationBadge | null {
     const badge = readPluginSurfaceRecord(placement.display.badge);
     if (!badge) {
@@ -192,10 +210,10 @@ export function resolvePluginSurfaceDestinationBadge(
     if (!label) {
         return null;
     }
-    const tone = PluginUiToneV1Schema.safeParse(badge.tone);
+    const tone = admittedTone === undefined ? PluginUiToneV1Schema.safeParse(badge.tone) : null;
     return Object.freeze({
         label,
-        tone: tone.success ? tone.data : 'neutral',
+        tone: admittedTone ?? (tone?.success ? tone.data : 'neutral'),
     });
 }
 
@@ -221,16 +239,49 @@ export function resolvePluginSurfaceDestinationRankHint(
 export function resolvePluginSurfaceDestinationDisabledReason(
     placement: PluginUiDestinationProjection,
     policyContext: PluginUiPolicyEvaluationContext | undefined,
+    localize?: PluginLocalizedTextResolver,
 ): string | null {
+    return resolvePluginSurfaceState(placement, policyContext, localize).disabledReason;
+}
+
+export type PluginSurfaceRenderGateDecision =
+    | Readonly<{ canRender: true }>
+    | Readonly<{ canRender: false; reason: string; state?: 'loading' }>;
+
+/** One policy fact for catalogs, route admission, physical bodies and inert widget references. */
+export function resolvePluginSurfaceState(
+    placement: PluginUiPhysicalSurfacePlacementProjection | PluginUiSettingsPageProjection,
+    policyContext: PluginUiPolicyEvaluationContext | undefined,
+    localize?: PluginLocalizedTextResolver,
+): Readonly<{ visible: boolean; disabledReason: string | null;
+    disabledReasonCode?: string; renderGate: PluginSurfaceRenderGateDecision }> {
+    const policy = evaluatePluginUiPolicy(placement, policyContext ?? {});
+    const refuse = (reason: string, visible = policy.visible) => {
+        const normalizedReason = reason === 'feature_gate_disabled' ? 'feature_disabled' : reason;
+        return { visible, disabledReason: normalizedReason,
+            renderGate: { canRender: false as const, reason: normalizedReason } };
+    };
+    if (!policy.visible) {
+        return refuse(policy.diagnostics.find(reason => reason.trim().length > 0) ?? 'policy_unavailable', false);
+    }
+    if (placement.availability.state !== 'available' && placement.availability.state !== 'resolving') {
+        return refuse(placement.availability.reason);
+    }
+    if (!policy.enabled) {
+        const declaredReason = placement.availability.disabledReason;
+        return { visible: true, disabledReasonCode: 'policy_disabled',
+            disabledReason: declaredReason === undefined ? 'policy_disabled'
+                : localize ? localize(placement.pluginId, declaredReason)
+                    : resolvePluginLocalizedText({ projection: null, pluginId: placement.pluginId, value: declaredReason }),
+            renderGate: { canRender: false, reason: 'policy_disabled' } };
+    }
     // Resolving execution does not deny navigation to the declared page. Its
     // route owns loading while Administration resolves the exact origin.
-    if (placement.availability.state !== 'available' && placement.availability.state !== 'resolving') {
-        return placement.availability.reason;
+    if (placement.availability.state === 'resolving') {
+        return { visible: true, disabledReason: null,
+            renderGate: { canRender: false, reason: 'plugin_execution_origin_pending', state: 'loading' } };
     }
-    if (!canRenderPluginUiProjectionEntry(placement, policyContext)) {
-        return 'policy_deferred';
-    }
-    return null;
+    return { visible: true, disabledReason: null, renderGate: { canRender: true } };
 }
 
 /**
@@ -250,6 +301,7 @@ export function resolvePluginSurfaceDestinations(
     input: ResolvePluginSurfaceDestinationsInput,
 ): readonly PluginSurfaceDestination[] {
     const destinations: PluginSurfaceDestination[] = [];
+    const previousById = new Map(input.baseline?.map(entry => [entry.id, entry]));
     // A qualified destination is a single public identity. Host order is
     // allowed to decide presentation order among distinct destinations, never
     // which of two conflicting declarations becomes authoritative. Record every
@@ -258,30 +310,48 @@ export function resolvePluginSurfaceDestinations(
     const claimedIds = new Set<string>();
     const duplicateIds = new Set<string>();
 
-    for (const placement of input.placements ?? []) {
-        const selection = input.select(placement);
+    for (const incoming of input.placements ?? []) {
+        const selection = input.select(incoming);
         if (!selection) {
             continue;
         }
         const slug = normalizePluginSurfaceDestinationSlug(selection.slug);
-        const id = buildPluginSurfaceDestinationId(placement.pluginId, slug);
+        const id = buildPluginSurfaceDestinationId(incoming.pluginId, slug);
+        const previous = previousById.get(id);
+        const placement = reconcilePluginUiProjectionValue(previous?.placement, incoming);
         if (claimedIds.has(id)) {
             duplicateIds.add(id);
         } else {
             claimedIds.add(id);
         }
-        const disabledReason = resolvePluginSurfaceDestinationDisabledReason(
+        const { visible, disabledReason, disabledReasonCode } = resolvePluginSurfaceState(
             placement,
             input.policyContext,
+            input.localize,
         );
         if (disabledReason !== null && input.hideWhenDisabled?.(placement, disabledReason) === true) {
             continue;
         }
-        const badge = resolvePluginSurfaceDestinationBadge(placement, input.localize);
-        const requestedPlacement = resolvePluginSurfaceDestinationPlacement(placement);
-        const rankHint = resolvePluginSurfaceDestinationRankHint(placement);
-        destinations.push(Object.freeze({
+        const sameDisplay = previous !== undefined && placement.display === previous.placement.display;
+        const badge = resolvePluginSurfaceDestinationBadge(placement, input.localize, sameDisplay ? previous.badge?.tone : undefined);
+        const requestedPlacement = sameDisplay ? previous.requestedPlacement : resolvePluginSurfaceDestinationPlacement(placement);
+        const rankHint = sameDisplay ? previous.rankHint : resolvePluginSurfaceDestinationRankHint(placement);
+        const defaultPlacement = placement.binding.container === 'rightSidebarTab'
+            ? placement.display.defaultPlacement : undefined;
+        const countResourceId = placement.binding.container === 'rightSidebarTab'
+            ? readPluginSurfaceString(placement.display.countResourceId) : null;
+        const countBinding = placement.display.counts;
+        const counts = countBinding ? reconcilePluginUiProjectionValue(previous?.counts, Object.freeze({
+            resourceId: countBinding.resourceId,
+            items: Object.freeze(countBinding.items.map(item => Object.freeze({
+                field: item.field, label: input.localize ? input.localize(placement.pluginId, item.label)
+                    : resolvePluginLocalizedText({ projection: null, pluginId: placement.pluginId, value: item.label }),
+            }))),
+        })) : undefined;
+        destinations.push(reconcilePluginUiProjectionValue(previous, Object.freeze({
             id,
+            visible,
+            ...(disabledReasonCode ? { disabledReasonCode } : {}),
             pluginId: placement.pluginId,
             descriptorId: placement.descriptorId,
             label: resolvePluginSurfaceDestinationLabel(placement, input.localize),
@@ -289,13 +359,20 @@ export function resolvePluginSurfaceDestinations(
             ...(badge === null ? {} : { badge }),
             ...(requestedPlacement === undefined ? {} : { requestedPlacement }),
             ...(rankHint === undefined ? {} : { rankHint }),
+            ...(defaultPlacement === 'pinned' || defaultPlacement === 'overflow' || defaultPlacement === 'auto'
+                ? { defaultPlacement } : {}),
+            ...(countResourceId ? { countResourceId } : {}),
+            ...(counts ? { counts } : {}),
             order: selection.order ?? Number.MAX_SAFE_INTEGER,
             disabledReason,
             placement,
-        }));
+        })));
     }
 
-    return Object.freeze(destinations
+    const ordered = destinations
         .filter((destination) => !duplicateIds.has(destination.id))
-        .sort(comparePluginSurfaceDestinations));
+        .sort(comparePluginSurfaceDestinations);
+    return input.baseline && input.baseline.length === ordered.length
+        && ordered.every((entry, index) => entry === input.baseline?.[index])
+        ? input.baseline : Object.freeze(ordered);
 }

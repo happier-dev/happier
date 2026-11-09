@@ -8,6 +8,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
+import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
 /** A recipe's own options are static, so there is nothing to read: the resolver only projects what it declares. */
 const STATIC_OPTIONS = buildSessionActionFieldOptionsResolver({});
@@ -57,14 +58,18 @@ export function SoftwareInputFields(
     draft: SoftwareInputDraft;
     onPatch: (patch: Record<string, unknown>) => void;
     testID: string;
+    pickerContext?: InputTypePickerHostContext;
   }>,
 ): React.ReactNode {
+  const resolveFieldOptions = React.useMemo(() => props.pickerContext
+    ? Object.assign(buildSessionActionFieldOptionsResolver({}), { pickerContext: props.pickerContext })
+    : STATIC_OPTIONS, [props.pickerContext]);
   return (
     <ActionInputFields
       fields={props.fields}
       input={{ ...props.draft }}
       editable
-      resolveFieldOptions={STATIC_OPTIONS}
+      resolveFieldOptions={resolveFieldOptions}
       resolveFieldTestID={(field) => `${props.testID}.${field.path}`}
       onPatch={props.onPatch}
     />

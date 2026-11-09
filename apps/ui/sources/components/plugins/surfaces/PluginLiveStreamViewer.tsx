@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { PluginUiLiveStreamViewingV1Schema } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
-import type { DaemonPluginUiCaptureSourceDescriptorV1 } from '@happier-dev/protocol';
+import type { DaemonPluginUiCaptureSourceDescriptorV1 } from '@happier-dev/protocol/daemon/pluginCaptureSources';
 import type { HappierLiveStreamProps } from '@happier-dev/plugin-ui/presentation';
 import { LiveStreamPlayer, type LiveStreamPlayerDisplayState } from '@/components/stream/LiveStreamPlayer';
 import { useMachineLiveStreamRelaySocket } from '@/components/stream/useMachineLiveStreamRelaySocket';

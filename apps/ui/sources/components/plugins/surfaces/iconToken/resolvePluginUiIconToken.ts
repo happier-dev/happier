@@ -75,6 +75,7 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     generate: 'sparkle',
     workflow: 'play-circle',
     neutral: 'minus-circle',
+    task: 'check-square',
     rocket: 'rocket',
     star: 'star',
     flag: 'flag',
@@ -82,6 +83,8 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     flask: 'flask',
     book: 'book',
     heart: 'heart',
+    shield: 'shield',
+    edit: 'pencil-simple',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */

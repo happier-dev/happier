@@ -72,7 +72,7 @@ function createInspectorTabHostApi(executeAction: (actionId: string, input: unkn
         },
     });
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
-        surface: createInspectorTabSurface(), requestSurface, requestIdPrefix: 'inspector-test',
+        surface: createInspectorTabSurface(), requestSurface,
         handleRequest: owner.handleRequest, installedMethods: owner.installedMethods,
     });
     inspectorHostAdapters.push(adapter);
@@ -153,6 +153,25 @@ describe('inspector renderSurface (real source, mounted)', () => {
         } finally {
             await act(async () => { laterRead.resolve(inventory); });
         }
+    });
+
+    it('reads the inventory once when the Machine becomes execution-ready after mount', async () => {
+        const executeAction = vi.fn(async (actionId: string) => {
+            if (actionId !== 'plugins.list') throw new Error(`unexpected actionId ${actionId}`);
+            return { ok: true, kind: 'plugins_list', plugins: [{ pluginId: 'acme.ready', enabled: true }] };
+        });
+        const hostApi = createInspectorTabHostApi(executeAction);
+        const signal = new AbortController().signal;
+        const surface = createInspectorTabSurface({ machineExecutionReady: false });
+        await act(async () => {
+            renderer = create(renderInspectorSurface({ hostApi, surface, signal }));
+        });
+        await act(async () => {
+            renderer!.update(renderInspectorSurface({ hostApi, signal, surface: { ...surface, machineExecutionReady: true } }));
+        });
+        await waitForTestId(renderer!, 'inspector-plugin-acme.ready');
+        expect(executeAction.mock.calls.filter(([actionId]) => actionId === 'plugins.list'),
+            'an unready Machine defers the read; admission starts exactly one').toHaveLength(1);
     });
 
     it('settles its declared self-check through the same public Action bridge as inventory', async () => {
@@ -331,7 +350,7 @@ describe('inspector renderSurface (real source, mounted)', () => {
             await Promise.resolve();
         });
 
-        expect(executeAction).toHaveBeenCalledWith('plugins.list', {});
+        expect(executeAction).toHaveBeenCalledWith('plugins.list', { projection: 'summary' });
         await waitForTestId(renderer!, 'inspector-surface');
         await waitForTestId(renderer!, 'inspector-plugin-happier.inspector');
         await waitForTestId(renderer!, 'inspector-plugin-acme.example');

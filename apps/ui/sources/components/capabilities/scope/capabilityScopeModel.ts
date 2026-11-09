@@ -46,6 +46,22 @@ export function machinesNeedingOfflineNote<T extends Readonly<{ machineId: strin
   return covered.filter((machine) => machine.offline && machine.machineId !== announcedMachineId);
 }
 
+/**
+ * The covered machine the lists wait on, and whether the page above already says it is not answering. A machine
+ * the page announces is stated once there, so the lists only inherit it; any other offline machine is the one the
+ * lists name themselves.
+ */
+export function listsWaitOnMachine<T extends Readonly<{ machineId: string; offline?: boolean }>>(
+  covered: readonly T[],
+  announcedMachineId: string | null,
+): Readonly<{ machine: T; announced: boolean }> | null {
+  const offline = covered.filter((machine) => machine.offline);
+  const own = machinesNeedingOfflineNote(offline, announcedMachineId)[0];
+  if (own) return { machine: own, announced: false };
+  const announced = offline[0];
+  return announced ? { machine: announced, announced: true } : null;
+}
+
 type Cell = Readonly<
   { machineId: string; agentId: string | null } & ReachDecisionV1
 >;
@@ -149,8 +165,7 @@ export function scopeWrite(
   };
 }
 
-/** The words under the switch: where a uniform decision comes from, else who gets it and who does not. */
-export function describeScope(read: ScopeRead, place: ScopePlace, names: WhereItsOnNames): string {
+function describeGeneralScope(read: ScopeRead, place: ScopePlace, names: WhereItsOnNames): string {
   const machineIds = [...new Set(read.general.map((cell) => cell.machineId))];
   const machinesDiffer =
     new Set(read.general.map((cell) => cell.enabled)).size > 1;
@@ -166,18 +181,6 @@ export function describeScope(read: ScopeRead, place: ScopePlace, names: WhereIt
           .map(names.machineName),
       );
     return `${t('capabilities.scopeSection.onOn', { machines: named(true) })} · ${t('capabilities.scopeSection.notOn', { machines: named(false) })}`;
-  }
-  const agentIds = [
-    ...new Set(read.agents.map((cell) => cell.agentId ?? '')),
-  ].filter(Boolean);
-  const gets = (agentId: string) =>
-    read.agents
-      .filter((cell) => cell.agentId === agentId)
-      .every((cell) => cell.enabled);
-  const getting = agentIds.filter(gets);
-  const missing = agentIds.filter((agentId) => !gets(agentId));
-  if (getting.length > 0 && missing.length > 0) {
-    return `${t('capabilities.scopeSection.onFor', { agents: joinList(names.agentNames(getting)) })} · ${t('capabilities.scopeSection.notFor', { agents: joinList(names.agentNames(missing)) })}`;
   }
   const decided = read.general[0]?.decidedBy ?? null;
   if (decided === null) return t('capabilities.where.off');
@@ -195,6 +198,40 @@ export function describeScope(read: ScopeRead, place: ScopePlace, names: WhereIt
       : 'capabilities.scopeSection.offForPlace',
     { place: names.machineName(read.general[0]!.machineId) },
   );
+}
+
+/** Describe every Agent exception against its own machine's general decision, without changing the switch. */
+export function describeScope(read: ScopeRead, place: ScopePlace, names: WhereItsOnNames): string {
+  const general = new Map(read.general.map((cell) => [cell.machineId, cell.enabled]));
+  const differing = read.agents.filter((cell) => cell.enabled !== general.get(cell.machineId));
+  const differingByMachine = new Map<string, Cell[]>();
+  for (const cell of differing) {
+    const cells = differingByMachine.get(cell.machineId);
+    if (cells) cells.push(cell);
+    else differingByMachine.set(cell.machineId, [cell]);
+  }
+  const base = describeGeneralScope(read, place, names);
+  if (differing.length === 0) return base;
+
+  const describeAgents = (cells: readonly Cell[]) => [true, false].flatMap((enabled) => {
+    const ids = [...new Set(cells.filter((cell) => cell.enabled === enabled).map((cell) => cell.agentId!))];
+    return ids.length ? [t(enabled ? 'capabilities.scopeSection.onFor' : 'capabilities.scopeSection.notFor',
+      { agents: joinList(names.agentNames(ids)) })] : [];
+  }).join(' · ');
+  const agentStates = new Map<string, boolean>();
+  let agentsUniform = true;
+  for (const cell of read.agents) {
+    if (agentStates.has(cell.agentId!) && agentStates.get(cell.agentId!) !== cell.enabled) agentsUniform = false;
+    agentStates.set(cell.agentId!, cell.enabled);
+  }
+  if (new Set(general.values()).size <= 1 && agentsUniform) {
+    // Keep the familiar mixed-Agent sentence, but retain the baseline when every installed Agent differs.
+    return new Set(agentStates.values()).size > 1
+      ? describeAgents(read.agents) : `${base} · ${describeAgents(differing)}`;
+  }
+  const clauses = [...differingByMachine].map(([machineId, exceptions]) =>
+    `${names.machineName(machineId)}: ${describeAgents(exceptions)}`);
+  return [base, ...clauses].join(' · ');
 }
 
 /** At most this many rows a sheet shows; "All n" opens the rest. */

@@ -10,6 +10,7 @@ import {
     HappierPressable,
     HappierText,
     HAPPIER_PAGE_METRICS,
+    resolveHappierCollectionRowRole,
 } from '@happier-dev/plugin-ui/presentation';
 import { DECLARATIVE_BUTTON_GEOMETRY } from '@/components/plugins/shared/declarativeNodes';
 import type { HappierUiTheme } from '@happier-dev/plugin-ui/environment';
@@ -299,7 +300,7 @@ const DeclarativeCollectionListRow = React.memo(function DeclarativeCollectionLi
                         icon: action.icon,
                         disabled: action.disabled,
                     }))}
-                    onSelect={input.onSelect}
+                    onSelect={(id) => input.onSelect(id)}
                     matchTriggerWidth={false}
                     placement="bottom"
                 />
@@ -308,6 +309,7 @@ const DeclarativeCollectionListRow = React.memo(function DeclarativeCollectionLi
     ) : undefined;
     return (
         <HappierListItem
+            rowRole={resolveHappierCollectionRowRole({ hasDescription: props.projection?.subtitleField !== undefined })}
             testID={`plugin-declarative-collection-list:${props.path}:row:${row.context.rowId}`}
             title={title}
             subtitle={subtitle ?? undefined}

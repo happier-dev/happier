@@ -11,6 +11,7 @@ import {
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 
 /**
  * The authority a plugin launch input belongs to.
@@ -32,7 +33,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 export type PluginSurfaceLaunchAuthority = Readonly<{
     serverId: string | null;
     machineId: string | null;
-    /** The exact plugin occurrence the open was made under. */
+    /** Exact producer occurrence; Account projections use their existing custodyId. */
     occurrenceId: string | null;
     /**
      * The opaque incumbent Account lifetime captured by the owning host scope.
@@ -41,10 +42,9 @@ export type PluginSurfaceLaunchAuthority = Readonly<{
      */
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     /**
-     * Exact selected materialization when one exists for a unioned app-scope
-     * contribution. Originless bundled/development contributions deliberately
-     * retain `null`; their selected machine and exact occurrence identify the
-     * producer without fabricating an Account materialization.
+     * Exact selected Machine materialization when one exists. Account-owned
+     * renderers retain `null`: their custody occurrence and Account lifetime
+     * identify the producer independently of an optional Machine supply.
      *
      * Do not reconstruct this from the coarse machine/server coordinates:
      * materialization replacement can retain both while changing the producer.
@@ -69,9 +69,9 @@ export function createPluginSurfaceLaunchAuthority(input: Readonly<{
 }
 
 /**
- * Reads the exact producer authority carried by a selected app-scope
- * contribution. The app union is only a catalog: it cannot authorize a
- * launch-input handoff for one of its members.
+ * Reads the exact Account custody or selected Machine authority carried by an
+ * app-scope contribution. The app union is only a catalog: its ambient Machine
+ * cannot authorize a launch-input handoff for one of its members.
  *
  * Keep this conversion beside launch-authority equality so every consumer
  * applies the same fail-closed test before retaining bounded plugin JSON.
@@ -85,6 +85,22 @@ export function resolveSelectedPluginSurfaceLaunchAuthority(input: Readonly<{
         && input.placement.occurrenceId.trim().length > 0
         ? input.placement.occurrenceId
         : null;
+    // Account-owned renderers have custody independently of any optional
+    // Machine execution supply. Use the same validated producer stamp as the
+    // physical host; never lend a mismatched Account a Machine fallback.
+    if (Object.hasOwn(input.placement, 'hostAccountOrigin')) {
+        const origin = readPluginUiAccountExecutableOrigin(input.placement);
+        const lifetime = input.accountLifetime;
+        if (!origin || !lifetime?.isCurrent()
+            || origin.accountId !== lifetime.scope.accountId
+            || !areServerProfileIdentifiersEquivalent(origin.serverId, lifetime.scope.serverId)
+            || occurrenceId !== origin.custodyId) return null;
+        return createPluginSurfaceLaunchAuthority({
+            serverId: origin.serverId,
+            occurrenceId: origin.custodyId,
+            accountLifetime: lifetime,
+        });
+    }
     const origin = readPluginUiContributionOrigin(input.placement);
     const executionOrigin = origin?.executionOrigin ?? null;
     if (
@@ -148,7 +164,7 @@ export function resolvePluginSurfaceLaunchAuthority(input: Readonly<{
         return null;
     }
 
-    if (hasContributionOriginField(input.placement)) {
+    if (hasContributionOriginField(input.placement) || Object.hasOwn(input.placement, 'hostAccountOrigin')) {
         return resolveSelectedPluginSurfaceLaunchAuthority({
             placement: input.placement,
             accountLifetime: input.accountLifetime,

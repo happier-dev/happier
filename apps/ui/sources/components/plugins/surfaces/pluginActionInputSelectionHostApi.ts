@@ -17,6 +17,7 @@ import {
     type PluginContributedActionConnectedAccountOptionsTransport,
     type PluginContributedActionSelectionOutcome,
 } from '@/components/plugins/actions/pluginContributedActionController';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import {
     composeSessionServerStartDraft,
@@ -85,6 +86,7 @@ export type PluginSessionServerStartDraftComposer = (params: Readonly<{
     signal?: AbortSignal;
     isCurrent: () => boolean;
     target: SessionServerStartDraftTarget;
+    anchor?: PopoverAnchor;
 }>) => Promise<SessionServerStartDraftComposerOutcome>;
 
 function readSessionServerStartDraftTarget(
@@ -120,7 +122,7 @@ async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSe
             target: params.target,
             // The machine the composition is FOR, which the seed may have
             // named — not the one this surface is mounted on.
-            present: ({ seed, target }) => presentSessionServerStartDraftComposer({ seed, target }),
+            present: ({ seed, target }) => presentSessionServerStartDraftComposer({ seed, target, anchor: params.anchor }),
         });
     } catch {
         return { kind: 'unavailable', reason: 'presentation_unavailable' };
@@ -150,6 +152,7 @@ type PluginActionInputSelectionBinding = Readonly<{
     host: PluginContributedActionHostFacts;
     isCurrent: () => boolean;
     present?: typeof presentActionInputForm;
+    anchor?: PopoverAnchor;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     composeSessionServerStartDraft?: PluginSessionServerStartDraftComposer;
 }>;
@@ -172,6 +175,24 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
             const result = await (async (): Promise<PluginUiJsonValueV1> => {
                 if (signal?.aborted) return errorPayload('unavailable', 'select_action_input_aborted');
                 if ('hostAction' in parsed.data) {
+                    if ('candidates' in parsed.data) {
+                        if (!input.host.accountLifetime) return errorPayload('unavailable', 'host_unavailable');
+                        if (parsed.data.candidates.length === 0) return errorPayload('unavailable', 'saved_project_required');
+                        const { presentNewSessionPlacementSelection } = await import(
+                            '@/components/sessions/new/presentNewSessionPlacementSelection'
+                        );
+                        const presentation = presentNewSessionPlacementSelection(parsed.data.candidates, input.anchor);
+                        const cancel = () => presentation.close();
+                        signal?.addEventListener('abort', cancel, { once: true });
+                        if (signal?.aborted) cancel();
+                        try {
+                            const candidate = await presentation.result;
+                            return candidate === null ? { kind: 'cancelled' }
+                                : readBoundedSelectionResult({ kind: 'sessionPlacement', candidate });
+                        } finally {
+                            signal?.removeEventListener('abort', cancel);
+                        }
+                    }
                     if (parsed.data.hostAction.action === 'session.transcript.get') {
                         const lifetime = input.host.accountLifetime;
                         const serverId = resolveServerProfileScopeIdForIdentifier(lifetime?.scope.serverId);
@@ -182,7 +203,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                         const { presentSessionAddressSelection } = await import(
                             '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection'
                         );
-                        const presentation = presentSessionAddressSelection(serverId);
+                        const presentation = presentSessionAddressSelection(serverId, input.anchor);
                         const cancel = () => presentation.close();
                         signal?.addEventListener('abort', cancel, { once: true });
                         if (signal?.aborted) cancel();
@@ -204,7 +225,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                             '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection'
                         );
                         const presentation = presentReviewExecutionRunLaunchSelection({ sessionId: parsed.data.sessionId,
-                            serverId, draft: parsed.data.draft, isCurrent: input.isCurrent });
+                            serverId, draft: parsed.data.draft, isCurrent: input.isCurrent, anchor: input.anchor });
                         const cancel = () => presentation.close();
                         signal?.addEventListener('abort', cancel, { once: true });
                         if (signal?.aborted) cancel();
@@ -225,6 +246,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                         ...(signal ? { signal } : {}),
                         isCurrent: input.isCurrent,
                         target,
+                        anchor: input.anchor,
                     });
                     if (outcome.kind === 'submitted') {
                         return readBoundedSelectionResult({ kind: 'serverStartDraft', draft: outcome.draft });
@@ -268,7 +290,11 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                     return readBoundedSelectionResult(selected.result);
                 }
 
-                present({ form: selected.form, ...(signal ? { signal } : {}) });
+                present({ form: selected.form, anchor: input.anchor, ...(signal ? { signal } : {}), pickerContext: {
+                    serverId: input.host.serverId,
+                    machineId: input.host.machineId,
+                    ...(input.host.accountLifetime ? { accountLifetime: input.host.accountLifetime } : {}),
+                } });
                 const readSelectionResult = async (): Promise<PluginUiJsonValueV1> => {
                     const result = await selected.result;
                     if (result.kind === 'unavailable' || result.kind === 'stale') {

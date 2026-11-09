@@ -5,7 +5,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-import { OpenableContentStatResultV1Schema } from '@happier-dev/protocol';
+import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1, OpenableContentStatResultV1Schema } from '@happier-dev/protocol/plugins/openableContent';
 import {
     cleanupWorkspaceFileDetailsActionBoundary,
     getWorkspaceFileDetailsActionBoundary,
@@ -533,7 +533,7 @@ describe('plugin surface openable content', () => {
         expect(workspaceReadFileMock).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps filename-decided classes ready and refuses undecidable content above the probe ceiling', async () => {
+    it('keeps filename-decided classes ready and refuses undecidable content above the hard maximum', async () => {
         const imageBinding = createWorkspaceFileOpenableContentBinding({
             target: TARGET,
             filePath: 'notes/preview.png',
@@ -550,7 +550,7 @@ describe('plugin surface openable content', () => {
             .statOpenableContent!(request('statOpenableContent', { ref: archiveBinding.ref })))
             .resolves.toMatchObject({ contentClass: 'binary' });
 
-        const sizeBytes = 300 * 1024;
+        const sizeBytes = HARD_OPENABLE_CONTENT_MAX_BYTES_V1 + 1;
         workspaceStatFileMock.mockResolvedValue({
             success: true,
             exists: true,
@@ -569,8 +569,8 @@ describe('plugin surface openable content', () => {
             .resolves.toEqual({ status: 'unsupported' });
 
         // A familiar text extension is still undecided by path: the filename
-        // cannot prove that the bytes are UTF-8, and this file is too large for
-        // the bounded classifier to inspect.
+        // cannot prove that the bytes are UTF-8, and this file exceeds the
+        // public openable-content hard maximum.
         const largeTextNamedBinding = createWorkspaceFileOpenableContentBinding({
             target: TARGET,
             filePath: 'notes/large.md',

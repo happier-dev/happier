@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { definePlugin, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -5,23 +6,27 @@ import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contribution
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { buildQualifiedPluginContributionKey, PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
+import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { machinePluginStructuredMessageActionExecute, resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import { createPluginSurfaceAccountActionServices } from './pluginSurfaceAccountActionServices';
-import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability';
 import { readMountedAccountTargetedContributions } from './mountedAccountTargetedContributions';
-import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
+import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import { projectPluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import {
     DaemonPluginTargetedSourceDeclarationV1Schema,
     DaemonPluginUiTargetedContributionsReadRequestSchema,
+    DaemonPluginUiResourceReadRequestSchema,
     DaemonPluginUiTargetedSurfaceMountV1Schema,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
@@ -34,6 +39,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 const inputSchema = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
 const resultSchema = defineProtocolObject({ accepted: defineProtocolLiteral(true) }, { policy: 'closed' });
+
 it.each([false, true])('admits the current GitHub source in the Account Triage Session relation view (Machine pending=%s)', async machinePending => {
     const { PLUGIN_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } = await import('@happier-dev/plugins-triage/manifest');
     const { GITHUB_PLUGIN } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
@@ -92,6 +98,126 @@ const source = definePlugin({ id: 'example.machine-source', version: '1.0.0', ac
 } } } });
 
 describe('Account Action targeted-contribution services', () => {
+    it('leases only privately bound managed credentials and zeros them when the Account invocation settles', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-bootstrap-lease.test', accountId: 'alice' }], route: () => undefined });
+        let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        const bootstrap = new TextEncoder().encode('bootstrap-private-fixture');
+        const guest = new TextEncoder().encode('guest-private-fixture');
+        let admissions = 0;
+        let current = true;
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            owner = createPluginSurfaceAccountActionServices({ pluginId: target.manifest.id, occurrenceId: 'private-lease',
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => current,
+                managedBootstrapCredential: { role: 'acquire', isCurrent: () => { admissions++; return current; },
+                    readBootstrapCredential: async () => bootstrap, readGuestHostCredential: async () => guest },
+                execute: async () => null });
+            const service = owner.services.machineProvisioners;
+            const lease = await service.materializeBootstrapCredential({ kind: 'bytes' });
+            expect(lease).toMatchObject({ kind: 'bytes', bytes: new TextEncoder().encode('bootstrap-private-fixture') });
+            const guestLease = await service.materializeGuestHostCredential();
+            expect(guestLease.bytes).toBe(guest);
+            expect(owner.redactDiagnosticText('bootstrap-private-fixture guest-private-fixture')).toBe('[REDACTED] [REDACTED]');
+            expect(admissions).toBe(2);
+            await expect(service.materializeBootstrapCredential({ kind: 'file' })).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+            await expect(service.materializeNativeCredentialHeaders({ bindingKey: 'other' }))
+                .resolves.toEqual({ ok: false, code: 'native_credential_binding_unavailable' });
+            current = false;
+            await expect(service.materializeGuestHostCredential()).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+            expect(bootstrap.some(value => value !== 0)).toBe(true);
+            await owner.dispose();
+            expect(bootstrap).toEqual(new Uint8Array(bootstrap.length));
+            expect(guest).toEqual(new Uint8Array(guest.length));
+            expect(machineRpc).not.toHaveBeenCalled();
+        } finally { await owner?.dispose(); machineRpc.mockReset(); await home.dispose(); }
+    });
+
+    it('joins pending private credential acquisition before finishing Account disposal', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-bootstrap-pending.test', accountId: 'alice' }], route: () => undefined });
+        let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        const started = createDeferred<void>();
+        const pending = createDeferred<Uint8Array>();
+        const material = new Uint8Array([7, 8, 9]);
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            owner = createPluginSurfaceAccountActionServices({ pluginId: target.manifest.id, occurrenceId: 'pending-lease',
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true,
+                managedBootstrapCredential: { role: 'bootstrap', isCurrent: () => true,
+                    readBootstrapCredential: () => { started.resolve(); return pending.promise; } }, execute: async () => null });
+            const acquisition = owner.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' });
+            const rejected = expect(acquisition).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+            await started.promise;
+            let disposed = false;
+            const disposal = Promise.resolve(owner.dispose()).then(() => { disposed = true; });
+            await Promise.resolve();
+            expect(disposed).toBe(false);
+            pending.resolve(material);
+            await rejected;
+            await disposal;
+            expect(material).toEqual(new Uint8Array(3));
+        } finally { pending.resolve(material); await owner?.dispose(); await home.dispose(); }
+    });
+
+    it('exposes the shared HTTP service in a zero-Machine Account invocation', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://portable-account-http.test', accountId: 'alice' }],
+            route: request => request.path === '/vendor/public' ? new Response('portable', { status: 200 }) : undefined });
+        let service: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            service = createPluginSurfaceAccountActionServices({ pluginId: target.manifest.id, occurrenceId: 'portable-http',
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true,
+                execute: async () => null });
+            expect(service.services.http).toBeDefined();
+            const response = await service.services.http!.request({ url: 'https://portable-account-http.test/vendor/public', redirect: 'error' });
+            expect(response.status).toBe(200);
+            expect(new TextDecoder().decode(response.body)).toBe('portable');
+            expect(machineRpc).not.toHaveBeenCalled();
+        } finally { service?.dispose(); machineRpc.mockReset(); await home.dispose(); }
+    });
+
+    it('opens one linked resource, redacts its echoes and refuses opaque redirects without another send', async () => {
+        const value = 'private-"portable"\ncredential';
+        const paths: string[] = [];
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://portable-account-secret.test', accountId: 'alice' }],
+            route: request => {
+                if (request.path === '/v1/account/saved-secrets/resources/materials') {
+                    paths.push(`${request.path}${request.url.search}`);
+                    return Response.json({ resources: [{ resourceId: 'selected', encryptionMode: 'plain', recipientEnvelope: null,
+                        storedContent: { t: 'plain', v: { v: 1, name: 'Selected', kind: 'token', value } },
+                        entry: { ref: 'happier:shared-secret:v1:selected', source: 'shared_resource', relationship: 'owner', name: 'Selected', kind: 'token',
+                            revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] });
+                }
+                if (request.path === '/vendor/echo') return Response.json({ echoed: value });
+                if (request.path === '/vendor/opaque') {
+                    paths.push(request.path);
+                    const response = new Response(null);
+                    Object.defineProperties(response, { status: { value: 0 }, type: { value: 'opaqueredirect' } });
+                    return response;
+                }
+                return undefined;
+            } });
+        let service: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            service = createPluginSurfaceAccountActionServices({ pluginId: target.manifest.id, occurrenceId: 'portable-secret',
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true, execute: async () => null });
+            const opened = await service.services.secrets!.readSavedSecret('happier:shared-secret:v1:selected');
+            expect(opened).toBe(value);
+            expect(paths).toEqual(['/v1/account/saved-secrets/resources/materials?resourceId=selected']);
+            const response = await service.services.http!.request({ url: 'https://portable-account-secret.test/vendor/echo', redirect: 'error' });
+            expect(JSON.parse(new TextDecoder().decode(response.body))).toEqual({ echoed: '[REDACTED]' });
+            await expect(service.services.http!.request({ url: 'https://portable-account-secret.test/vendor/opaque', method: 'POST',
+                redirect: 'follow', body: new TextEncoder().encode(JSON.stringify({ secret: opened })) }))
+                .rejects.toMatchObject({ code: 'plugin_fetch_redirect_refused' });
+            expect(paths.filter(path => path === '/vendor/opaque')).toHaveLength(1);
+            expect(machineRpc).not.toHaveBeenCalled();
+        } finally { service?.dispose(); machineRpc.mockReset(); await home.dispose(); }
+    });
+
     it('projects the current mounted Account target without a Machine', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://mounted-account-target.test', accountId: 'alice' }], route: () => undefined });
         let unmount: (() => Promise<void>) | undefined;
@@ -150,6 +276,129 @@ describe('Account Action targeted-contribution services', () => {
         }
     });
 
+    it.each(['declarations', 'mounts', 'unavailable', 'points-free'] as const)('publishes Account rows before Machine %s and renders only changed rows on arrival', async (pendingStage) => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-first-target.test', accountId: 'alice' }], route: () => undefined });
+        let unmount: (() => Promise<void>) | undefined;
+        const pending = createDeferred<unknown>();
+        try {
+            resetMachineProjectionReadsForTests();
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            const portableSource = definePlugin({ id: 'example.zzz-account-source', version: '1.0.0', actions: {
+                inspect: { title: 'Inspect', surfaces: ['plugin'], dangerLevel: 'safe',
+                    execution: { target: 'account', account: { artifactId: 'source', exportName: 'activate' } },
+                    inputSchema, resultSchema, run: async () => ({ accepted: true as const }) },
+            }, contributesTo: { 'example.account-target': { sources: {
+                personal: protocol.contribute({ operations: { inspect: protocol.operations.inspect.bind('inspect') } }),
+            } } } });
+            const machineOnlySource = definePlugin({ id: 'example.aaa-machine-source', version: '1.0.0', actions: {
+                inspect: { title: 'Inspect', surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' },
+                    inputSchema, resultSchema, run: async () => ({ accepted: true as const }) },
+            }, contributesTo: { 'example.account-target': { sources: {
+                personal: protocol.contribute({ operations: { inspect: protocol.operations.inspect.bind('inspect') } }),
+            } } } });
+            const manifests = [target, source, portableSource, machineOnlySource].map(plugin => {
+                const parsed = ingestPluginManifestV2(plugin.manifest);
+                if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+                return parsed.manifest;
+            });
+            replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: manifests.slice(0, 3).map(manifest => ({ pluginId: manifest.id, response: {
+                    availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                    intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                        offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                    release: { ref: { pluginId: manifest.id, version: manifest.version },
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                        collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+                } })),
+            } });
+            const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(target.manifest.id);
+            if (selected.kind !== 'available' || selected.sourceCustody.kind !== 'account_release') throw new Error('Expected Account target');
+            const declarations = manifests.filter(manifest => manifest.id !== portableSource.manifest.id).map(manifest => DaemonPluginTargetedSourceDeclarationV1Schema.parse({
+                occurrenceId: `${manifest.id}:machine`, sourceCustody: { kind: 'development', registeredRootId: `${manifest.id}-root` },
+                manifest: { id: manifest.id, contributes: { actions: manifest.contributes.actions,
+                    pluginContributionPoints: manifest.contributes.pluginContributionPoints,
+                    targetedPluginContributions: manifest.contributes.targetedPluginContributions,
+                    ui: { renderers: manifest.contributes.ui.renderers } } },
+            }));
+            const declarationReply = { status: 'sourceDeclarations', pluginId: target.manifest.id, sourceDeclarations: declarations };
+            const mountReply = { status: 'current', targetedContributions: {
+                target: { pluginId: target.manifest.id, occurrenceId: declarations[0]!.occurrenceId, sourceCustody: declarations[0]!.sourceCustody }, points: [],
+            }, targetedSurfaceMounts: [] };
+            machineRpc.mockImplementation(async (request: Readonly<{ method: string; payload: unknown; decodeResult?: (raw: unknown) => unknown }>) => {
+                if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    if (pendingStage === 'points-free') await pending.promise;
+                    throw new Error('Machine offline');
+                }
+                if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) throw new Error('Unexpected Machine RPC');
+                const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(request.payload);
+                const stage = payload.readMode === 'sourceDeclarations' ? 'declarations' : 'mounts';
+                const response = stage === pendingStage || (pendingStage === 'unavailable' && stage === 'declarations')
+                    ? await pending.promise : stage === 'declarations' ? declarationReply : mountReply;
+                return request.decodeResult ? request.decodeResult(response) : response;
+            });
+            const { useMountedTargetedContributions } = await import('./mountedTargetedContributions');
+            type Contribution = PluginUiTargetedContributionsV1['points'][number]['protocols'][number]['contributions'][number];
+            const renders = new Map<string, number>();
+            const Row = React.memo(({ contribution }: { contribution: Contribution }) => {
+                const id = contribution.contributor.pluginId;
+                renders.set(id, (renders.get(id) ?? 0) + 1);
+                return React.createElement('account-source-row', { id });
+            });
+            let current: ReturnType<typeof useMountedTargetedContributions> | undefined;
+            const emptyTargetedContributions = { target: { pluginId: target.manifest.id,
+                occurrenceId: selected.custodyId, sourceCustody: selected.sourceCustody }, points: [] };
+            function Rows() {
+                current = useMountedTargetedContributions({ accountLifetime: lifetime!,
+                    machineId: 'machine-1', serverId: lifetime!.scope.serverId, pluginId: target.manifest.id,
+                    mountedOccurrenceId: selected.custodyId, enabled: true,
+                    accountExecutionOrigin: { ...lifetime!.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                    ...(pendingStage === 'unavailable' || pendingStage === 'points-free'
+                        ? { machineTarget: mountReply.targetedContributions.target } : {}),
+                    ...(pendingStage === 'points-free' ? { emptyTargetedContributions } : {}),
+                });
+                return React.createElement(React.Fragment, null, current.targetedContributions?.points.flatMap(point => point.protocols.flatMap(protocol =>
+                    protocol.contributions.map(contribution => React.createElement(Row, { key: contribution.contributor.pluginId, contribution })))));
+            }
+            const screen = await renderScreen(React.createElement(Rows));
+            unmount = screen.unmount;
+            await flushHookEffects({ cycles: 3, turns: 2 });
+            if (pendingStage === 'points-free') {
+                expect(current?.phase).toBe('ready');
+                expect(current?.targetedContributions).toEqual(emptyTargetedContributions);
+                await act(async () => { pending.resolve(undefined); });
+                await flushHookEffects({ cycles: 3, turns: 2 });
+                expect(current?.phase).toBe('ready');
+                expect(current?.projectionInputs).toBeNull();
+                return;
+            }
+            expect(current?.targetedContributions?.points[0]?.protocols[0]?.contributions).toHaveLength(2);
+            expect(renders.get(portableSource.manifest.id)).toBe(1);
+            const accountEntry = current?.targetedContributions?.points[0]?.protocols[0]?.contributions.find(row => row.contributor.pluginId === portableSource.manifest.id);
+            const before = new Map(renders);
+            await act(async () => { pending.resolve(pendingStage === 'mounts' ? mountReply : declarationReply); });
+            await flushHookEffects({ cycles: 3, turns: 2 });
+            expect(current?.phase).toBe('ready');
+            const merged = current?.targetedContributions?.points[0]?.protocols[0]?.contributions;
+            if (pendingStage === 'unavailable') {
+                expect(current?.projectionInputs).toBeNull();
+                expect(merged).toHaveLength(2);
+                expect(renders).toEqual(before);
+                return;
+            }
+            expect(merged).toHaveLength(3);
+            expect((renders.get(portableSource.manifest.id) ?? 0) - (before.get(portableSource.manifest.id) ?? 0)).toBe(0);
+            expect((renders.get(source.manifest.id) ?? 0) - (before.get(source.manifest.id) ?? 0)).toBe(1);
+            expect(merged?.find(row => row.contributor.pluginId === portableSource.manifest.id)).toBe(accountEntry);
+            expect(merged?.find(row => row.contributor.pluginId === source.manifest.id)?.contributor.occurrenceId).toBe(declarations[1]!.occurrenceId);
+            expect(renders.get(machineOnlySource.manifest.id)).toBe(1);
+        } finally {
+            await unmount?.();
+            pending.resolve(undefined);
+            machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose();
+        }
+    });
+
     it('retains an exact selected Machine child under the Account target and omits unavailable physical mounts', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-machine-child.test', accountId: 'alice' }], route: () => undefined });
         try {
@@ -162,7 +411,9 @@ describe('Account Action targeted-contribution services', () => {
                 surfaces: { detail: { required: true, presentation: 'content', inputSchema: surfaceInput } },
             });
             const detailProtocol = makeProtocol(inputSchema);
-            const accountParent = definePlugin({ id: 'example.detail-target', version: '1.0.0', contributionPoints: { sources: detailProtocol.point() } });
+            const accountParent = definePlugin({ id: 'example.detail-target', version: '1.0.0', contributionPoints: { sources: detailProtocol.point() },
+                resources: { connections: { source: 'dynamic', kind: 'config', scope: 'global', contentType: 'application/json',
+                    runtime: { read: () => '[]', observe: () => ({ dispose() {} }) } } } });
             const oldMachineInput = defineProtocolObject({ legacy: defineProtocolString() }, { policy: 'closed' });
             const machineParent = definePlugin({ id: accountParent.manifest.id, version: '0.9.0',
                 contributionPoints: { sources: makeProtocol(oldMachineInput).point() } });
@@ -239,8 +490,12 @@ describe('Account Action targeted-contribution services', () => {
                 expect(payload.machineId).toBe('machine-1');
                 expect(payload.pluginId).toBe(parentManifest.id);
                 return payload.readMode === 'sourceDeclarations'
-                    ? { status: 'sourceDeclarations', pluginId: parentManifest.id, sourceDeclarations: [declarations[1]] }
-                    : { status: 'current', targetedContributions: machineTarget, targetedSurfaceMounts: includeMount ? [actualMount] : [] };
+                    ? { status: 'sourceDeclarations', pluginId: parentManifest.id, sourceDeclarations: declarations }
+                    : { status: 'current', targetedContributions: machineTarget, targetedSurfaceMounts: includeMount ? [actualMount] : [],
+                        resourceDeclarationsByPluginId: { [parentManifest.id]: {
+                            [`${parentManifest.id}/connections`]: { id: 'connections', pluginId: parentManifest.id,
+                                occurrenceId: 'machine-parent-current', resourceKind: 'config', scope: 'global', contentType: 'application/json' },
+                        } } };
             });
             const read = () => readMountedAccountTargetedContributions({ pluginId: parentManifest.id,
                 origin: accountOrigin,
@@ -248,9 +503,14 @@ describe('Account Action targeted-contribution services', () => {
                 machine: { machineId: 'machine-1', serverId: lifetime.scope.serverId },
             });
             const result = await read();
+            expect(result.resourceDeclarationsByPluginId?.[parentManifest.id]).toMatchObject({
+                [`${parentManifest.id}/connections`]: { scope: 'global', occurrenceId: 'machine-parent-current' },
+            });
+            expect(result.targetedContributions.target).toEqual({ pluginId: parentManifest.id,
+                occurrenceId: selected.custodyId, sourceCustody: declarations[0]!.sourceCustody });
             expect(result.targetedSurfaceMounts).toHaveLength(1);
             expect(result.targetedSurfaceMounts[0]).toEqual({ ...actualMount,
-                target: { pluginId: parentManifest.id, occurrenceId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                target: result.targetedContributions.target,
                 inputSchema: inputSchema.jsonSchema,
             });
             expect(result.targetedSurfaceMounts[0]).not.toHaveProperty('accountExecutionOrigin');
@@ -264,6 +524,101 @@ describe('Account Action targeted-contribution services', () => {
         } finally {
             machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose();
         }
+    });
+
+    it.each(['targeted', 'full describe'] as const)('publishes Machine Resource scopes for an Account page with operation-only contributors (%s)', async declarationSource => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-page-resources.test', accountId: 'alice' }], route: () => undefined });
+        try {
+            resetMachineProjectionReadsForTests();
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            const manifests = [target, source].map(plugin => {
+                const parsed = ingestPluginManifestV2(plugin.manifest);
+                if (!parsed.ok) throw new Error('Expected valid manifest');
+                return parsed.manifest;
+            });
+            replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: manifests.map(manifest => ({ pluginId: manifest.id, response: {
+                    availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                    intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                        offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                    release: { ref: { pluginId: manifest.id, version: manifest.version },
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                        collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+                } })),
+            } });
+            const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(target.manifest.id);
+            if (selected.kind !== 'available' || selected.sourceCustody.kind !== 'account_release') throw new Error('Expected Account target');
+            const declarations = manifests.map(manifest => DaemonPluginTargetedSourceDeclarationV1Schema.parse({
+                occurrenceId: `${manifest.id}:machine`, sourceCustody: { kind: 'development', registeredRootId: `${manifest.id}-root` },
+                manifest: { id: manifest.id, contributes: { actions: manifest.contributes.actions,
+                    pluginContributionPoints: manifest.contributes.pluginContributionPoints,
+                    targetedPluginContributions: manifest.contributes.targetedPluginContributions,
+                    ui: { renderers: manifest.contributes.ui.renderers } } },
+            }));
+            const admitted = resolveManifestTargetedContributions(declarations);
+            const machineTarget = projectPluginUiTargetedContributionsV1({
+                target: { pluginId: target.manifest.id, occurrenceId: declarations[0]!.occurrenceId },
+                snapshots: [{ point: { pointId: 'sources', protocol: { id: protocol.id, version: protocol.version } },
+                    snapshot: admitted.read({ targetPluginId: target.manifest.id, pointId: 'sources', protocol })! }],
+                readSourceCustody: (pluginId, occurrenceId) => declarations.find(row => row.manifest.id === pluginId && row.occurrenceId === occurrenceId)?.sourceCustody,
+            });
+            const resources = { [`${target.manifest.id}/connections`]: { id: 'connections', pluginId: target.manifest.id,
+                occurrenceId: declarations[0]!.occurrenceId, resourceKind: 'config' as const, scope: 'global' as const, contentType: 'application/json' } };
+            let targetedReads = 0;
+            machineRpc.mockImplementation(async (request: Readonly<{ method: string; payload: unknown; decodeResult?: (raw: unknown) => unknown }>) => {
+                if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                    // The daemon boundary rejects a containing Surface context;
+                    // parsing, declaration resolution and mounted stores stay real.
+                    const payload = DaemonPluginUiResourceReadRequestSchema.parse(request.payload);
+                    expect(payload.expectedCallerOccurrenceId).toBe(declarations[0]!.occurrenceId);
+                    return payload.context?.kind !== 'global'
+                        ? { ok: false, reason: 'unavailable', code: 'plugin_resource_context_unavailable' }
+                        : { ok: true, resource: { pluginId: target.manifest.id, localId: 'connections' },
+                            kind: 'config', contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'W10=' };
+                }
+                if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) throw new Error('Unexpected Machine RPC');
+                const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(request.payload);
+                if (payload.readMode === 'sourceDeclarations') {
+                    const response = { status: 'sourceDeclarations', pluginId: target.manifest.id, sourceDeclarations: declarations };
+                    // Preserve the real transport decoder: bypassing it hid the
+                    // target-custody row refusal and left Account occurrences live.
+                    return request.decodeResult ? request.decodeResult(response) : response;
+                }
+                targetedReads += 1;
+                return { status: 'current', targetedContributions: machineTarget, targetedSurfaceMounts: [],
+                    resourceDeclarationsByPluginId: { [target.manifest.id]: resources } };
+            });
+            const result = await readMountedAccountTargetedContributions({ pluginId: target.manifest.id,
+                origin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true,
+                machine: { machineId: 'machine-1', serverId: lifetime.scope.serverId } });
+            expect(result.resourceDeclarationsByPluginId?.[target.manifest.id]).toEqual(resources);
+            const controller = createBoundPluginSurfaceController({ facts: {
+                pluginId: target.manifest.id, contributionId: 'settings', surfaceId: 'account-settings',
+                placement: 'settingsPage', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [],
+                accountLifetime: lifetime, machineId: 'machine-1', serverId: lifetime.scope.serverId,
+                occurrenceId: selected.custodyId, daemonOccurrenceId: declarations[0]!.occurrenceId,
+                accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                resourceCapability: { readable: true, dynamic: true },
+                resourceContext: { kind: 'surface', mountInstanceKey: 'settings', launchInput: null, target: { kind: 'app' } },
+                ...(declarationSource === 'targeted'
+                    ? { resourceDeclarations: result.resourceDeclarationsByPluginId?.[target.manifest.id] }
+                    : { pluginUiProjection: widgetProjectionOf([], { [target.manifest.id]: {
+                        ...widgetInstalledPackage(target.manifest.id, 'Account target'), occurrenceId: declarations[0]!.occurrenceId,
+                    } }, resources) }),
+                interactionEnabled: true, daemonInteractionEnabled: true,
+            } });
+            try {
+                const snapshot = await controller.resourceStore!.getEntry('connections').refresh();
+                expect(snapshot.error).toBeUndefined();
+                expect(new TextDecoder().decode(snapshot.value!.bytes)).toBe('[]');
+            } finally { controller.dispose(); }
+            expect(targetedReads).toBe(1);
+            expect(result.targetedSurfaceMounts).toEqual([]);
+            expect(result.targetedContributions.points[0]?.protocols[0]?.contributions[0]?.operations[0]?.contributor.occurrenceId)
+                .toBe(declarations[1]!.occurrenceId);
+        } finally { machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose(); }
     });
 
     it('does not retire a current Machine operation when a separate declaration read is canceled', async () => {

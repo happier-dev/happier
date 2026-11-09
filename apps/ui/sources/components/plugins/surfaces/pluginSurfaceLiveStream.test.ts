@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1,
-    type ActionExecutorDeps, type ApprovalRequest } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import {
+    type ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
+import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { PluginUiHostApiRequestEnvelopeV1, PluginUiSurfaceContextV1, PluginLiveStreamReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginSurfaceActionHostApi } from './pluginSurfaceActionDispatch';
 import { createPluginSurfaceLiveStreamOwner } from './pluginSurfaceLiveStream';

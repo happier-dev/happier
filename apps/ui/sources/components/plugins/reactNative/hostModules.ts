@@ -14,7 +14,6 @@ import * as PluginUiEnvironment from '@happier-dev/plugin-ui/environment';
 import * as PluginUiAdvanced from '@happier-dev/plugin-ui/advanced';
 import * as PluginUiAnsi from '@happier-dev/plugin-ui/ansi';
 import * as PluginUiClient from '@happier-dev/plugin-sdk/ui/client';
-
 import * as ZodMini from 'zod/mini';
 
 import type { PluginUiHostRuntimeExternalModulesV1 } from '@happier-dev/protocol/plugins/ui';
@@ -46,8 +45,24 @@ export const PLUGIN_UI_COMMON_JS_HOST_MODULES: PluginUiHostRuntimeExternalModule
     '@happier-dev/plugin-ui/ansi': PluginUiAnsi,
     get '@happier-dev/plugin-sdk/machine-provisioners'(): unknown { return require('@happier-dev/plugin-sdk/machine-provisioners'); },
     '@happier-dev/plugin-sdk/ui/client': PluginUiClient,
+    // Public portable SDK owners stay demand-loaded in Metro's existing realm.
     get '@happier-dev/plugin-sdk'(): unknown { return require('@happier-dev/plugin-sdk'); },
+    get '@happier-dev/plugin-sdk/actions'(): unknown { return require('@happier-dev/plugin-sdk/actions'); },
+    get '@happier-dev/plugin-sdk/agents'(): unknown { return require('@happier-dev/plugin-sdk/agents'); },
+    get '@happier-dev/plugin-sdk/async'(): unknown { return require('@happier-dev/plugin-sdk/async'); },
+    get '@happier-dev/plugin-sdk/automations'(): unknown { return require('@happier-dev/plugin-sdk/automations'); },
+    get '@happier-dev/plugin-sdk/collections'(): unknown { return require('@happier-dev/plugin-sdk/collections'); },
+    get '@happier-dev/plugin-sdk/connected-accounts'(): unknown { return require('@happier-dev/plugin-sdk/connected-accounts'); },
+    get '@happier-dev/plugin-sdk/contributions'(): unknown { return require('@happier-dev/plugin-sdk/contributions'); },
+    get '@happier-dev/plugin-sdk/errors'(): unknown { return require('@happier-dev/plugin-sdk/errors'); },
+    get '@happier-dev/plugin-sdk/manifest'(): unknown { return require('@happier-dev/plugin-sdk/manifest'); },
     get '@happier-dev/plugin-sdk/protocol'(): unknown { return require('@happier-dev/plugin-sdk/protocol'); },
+    get '@happier-dev/plugin-sdk/reviews'(): unknown { return require('@happier-dev/plugin-sdk/reviews'); },
+    get '@happier-dev/plugin-sdk/scm'(): unknown { return require('@happier-dev/plugin-sdk/scm'); },
+    get '@happier-dev/plugin-sdk/sessions'(): unknown { return require('@happier-dev/plugin-sdk/sessions'); },
+    get '@happier-dev/plugin-sdk/storage'(): unknown { return require('@happier-dev/plugin-sdk/storage'); },
+    get '@happier-dev/plugin-sdk/ui'(): unknown { return require('@happier-dev/plugin-sdk/ui'); },
+    get '@happier-dev/plugin-sdk/webhooks'(): unknown { return require('@happier-dev/plugin-sdk/webhooks'); },
     get zod(): unknown { return require('zod'); },
     'zod/mini': ZodMini,
     get 'zod/v4/core'(): unknown { return require('zod/v4/core'); },

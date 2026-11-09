@@ -1,5 +1,5 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it, vi } from 'vitest';
 

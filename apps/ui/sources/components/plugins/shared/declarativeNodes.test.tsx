@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { HappierUiTheme } from '@happier-dev/plugin-ui/environment';
-import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { Spinner } from '@happier-dev/plugin-ui/components';
 import { HappierDataChart, HappierDataMetric, HappierDataRows, HappierDataTable } from '@happier-dev/plugin-ui/presentation';
 

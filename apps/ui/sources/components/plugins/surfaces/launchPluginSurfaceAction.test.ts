@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PluginContributionIdentityV1, PluginProjectedActionV2 } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 

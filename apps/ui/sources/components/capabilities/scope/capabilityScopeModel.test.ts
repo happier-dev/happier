@@ -6,6 +6,7 @@ import { resolveSkillReachV1 } from '@happier-dev/protocol/prompts/library/skill
 import type { WhereItsOnNames } from '@/components/capabilities/where/whereItsOnPresentation';
 import {
   describeScope,
+  listsWaitOnMachine,
   machinesNeedingOfflineNote,
   migratedProjectRuleItems,
   orderScopeRows,
@@ -100,6 +101,12 @@ describe("a machine's switch", () => {
     expect(describeScope(read, nl2, names)).toBe('On for Codex · not Gemini');
   });
 
+  it.each([true, false])('names every installed Agent exception when the general state is %s', (enabled) => {
+    const read = readScope([everywhere(enabled), everywhere(!enabled, 'gemini')], nl2, [machine('nl2', ['gemini'])]);
+    expect(read.on).toBe(enabled);
+    expect(describeScope(read, nl2, names)).toBe(enabled ? 'Everywhere · not Gemini' : 'Off · On for Gemini');
+  });
+
   it('writes only the agent-general machine rule, so the Gemini exception keeps holding', () => {
     const rules = [everywhere(true), everywhere(false, 'gemini')];
     const change = scopeWrite(rules, nl2, machines, false);
@@ -174,6 +181,20 @@ describe("a project's switch across its machines", () => {
     const read = readScope(rules, happier, machines);
     expect(read.on).toBe(false);
     expect(describeScope(read, happier, names)).toBe('On on MacBook Pro · not nl2');
+  });
+
+  it('keeps machine-specific Agent exceptions alongside a mixed project baseline', () => {
+    const read = readScope([everywhere(false), onMachine('a', true), onMachine('a', false, 'gemini'), onMachine('b', true, 'gemini')],
+      happier, [machine('a', ['claude', 'gemini']), machine('b', ['claude', 'gemini'])]);
+    expect(read.on).toBe(false);
+    expect(describeScope(read, happier, names)).toBe('On on MacBook Pro · not nl2 · MacBook Pro: not Gemini · nl2: On for Gemini');
+  });
+
+  it('does not describe a machine-local Agent exception as a project-wide refusal', () => {
+    const read = readScope([everywhere(true), onMachine('a', false, 'gemini')], happier,
+      [machine('a', ['claude', 'gemini']), machine('b', ['claude', 'gemini'])]);
+    expect(read.on).toBe(true);
+    expect(describeScope(read, happier, names)).toBe('Everywhere · MacBook Pro: not Gemini');
   });
 
   it('retains an explicit project On, so the other machine gets it too (RED: PD7 against one machine writes inherit)', () => {
@@ -308,5 +329,23 @@ describe('machinesNeedingOfflineNote', () => {
   });
   it('leaves out the machine the page already says is not answering, and keeps the others', () => {
     expect(machinesNeedingOfflineNote(covered, 'a').map((machine) => machine.machineId)).toEqual(['b']);
+  });
+});
+
+describe('listsWaitOnMachine', () => {
+  const covered = [
+    { machineId: 'a', offline: true },
+    { machineId: 'b', offline: true },
+    { machineId: 'c', offline: false },
+  ];
+  it('is empty while every covered machine answers', () => {
+    expect(listsWaitOnMachine([{ machineId: 'c', offline: false }], null)).toBeNull();
+  });
+  it('marks the machine the page already announces, so the lists inherit its one statement', () => {
+    expect(listsWaitOnMachine(covered.slice(0, 1), 'a')).toEqual({ machine: covered[0], announced: true });
+  });
+  it('names a machine the page does not announce ahead of the announced one', () => {
+    expect(listsWaitOnMachine(covered, 'a')).toEqual({ machine: covered[1], announced: false });
+    expect(listsWaitOnMachine(covered, null)).toEqual({ machine: covered[0], announced: false });
   });
 });

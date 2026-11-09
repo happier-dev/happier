@@ -1,75 +1,53 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveManifestTargetedContributions } from '@happier-dev/plugin-sdk/host/registration';
 import {
     DaemonPluginUiTargetedSurfaceMountV1Schema,
     PluginUiTargetedSurfaceMountCoreV1Schema,
     readDaemonPluginUiTargetedSurfaceMountV1,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-    projectPluginUiTargetedContributionIdentityV1,
     projectPluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { selectPluginUiRendererChainMemberV1, resolvePluginUiRendererProjectionEntry } from '@happier-dev/protocol/plugins/contributions/ui';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { PluginUiAccountExecutableOrigin } from '../reactNative/executableModuleHost';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
-import { machinePluginUiTargetedContributionsRead } from '@/sync/ops/machineContributionRegistryProjection';
-import { createPluginSurfaceTargetedDeclarationSource } from './pluginSurfaceTargetedDeclarations';
+import { machinePluginUiTargetedContributionsRead, type MachinePluginUiTargetedContributionsReadResult } from '@/sync/ops/machineContributionRegistryProjection';
+import { readAccountTargetedContributionSnapshot } from './accountTargetedContributionSnapshot';
 import type { MountedPluginUiTargetedSurfaceMountV1 } from './mountedTargetedContributions';
 
 /** Adapts current Account custody into the shared admitted semantic/mount owners. */
-export async function readMountedAccountTargetedContributions(input: Readonly<{
+type MountedAccountTargetedContributionsInput = Readonly<{
     pluginId: string;
     origin: PluginUiAccountExecutableOrigin;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
     machine?: Readonly<{ machineId: string; serverId?: string | null }>;
     isCurrent(): boolean;
-}>) {
-    const availability = readPluginAccountAvailability(input.accountLifetime.scope);
-    const assertCurrent = () => {
-        input.signal.throwIfAborted();
-        const selected = availability.readCurrentAccountExecution(input.pluginId);
-        if (!input.isCurrent() || !input.accountLifetime.isCurrent()
-            || input.origin.serverId !== input.accountLifetime.scope.serverId
-            || input.origin.accountId !== input.accountLifetime.scope.accountId
-            || selected.kind !== 'available' || selected.custodyId !== input.origin.custodyId
-            || !pluginSourceCustodyV1Equal(selected.sourceCustody, input.origin.sourceCustody)) {
-            throw new PluginError({ code: 'plugin_action_generation_retired' });
-        }
-    };
-    assertCurrent();
-    const source = createPluginSurfaceTargetedDeclarationSource(input);
-    const declarations = await source.readCurrentDeclarations();
-    assertCurrent();
-    const admitted = resolveManifestTargetedContributions(declarations);
-    const readSourceCustody = (pluginId: string, occurrenceId: string) => declarations.find(row => (
-        row.manifest.id === pluginId && row.occurrenceId === occurrenceId
-    ))?.sourceCustody;
-    const projectIdentity = <TIdentity extends Readonly<{ pluginId: string; occurrenceId: string }>>(identity: TIdentity) => (
-        projectPluginUiTargetedContributionIdentityV1({ identity, readSourceCustody })
-    );
-    const readSnapshots = (pluginId: string, occurrenceId: string) => {
-        const declaration = declarations.find(row => row.manifest.id === pluginId && row.occurrenceId === occurrenceId);
-        if (!declaration) throw new PluginError({ code: 'plugin_targeted_contributions_unavailable' });
-        return declaration.manifest.contributes.pluginContributionPoints.flatMap(point => [...point.protocols]
-            .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : left.version - right.version)
-            .map(protocol => {
-                const snapshot = admitted.read({ targetPluginId: pluginId, pointId: point.id, protocol });
-                if (!snapshot || snapshot.target.occurrenceId !== occurrenceId) {
-                    throw new PluginError({ code: 'plugin_targeted_contributions_unavailable' });
-                }
-                return { point: { pointId: point.id, protocol: { id: protocol.id, version: protocol.version } }, snapshot };
-            }));
-    };
-    const snapshots = readSnapshots(input.pluginId, input.origin.custodyId);
-    const target = { pluginId: input.pluginId, occurrenceId: input.origin.custodyId };
-    const targetedContributions = projectPluginUiTargetedContributionsV1({ target, snapshots, readSourceCustody });
+}>;
+
+export async function readMountedAccountTargetedContributions(input: MountedAccountTargetedContributionsInput,
+    onAccountReady?: (result: ReturnType<typeof projectMountedAccountTargetedContributions>) => Promise<void>,
+) {
+    const snapshot = await readAccountTargetedContributionSnapshot(input, onAccountReady
+        ? async snapshot => { await onAccountReady(projectMountedAccountTargetedContributions(input, snapshot)); }
+        : undefined);
+    // The selected Machine also supplies Resource scopes for operation-only pages.
+    const machineRead = input.machine ? await machinePluginUiTargetedContributionsRead(input.machine.machineId, {
+        serverId: input.machine.serverId, pluginId: input.pluginId,
+        accountLifetime: input.accountLifetime, signal: input.signal,
+    }) : undefined;
+    return projectMountedAccountTargetedContributions(input, snapshot, machineRead);
+}
+
+function projectMountedAccountTargetedContributions(input: MountedAccountTargetedContributionsInput,
+    snapshot: Awaited<ReturnType<typeof readAccountTargetedContributionSnapshot>>,
+    machineRead?: MachinePluginUiTargetedContributionsReadResult,
+) {
+    const { availability, assertCurrent, projectIdentity, readSnapshots, readSourceCustody, snapshots, targetedContributions }
+        = snapshot;
     const projection = availability.readAccountUiProjection();
     const entriesById = { ...projection?.unknownEntriesById, ...projection?.reactNativeBundlesById, ...projection?.hostedWebById };
     const mounts: MountedPluginUiTargetedSurfaceMountV1[] = [];
-    let machineRead: Awaited<ReturnType<typeof machinePluginUiTargetedContributionsRead>> | undefined;
+    assertCurrent();
     for (const { point, snapshot } of snapshots) {
         for (const contribution of snapshot.contributions) {
             for (const surface of contribution.surfaces) {
@@ -78,12 +56,7 @@ export async function readMountedAccountTargetedContributions(input: Readonly<{
                 if (selection.kind !== 'available' || selection.custodyId !== contributor.occurrenceId
                     || !pluginSourceCustodyV1Equal(selection.sourceCustody, contributor.sourceCustody)) {
                     if (!input.machine) continue;
-                    machineRead ??= await machinePluginUiTargetedContributionsRead(input.machine.machineId, {
-                        serverId: input.machine.serverId, pluginId: input.pluginId,
-                        accountLifetime: input.accountLifetime, signal: input.signal,
-                    });
-                    assertCurrent();
-                    if (!machineRead.supported) continue;
+                    if (!machineRead?.supported) continue;
                     const machineMount = readDaemonPluginUiTargetedSurfaceMountV1({
                         mounts: machineRead.targetedSurfaceMounts, target: machineRead.targetedContributions.target,
                         surface: { point, contributor, role: surface.role, presentation: surface.presentation },
@@ -112,6 +85,8 @@ export async function readMountedAccountTargetedContributions(input: Readonly<{
                 const artifactProjection = selected.entry.renderer && typeof selected.entry.renderer === 'object'
                     ? resolvePluginUiRendererProjectionEntry({ pluginId: contributor.pluginId,
                         renderer: selected.entry.renderer as Readonly<Record<string, unknown>>, entriesById }) : null;
+                // A child's context target is its physical contributor, not
+                // the parent's selected Machine target-operation fence.
                 const contributorTargetedContributions = projectPluginUiTargetedContributionsV1({
                     target: { pluginId: contributor.pluginId, occurrenceId: contributor.occurrenceId },
                     snapshots: readSnapshots(contributor.pluginId, contributor.occurrenceId), readSourceCustody,
@@ -132,9 +107,10 @@ export async function readMountedAccountTargetedContributions(input: Readonly<{
         }
     }
     assertCurrent();
-    // Machine Resource census belongs only to the actual Machine contributors,
-    // never to this Account target or another Account-selected contributor.
-    const machinePluginIds = new Set(mounts.filter(mount => 'executionOrigin' in mount).map(mount => mount.contributor.pluginId));
+    // A portable page can consume its own daemon Resources. Embedded Machine
+    // children keep their own census; other Account contributors remain separate.
+    const machinePluginIds = new Set([input.pluginId,
+        ...mounts.filter(mount => 'executionOrigin' in mount).map(mount => mount.contributor.pluginId)]);
     const resourceDeclarationsByPluginId = machineRead?.supported && machineRead.resourceDeclarationsByPluginId
         ? Object.fromEntries(Object.entries(machineRead.resourceDeclarationsByPluginId).filter(([pluginId]) => machinePluginIds.has(pluginId)))
         : undefined;

@@ -96,7 +96,7 @@ function createMemoryPersistentArtifactStore() {
 }
 
 describe('React Native bundle cache', () => {
-    it.each(['read', 'write'] as const)('does not finish a %s from an Account lifetime retired during hashing', async (mode) => {
+    it('does not finish a write from an Account lifetime retired during ingress hashing', async () => {
         const persistent = createMemoryPersistentArtifactStore();
         const cache = createPluginReactNativeBundleCache({ persistentStore: persistent.store });
         const bytes = new TextEncoder().encode('// async cached bytes');
@@ -114,9 +114,7 @@ describe('React Native bundle cache', () => {
             return realDigest(algorithm, data);
         });
         try {
-            const result = mode === 'read'
-                ? cache.readPersistentArtifact(stableIdentity)
-                : cache.writePersistentArtifact(record);
+            const result = cache.writePersistentArtifact(record);
             await started;
             await cache.retireAccount(stableIdentity.accountScope);
             cache.bindAccountLifetime({
@@ -125,12 +123,34 @@ describe('React Native bundle cache', () => {
                 onRetire: () => ({ dispose: () => {} }),
             });
             releaseDigest();
-            await expect(result).resolves.toBe(mode === 'read' ? null : false);
+            await expect(result).resolves.toBe(false);
             expect(persistent.writes).toEqual([]);
         } finally {
             releaseDigest();
             hashing.mockRestore();
         }
+    });
+
+    it('restores admitted persistent records without hashing and reads a changed digest', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const cache = createPluginReactNativeBundleCache({ persistentStore: persistent.store });
+        const bytes = new TextEncoder().encode('// retained bytes');
+        const stableIdentity = { ...persistentIdentity, artifactDigest: fileSetDigestFor('entry.js', bytes) };
+        const record = singleFileRecord(stableIdentity, 'entry.js', bytes);
+        const changedBytes = new TextEncoder().encode('// updated bytes');
+        const changedIdentity = { ...persistentIdentity, artifactDigest: fileSetDigestFor('entry.js', changedBytes) };
+        const changed = singleFileRecord(changedIdentity, 'entry.js', changedBytes);
+        persistent.records.set(derivePluginReactNativePersistentArtifactKey(stableIdentity), record);
+        persistent.records.set(derivePluginReactNativePersistentArtifactKey(changedIdentity), changed);
+        const hashing = vi.spyOn(platformDigest, 'digest');
+        try {
+            for (const selected of [record, record, changed]) {
+                await expect(cache.readPersistentArtifact(selected.persistentIdentity)).resolves.toMatchObject({
+                    persistentIdentity: selected.persistentIdentity, bytes: selected.bytes,
+                });
+            }
+            expect(hashing).toHaveBeenCalledTimes(0);
+        } finally { hashing.mockRestore(); }
     });
 
     it('does not expose a second Artifact byte-fetch path from the cache owner', async () => {
@@ -621,7 +641,7 @@ describe('React Native bundle cache', () => {
         ]);
     });
 
-    it('writes a valid exact Artifact only after its corrupt predecessor deletion has drained', async () => {
+    it('writes a valid exact Artifact only after its explicit predecessor deletion has drained', async () => {
         const persistent = createMemoryPersistentArtifactStore();
         const validBytes = new TextEncoder().encode('// valid exact Artifact after corrupt cache entry');
         const identity = {
@@ -629,8 +649,8 @@ describe('React Native bundle cache', () => {
             artifactDigest: fileSetDigestFor('index.bundle', validBytes),
         };
         const key = derivePluginReactNativePersistentArtifactKey(identity);
-        // Same identity but invalid content makes the cache reader start its
-        // corrupt-entry exact deletion.
+        // Explicit removal belongs to persistent custody; loading an admitted
+        // record does not hash it to invent another deletion decision.
         persistent.records.set(key, singleFileRecord(
             identity,
             'index.bundle',
@@ -655,7 +675,7 @@ describe('React Native bundle cache', () => {
             },
         });
 
-        const corruptRead = cache.readPersistentArtifact(identity);
+        const removal = cache.removePersistentArtifact(identity);
         await corruptRemovalBegan;
 
         // A later valid A must join the cache owner's pending exact deletion,
@@ -665,7 +685,7 @@ describe('React Native bundle cache', () => {
         );
         allowCorruptRemoval();
 
-        await expect(corruptRead).resolves.toBeNull();
+        await removal;
         await expect(validWrite).resolves.toBe(true);
         await expect(cache.readPersistentArtifact(identity)).resolves.toMatchObject({
             persistentIdentity: identity,

@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveManifestTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
+import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import {
     projectPluginUiTargetedContributionIdentityV1,
     projectPluginUiTargetedContributionsV1,
@@ -9,11 +9,13 @@ import type { PluginUiAccountExecutableOrigin } from '../reactNative/executableM
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { createPluginSurfaceTargetedDeclarationSource } from './pluginSurfaceTargetedDeclarations';
 
+type AccountTargetedContributionInput = Parameters<typeof createPluginSurfaceTargetedDeclarationSource>[0]
+    & Readonly<{ origin: PluginUiAccountExecutableOrigin }>;
+
 /** The finite Account semantic projection shared by Actions and mounted UI.
  * Reading this snapshot does not discover or mount a renderer or Resource. */
-export async function readAccountTargetedContributionSnapshot(input:
-    Parameters<typeof createPluginSurfaceTargetedDeclarationSource>[0]
-    & Readonly<{ origin: PluginUiAccountExecutableOrigin }>,
+export async function readAccountTargetedContributionSnapshot(input: AccountTargetedContributionInput,
+    onAccountReady?: (snapshot: ReturnType<typeof projectAccountTargetedContributionSnapshot>) => Promise<void>,
 ) {
     const availability = readPluginAccountAvailability(input.accountLifetime.scope);
     await availability.ensureCurrentAccountExecution(input.pluginId);
@@ -30,8 +32,17 @@ export async function readAccountTargetedContributionSnapshot(input:
     };
     assertCurrent();
     const source = createPluginSurfaceTargetedDeclarationSource(input);
-    const declarations = await source.readCurrentDeclarations();
+    const declarations = await source.readCurrentDeclarations(input.signal, onAccountReady
+        ? async declarations => { await onAccountReady(projectAccountTargetedContributionSnapshot(input, availability, declarations, assertCurrent)); }
+        : undefined);
     assertCurrent();
+    return projectAccountTargetedContributionSnapshot(input, availability, declarations, assertCurrent);
+}
+
+function projectAccountTargetedContributionSnapshot(input: AccountTargetedContributionInput,
+    availability: ReturnType<typeof readPluginAccountAvailability>,
+    declarations: readonly TargetedContributionManifestDeclaration[], assertCurrent: () => void,
+) {
     const admitted = resolveManifestTargetedContributions(declarations);
     const readSourceCustody = (pluginId: string, occurrenceId: string) => declarations.find(row => (
         row.manifest.id === pluginId && row.occurrenceId === occurrenceId

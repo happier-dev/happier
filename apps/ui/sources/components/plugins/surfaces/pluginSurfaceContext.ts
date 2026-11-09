@@ -1,8 +1,7 @@
-import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import type {
     PluginSurfaceTarget,
     PluginUiPlatform,
@@ -10,12 +9,14 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useHighContrastPreference } from '@/hooks/ui/useHighContrastPreference';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useScreenReaderEnabled } from '@/hooks/ui/useScreenReaderEnabled';
 import {
     fetchAccountEncryptionMode,
     getAccountEncryptionModeCacheRevision,
+    readAccountEncryptionModeReadiness,
     subscribeAccountEncryptionModeCacheInvalidation,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -26,6 +27,13 @@ import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfaceP
 import type { PluginSurfaceTargetUndeclaredReason } from '@/sync/domains/plugins/ui/scope/resolveResourceScope';
 
 import { usePluginUiTheme } from './pluginUiThemeProjection';
+import { readProjectRepositoryIdentityV1, type ProjectScmContextSnapshotV1, type ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { useActiveServerAccountScopeLifetime, useSessionProjectScmSummarySnapshot } from '@/sync/domains/state/storage';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { HappyError } from '@/utils/errors/errors';
+import { PluginCompanionOpenedFromContext, PluginPageNavigationContext } from '@/components/plugins/pages/pluginPageNavigationContext';
 
 function freezeOwnedContext<T>(value: T): T {
     if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -57,6 +65,9 @@ export type PluginSurfaceEnvironment = Readonly<{
     safeAreaInsets: SurfaceContext['safeAreaInsets'];
     theme: SurfaceContext['theme'];
     columnVisible: boolean;
+    pageNavigation?: NonNullable<SurfaceContext['page']>['navigation'];
+    /** Present only for a companion opened from its page's own item (`AppScopeRightSidebar`). */
+    openedFrom?: SurfaceContext['openedFrom'];
 }>;
 
 /**
@@ -72,6 +83,8 @@ export type PluginSurfaceTargetFacts = Readonly<{
     targetKind: PluginSurfaceTargetKind | null;
     sessionId?: string | null;
     agentId?: string | null;
+    snapshot?: ProjectScmContextSnapshotV1 | null;
+    session?: Extract<PluginSurfaceTarget, { kind: 'session' }> | null;
     /** Supplied by the canonical admitted Project context, never a checkout-address alias. */
     project?: ProjectSurfaceTargetV1 | null;
     /** The addressed Machine, independently of the plugin's selected execution origin. */
@@ -160,8 +173,15 @@ export function resolvePluginSurfaceTarget(
         case 'session': {
             const sessionId = readId(facts.sessionId);
             if (!sessionId) return unresolvedTarget('session_target_identity_unavailable');
+            if (facts.session) return facts.session.sessionId === sessionId
+                ? resolvedTarget(facts.session) : unresolvedTarget('session_target_identity_unavailable');
             const agentId = readId(facts.agentId);
-            return resolvedTarget({ kind: 'session', sessionId, ...(agentId ? { agentId } : {}) });
+            const repository = readProjectRepositoryIdentityV1({ snapshot: facts.snapshot });
+            const branch = facts.snapshot?.branch;
+            const currentBranch = branch && !branch.detached ? readId(branch.head) : undefined;
+            const headOid = readId(branch?.headOid);
+            return resolvedTarget({ kind: 'session', sessionId, ...(agentId ? { agentId } : {}),
+                ...(repository ? { repository } : {}), ...(currentBranch ? { branch: currentBranch } : {}), ...(headOid ? { headOid } : {}) });
         }
         case 'project': {
             return facts.project && readId(facts.project.projectKey)
@@ -197,6 +217,38 @@ export function resolvePluginSurfaceTarget(
     }
 }
 
+/** Existing admitted SCM subscriptions only; never starts repository observation or loads a body. */
+export function usePluginSessionSurfaceTarget(input: Readonly<{
+    sessionId: string | null | undefined;
+    serverId: string | null | undefined;
+    agentId?: string | null;
+    authority?: ActiveServerAccountScopeLifetime | null;
+}>): Extract<PluginSurfaceTarget, { kind: 'session' }> | null {
+    const active = useActiveServerAccountScopeLifetime();
+    const authority = input.authority === undefined ? active : input.authority;
+    const current = authority?.isCurrent() === true && Boolean(input.serverId)
+        && areServerProfileIdentifiersEquivalent(authority.scope.serverId, input.serverId!);
+    const snapshot = useSessionProjectScmSummarySnapshot(current ? input.sessionId ?? null : null, input.serverId);
+    const provider = snapshot?.hostingProvider;
+    const branch = snapshot?.branch;
+    const baseline = React.useRef<Readonly<{ authority: typeof authority; serverId: typeof input.serverId;
+        target: Extract<PluginSurfaceTarget, { kind: 'session' }> }> | null>(null);
+    return React.useMemo(() => {
+        if (!current) { baseline.current = null; return null; }
+        const resolved = resolvePluginSurfaceTarget({ targetKind: 'session', sessionId: input.sessionId, agentId: input.agentId, snapshot });
+        if (!resolved.resolved || resolved.target.kind !== 'session') return null;
+        const previous = baseline.current?.authority === authority && baseline.current.serverId === input.serverId
+            && baseline.current.target.sessionId === input.sessionId ? baseline.current.target : null;
+        const repository = previous?.repository && sameStrictJsonValue(previous.repository, resolved.target.repository)
+            ? previous.repository : resolved.target.repository;
+        const target = previous && sameStrictJsonValue(previous, resolved.target) ? previous
+            : Object.freeze({ ...resolved.target, ...(repository ? { repository } : {}) });
+        baseline.current = { authority, serverId: input.serverId, target };
+        return target;
+    }, [authority, current, input.sessionId, input.serverId, input.agentId, provider?.kind, provider?.baseUrl, provider?.nameWithOwner,
+        branch?.head, branch?.headOid, branch?.detached]);
+}
+
 /**
  * The mount-lifetime equality fact for an exact public target. This is private
  * lifecycle bookkeeping only: it is deliberately not a wire or persistence
@@ -221,6 +273,13 @@ export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget):
     }
 }
 
+/** Exact checkout changes replace physical content; branch/HEAD facts replace only Resource demand. */
+export function getPluginSurfaceTargetMountKey(target: PluginSurfaceTarget): string {
+    const checkout = target.kind === 'project' ? target.checkout : undefined;
+    return JSON.stringify([getPluginSurfaceTargetAuthorityKey(target),
+        checkout ? [checkout.serverId, checkout.id, checkout.machineId, checkout.rootPath] : null]);
+}
+
 /**
  * Read the environmental facts every mounted plugin surface shares. The theme is
  * projected from the app's ACTIVE theme, and the locale is read at render time
@@ -235,6 +294,8 @@ export function usePluginSurfaceEnvironment(
     const screenReaderEnabled = useScreenReaderEnabled();
     const highContrast = useHighContrastPreference();
     const columnVisible = useAppShellColumn().columnVisible;
+    const pageNavigation = React.useContext(PluginPageNavigationContext);
+    const openedFrom = React.useContext(PluginCompanionOpenedFromContext);
     const locale = usePreferredLanguage();
     const resolvedPlatform = normalizePluginSurfacePlatform(platform);
     const spinnerStyle = useLocalSetting('loadingIndicatorStyle');
@@ -263,8 +324,12 @@ export function usePluginSurfaceEnvironment(
         }),
         theme: pluginTheme,
         columnVisible,
+        ...(pageNavigation ? { pageNavigation } : {}),
+        ...(openedFrom ? { openedFrom } : {}),
     }), [
         columnVisible,
+        pageNavigation,
+        openedFrom,
         highContrast,
         locale,
         pluginTheme,
@@ -287,10 +352,14 @@ export function usePluginSurfaceEnvironment(
  * binding; embedded mounts enter through their own normalized producer.
  */
 export function createPluginSurfaceContext(input: Readonly<{
+    /** The existing physical renderer's instance id, not a descriptor or container identity. */
+    mountId?: SurfaceContext['mountId'];
     mount: SurfaceContext['mount'];
     target: PluginSurfaceTarget;
     /** Resolved by the Account-lifetime-bound host admission path. */
     accountEncryptionMode: SurfaceContext['accountEncryptionMode'];
+    /** The physical mount's admitted lifetime, never the globally focused Account. */
+    accountLifetime?: Pick<ActiveServerAccountScopeLifetime, 'scope' | 'isCurrent'> | null;
     environment: PluginSurfaceEnvironment;
     translations: Readonly<Record<string, string>>;
     /** Exact target-scoped snapshot; an admitted empty `points` array is valid. */
@@ -301,11 +370,15 @@ export function createPluginSurfaceContext(input: Readonly<{
     requesterExecutionReady?: SurfaceContext['requesterExecutionReady'];
 }>): SurfaceContext {
     return freezeOwnedContext({
+        ...(input.mountId === undefined ? {} : { mountId: input.mountId }),
         mount: input.mount,
         target: input.target,
+        ...(input.accountLifetime?.isCurrent() === true ? { accountScope: input.accountLifetime.scope } : {}),
         ...(input.mount.kind === 'destination' && input.mount.container === 'appPage'
-            ? { page: Object.freeze({ columnVisible: input.environment.columnVisible }) }
+            ? { page: Object.freeze({ columnVisible: input.environment.columnVisible,
+                ...(input.environment.pageNavigation ? { navigation: input.environment.pageNavigation } : {}) }) }
             : {}),
+        ...(input.environment.openedFrom ? { openedFrom: input.environment.openedFrom } : {}),
         accountEncryptionMode: input.accountEncryptionMode,
         platform: input.environment.platform,
         locale: input.environment.locale,
@@ -336,7 +409,7 @@ const ACCOUNT_MODE_UNAVAILABLE = Object.freeze({ status: 'unavailable' as const 
 
 type ResolvedAccountEncryptionMode = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
-    credentials: AuthCredentials | null | undefined;
+    credentialScopeKey: string | null;
     resolveMode: ((signal: AbortSignal) => Promise<SurfaceContext['accountEncryptionMode']>) | undefined;
     cacheRevision: number;
     result: Exclude<PluginSurfaceAccountEncryptionModeReadiness, { status: 'loading' }>;
@@ -356,30 +429,36 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
     /** Gates disclosure through the incumbent physical mount. */
     isCurrent: () => boolean;
 }>): PluginSurfaceAccountEncryptionModeReadiness {
+    const serverId = input.accountLifetime?.scope.serverId;
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeAccountEncryptionModeCacheInvalidation(listener, serverId), [serverId]);
+    const getRevision = React.useCallback(() => getAccountEncryptionModeCacheRevision(serverId), [serverId]);
     const cacheRevision = React.useSyncExternalStore(
-        subscribeAccountEncryptionModeCacheInvalidation,
-        getAccountEncryptionModeCacheRevision,
-        getAccountEncryptionModeCacheRevision,
+        subscribe,
+        getRevision,
+        getRevision,
     );
     const requestRevisionRef = React.useRef(0);
+    const credentialScopeKey = input.credentials ? resolveAuthCredentialsScopeKey(input.credentials) : null;
+    const credentialsRef = React.useRef(input.credentials);
+    credentialsRef.current = input.credentials;
     const isCurrentRef = React.useRef(input.isCurrent);
     isCurrentRef.current = input.isCurrent;
     const [resolved, setResolved] = React.useState<ResolvedAccountEncryptionMode | null>(null);
     // Currentness callbacks can retain their identity while their captured
     // mount becomes ready or retires. Reconcile that transition on this render.
     const canReadMode = input.accountLifetime?.isCurrent() === true
-        && Boolean(input.credentials || input.resolveMode)
         && input.isCurrent();
 
     React.useEffect(() => {
         const accountLifetime = input.accountLifetime;
-        const credentials = input.credentials;
+        const credentials = credentialsRef.current;
         const resolveMode = input.resolveMode;
         const requestRevision = requestRevisionRef.current + 1;
         requestRevisionRef.current = requestRevision;
         setResolved((previous) => (
             previous?.accountLifetime === accountLifetime
-            && previous.credentials === credentials
+            && previous.credentialScopeKey === credentialScopeKey
             && previous.resolveMode === resolveMode
             && previous.cacheRevision === cacheRevision
                 ? previous
@@ -401,7 +480,23 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                 previous?.accountLifetime === accountLifetime ? null : previous
             ));
         });
-        const modeRead = resolveMode ? resolveMode(readAbort.signal) : fetchAccountEncryptionMode(credentials!).then(({ mode }) => mode);
+        // Explicit credential callers retain their bound adapter. Ordinary
+        // mounts acquire the same exact-Home Account context used by Actions;
+        // ambient Sync focus is not this surface's Account authority.
+        const readCapturedMode = async () => {
+            const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, readAbort.signal);
+            try {
+                if (!accountLifetime.isCurrent() || account.accountId !== accountLifetime.scope.accountId) {
+                    throw new HappyError('Account mode scope retired', false);
+                }
+                return await account.resolveAccountMode(readAbort.signal);
+            } finally { account.dispose(); }
+        };
+        const modeRead = resolveMode ? resolveMode(readAbort.signal)
+            : credentials ? fetchAccountEncryptionMode(credentials).then(({ mode }) => mode)
+                : readAccountEncryptionModeReadiness(readCapturedMode, () => !readAbort.signal.aborted
+                    && accountLifetime.isCurrent() && isCurrentRef.current()
+                    && cacheRevision === getAccountEncryptionModeCacheRevision(accountLifetime.scope.serverId));
         void modeRead.then(
             (mode) => {
                 if (
@@ -411,7 +506,7 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                 ) {
                     return;
                 }
-                setResolved({ accountLifetime, credentials, resolveMode, cacheRevision, result: { status: 'ready', mode } });
+                setResolved({ accountLifetime, credentialScopeKey, resolveMode, cacheRevision, result: { status: 'ready', mode } });
             },
             () => {
                 if (
@@ -419,7 +514,9 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                     && accountLifetime.isCurrent()
                     && isCurrentRef.current()
                 ) {
-                    setResolved({ accountLifetime, credentials, resolveMode, cacheRevision, result: { status: 'unavailable' } });
+                    setResolved({ accountLifetime, credentialScopeKey, resolveMode, cacheRevision, result: {
+                        status: 'unavailable',
+                    } });
                 }
             },
         );
@@ -428,13 +525,16 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
             requestRevisionRef.current += 1;
             retirement.dispose();
         };
-    }, [cacheRevision, canReadMode, input.accountLifetime, input.credentials, input.resolveMode, input.isCurrent]);
+        // Material/Account/transport changes restart acquisition. Reallocating
+        // equal credentials or a mount predicate changes no encryption fact;
+        // disclosure still checks the latest predicate on render and settlement.
+    }, [cacheRevision, canReadMode, credentialScopeKey, input.accountLifetime, input.resolveMode]);
 
     if (!canReadMode) return ACCOUNT_MODE_UNAVAILABLE;
 
     return resolved
         && resolved.accountLifetime === input.accountLifetime
-        && resolved.credentials === input.credentials
+        && resolved.credentialScopeKey === credentialScopeKey
         && resolved.resolveMode === input.resolveMode
         && resolved.cacheRevision === cacheRevision
         && input.accountLifetime?.isCurrent() === true

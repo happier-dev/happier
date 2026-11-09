@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol';
+import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
 
 import { renderScreen } from '@/dev/testkit';
 

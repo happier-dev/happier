@@ -14,7 +14,7 @@ import {
 } from 'expo-modules-core';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import type { BrowserFrameMessageReceipt } from '@/components/browser/frame/types';
 
 import { useHostedHtmlDocument } from './useHostedHtmlDocument';
