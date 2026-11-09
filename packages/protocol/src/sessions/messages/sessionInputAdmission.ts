@@ -1121,8 +1121,8 @@ export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
     localId: PendingLocalIdSchema,
     code: z.literal('resume_failed'),
     admissionResult: z.union([
-      SessionInputEnqueueResultV1Schema.options[0],
-      SessionInputEnqueueResultV1Schema.options[1],
+      SessionInputEnqueueResultV1Schema._zod.def.options[0],
+      SessionInputEnqueueResultV1Schema._zod.def.options[1],
     ]),
     errorDetail: z.optional(SessionSpawnLaunchErrorV1Schema),
   }),
