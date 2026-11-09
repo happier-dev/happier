@@ -1,39 +1,28 @@
-import type { PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { PluginSearchResultV1Schema } from '@happier-dev/protocol';
-import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageConfiguredSourceInstanceV1Schema,
     type TriageScanResultV1,
+    type TriageScanInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitEmptyInternalTaskSource } from '../corpus/testkit/internalTaskSource.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { parseTriageEntryDetailLaunchInput } from '../composer/entryDetailLaunchInput.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from '../composer/openEntryDetails.js';
-import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
-import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
-import {
-    acquireTriageListWindow,
-    readTriageListWindowSnapshot,
-    refreshTriageListWindow,
-    setTriageListWindowLens,
-} from '../ui/window/mountedWindow.js';
-import { createTriageListEntriesActionHandler } from './listEntries.js';
 import { createTriageSearchEntriesActionHandler } from './searchEntries.js';
-import * as searchActionArtifact from './searchEntries.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
-import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { activate as activateAccount } from '../accountRuntime.js';
+import { activate } from '../activate.js';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
 /**
@@ -67,7 +56,7 @@ type SearchEntryFixture = Readonly<{
     designation?: string;
 }>;
 
-function createDaemonContext(snapshots: readonly SearchEntryFixture[]): PluginInvocationContext {
+function createContext(snapshots: readonly SearchEntryFixture[], remoteQueries?: string[]): PluginAccountActionContext {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue({
         instanceTag: `a${'0'.repeat(42)}`,
@@ -86,6 +75,9 @@ function createDaemonContext(snapshots: readonly SearchEntryFixture[]): PluginIn
         }),
     }));
 
+    const internal = createTestkitEmptyInternalTaskSource();
+    const internalScan = internal.contribution.operations.scan;
+    // Host-created operation handles are the genuine admission/RPC boundary.
     const admitted = [{
         contributor: {
             pluginId: SOURCE.pluginId,
@@ -99,7 +91,7 @@ function createDaemonContext(snapshots: readonly SearchEntryFixture[]): PluginIn
         descriptor: SOURCE_DESCRIPTOR,
         operations: { listInstances: {}, scan: { role: 'scan' }, get: {} },
         surfaces: { detail: {} },
-    } as unknown as TriageAdmittedSourceV1];
+    } as unknown as TriageAdmittedSourceV1, internal.contribution];
 
     return {
         signal: new AbortController().signal,
@@ -124,13 +116,18 @@ function createDaemonContext(snapshots: readonly SearchEntryFixture[]): PluginIn
                 // real one must: a page larger than requested breaks the scan
                 // contract and the lane is refused, not silently truncated.
                 executeAdmittedTargetedOperation: async (
-                    _operation: unknown,
-                    scanInput: { page: { kind: string; limit?: number } },
+                    operation: unknown,
+                    scanInput: TriageScanInputV1,
                 ): Promise<TriageScanResultV1> => {
+                    if (operation === internalScan) return await internal.scan(internalScan, scanInput);
                     const pageLimit = scanInput.page.kind === 'initial'
                         ? scanInput.page.limit ?? snapshots.length
                         : snapshots.length;
-                    const page = snapshots.slice(0, pageLimit);
+                    const query = 'query' in scanInput && typeof scanInput.query === 'string' ? scanInput.query : '';
+                    remoteQueries?.push(query);
+                    const matching = remoteQueries === undefined || query === '' ? snapshots
+                        : snapshots.filter(entry => entry.title.toLowerCase().includes(query.toLowerCase()));
+                    const page = matching.slice(0, pageLimit);
                     return {
                         kind: 'complete',
                         observations: page.map((entry) => {
@@ -156,77 +153,46 @@ function createDaemonContext(snapshots: readonly SearchEntryFixture[]): PluginIn
                         // A source that stopped at the page bound has NOT walked
                         // to the end, and saying otherwise here would let the
                         // window claim a coverage the reader does not have.
-                        evidence: page.length === snapshots.length
+                        evidence: page.length === matching.length
                             ? { kind: 'walkFinished' }
                             : { kind: 'partial', reason: 'page-bound' },
                     };
                 },
             },
         },
-    } as unknown as PluginInvocationContext;
-}
-
-function createContext(snapshots: readonly SearchEntryFixture[]): PluginClientActionContext {
-    const daemonContext = createDaemonContext(snapshots);
-    const listEntries = createTriageListEntriesActionHandler();
-    const executeAction = (async (
-        action: string,
-        input?: unknown,
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ) => {
-        expect(action).toBe('entries/list-v1');
-        return await listEntries(input as never, {
-            ...daemonContext,
-            signal: options?.signal ?? daemonContext.signal,
-        });
-    }) as PluginClientActionContext['ui']['executeAction'];
-    return {
-        plugin: { id: 'happier.triage', version: '1.0.0' },
-        contribution: {
-            id: 'entries/search-v1',
-            qualifiedId: 'happier.triage/actions/entries/search-v1',
-        },
-        invocationSurface: 'ui',
-        signal: new AbortController().signal,
-        ui: Object.freeze({ executeAction, openSurface: async () => {}, context: async () => ({
-            targetedContributions: PluginUiTargetedContributionsV1Schema.parse({
-                target: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, occurrenceId: 'triage-1',
-                    sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } },
-                points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{
-                    protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-                    contributions: [{ contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId,
-                        occurrenceId: 'source-1', sourceCustody: { kind: 'development', registeredRootId: 'source-root' } },
-                        protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-                        descriptor: SOURCE_DESCRIPTOR, operations: [], surfaces: [] }],
-                }] }],
-            }),
-        }) }),
-        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
-    };
+    } as unknown as PluginAccountActionContext;
 }
 
 describe('the Triage universal-search query Action', () => {
-    it('keeps retained entries searchable when the host has no admitted contribution snapshot', async () => {
-        const base = createContext([{ entryId: '17', title: 'Fix the transcript crash' }]);
-        const context: PluginClientActionContext = {
-            ...base,
-            ui: {
-                ...base.ui,
-                context: async (request) => ({
-                    ...await base.ui.context(request),
-                    targetedContributions: null,
-                }),
-            },
-        };
+    it('finds a provider text match beyond the loaded page with one source search', async () => {
+        const queries: string[] = [];
+        const context = createContext([
+            ...Array.from({ length: 8 }, (_, index) => ({ entryId: `${index}`, title: 'Recent change' })),
+            { entryId: 'older', title: 'Older crash' },
+        ], queries);
+        const result = await createTriageSearchEntriesActionHandler()({ query: 'crash', limit: 8 }, context);
+        expect(result.items.map(item => item.title)).toEqual(['Older crash']);
+        expect(queries).toEqual(['crash']);
+        expect(result.truncated).toBe(false);
+    });
 
-        const result = PluginSearchResultV1Schema.parse(await createTriageSearchEntriesActionHandler()({
-            query: 'crash', limit: 8,
-        }, context));
+    it('declares and runs Account search without a client window or Machine', async () => {
+        expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'entries/search-v1')?.execution.target).toBe('account');
+        const context = createContext([{ entryId: '17', title: 'Fix the transcript crash' }]);
+        const result = PluginSearchResultV1Schema.parse(await createTriageSearchEntriesActionHandler()({ query: 'crash', limit: 8 }, context));
+        expect(result.items).toEqual([expect.objectContaining({ title: 'Fix the transcript crash', icon: 'change-open' })]);
+    });
 
-        expect(result.items).toEqual([
-            expect.objectContaining({ title: 'Fix the transcript crash', icon: 'info' }),
+    it('reads current Account entries on every query without retaining a client window', async () => {
+        const entries = [{ entryId: '17', title: 'Old transcript title' }];
+        const context = createContext(entries);
+        const search = createTriageSearchEntriesActionHandler();
+        expect((await search({ query: 'Old', limit: 8 }, context)).items).toHaveLength(1);
+        entries[0] = { entryId: '17', title: 'New transcript title' };
+        expect((await search({ query: 'Old', limit: 8 }, context)).items).toEqual([]);
+        expect((await search({ query: 'New', limit: 8 }, context)).items).toEqual([
+            expect.objectContaining({ title: 'New transcript title' }),
         ]);
-        expect(result.items[0]?.command.kind).toBe('openSurface');
     });
 
     it('uses the source-declared kind glyph and designation through the strict search consumer', async () => {
@@ -241,10 +207,12 @@ describe('the Triage universal-search query Action', () => {
         ]));
     });
     it.each(['root_not_found', 'ROOT_NOT_FOUND', 'unavailable', 'auth_required'])(
-        'preserves a typed %s acquisition failure through the shared window and search result', async (code) => {
+        'preserves a typed %s Account acquisition failure in the search result', async (code) => {
             const base = createContext([]);
-            const context = { ...base, ui: { ...base.ui,
-                executeAction: async () => { throw new PluginError({ code }); },
+            const context = { ...base, services: { ...base.services,
+                storage: { account: { ...base.services.storage.account,
+                    collection: () => { throw new PluginError({ code }); },
+                } },
             } };
             const result = await createTriageSearchEntriesActionHandler()({ query: 'needle', limit: 8 }, context);
             expect(result).toEqual({ items: [], truncated: false,
@@ -253,92 +221,22 @@ describe('the Triage universal-search query Action', () => {
         },
     );
 
-    it('reuses the shared mounted window without rescanning or changing the shell lens', async () => {
-        const daemonContext = createDaemonContext([
-            { entryId: '17', title: 'Fix the transcript crash' },
-            { entryId: '18', title: 'Document the release flow' },
-        ]);
-        const listEntries = createTriageListEntriesActionHandler();
-        const executeAction = vi.fn(async (action: string, input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
-            expect(action).toBe('entries/list-v1');
-            return await listEntries(input as never, {
-                ...daemonContext,
-                signal: options?.signal ?? daemonContext.signal,
-            });
-        });
-        const ui = Object.freeze({
-            executeAction,
-            openSurface: vi.fn(async () => {}),
-            context: createContext([]).ui.context,
-        }) as PluginClientActionContext['ui'];
-        const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
-        const shellLease = acquireTriageListWindow(ui, ephemeralSharedScope);
-        try {
-            await refreshTriageListWindow('view', ui, ephemeralSharedScope);
-            setTriageListWindowLens({
-                ...TRIAGE_LIST_DEFAULT_LENS_V1,
-                query: 'release',
-            }, ui, ephemeralSharedScope);
-            const shellSnapshot = readTriageListWindowSnapshot(ui, ephemeralSharedScope);
-            expect(shellSnapshot.window?.rows.map((row) => row.entryRef.entryId)).toEqual(['18']);
-            const callsBeforeSearch = executeAction.mock.calls.length;
-
-            const result = await createTriageSearchEntriesActionHandler()({
-                query: 'crash',
-                limit: 8,
-            }, {
-                plugin: { id: 'happier.triage', version: '1.0.0' },
-                contribution: {
-                    id: 'entries/search-v1',
-                    qualifiedId: 'happier.triage/actions/entries/search-v1',
-                },
-                invocationSurface: 'ui',
-                signal: new AbortController().signal,
-                ui,
-                ephemeralSharedScope,
-            } satisfies PluginClientActionContext);
-
-            expect(result.items.map((item) => item.title)).toEqual(['Fix the transcript crash']);
-            expect(executeAction).toHaveBeenCalledTimes(callsBeforeSearch);
-            expect(readTriageListWindowSnapshot(ui, ephemeralSharedScope)).toBe(shellSnapshot);
-        } finally {
-            shellLease.release();
-        }
-    });
-
-    it('activates its declared client search handler before any plugin page opens', async () => {
+    it('activates its declared Account search handler before any plugin page opens', async () => {
         const context = createContext([
             { entryId: '17', title: 'Fix the transcript crash' },
             { entryId: '18', title: 'Document the release flow' },
         ]);
 
         const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === 'entries/search-v1');
-        if (action?.execution.target !== 'client') throw new Error('Missing declared client search Action');
-        const target = { ...action.execution.client, platform: 'web' as const };
-        const scope = createPluginRegistrationScope({
-            pluginId: PLUGIN_MANIFEST.id,
-            target: { realm: 'client', ...target },
-            rights: derivePluginClientContributionRegistrationRights(PLUGIN_MANIFEST.contributes, target),
-        });
-        const exported: unknown = Reflect.get(searchActionArtifact, target.exportName);
-        if (typeof exported !== 'function') throw new Error('Missing declared client activation export');
-        await Reflect.apply(exported, undefined, [scope.api]);
-        const registration = scope.commit().find(entry => entry.family === 'actions' && entry.localId === action.id);
-        if (registration?.family !== 'actions') throw new Error('Client search handler was not registered');
-        // The exact client target and Action right above prove this opaque SDK capture's realm.
-        const handler = registration.value as unknown as ReturnType<typeof createTriageSearchEntriesActionHandler>;
-        const result = PluginSearchResultV1Schema.parse(await handler({
-            query: 'crash',
-            limit: 8,
-        }, context));
-
-        // The universal boundary parses this exact value, so the handler's own
-        // answer has to satisfy it here.
-        expect(PluginSearchResultV1Schema.safeParse(result).success).toBe(true);
-        // One matcher: the entry whose title the reader typed part of, and only
-        // that one — no second narrowing rule in the search path.
-        expect(result.items.map((item) => item.title)).toEqual(['Fix the transcript crash']);
-        expect(result.truncated).toBe(false);
+        if (action?.execution.target !== 'account') throw new Error('Missing declared Account search Action');
+        const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
+        try {
+            const handler = plugin.registration('actions', action.id);
+            if (!handler) throw new Error('Account search handler was not registered');
+            const result = PluginSearchResultV1Schema.parse(await handler({ query: 'crash', limit: 8 }, context));
+            expect(result.items.map(item => item.title)).toEqual(['Fix the transcript crash']);
+            expect(result.truncated).toBe(false);
+        } finally { await plugin.dispose(); }
     });
 
     it('activates through the incumbent open owner, carrying its exact launch input', async () => {
@@ -439,57 +337,29 @@ describe('the Triage universal-search query Action', () => {
         expect(result.items).toEqual([]);
     });
 
-    it('releases its lease promptly when aborted during a cold shared refresh', async () => {
-        let settleRead: ((value: unknown) => void) | undefined;
-        const ui = Object.freeze({
-            executeAction: vi.fn(() => new Promise<unknown>((resolve) => { settleRead = resolve; })),
-            openSurface: vi.fn(async () => {}),
-        }) as PluginClientActionContext['ui'];
-        const baseScope = createTriageEphemeralSharedScopeFixture();
-        let leases = 0;
-        const ephemeralSharedScope = Object.freeze({
-            acquire<T>(key: string, create: Parameters<typeof baseScope.acquire<T>>[1]) {
-                const lease = baseScope.acquire(key, create);
-                if (lease === null) return null;
-                leases += 1;
-                let released = false;
-                return Object.freeze({
-                    value: lease.value,
-                    release() {
-                        if (released) return;
-                        released = true;
-                        leases -= 1;
-                        lease.release();
-                    },
-                });
-            },
-        });
-        const shellLease = acquireTriageListWindow(ui, ephemeralSharedScope);
-        expect(leases).toBe(1);
+    it('forwards Account query cancellation to the scan and rejects its late result', async () => {
+        const base = createContext([{ entryId: '17', title: 'Crash' }]);
         const cancellation = new AbortController();
+        let scanSignal: AbortSignal | undefined;
+        let settleScan!: () => void;
+        const scanWait = new Promise<void>(resolve => { settleScan = resolve; });
+        const execute = base.services.actions.executeAdmittedTargetedOperation;
         const pending = createTriageSearchEntriesActionHandler()({ query: 'crash', limit: 8 }, {
-            plugin: { id: 'happier.triage', version: '1.0.0' },
-            contribution: {
-                id: 'entries/search-v1',
-                qualifiedId: 'happier.triage/actions/entries/search-v1',
-            },
-            invocationSurface: 'ui',
+            ...base,
             signal: cancellation.signal,
-            ui,
-            ephemeralSharedScope,
+            services: { ...base.services, actions: { ...base.services.actions,
+                executeAdmittedTargetedOperation: async (operation, input, options) => {
+                    scanSignal = options?.signal;
+                    await scanWait;
+                    return execute(operation, input, options);
+                },
+            } },
         });
-        await vi.waitFor(() => expect(settleRead).toBeDefined(), { timeout: 5_000 });
+        const rejected = expect(pending).rejects.toMatchObject({ code: 'plugin_action_aborted' });
+        await vi.waitFor(() => expect(scanSignal).toBeDefined());
+        expect(scanSignal).toBe(cancellation.signal);
         cancellation.abort();
-
-        await expect(Promise.race([
-            pending.then(() => 'resolved', () => 'rejected'),
-            new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 50)),
-        ])).resolves.toBe('rejected');
-        // Search released only its lease. The shell still owns the shared pass,
-        // so its transport remains unsettled and the shared value stays alive.
-        expect(leases).toBe(1);
-        shellLease.release();
-        expect(leases).toBe(0);
-        settleRead?.({});
+        settleScan();
+        await rejected;
     });
 });

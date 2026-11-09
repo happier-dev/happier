@@ -102,7 +102,7 @@ function listResult(listsTheEntry: boolean): TriageListEntriesResultV1 {
             sourceInstanceId: INSTANCE, configurationRowId: INSTANCE,
             source: SOURCE,
             displayLabel: 'Example account',
-            available: true,
+            available: sourceAvailable,
         }],
         configuredSourcesStatus: 'complete',
         window: {
@@ -143,6 +143,7 @@ function listResult(listsTheEntry: boolean): TriageListEntriesResultV1 {
  * a payload the wire would reject cannot reach the window store.
  */
 let listsTheEntry = true;
+let sourceAvailable = true;
 let exactTitle = ENTRY_TITLE;
 let exactReads = 0;
 let exactNeedsReview = true;
@@ -184,6 +185,7 @@ const mounted: PluginUiTestkit[] = [];
 
 async function mountShell(hosted = false, options: Readonly<{ pinned?: boolean; listsEntry?: boolean }> = {}) {
     listsTheEntry = options.listsEntry ?? true;
+    sourceAvailable = true;
     exactTitle = ENTRY_TITLE;
     exactReads = 0;
     exactNeedsReview = true;
@@ -289,6 +291,58 @@ describe('the selected entry once the window stops holding it', () => {
         await expect(shell.getByText('This connection is no longer configured')).resolves.toBeDefined();
         await expect(shell.getByRole('heading', { name: ENTRY_TITLE })).resolves.toBeDefined();
         expect(exactReads).toBe(2);
+    });
+    it('reopens a retained failed row through its active source and recovers its observation', async () => {
+        const { shell, ephemeralSharedScope } = await mountShell(true);
+        exactFailure = new PluginError({ code: 'forbidden', retryable: false });
+        await openTheRow(shell);
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        const retained = store.getRow(triageEntryRowKey(ENTRY_REF))!;
+        let failed: ReturnType<typeof store.publishObservation> = null;
+        await act(async () => {
+            failed = store.publishObservation({
+                entryRef: retained.entryRef,
+                sourceInstanceId: INSTANCE,
+                observedAtMs: 1_760_000_100_010,
+                outcome: { kind: 'unresolved', failure: { class: 'permission', code: 'forbidden' } },
+            });
+        });
+        if (failed === null) throw new Error('Failed observation must retain its row');
+        expect(failed.content?.outcome.snapshot.title).toBe(ENTRY_TITLE);
+        expect(failed.selected).toEqual({ kind: 'none', reason: 'noPresentObservation' });
+
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close details' })); });
+        exactFailure = null;
+        await openTheRow(shell);
+
+        expect(exactReads).toBe(2);
+        const recovered = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!
+            .getRow(triageEntryRowKey(ENTRY_REF))!;
+        expect(recovered.selected).toMatchObject({ kind: 'selected', sourceInstanceId: INSTANCE });
+    });
+    it('refuses reopening a failed row when its source is unavailable', async () => {
+        const { shell, ephemeralSharedScope } = await mountShell(true);
+        await openTheRow(shell);
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        const retained = store.getRow(triageEntryRowKey(ENTRY_REF))!;
+        await act(async () => {
+            store.publishObservation({
+                entryRef: retained.entryRef,
+                sourceInstanceId: INSTANCE,
+                observedAtMs: 1_760_000_100_010,
+                outcome: { kind: 'unresolved', failure: { class: 'permission', code: 'forbidden' } },
+            });
+        });
+        sourceAvailable = false;
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi, ephemeralSharedScope); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close details' })); });
+
+        await openTheRow(shell);
+
+        await expect(shell.getByText('No active connection is available for this entry’s source. Configure or reconnect a source, then open the entry again.')).resolves.toBeDefined();
+        expect(exactReads).toBe(1);
     });
     it('settles a retired opening generation as an unavailable detail', async () => {
         const { shell } = await mountShell(true);

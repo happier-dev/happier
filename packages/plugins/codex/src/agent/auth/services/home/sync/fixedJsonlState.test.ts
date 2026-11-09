@@ -49,6 +49,17 @@ describe('reconcileCodexSharedJsonlState', () => {
       currentContents: 'partial prefix suffix\n', incomingContents: 'partial prefix' })).toEqual({ appendText: 'partial prefix\n' });
   });
 
+  it('declines text merging for compressed rollout bytes', () => {
+    // Valid zstd raw-block frame containing '{}\n'; the final newline must not
+    // let binary content enter the UTF-8 append path instead of binary import.
+    const compressed = Buffer.from('28b52ffd20031900007b7d0a', 'hex');
+    expect(reconcileCodexSharedJsonlState({
+      entryPath: 'sessions/rollout-2026-10-19T15-51-26-01a1546e-701a-7b41-8277-bdf4e72f2b28.jsonl.zst',
+      currentContents: null,
+      incomingContents: compressed.toString('utf8'),
+    })).toBeNull();
+  });
+
   it('adopts only exact complete-line extensions of the same rollout', () => {
     const entryPath = 'sessions/2026/10/19/rollout-2026-10-19T15-51-26-01a1546e-701a-7b41-8277-bdf4e72f2b28.jsonl';
     const metadata = '{"type":"session_meta","payload":{"id":"01a1546e-701a-7b41-8277-bdf4e72f2b28"}}\n';

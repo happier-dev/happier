@@ -21,12 +21,14 @@ import {
   SENTRY_ACTION_IDS,
   SENTRY_CONNECTED_ACCOUNT_ID,
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+  SENTRY_CONTRIBUTION_ID,
   SENTRY_PLUGIN_ID,
   SENTRY_SOURCE_DISPLAY_NAME,
 } from '../../sentryContracts.js';
 
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: SENTRY_PLUGIN_ID,
+  sourceLocalId: SENTRY_CONTRIBUTION_ID,
   listInstancesLocalActionId: SENTRY_ACTION_IDS.listInstances,
   connectedAccountServiceLocalId: SENTRY_CONNECTED_ACCOUNT_ID,
   connectedAccountPurpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,

@@ -2,7 +2,7 @@ import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,
 } from '@happier-dev/plugin-sdk';
-import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
 
 const PI_PROVIDER_TOKEN_PATTERN = /\bsk-[A-Za-z0-9][A-Za-z0-9_-]{12,}\b/gu;
 const HAPPIER_BROKER_BRIDGE_RETRYABLE_STATUS_PATTERN =

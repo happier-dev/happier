@@ -18,16 +18,13 @@ describe('DeepSeek plugin manifest', () => {
   });
 
   it('uses only the strict data-only root and survives bundled or installed ingestion', () => {
-    expect(Object.keys(PLUGIN_MANIFEST).sort()).toEqual([
-      'contributes', 'description', 'displayName', 'engines', 'hostAccess', 'id', 'runtime', 'schemaVersion', 'version',
-    ]);
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toEqual(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST)));
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST).ok).toBe(true);
   });
 
-  it('keeps providers delegated to the first-class provider domain without runtime registration', () => {
+  it('activates the declared balance parser through the first-class Provider family', () => {
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'providers');
     expect(family).toMatchObject({ identityKind: 'delegatedDomain', disposition: 'delegated', activationDemand: 'conditional', allowedRuntimeRegistration: 'providers' });
-    expect(family?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({ localId: null, registration: 'notRequired' });
+    expect(family?.projectIntrospection(PLUGIN_MANIFEST.contributes.providers[0])).toMatchObject({ localId: null, registration: 'required' });
   });
 });

@@ -155,6 +155,7 @@ async function createCandidate(params: Readonly<{
     projectId: string;
     remoteSessionId: string;
     title?: string;
+    cwd?: string;
     updatedAt?: Date;
 }>): Promise<string> {
     const projectDir = join(params.configDir, 'projects', params.projectId);
@@ -165,6 +166,7 @@ async function createCandidate(params: Readonly<{
         jsonlLine({
             type: 'user',
             uuid: `${params.projectId}-${params.remoteSessionId}`,
+            ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
             message: { content: params.title ?? params.remoteSessionId },
         }),
         'utf8',
@@ -539,6 +541,7 @@ describe('Claude external-session candidate listing', () => {
             projectId: 'project-a',
             remoteSessionId: 'indexed-row',
             title: 'indexed title',
+            cwd: '  /repo/my project  ',
         });
 
         const legacyHost = await listClaudeExternalSessionCandidates({
@@ -547,6 +550,7 @@ describe('Claude external-session candidate listing', () => {
             limit: 1,
         });
         expect(legacyHost.candidates[0]).not.toHaveProperty('candidateIndexState');
+        expect(legacyHost.candidates[0]).toMatchObject({ cwd: '/repo/my project' });
 
         const indexedHost = await listClaudeExternalSessionCandidates({
             source: { kind: 'claudeConfig', configDir, projectId: null },
@@ -556,10 +560,12 @@ describe('Claude external-session candidate listing', () => {
         });
         expect(indexedHost.candidates[0]).toMatchObject({
             title: 'indexed title',
+            cwd: '/repo/my project',
             candidateIndexState: {
                 v: 1,
                 kind: 'claude_title_index',
                 fallbackTitle: 'indexed title',
+                cwd: '/repo/my project',
             },
         });
 
@@ -574,6 +580,7 @@ describe('Claude external-session candidate listing', () => {
         });
         expect(warm.candidates[0]).toMatchObject({
             title: 'indexed title',
+            cwd: '/repo/my project',
             candidateIndexState: persistedState,
         });
         expect(transcriptPaths(fsMockState.openCalls)).toEqual([]);

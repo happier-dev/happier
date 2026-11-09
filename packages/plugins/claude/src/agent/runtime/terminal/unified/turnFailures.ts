@@ -1,3 +1,4 @@
+import { readClaudeJsonlRowTimestampMs } from '../../../transcripts/jsonlReplaySuppression.js';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -111,7 +112,8 @@ export function recordClaudeUnifiedTurnFailure(params: ClaudeUnifiedFailurePubli
 }>): Error {
   return publishRecordedFailure(params, buildClaudeRuntimeIssue({
     evidence: params.evidence,
-    occurredAt: Date.now(),
+    occurredAt: params.evidence !== null && typeof params.evidence === 'object' && !Array.isArray(params.evidence)
+      ? readClaudeJsonlRowTimestampMs(params.evidence as Readonly<Record<string, unknown>>) ?? Date.now() : Date.now(),
     fallbackMessage: params.fallbackMessage,
   }), params.fallbackMessage);
 }

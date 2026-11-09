@@ -84,6 +84,9 @@
           "acpRegistryIds": [
             "kimi"
           ],
+          "agentCliSystemTool": {
+            "toolId": "kimi-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -208,10 +211,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -244,7 +248,80 @@
     "providers": [],
     "registrySources": [],
     "requestInterceptors": [],
-    "resources": [],
+    "resources": [
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
+      }
+    ],
     "roles": [],
     "scmBackends": [],
     "scmHostingProviders": [],
@@ -254,6 +331,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -305,7 +383,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -314,111 +391,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimental)",
-            "sessionInfo.kimiSessionId": "Kimi session ID",
-            "sessionInfo.kimiSessionIdCopied": "Kimi session ID copied"
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "de",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimentell)",
-            "sessionInfo.kimiSessionId": "Kimi-Sitzungs-ID",
-            "sessionInfo.kimiSessionIdCopied": "Kimi-Sitzungs-ID kopiert"
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "ru",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (экспериментально)",
-            "sessionInfo.kimiSessionId": "Идентификатор сессии Kimi",
-            "sessionInfo.kimiSessionIdCopied": "Идентификатор сессии Kimi скопирован"
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (eksperymentalne)",
-            "sessionInfo.kimiSessionId": "Identyfikator sesji Kimi",
-            "sessionInfo.kimiSessionIdCopied": "Skopiowano identyfikator sesji Kimi"
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "CLI de Kimi (experimental)",
-            "sessionInfo.kimiSessionId": "ID de sesión de Kimi",
-            "sessionInfo.kimiSessionIdCopied": "ID de sesión de Kimi copiado"
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (expérimental)",
-            "sessionInfo.kimiSessionId": "ID de session Kimi",
-            "sessionInfo.kimiSessionIdCopied": "ID de session Kimi copié"
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (sperimentale)",
-            "sessionInfo.kimiSessionId": "ID sessione Kimi",
-            "sessionInfo.kimiSessionIdCopied": "ID sessione Kimi copiato"
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "CLI do Kimi (experimental)",
-            "sessionInfo.kimiSessionId": "ID da sessão Kimi",
-            "sessionInfo.kimiSessionIdCopied": "ID da sessão Kimi copiado"
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "CLI de Kimi (experimental)",
-            "sessionInfo.kimiSessionId": "ID de la sessió de Kimi",
-            "sessionInfo.kimiSessionIdCopied": "S’ha copiat l’ID de la sessió de Kimi"
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi 命令行（实验）",
-            "sessionInfo.kimiSessionId": "Kimi 会话 ID",
-            "sessionInfo.kimiSessionIdCopied": "已复制 Kimi 会话 ID"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI（實驗性）",
-            "sessionInfo.kimiSessionId": "Kimi 工作階段 ID",
-            "sessionInfo.kimiSessionIdCopied": "已複製 Kimi 工作階段 ID"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "agentInput.agent.kimi": "Kimi",
-            "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI（実験）",
-            "sessionInfo.kimiSessionId": "Kimi セッション ID",
-            "sessionInfo.kimiSessionIdCopied": "Kimi セッション ID をコピーしました"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -430,9 +447,6 @@
     "workflows": []
   },
   "displayName": "Kimi",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

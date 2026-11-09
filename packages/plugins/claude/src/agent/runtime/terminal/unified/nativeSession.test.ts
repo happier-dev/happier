@@ -49,15 +49,29 @@ describe('openClaudeNativeUnifiedTerminalSession', () => {
   it('acknowledges an accepted native permission decision before resolving it', async () => {
     const requestDecision = createClaudeNativeAgentSdkContext(createContext())
       .sessions.current.permissions.requestDecision as SessionPermissionsService['requestDecision'];
-    const acknowledgeDecisionApplication = vi.fn(async () => undefined);
+    let releaseAcknowledgement!: () => void;
+    const acknowledgement = new Promise<void>(resolve => { releaseAcknowledgement = resolve; });
+    const acknowledgeDecisionApplication = vi.fn(() => acknowledgement);
+    let settled = false;
 
-    const result = await requestDecision({
+    const pendingDecision = requestDecision({
       provider: 'claude',
       requestId: 'dialog-1',
       toolCallId: 'dialog-1',
       toolName: 'Read',
       input: { file_path: '/tmp/example' },
-    }, { acknowledgeDecisionApplication });
+    }, { acknowledgeDecisionApplication }).then(result => {
+      settled = true;
+      return result;
+    });
+
+    try {
+      await vi.waitFor(() => expect(acknowledgeDecisionApplication).toHaveBeenCalledOnce());
+      expect(settled).toBe(false);
+    } finally {
+      releaseAcknowledgement();
+    }
+    const result = await pendingDecision;
 
     expect(result.decision).toBe('approved');
     expect(acknowledgeDecisionApplication).toHaveBeenCalledWith(result);

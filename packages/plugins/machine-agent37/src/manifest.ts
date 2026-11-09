@@ -24,7 +24,7 @@ const errorCode = (error: unknown) => error instanceof Error && error.message ==
 
 export const MACHINE_PROVISIONER = {
   title: 'Agent37', icon: 'cloud', resourceKind: 'agent37-instance', schemaVersion: 1, enrollmentRole: 'sandbox',
-  kindTitle: 'Linux machine', description: 'Persistent Agent37 Ubuntu VMs, coding containers or dedicated Performance machines, connected as ordinary Happier Machines.',
+  kindTitle: 'Linux machine', description: 'Persistent Linux machines on Agent37.',
   launchSchema: Agent37LaunchSchema.jsonSchema, resourceSchema: Agent37ResourceSchema.jsonSchema,
   resourceIdPath: 'instanceId', platforms: ['darwin', 'linux', 'win32'], prerequisites: [], browserReachable: false,
   billing: BILLING, retention: RETENTION,

@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "Droplet z wybranym rozmiarem, obrazem i regionem.",
+  "machineDigitalOcean.account.tokenHint": "Użyj osobistego tokenu dostępu DigitalOcean. Utwórz go w panelu sterowania: Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "maszyna",
+  "machineDigitalOcean.presentation.description": "Maszyna w chmurze z wybranym rozmiarem, obrazem i regionem.",
   "machineDigitalOcean.presentation.ready": "Konto połączone",
   "machineDigitalOcean.presentation.unavailable": "Konto niedostępne",
   "machineDigitalOcean.network.ipv4": "Tylko IPv4",

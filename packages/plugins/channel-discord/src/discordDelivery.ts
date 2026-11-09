@@ -1,7 +1,11 @@
-import { MAX_CONVERSATION_RETRY_AFTER_MS } from '@happier-dev/channels-protocol/v1';
+import { MAX_CONVERSATION_RETRY_AFTER_MS, type ConversationDeliveryInputV1, type ConversationDeliveryResultV1,
+  type ConversationResolvedEndpointV1 } from '@happier-dev/channels-protocol/v1';
+import type { DiscordBotApi } from './discordApi.js';
+import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
 
 export const DISCORD_MESSAGE_MAXIMUM_CODE_POINTS = 2_000;
 export const DISCORD_MESSAGE_NONCE_MAXIMUM_CODE_POINTS = 25;
+export const DISCORD_THREAD_NAME_MAXIMUM_CODE_POINTS = 100;
 export const DISCORD_SUPPRESS_EMBEDS_FLAG = 1 << 2;
 const DISCORD_DELIVERY_NONCE_DOMAIN = 'happier.discord.delivery-nonce.v1';
 const UTF8 = new TextEncoder();
@@ -17,7 +21,7 @@ export type DiscordMessageCreatePayload = Readonly<{
 
 export type DiscordDeliveryResult =
   | Readonly<{ kind: 'sent'; messageId: string; channelId: string }>
-  | Readonly<{ kind: 'endpointArchived'; recovery: 'unarchiveAndRetry' | 'ownerMustUnarchiveOrRebind' }>
+  | Readonly<{ kind: 'endpointArchived'; recovery: 'ownerMustUnarchiveOrRebind' }>
   | Readonly<{
       kind: 'notSent';
       retry: 'safe' | 'after' | 'never';
@@ -28,7 +32,7 @@ export type DiscordDeliveryResult =
 
 export type DiscordNonArchivedDeliveryResult = Exclude<
   DiscordDeliveryResult,
-  Readonly<{ kind: 'endpointArchived'; recovery: 'unarchiveAndRetry' | 'ownerMustUnarchiveOrRebind' }>
+  Readonly<{ kind: 'endpointArchived'; recovery: 'ownerMustUnarchiveOrRebind' }>
 >;
 
 function requireNonEmpty(value: string, name: string): string {
@@ -110,10 +114,6 @@ export function classifyDiscordNonArchivedDeliveryResponse(_input: Readonly<{
   const body = typeof input.body === 'object' && input.body !== null && !Array.isArray(input.body)
     ? input.body as Readonly<Record<string, unknown>>
     : null;
-  const diagnostic = body && typeof body.message === 'string' && body.message.trim()
-    ? body.message
-    : undefined;
-
   if (input.status >= 200 && input.status < 300) {
     const messageId = body && typeof body.id === 'string' && body.id.trim() ? body.id : null;
     const channelId = body && typeof body.channel_id === 'string' && body.channel_id.trim() ? body.channel_id : null;
@@ -121,6 +121,17 @@ export function classifyDiscordNonArchivedDeliveryResponse(_input: Readonly<{
       ? { kind: 'sent', messageId, channelId }
       : { kind: 'outcomeUnknown' };
   }
+  return classifyDiscordDeliveryFailureResponse(input);
+}
+
+/** Shared no-effect/ambiguous classification for Create Message and Create Thread. */
+export function classifyDiscordDeliveryFailureResponse(input: Readonly<{
+  status: number; body: unknown;
+}>): Exclude<DiscordNonArchivedDeliveryResult, { kind: 'sent' }> {
+  if (!Number.isSafeInteger(input.status) || input.status <= 0) return { kind: 'outcomeUnknown' };
+  const body = typeof input.body === 'object' && input.body !== null && !Array.isArray(input.body)
+    ? input.body as Readonly<Record<string, unknown>> : null;
+  const diagnostic = body && typeof body.message === 'string' && body.message.trim() ? body.message : undefined;
   if (input.status === 429) {
     const retryAfterMs = boundedDiscordRetryAfterMs(input.body);
     return retryAfterMs === undefined
@@ -138,10 +149,55 @@ export function classifyDiscordNonArchivedDeliveryResponse(_input: Readonly<{
   return { kind: 'notSent', retry: 'never', ...(diagnostic ? { diagnostic } : {}) };
 }
 
+function resolveDeliveryResult(result: DiscordDeliveryResult): ConversationDeliveryResultV1 {
+  switch (result.kind) {
+    case 'sent': return { kind: 'delivered', providerMessageIds: [result.messageId] };
+    case 'endpointArchived': return { kind: 'endpointArchived', recovery: result.recovery };
+    case 'notSent': return { kind: 'notDelivered', retry: result.retry,
+      ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }) };
+    case 'outcomeUnknown': return result;
+  }
+}
+
+/** One native message sender, including the first message of a new public thread. */
+export async function deliverDiscordText(input: Readonly<{
+  api: DiscordBotApi; request: ConversationDeliveryInputV1;
+  channelId: string; payload: DiscordMessageCreatePayload; signal: AbortSignal;
+}>): Promise<ConversationDeliveryResultV1> {
+  let channelId = input.channelId;
+  let endpoint: ConversationResolvedEndpointV1 | undefined;
+  if (input.request.newThread !== undefined) {
+    if (input.request.replyContext !== undefined) return { kind: 'notDelivered', retry: 'never' };
+    const name = Array.from(input.request.newThread.subject.trim()).slice(0, DISCORD_THREAD_NAME_MAXIMUM_CODE_POINTS).join('');
+    let created: Awaited<ReturnType<DiscordBotApi['createThread']>>;
+    try {
+      created = await input.api.createThread({ channelId, name }, { signal: input.signal });
+    } catch {
+      return { kind: 'outcomeUnknown' };
+    }
+    if (created.kind === 'outcomeUnknown') return created;
+    if (created.kind === 'notSent') return resolveDeliveryResult(created);
+    channelId = created.channelId;
+    endpoint = { kind: 'thread', audience: 'shared', id: createDiscordChannelEndpointId(channelId), parentId: input.request.endpoint.id };
+    if (input.signal.aborted) return { kind: 'outcomeUnknown', endpoint };
+  }
+  let result: DiscordDeliveryResult;
+  try {
+    // A normal send may auto-unarchive. Exact native refusal alone requests
+    // recovery; no speculative PATCH or unverified MANAGE_THREADS permission.
+    result = await input.api.sendMessage({ channelId, payload: input.payload }, { signal: input.signal });
+  } catch {
+    return { kind: 'outcomeUnknown', ...(endpoint === undefined ? {} : { endpoint }) };
+  }
+  const delivered = resolveDeliveryResult(result);
+  return endpoint === undefined ? delivered
+    : delivered.kind === 'delivered' ? { ...delivered, endpoint } : { kind: 'outcomeUnknown', endpoint };
+}
+
 export function classifyDiscordDeliveryResponse(_input: Readonly<{
   status: number;
   body: unknown;
-  canManageThreads: boolean;
+
 }>): DiscordDeliveryResult {
   const input = _input;
   const body = typeof input.body === 'object' && input.body !== null && !Array.isArray(input.body)
@@ -159,7 +215,7 @@ export function classifyDiscordDeliveryResponse(_input: Readonly<{
   ) {
     return {
       kind: 'endpointArchived',
-      recovery: input.canManageThreads ? 'unarchiveAndRetry' : 'ownerMustUnarchiveOrRebind',
+      recovery: 'ownerMustUnarchiveOrRebind',
     };
   }
 

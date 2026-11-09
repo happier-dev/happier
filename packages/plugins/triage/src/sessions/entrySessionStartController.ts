@@ -31,6 +31,7 @@ import type {
 import { planTriageActionDeliveryV1 } from '../sessions/actionDelivery.js';
 import {
     readTriageActionExecutionPlacementV1,
+    readTriageActionLaunchDirectoryV1,
     resolveTriageActionCheckoutV1,
     resolveTriageActionPlacementV1,
 } from '../sessions/actionLaunch.js';
@@ -66,7 +67,7 @@ import {
     type TriageNewSessionSeedHostV1,
     type TriageNewSessionFailureV1,
 } from '../ui/header/newSessionSeedCommand.js';
-import { requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
@@ -981,21 +982,19 @@ export function createTriageEntrySessionStartController(
                 // carries its source preparation.
                 const composes = request.comparisonDestination === undefined
                     && action.target.kind === 'agent' && action.target.delivery === 'compose';
-                const checkoutIsDirectlyLaunchable = checkout === 'none' || checkout === 'reuseWorkspace'
-                    || checkout === 'preparedReviewWorkspace';
+                const launchDirectory = readTriageActionLaunchDirectoryV1(executionPlacement, checkout);
                 const preferredAgentTargetKey = references.profile?.preferredAgentTargetKey;
                 const agent = composes ? explicitAgent
-                    : explicitAgent ?? (checkoutIsDirectlyLaunchable
-                        && executionPlacement?.directory !== undefined
+                    : explicitAgent ?? (launchDirectory !== undefined
                         && preferredAgentTargetKey !== undefined
                         ? await readTriageAgentExecutionTargetV1(host, preferredAgentTargetKey)
                         : null);
                 if (retired.current) return;
                 const directSettlement: unknown = request.settlement
-                    ?? (agent?.status === 'resolved' && executionPlacement?.directory !== undefined ? {
+                    ?? (agent?.status === 'resolved' && executionPlacement !== null && launchDirectory !== undefined ? {
                         executionTarget: executionPlacement.executionTarget,
                         agentTarget: agent.agentTarget,
-                        directory: { kind: 'path', path: executionPlacement.directory },
+                        directory: launchDirectory,
                     } : undefined);
 
                 // Compose is authoring, not Session creation, and so is every
@@ -1012,6 +1011,7 @@ export function createTriageEntrySessionStartController(
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], promptText, profileId: action.profileId,
+                        actionDefault: triageActionDefaultSeedV1(action),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
                         checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,

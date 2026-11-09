@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Всё остальное",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Развёртывания",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Окружения",
+  "plugins.triage.surface.actions.subject.workflowRun": "Запуски рабочих процессов",
+  "plugins.triage.surface.actions.investigateRun": "Исследовать этот запуск",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Без рабочей копии",
   "plugins.triage.surface.actions.workspace.repository": "Проект, который я выберу",
   "plugins.triage.surface.actions.workspace.pullRequest": "Подготовленное рабочее дерево для проверки",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Связывайте их с сессиями, блокируйте pull request’ом, разбивайте на подзадачи.",
   "plugins.triage.tasks.firstRun.trackers.title": "Задачи из трекера",
   "plugins.triage.tasks.firstRun.trackers.description": "Они остаются в своём трекере. Happier читает и редактирует их там.",
-  "plugins.triage.tasks.firstRun.trust": "Трекеры читаются в реальном времени на выбранной машине. Их задачи никогда не копируются в ваш аккаунт."
+  "plugins.triage.tasks.firstRun.trust": "Трекеры читаются в реальном времени на выбранной машине. Их задачи никогда не копируются в ваш аккаунт.",
+  "plugins.triage.surface.sources.permanent": "Повторная попытка не поможет. В разделе «Подробности» есть то, что нужно поддержке.",
+  "plugins.triage.surface.sources.supportCode": "Для поддержки",
+  "plugins.triage.surface.failure.unreachableSuffix": "не удалось подключиться"
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createCodexAppServerRpcError } from './compatibility.js';
+import { SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 const UPLOAD_PATH = '.happier/uploads/messages/m1/screenshot.png';
 
@@ -201,6 +202,10 @@ describe('Codex app-server structured input dispatch', () => {
 
   it('forwards skill mentions, vendor plugin mentions and verified image attachments to turn/start', async () => {
     const runtime = createCodexNativeAppServerSessionRuntime(createRuntime(), 'session-1');
+    const metadata = SessionOwnerMetadataV1Schema.parse({ v: 1, runtime: {
+      agentRuntimeCapabilitiesV1: runtime.runtimeCapabilities,
+    } });
+    expect(metadata.runtime?.agentRuntimeCapabilitiesV1?.backend?.session?.media?.acceptsImageInput?.supported).toBe(true);
 
     await expect(runtime.send({
       inputIds: ['input-1'],

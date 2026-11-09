@@ -355,6 +355,13 @@ describe('activated public Lima actions', () => {
         { requirement: { id: { localId: 'qemu-img' } }, status: 'available' }] });
   });
 
+  it('says a missing Lima install is an absent prerequisite, not a failed check', async () => {
+    const exec: Pick<ExecService, 'run'> = { run: async () => processResult(new Uint8Array()) };
+    const missing = await activatedAction('check', exec, []);
+    expect(await missing.handler({}, missing.context)).toMatchObject({ available: false, code: 'lima_unavailable',
+      prerequisites: [{ requirement: { id: { localId: 'lima-cli' } }, status: 'unavailable' }] });
+  });
+
   it('preserves binary streams and cancellation while private input stays on native stdin', async () => {
     const requests: Parameters<ExecService['run']>[0][] = [];
     const result: PluginProcessResult = { ...processResult(new Uint8Array([255, 0])),

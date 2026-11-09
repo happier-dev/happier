@@ -1,9 +1,12 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
 import { CLAUDE_UI_DESCRIPTOR } from './descriptor.js';
-import { CLAUDE_UI_TRANSLATIONS } from './translations.js';
 import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
 
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
@@ -212,8 +215,8 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
     const keys = [detailsSlot.tab.titleKey, detailsSlot.tab.subtitleKey]
       .filter((key): key is string => typeof key === 'string');
 
-    expect(Object.keys(CLAUDE_UI_TRANSLATIONS)).toContain('de');
-    for (const messages of Object.values(CLAUDE_UI_TRANSLATIONS)) {
+    expect(Object.keys(PACKAGED_UI_TRANSLATIONS)).toContain('de');
+    for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
       expect(keys.every((key) => typeof (messages as Readonly<Record<string, string>>)[key] === 'string'))
         .toBe(true);
     }

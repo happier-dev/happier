@@ -18,7 +18,7 @@ import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 as GH } from '../../../scm-github/sr
 import { GITLAB_TRIAGE_DETAIL_ACTION_IDS as GL } from '../../../scm-gitlab/src/triage/contribution.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS as BB } from '../../../scm-bitbucket/src/triage/source/detailActions.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS as AZ } from '../../../scm-azure-devops/src/triage/detailActions.js';
-import { AZURE_THREAD_WINDOW_V1 } from '../../../scm-azure-devops/src/ui/detail/tabDeclarations.js';
+import { AZURE_THREAD_REPLY_WINDOW_V1, AZURE_THREAD_WINDOW_V1 } from '../../../scm-azure-devops/src/ui/detail/tabDeclarations.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { bindTriageMountedUiActions } from './mountedActions.js';
 import { useTriageSourcePanelActionsV1 } from './useSourcePanelActions.js';
@@ -76,21 +76,27 @@ async function mountProvider(provider: 'github' | 'gitlab' | 'bitbucket' | 'azur
 describe('SCM mounted source controls', () => {
   it('widens the returned Azure thread slice without another provider read', async () => {
     let reads = 0;
+    const total = 2 * AZURE_THREAD_WINDOW_V1 + 1;
     const fixture = await mountProvider('azure-devops', 'activity', id => {
       reads += 1;
       if (id === AZ.readIterations) return azureIterations;
       if (id === AZ.listCommits) return pageResult('commits', []);
-      if (id === AZ.readThreads) return pageResult('threads', Array.from({ length: AZURE_THREAD_WINDOW_V1 + 1 }, (_, n) => ({
+      if (id === AZ.readThreads) return pageResult('threads', Array.from({ length: total }, (_, n) => ({
         id: String(n), status: 'active', omittedCommentCount: 0, comments: [{ id: String(n), content: `thread-body-${n}` }],
       })));
       return unavailable;
     });
-    expect(document.body.textContent).not.toContain(`thread-body-${AZURE_THREAD_WINDOW_V1}`);
+    // The Timeline virtualizes rows; its footer reports the complete visible slice.
+    expect(document.body.textContent).toContain(`${AZURE_THREAD_WINDOW_V1} of ${total} thread(s) shown.`);
     const command = fixture.commands().find(row => row.operation.kind === 'loadMoreSourceItems' && row.operation.list === 'threads');
     expect(command).toBeDefined();
     const before = reads;
     await act(async () => { expect(await fixture.invoke(command!.operation)).toEqual({ status: 'applied' }); });
-    expect(document.body.textContent).toContain(`thread-body-${AZURE_THREAD_WINDOW_V1}`);
+    expect(document.body.textContent).toContain(`${2 * AZURE_THREAD_WINDOW_V1} of ${total} thread(s) shown.`);
+    const next = fixture.commands().find(row => row.operation.kind === 'loadMoreSourceItems' && row.operation.list === 'threads');
+    expect(next).toBeDefined();
+    await act(async () => { await fixture.page.press(await fixture.page.getByRole('button', { name: next!.title })); });
+    expect(document.body.textContent).toContain(`${total} of ${total} thread(s) shown.`);
     expect(reads).toBe(before);
     expect(fixture.commands().some(row => row.operation.kind === 'loadMoreSourceItems' && row.operation.list === 'threads')).toBe(false);
   });
@@ -203,7 +209,7 @@ describe('SCM mounted source controls', () => {
       if (id === BB.listComments) return pageResult('comments', Array.from({ length: 4 }, (_, n) => ({ id: String(n), body: `reply-body-${n}`, deleted: false, resolution: 'unknown', ...(n === 0 ? {} : { parentId: '0' }) })));
       if (id === AZ.listCommits) return pageResult('commits', []);
       if (id === AZ.readThreads) return pageResult('threads', [{ id: 'thread-1', status: 'active', omittedCommentCount: 0,
-        comments: Array.from({ length: 10 }, (_, n) => ({ id: String(n), content: `reply-body-${n}`, author: 'Reviewer' })) }]);
+        comments: Array.from({ length: 3 * AZURE_THREAD_REPLY_WINDOW_V1 }, (_, n) => ({ id: String(n), content: `reply-body-${n}`, author: 'Reviewer' })) }]);
       return unavailable;
     });
     const command = fixture.commands().find(row => row.operation.kind === 'setSourceItemExpanded');
@@ -220,5 +226,6 @@ describe('SCM mounted source controls', () => {
       expect(reads).toBe(before);
     }
     expect(fixture.commands().filter(row => row.operation.kind === 'setSourceItemExpanded')).toEqual([]);
+    expect(document.body.textContent).toContain('reply-body-0');
   });
 });

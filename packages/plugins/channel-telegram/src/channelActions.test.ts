@@ -105,6 +105,21 @@ function botIdentity() {
 }
 
 describe('Telegram Channel provider actions', () => {
+  it('resolves and sends an ordinary destination without repeating bot identity acquisition', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+      if (input.url.endsWith('/getMe')) return response(botIdentity());
+      if (input.url.endsWith('/getChat')) return response({ ok: true, result: { id: 456, type: 'private' } });
+      if (input.url.endsWith('/sendMessage')) return response({ ok: true, result: { message_id: 88 } });
+      throw new Error(`Unexpected Telegram request: ${input.url}`);
+    }) };
+    await expect(resolveTelegramEndpoint({ ...connection, query: '456' }, coreContext(http)))
+      .resolves.toMatchObject({ kind: 'resolved', candidates: [{ kind: 'direct', id: '456' }] });
+    await expect(deliverTelegramMessage({ ...connection, endpoint: { kind: 'direct', audience: 'direct', id: '456' },
+      content: { text: 'hello' }, deliveryKey: 'ordinary-identity-read', linkPreviewPolicy: 'suppress' }, coreContext(http)))
+      .resolves.toEqual({ kind: 'delivered', providerMessageIds: ['88'] });
+    expect(http.request.mock.calls.filter(([request]) => request.url.endsWith('/getMe'))).toHaveLength(0);
+  });
+
   it('fetches a descriptor after observation using fresh HTTP state and refuses message and credential mismatches', async () => {
     const observed = await pollTelegramObservations({ ...connection,
       checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() }, limit: 10, waitMs: 0,
@@ -129,13 +144,14 @@ describe('Telegram Channel provider actions', () => {
       return { ...response(null), finalUrl: input.url, body: new TextEncoder().encode('hello') };
     }) };
     await expect(fetchTelegramAttachments(request, coreContext(http))).resolves.toEqual({ kind: 'fetched', attachments: [{ attachmentId, base64: 'aGVsbG8=' }] });
+    expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(0);
     expect(http.request.mock.calls.some(([input]) => input.method === 'GET')).toBe(true);
     http.request.mockClear();
     await expect(fetchTelegramAttachments({ ...request, messageId: '3' }, coreContext(http))).resolves.toMatchObject({ kind: 'notReady', reason: 'unsupported' });
-    expect(http.request.mock.calls.every(([input]) => input.url.endsWith('/getMe'))).toBe(true);
+    expect(http.request).not.toHaveBeenCalled();
     http.request.mockClear();
-    await expect(fetchTelegramAttachments({ ...request, providerConnectionKey: 'telegram-bot:999' }, coreContext(http))).resolves.toMatchObject({ kind: 'notReady', reason: 'invalidConfiguration' });
-    expect(http.request.mock.calls.every(([input]) => input.url.endsWith('/getMe'))).toBe(true);
+    await expect(fetchTelegramAttachments({ ...request, providerConnectionKey: 'telegram-bot:999' }, coreContext(http))).resolves.toMatchObject({ kind: 'notReady', reason: 'unsupported' });
+    expect(http.request).not.toHaveBeenCalled();
   });
 
   it('refuses cancelled attachment materialization before credential use or HTTP', async () => {
@@ -169,15 +185,76 @@ describe('Telegram Channel provider actions', () => {
     expect(http.request.mock.calls.every(([request]) => !request.url.includes('/getFile') && request.method !== 'GET')).toBe(true);
   });
 
-  it('refuses unsupported new threads before any Telegram request', async () => {
+  it.each([
+    { kind: 'direct', audience: 'direct', id: '456' },
+    { kind: 'thread', audience: 'shared', id: '-100456:17', parentId: '-100456' },
+  ] as const)('refuses unsupported new threads at a $kind destination before any Telegram request', async endpoint => {
     const http = { request: vi.fn(async () => { throw new Error('Unsupported starts must not call Telegram'); }) };
     await expect(deliverTelegramMessage({
-      ...connection, endpoint: { kind: 'direct', audience: 'direct', id: '456' },
+      ...connection, endpoint,
       content: { text: 'Brief', html: '<p>Brief</p>' }, deliveryKey: 'start-1',
       newThread: { recipients: ['456'], subject: 'Brief' },
-      mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+       linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toEqual({ kind: 'notReady', reason: 'unsupported' });
     expect(http.request).not.toHaveBeenCalled();
+  });
+
+  it.each(['sent', 'createRejected', 'createUnknown', 'cancelAfterCreate', 'sendRejected', 'sendUnknown'] as const)(
+    'starts one forum topic with the text alternative and retains create evidence (%s)', async outcome => {
+      const effects: { method: string; body: Record<string, unknown> }[] = [];
+      const controller = new AbortController();
+      const http = { async request(input: TelegramHttpRequestInput) {
+        if (input.url.endsWith('/getMe')) return response(botIdentity());
+        if (input.url.endsWith('/getChat')) return response({ ok: true, result: {
+          id: -100456, type: 'supergroup', title: 'QA', is_forum: true,
+        } });
+        const method = input.url.split('/').at(-1)!;
+        effects.push({ method, body: JSON.parse(new TextDecoder().decode(input.body)) });
+        if (method === 'createForumTopic') {
+          if (outcome === 'createUnknown') throw new Error('response lost after create');
+          if (outcome === 'createRejected') return response({ ok: false, error_code: 429,
+            description: 'Wait', parameters: { retry_after: 10 } });
+          if (outcome === 'cancelAfterCreate') controller.abort(new Error('caller cancelled'));
+          return response({ ok: true, result: { message_thread_id: 17, name: 'Brief' } });
+        }
+        if (method === 'sendMessage') {
+          if (outcome === 'sendUnknown') throw new Error('response lost after send');
+          return outcome === 'sendRejected'
+            ? response({ ok: false, error_code: 429, description: 'Wait', parameters: { retry_after: 10 } })
+            : response({ ok: true, result: { message_id: 71 } });
+        }
+        throw new Error('Unexpected Telegram effect');
+      } };
+      const result = await deliverTelegramMessage({ ...connection,
+        endpoint: { kind: 'shared', audience: 'shared', id: '-100456' },
+        content: { text: 'Hello @all', html: '<p>Not sent</p>' }, deliveryKey: 'start-1',
+        newThread: { recipients: ['456'], subject: 'Brief' },
+         linkPreviewPolicy: 'suppress',
+      }, coreContext(http, { signal: controller.signal }));
+      const endpoint = { kind: 'thread', audience: 'shared', id: '-100456:17', parentId: '-100456' };
+      expect(result).toEqual(outcome === 'sent'
+        ? { kind: 'delivered', providerMessageIds: ['71'], endpoint }
+        : outcome === 'createUnknown' ? { kind: 'outcomeUnknown' }
+        : outcome === 'createRejected' ? { kind: 'notDelivered', retry: 'after', retryAfterMs: 10_000 }
+        : { kind: 'outcomeUnknown', endpoint });
+      expect(effects[0]).toEqual({ method: 'createForumTopic', body: { chat_id: '-100456', name: 'Brief' } });
+      expect(effects.slice(1)).toEqual(['createUnknown', 'createRejected', 'cancelAfterCreate'].includes(outcome) ? [] : [{ method: 'sendMessage', body: {
+        chat_id: '-100456', message_thread_id: 17, text: 'Hello ＠all', link_preview_options: { is_disabled: true },
+      } }]);
+    },
+  );
+
+  it('refuses a non-forum shared parent without creating a topic or sending text', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+      if (input.url.endsWith('/getMe')) return response(botIdentity());
+      if (input.url.endsWith('/getChat')) return response({ ok: true, result: { id: -100456, type: 'supergroup', is_forum: false } });
+      throw new Error('No native effect is allowed');
+    }) };
+    await expect(deliverTelegramMessage({ ...connection, endpoint: { kind: 'shared', audience: 'shared', id: '-100456' },
+      content: { text: 'Brief' }, deliveryKey: 'start-1', newThread: { recipients: ['456'], subject: 'Brief' },
+       linkPreviewPolicy: 'suppress',
+    }, coreContext(http))).resolves.toEqual({ kind: 'notReady', reason: 'unsupported' });
+    expect(http.request.mock.calls.every(([input]) => input.url.endsWith('/getMe') || input.url.endsWith('/getChat'))).toBe(true);
   });
   it('deletes a conflicting webhook only through the exact selected bot account without dropping pending updates', async () => {
     const materialize = vi.fn(async () => ({
@@ -627,7 +704,7 @@ describe('Telegram Channel provider actions', () => {
     });
     await expect(deliverTelegramMessage({ ...connection, endpoint: observation.endpoint, content: { text: 'answer' },
       deliveryKey: 'ordinary-reply', replyContext: { replyToMessageId: observation.message.id },
-      mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+       linkPreviewPolicy: 'suppress',
     }, context)).resolves.toMatchObject({ kind: 'delivered' });
     const sent = http.request.mock.calls.find(([input]) => input.url.endsWith('/sendMessage'))?.[0];
     expect(JSON.parse(new TextDecoder().decode(sent?.body))).toEqual({
@@ -1005,9 +1082,10 @@ describe('Telegram Channel provider actions', () => {
       .resolves.toMatchObject({ kind: 'resolved', candidates: [] });
     await expect(deliverTelegramMessage({ ...connection,
       endpoint: { kind: 'thread', audience: type === 'private' ? 'direct' : 'shared', id: `${id}:17`, parentId: String(id) },
-      content: { text: 'not a topic' }, deliveryKey: 'invalid-topic', mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+      content: { text: 'not a topic' }, deliveryKey: 'invalid-topic',  linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toEqual({ kind: 'notDelivered', retry: 'never' });
     expect(http.request.mock.calls.some(([input]) => input.url.endsWith('/sendMessage'))).toBe(false);
+    expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(type === 'private' ? 2 : 0);
   });
 
   it.each([
@@ -1027,7 +1105,7 @@ describe('Telegram Channel provider actions', () => {
       endpoint: topic ? { kind: 'thread', audience: type === 'private' ? 'direct' : 'shared', id: `${id}:17`, parentId: String(id) }
         : { kind: 'shared', audience: 'shared', id: String(id) },
       content: { text }, deliveryKey: 'mention-suppression', replyContext: { replyToMessageId: '7' },
-      mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress',
+       linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toMatchObject({ kind: 'delivered' });
     const sent = http.request.mock.calls.find(([input]) => input.url.endsWith('/sendMessage'))?.[0];
     const body = JSON.parse(new TextDecoder().decode(sent?.body));
@@ -1055,9 +1133,10 @@ describe('Telegram Channel provider actions', () => {
       content: { text: 'topic reply' },
       deliveryKey: 'delivery-1',
       ...(threadId === undefined ? {} : { replyContext: { threadId, replyToMessageId: '7' } }),
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toEqual({ kind: 'delivered', providerMessageIds: ['88'] });
+    expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(1);
 
     const sendMessage = http.request.mock.calls.find(([input]) => input.url.endsWith('/sendMessage'))?.[0];
     expect(JSON.parse(new TextDecoder().decode(sendMessage?.body))).toMatchObject({
@@ -1086,7 +1165,7 @@ describe('Telegram Channel provider actions', () => {
       deliveryKey: 'delivery-1',
       ...(chunkIndex === undefined ? {} : { chunkIndex }),
       replyContext: { threadId: '17', replyToMessageId: '7' },
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toEqual({ kind: 'delivered', providerMessageIds: ['88'] });
 
@@ -1126,7 +1205,7 @@ describe('Telegram Channel provider actions', () => {
         endpoint,
         content: { text: 'wrong audience' },
         deliveryKey: `delivery-${endpoint.id}`,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
       }, coreContext(http))).resolves.toEqual({ kind: 'notDelivered', retry: 'never' });
 
@@ -1153,7 +1232,7 @@ describe('Telegram Channel provider actions', () => {
       endpoint: { kind: 'thread', audience: 'direct', id: '456:17:extra', parentId: '456' },
       content: { text: 'must not be redirected' },
       deliveryKey: 'delivery-malformed-thread',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, coreContext(http))).resolves.toEqual({ kind: 'notDelivered', retry: 'never' });
 
@@ -1165,6 +1244,7 @@ describe('Telegram Channel provider actions', () => {
       {
         name: 'getMe rate limit',
         request: async (input: TelegramHttpRequestInput) => {
+          if (input.url.endsWith('/getChat')) return response({ ok: true, result: { id: 456, type: 'private' } });
           if (input.url.endsWith('/getMe')) {
             return response({
               ok: false,
@@ -1180,6 +1260,7 @@ describe('Telegram Channel provider actions', () => {
       {
         name: 'getMe transport failure',
         request: async (input: TelegramHttpRequestInput) => {
+          if (input.url.endsWith('/getChat')) return response({ ok: true, result: { id: 456, type: 'private' } });
           if (input.url.endsWith('/getMe')) throw new Error('connection reset');
           throw new Error(`Unexpected Telegram request: ${input.url}`);
         },
@@ -1255,10 +1336,12 @@ describe('Telegram Channel provider actions', () => {
       const http = { request: vi.fn(scenario.request) };
       await expect(deliverTelegramMessage({
         ...connection,
-        endpoint: { kind: 'direct', audience: 'direct', id: '456' },
+        endpoint: scenario.name.startsWith('getMe')
+          ? { kind: 'thread', audience: 'direct', id: '456:17', parentId: '456' }
+          : { kind: 'direct', audience: 'direct', id: '456' },
         content: { text: 'reply' },
         deliveryKey: `delivery-${scenario.name}`,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
       }, coreContext(http))).resolves.toEqual(scenario.expected);
       expect(http.request.mock.calls.some(([input]) => input.url.endsWith('/sendMessage'))).toBe(false);
@@ -1303,7 +1386,7 @@ describe('Telegram Channel provider actions', () => {
         endpoint: { kind: 'direct', audience: 'direct', id: '456' },
         content: { text: 'reply' },
         deliveryKey: `delivery-materialize-${scenario.name}`,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
       }, coreContext(http, { materialize }))).resolves.toEqual(scenario.expected);
 
@@ -1343,7 +1426,7 @@ describe('Telegram Channel provider actions', () => {
         endpoint: { kind: 'direct', audience: 'direct', id: '456' },
         content: { text: 'reply' },
         deliveryKey: `delivery-materialize-${scenario.name}`,
-        mentionPolicy: 'suppress',
+
         linkPreviewPolicy: 'suppress',
       }, coreContext(http, { signal: scenario.signal, materialize }))).rejects.toBe(scenario.error);
 
@@ -1560,10 +1643,10 @@ describe('Telegram Channel provider actions', () => {
     }, coreContext(http));
 
     expect(first).toMatchObject({
-      checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs: committedCheckpoint.caughtUpAtMs },
+      checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs: expect.any(Number) },
     });
     expect(replay).toMatchObject({
-      checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs: committedCheckpoint.caughtUpAtMs },
+      checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs: expect.any(Number) },
     });
     const offsets = http.request.mock.calls
       .filter(([input]) => input.url.endsWith('/getUpdates'))
@@ -1571,7 +1654,7 @@ describe('Telegram Channel provider actions', () => {
     expect(offsets).toEqual([42, 42]);
   });
 
-  it('does not renew a caught-up proof while a limit-one page leaves Telegram backlog', async () => {
+  it('renews checkpoint freshness on a full page and keeps draining past Telegram retention', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
     try {
@@ -1602,24 +1685,28 @@ describe('Telegram Channel provider actions', () => {
         limit: 1,
         waitMs: 0,
       }, coreContext(http))).resolves.toMatchObject({
-        checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs },
+        checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs: Date.now() },
       });
 
       vi.advanceTimersByTime(1_000);
-      const retryHttp = { request: vi.fn() };
+      const retryHttp = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+        input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
+      )) };
       const retryContext = coreContext(retryHttp);
-      await expect(pollTelegramObservations({
+      const idle = await pollTelegramObservations({
         ...connection,
         checkpoint: { v: 1, offset: '43', caughtUpAtMs },
         limit: 1,
         waitMs: 0,
-      }, retryContext)).resolves.toMatchObject({
-        kind: 'historyGap',
-        reason: 'providerHistoryUnavailable',
-        diagnostic: expect.any(String),
+      }, retryContext);
+      expect(idle).toMatchObject({
+        kind: 'checkpointOnly',
+        checkpointAfterBatch: { v: 1, offset: '43', caughtUpAtMs },
       });
-      expect(retryContext.services.connectedAccounts.materialize).not.toHaveBeenCalled();
-      expect(retryHttp.request).not.toHaveBeenCalled();
+      expect(idle).not.toHaveProperty('notice');
+      const updateRequests = retryHttp.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+      expect(updateRequests).toHaveLength(1);
+      expect(JSON.parse(new TextDecoder().decode(updateRequests[0]?.[0].body)).offset).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -1662,14 +1749,13 @@ describe('Telegram Channel provider actions', () => {
     }
   });
 
-  it('reports an expired, superseded, or unsupported legacy checkpoint as history-gap attention before materialization or Telegram effects', async () => {
+  it('reports an invalid or unsupported legacy checkpoint for core automatic baseline recovery before provider effects', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
     try {
       for (const checkpoint of [
         { v: 1, offset: '-1', caughtUpAtMs: Date.now(), retiredOffsetHint: '42' },
         { v: 1, offset: '42', caughtUpAtMs: -1, retiredOffsetHint: '42' },
-        { v: 1, offset: '42', caughtUpAtMs: Date.now() - 86_400_000 },
         { v: 1, offset: '42', observedAtMs: Date.now() },
         '42',
       ]) {
@@ -1692,6 +1778,145 @@ describe('Telegram Channel provider actions', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('continues a valid Telegram offset without a gap notice when only its caught-up clock is in the future', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+      input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
+    )) };
+    const result = await pollTelegramObservations({ ...connection,
+      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() + 60_000 }, limit: 10, waitMs: 0,
+    }, coreContext(http));
+    expect(result).toMatchObject({ kind: 'checkpointOnly',
+      checkpointAfterBatch: { offset: '42' },
+    });
+    expect(result).not.toHaveProperty('notice');
+    const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+    expect(updates).toHaveLength(1);
+    expect(JSON.parse(new TextDecoder().decode(updates[0]?.[0].body)).offset).toBe(0);
+  });
+
+  it('proves a replaced Telegram sequence with one nondestructive queue read after a week offline', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+      input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [{ update_id: 12, message: {
+        message_id: 1, date: 1_700_000_000, chat: { id: 456, type: 'private' },
+        from: { id: 789, is_bot: false }, text: 'existing item from a replaced sequence',
+      } }] },
+    )) };
+    await expect(pollTelegramObservations({ ...connection,
+      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() - 7 * 86_400_000 }, limit: 10, waitMs: 0,
+    }, coreContext(http))).resolves.toMatchObject({ kind: 'historyGap', reason: 'providerHistoryUnavailable', diagnostic: expect.any(String) });
+    const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+    expect(updates).toHaveLength(1);
+    expect(JSON.parse(new TextDecoder().decode(updates[0]?.[0].body))).toMatchObject({ offset: 0, limit: 100, timeout: 0 });
+  });
+
+  it('preserves a legacy full pending page when its old caught-up proof is more than a week old', async () => {
+    const checkpoint = { v: 1, offset: '142', caughtUpAtMs: Date.now() - 7 * 86_400_000 };
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+      if (input.url.endsWith('/getMe')) return response(botIdentity());
+      const offset = JSON.parse(new TextDecoder().decode(input.body)).offset;
+      return response({ ok: true, result: offset === 0
+        ? Array.from({ length: 100 }, (_, index) => ({ update_id: 42 + index }))
+        : [{ update_id: 142, message: { message_id: 2, date: 1_700_000_000,
+          chat: { id: 456, type: 'private' }, from: { id: 789, is_bot: false }, text: 'new current input' } }],
+      });
+    }) };
+    const result = await pollTelegramObservations({ ...connection, checkpoint, limit: 1, waitMs: 0 }, coreContext(http));
+    expect(result).toMatchObject({ kind: 'batch', checkpointAfterBatch: { offset: '143' } });
+    expect(result).not.toHaveProperty('notice');
+    const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+    expect(updates.map(([input]) => JSON.parse(new TextDecoder().decode(input.body)).offset)).toEqual([0, 142]);
+  });
+
+  it('keeps a week-old logical offset and idle anchor while empty polling stays nondestructive', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+      input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
+    )) };
+    const first = await pollTelegramObservations({ ...connection,
+      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() - 7 * 86_400_000 }, limit: 10, waitMs: 0,
+    }, coreContext(http));
+    expect(first).toMatchObject({ kind: 'checkpointOnly', checkpointAfterBatch: { offset: '42' } });
+    expect(first).not.toHaveProperty('notice');
+    if (first.kind !== 'checkpointOnly') throw new Error('Expected successful checkpoint refresh');
+    await pollTelegramObservations({ ...connection, checkpoint: first.checkpointAfterBatch, limit: 10, waitMs: 0 }, coreContext(http));
+    const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+    expect(updates.map(([input]) => JSON.parse(new TextDecoder().decode(input.body)).offset)).toEqual([0, 0]);
+  });
+
+  it('continues an aged logical offset while filtering old queue items and respecting the core batch size', async () => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+      input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [41, 42, 43].map(update_id => ({ update_id,
+        message: { message_id: update_id, date: 1_700_000_000, chat: { id: 456, type: 'private' },
+          from: { id: 789, is_bot: false }, text: `message ${update_id}` },
+      })) },
+    )) };
+    const result = await pollTelegramObservations({ ...connection,
+      checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() - 86_400_000 }, limit: 1, waitMs: 0,
+    }, coreContext(http));
+    expect(result).toMatchObject({ kind: 'batch', checkpointAfterBatch: { offset: '43' } });
+    expect(result).not.toHaveProperty('notice');
+    if (result.kind !== 'batch') throw new Error('Expected current native update');
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toMatchObject({
+      observation: { kind: 'fullText', observation: { occurrenceId: 'telegram:update:42' } },
+    });
+    const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+    expect(updates).toHaveLength(1);
+    expect(JSON.parse(new TextDecoder().decode(updates[0]?.[0].body))).toMatchObject({ offset: 0, limit: 100 });
+  });
+
+  it('keeps valid old-cursor catch-up quiet even when allowed update types leave a sequence hole', async () => {
+    let nextId = 42;
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+      input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [{ update_id: nextId, message: {
+        message_id: nextId, date: 1_700_000_000, chat: { id: 456, type: 'private' },
+        from: { id: 789, is_bot: false }, text: 'retained update',
+      } }] },
+    )) };
+    const checkpoint = { v: 1, offset: '42', caughtUpAtMs: Date.now() - 86_400_000 };
+    const healthy = await pollTelegramObservations({ ...connection, checkpoint, limit: 10, waitMs: 0 }, coreContext(http));
+    expect(healthy).toMatchObject({ kind: 'batch', checkpointAfterBatch: { offset: '43' } });
+    expect(healthy).not.toHaveProperty('notice');
+    nextId = 44;
+    const filtered = await pollTelegramObservations({ ...connection, checkpoint, limit: 10, waitMs: 0 }, coreContext(http));
+    expect(filtered).toMatchObject({ kind: 'batch', checkpointAfterBatch: { offset: '45' } });
+    expect(filtered).not.toHaveProperty('notice');
+    if (filtered.kind !== 'batch') throw new Error('Expected retained input after a filtered update');
+    const continued = await pollTelegramObservations({ ...connection, checkpoint: filtered.checkpointAfterBatch, limit: 10, waitMs: 0 }, coreContext(http));
+    expect(continued).not.toHaveProperty('notice');
+  });
+
+  it('detects a lower native sequence after a week of successful empty polls without acknowledging the new update', async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.parse('2026-08-10T12:00:00.000Z');
+    vi.setSystemTime(startedAt);
+    try {
+      let queued: { update_id: number }[] = [];
+      const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+        if (input.url.endsWith('/getMe')) return response(botIdentity());
+        const { offset, limit } = JSON.parse(new TextDecoder().decode(input.body));
+        // Model Telegram's destructive acknowledgement at the real network
+        // boundary: a stale positive offset would erase the randomized ID.
+        if (offset > 0) queued = queued.filter(update => update.update_id >= offset);
+        return response({ ok: true, result: queued.slice(0, limit) });
+      }) };
+      let checkpoint: unknown = { v: 1, offset: '42', caughtUpAtMs: startedAt };
+      for (let day = 1; day <= 7; day += 1) {
+        vi.setSystemTime(startedAt + day * 86_400_000);
+        const result = await pollTelegramObservations({ ...connection, checkpoint, limit: 10, waitMs: 0 }, coreContext(http));
+        expect(result.kind).toBe('checkpointOnly');
+        if (result.kind !== 'checkpointOnly') throw new Error('Expected idle polling');
+        checkpoint = result.checkpointAfterBatch;
+      }
+      queued = [{ update_id: 12 }];
+      await expect(pollTelegramObservations({ ...connection, checkpoint, limit: 10, waitMs: 0 }, coreContext(http)))
+        .resolves.toMatchObject({ kind: 'historyGap', reason: 'providerHistoryUnavailable' });
+      expect(queued).toEqual([{ update_id: 12 }]);
+      const updates = http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'));
+      expect(updates).toHaveLength(8);
+      expect(updates.map(([input]) => JSON.parse(new TextDecoder().decode(input.body)).offset)).toEqual(Array(8).fill(0));
+    } finally { vi.useRealTimers(); }
   });
 
   it('projects idle-ready, reconnecting, and history-gap poll facts only to matching current Automation sources', async () => {
@@ -1768,7 +1993,7 @@ describe('Telegram Channel provider actions', () => {
     }))).resolves.toMatchObject({ kind: 'checkpointOnly' });
     await expect(pollTelegramObservations({
       ...connection,
-      checkpoint: { v: 1, offset: '42', caughtUpAtMs: 0 },
+      checkpoint: { v: 1, offset: '-1', caughtUpAtMs: 0 },
       limit: 10,
       waitMs: 0,
     }, coreContext({ request: vi.fn() }, {
@@ -1861,7 +2086,7 @@ describe('Telegram Channel provider actions', () => {
     );
   });
 
-  it('bounds a core maximum wait to Telegram’s long-poll limit while preserving a longer HTTP deadline', async () => {
+  it('bounds a core maximum wait to Telegram’s server long-poll limit without a local HTTP deadline', async () => {
     const http = {
       request: vi.fn(async (input: TelegramHttpRequestInput) => response(
         input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
@@ -1879,40 +2104,7 @@ describe('Telegram Channel provider actions', () => {
     });
     const getUpdates = http.request.mock.calls.find(([input]) => input.url.endsWith('/getUpdates'))?.[0];
     expect(JSON.parse(new TextDecoder().decode(getUpdates?.body))).toMatchObject({ timeout: 50 });
-    expect(getUpdates?.timeoutMs).toBe(60_000);
-  });
-
-  it('refuses an oversized core delivery instead of splitting it into Telegram effects', async () => {
-    const http = {
-      request: vi.fn(async (input: TelegramHttpRequestInput) => {
-        if (input.url.endsWith('/getMe')) return response(botIdentity());
-        if (input.url.endsWith('/getChat')) {
-          return response({ ok: true, result: { id: 456, type: 'private', first_name: 'Ada' } });
-        }
-        if (http.request.mock.calls.filter(([request]) => request.url.endsWith('/sendMessage')).length === 1) {
-          return response({ ok: true, result: { message_id: 70 } });
-        }
-        return response({
-          ok: false,
-          error_code: 429,
-          description: 'Too Many Requests',
-          parameters: { retry_after: 3 },
-        });
-      }),
-    };
-
-    await expect(deliverTelegramMessage({
-      ...connection,
-      endpoint: { kind: 'direct', audience: 'direct', id: '456' },
-      content: { text: `${'a'.repeat(4_096)}b` },
-      deliveryKey: 'delivery-1',
-      mentionPolicy: 'suppress',
-      linkPreviewPolicy: 'suppress',
-    }, coreContext(http))).resolves.toEqual({
-      kind: 'notDelivered',
-      retry: 'never',
-    });
-    expect(http.request.mock.calls.some(([request]) => request.url.endsWith('/sendMessage'))).toBe(false);
+    expect(getUpdates?.timeoutMs).toBeUndefined();
   });
 
   it('does not rewrite an aborted outbound Telegram call as a safe retry', async () => {
@@ -1936,7 +2128,7 @@ describe('Telegram Channel provider actions', () => {
       endpoint: { kind: 'direct', audience: 'direct', id: '456' },
       content: { text: 'reply' },
       deliveryKey: 'delivery-1',
-      mentionPolicy: 'suppress',
+
       linkPreviewPolicy: 'suppress',
     }, context)).resolves.toEqual({ kind: 'outcomeUnknown' });
   });

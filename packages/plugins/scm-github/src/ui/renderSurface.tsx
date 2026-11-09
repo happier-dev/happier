@@ -753,11 +753,14 @@ function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
   const value = React.useMemo<TriageDetailPrimaryWriteV1 | null>(() => {
     if (input.observation.entryRef.kindId !== 'pull-request' || presentation !== 'active') return null;
     // Keep an unknown read explainable, but respect the producer's closed-state absence.
-    if (controller.primaryWrite !== null || overview.value?.state === 'closed') return controller.primaryWrite;
+    // While the first read is out Merge keeps its place, quietly: the reason is said only once the read has an answer.
+    const reading = overview.failure === null && overview.value === null;
+    if (controller.primaryWrite !== null) return reading ? { ...controller.primaryWrite, reading: true } : controller.primaryWrite;
+    if (overview.value?.state === 'closed') return null;
     return { title: text('plugins.github.ui.primaryWrite.merge', 'Merge'),
-      disabledReason: readReason, pending: false, execute: async () => {},
+      disabledReason: readReason, pending: false, execute: async () => {}, ...(reading ? { reading: true } : {}),
       ...(nativeStatus === null ? {} : { nativeStatus }), readRequirements: controller.refresh };
-  }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.value?.state, nativeStatus, readReason, text]);
+  }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.failure, overview.value, nativeStatus, readReason, text]);
   return React.useMemo(() => ({ value, refresh: controller.refresh }), [value, controller.refresh]);
 }
 
@@ -1414,8 +1417,7 @@ function IssueWrites({
         valueKey="plugins.github.ui.mutations.issueDescription"
         fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
       />
-      <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
-      <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} capabilities={capabilities} />
+      {/* Subscribing is this panel's quickest change, so it leads rather than sitting under the longer cards. */}
       <GithubIssueNotifications input={input} renderControls={(facts, update) => <Stack gap="small">
         <GithubNotificationToggle input={input} checked={facts.viewerSubscription === 'SUBSCRIBED'}
           operation={facts.viewerSubscription === 'SUBSCRIBED' ? 'entryUnsubscribe' : 'entrySubscribe'}
@@ -1425,6 +1427,8 @@ function IssueWrites({
           operation={facts.isPinned ? 'issueUnpin' : 'issuePin'} onObserved={onObserved} capabilities={capabilities}
           onConfirmed={entry => { if (entry.pinned !== undefined) update({ isPinned: entry.pinned }); }} />
       </Stack>} />
+      <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
+      <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} capabilities={capabilities} />
       <SingleProposalPublicationWrite
         input={input}
         proposals={publicationProposals.proposals}
@@ -2239,9 +2243,10 @@ function WritesSection({
                 </>
               )
               : null}
+            {/* Subscribing is this panel's quickest change; it leads the longer property and relationship cards. */}
+            <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
             <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} capabilities={capabilities} />
-            <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
             {input.observation.snapshot.state.presentation === 'active'
               ? (
                 <>

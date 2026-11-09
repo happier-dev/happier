@@ -1,6 +1,7 @@
 {
-  "machineLima.presentation.kind": "VM",
-  "machineLima.presentation.description": "コード、スクリプト、開発サーバー向けの軽量 Linux VM。",
+  "machineLima.presentation.customSize": "カスタムサイズ",
+  "machineLima.presentation.kind": "マシン",
+  "machineLima.presentation.description": "コード、スクリプト、開発サーバー向けの軽量 Linux マシン。",
   "machineLima.presentation.ready": "インストール済み",
   "machineLima.presentation.unavailable": "未インストール",
   "machineLima.presentation.lima_2_required": "Lima 2 が必要",

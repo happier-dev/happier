@@ -25,7 +25,7 @@ export const CRABBOX_CONFIGURATION_LABELS = {
 } as const;
 
 export const MACHINE_PRESENTATION_LABELS = {
-  "en": {"kind":"machine","description":"Development machines from a coordinator or local container.","ready":"Ready","unavailable":"Account unavailable","provider_unavailable":"Crabbox unavailable on this computer"},
+  "en": {"kind":"machine","description":"Development machines from a coordinator or local container.","coordinatorDescription":"Servers from a Crabbox coordinator you connect.","ready":"Ready","unavailable":"Account unavailable","provider_unavailable":"Crabbox unavailable on this computer"},
 } as const;
 
 export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {

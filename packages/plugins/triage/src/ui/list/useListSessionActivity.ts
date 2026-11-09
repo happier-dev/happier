@@ -7,6 +7,7 @@ import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import type { InternalTaskListProjection } from '../../internalTasks/listProjection.js';
+import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from '../../internalTasks/failure.js';
 import type { TriageAgentStateV1 } from '../detail/agentState.js';
 import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksActionResultV1Schema, normalizeTriageSourceSessionLinksCoverageV1 } from '../../actions/sessionLinksProtocol.js';
 
@@ -114,7 +115,7 @@ export function useTriageListSessionActivityV1(input: Readonly<{
           else if (sourceInstanceId !== undefined && sourceInstanceId === input.taskProjection?.sourceInstanceId) {
             projected.push({ entryRef, result: { kind: 'failed' as const, links: [], lanes: [{ source: entryRef.source,
               sourceInstanceId, displayLabel: sourceInstanceId, kindIds: [entryRef.kindId], health: { kind: 'failed' as const,
-                failure: input.taskProjection.failure ?? { class: 'transient' as const, code: 'accountDataUnavailable' } } }] } });
+                failure: input.taskProjection.failure ?? INTERNAL_TASK_DATA_UNAVAILABLE_V1 } }] } });
           } else selected.push({ entryRef, ...(sourceInstanceId === undefined ? {} : { sourceInstanceId }) });
         }
         const result = selected.length === 0 ? { kind: 'entries' as const, entries: [] }

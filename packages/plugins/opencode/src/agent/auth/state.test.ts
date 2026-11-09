@@ -49,7 +49,13 @@ describe('OpenCode auth state', () => {
 
   it('returns null for missing or malformed auth files', async () => {
     const dataHome = await createTempDir();
-    await writeFile(join(dataHome, 'auth.json'), '{');
+    expect(readOpenCodeOauthRefreshToken({
+      env: { XDG_DATA_HOME: dataHome },
+      homeDir: '/home/alice',
+    })).toBeNull();
+    const authDir = join(dataHome, 'opencode');
+    await mkdir(authDir, { recursive: true });
+    await writeFile(join(authDir, 'auth.json'), '{');
 
     expect(readOpenCodeOauthRefreshToken({
       env: { XDG_DATA_HOME: dataHome },

@@ -76,6 +76,9 @@
           "acpRegistryIds": [
             "kilo"
           ],
+          "agentCliSystemTool": {
+            "toolId": "kilo-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -110,8 +113,92 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "oauth"
+            ],
+            "materializationKinds": [
+              "httpHeaders"
+            ],
+            "purpose": "openai-codex-model-request",
+            "service": {
+              "localId": "openai-codex",
+              "pluginId": "happier.agent.codex"
+            }
+          }
+        ],
         "id": "kilo",
         "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-chat",
+            "openai-responses",
+            "anthropic"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_KILO_PROVIDER_API_KEY",
+              "KILO_CONFIG_CONTENT",
+              "KILO_AUTH_CONTENT",
+              "OPENAI_API_KEY",
+              "ANTHROPIC_API_KEY",
+              "CLAUDE_CODE_OAUTH_TOKEN"
+            ],
+            "suppressConnectedServiceIds": []
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-chat"
+              },
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-responses"
+              },
+              {
+                "destination": {
+                  "formats": [
+                    "raw"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "x-api-key"
+                  ]
+                },
+                "protocol": "anthropic"
+              }
+            ],
+            "noAuthProtocols": [
+              "openai-chat"
+            ],
+            "supportsNoAuth": true
+          },
+          "materialization": "spawnEnv",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
         "runtime": {
           "kind": "custom"
         },
@@ -166,10 +253,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -239,6 +327,7 @@
       }
     ],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -249,7 +338,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -265,9 +353,6 @@
     "workflows": []
   },
   "displayName": "Kilo",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
@@ -295,7 +380,14 @@
         "reason": "Run the declared Kilo CLI executable.",
         "scope": {
           "envKeys": [
-            "KILO_PERMISSION"
+            "KILO_PERMISSION",
+            "HAPPIER_KILO_PROVIDER_API_KEY",
+            "KILO_CONFIG_CONTENT",
+            "KILO_AUTH_CONTENT",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH"
           ],
           "executables": [
             {

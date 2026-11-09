@@ -67,6 +67,9 @@ function mapRuntimeEvent(
   if (event.kind === 'turn-start') {
     return { kind: 'turn-start', turnId: event.turnId, startedBy: event.startedBy ?? 'host' };
   }
+  if (event.kind === 'turn-progress') {
+    return { kind: 'turn-progress', turnId: event.turnId, ...(event.retry ? { retry: event.retry } : {}) };
+  }
   if (event.kind === 'message-delta') {
     return { kind: 'message-delta', turnId: event.turnId, channel: event.channel, text: event.text,
       ...(event.messageId ? { messageId: event.messageId } : {}) };
@@ -215,6 +218,7 @@ function waitForCompletionEventOrFallback(
 
 export function createOpenCodeSessionRuntime(params: Readonly<{
   operations: OpenCodeRuntimeTurnOperations;
+  providerModelId?: string;
   request: AgentSessionOpenRequest;
   disposeOperations(): Promise<void>;
   models?: AgentSessionRuntimeContext['session']['services']['models'];
@@ -225,6 +229,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   prepareTerminalPresentation?: NonNullable<AgentSessionRuntime['prepareTerminalPresentation']>;
 }>): OpenCodeNativeSessionRuntime {
   const launchPermissionIntent = params.request.configuration?.permissionIntent.value ?? null;
+  const launchWorkspaceWrites = params.request.configuration?.workspaceWrites ?? 'allow';
   const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
   const terminalWaiters = new Set<() => void>();
   let sequence = 0;
@@ -233,7 +238,6 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   let activeTurnId: string | null = null;
   let latestCompletedTurnId: string | null = null;
   let providerSessionId: string | null = null;
-  let effectiveModelId: string | null = null;
   let availableCommands: Array<Readonly<{ name: string; description?: string }>> | null = null;
   const canonicalProviderBindingModelId = params.request.providerBinding
     ? params.request.providerBinding.model.id.trim()
@@ -241,9 +245,14 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   const modelListeners = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
   const readModels = () => {
     const catalog = params.operations.readModelCatalog();
+    const nativeModelId = catalog.currentModelId ?? null;
+    const effectiveModelId = params.request.providerBinding && nativeModelId === params.providerModelId
+      ? canonicalProviderBindingModelId : nativeModelId;
     // A configured Provider owns its public membership; OpenCode's private dispatch carrier does not.
     return {
-      ...(!params.request.providerBinding && catalog.models !== null
+      ...(params.request.providerBinding
+        ? { observedAt: catalog.observedAt, models: null }
+        : catalog.models !== null
         ? catalog
         : {
             observedAt: 0,
@@ -269,15 +278,6 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
       return { dispose: () => { modeListeners.delete(listener); } };
     },
   });
-  const publishEffectiveModel = (dispatchedModelId: string | null | undefined): void => {
-    const modelId = params.request.providerBinding
-      ? canonicalProviderBindingModelId
-      : dispatchedModelId;
-    if (!modelId || modelId === effectiveModelId) return;
-    effectiveModelId = modelId;
-    const snapshot = readModels();
-    for (const listener of Array.from(modelListeners)) listener(snapshot);
-  };
   type PendingSend = {
     request: AgentSessionSendRequest;
     custody: 'pending' | 'accepted' | 'unknown' | 'rejected';
@@ -514,11 +514,10 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
         promptParts,
       };
       let providerUserMessageId: string | null;
-      let effectivePromptModelId: string | null | undefined;
       let priorCompletedTurnId: string | null = null;
       if (request.delivery.kind === 'steer') {
         ownedPendingSend.providerInvocationStarted = true;
-        ({ providerUserMessageId, effectiveModelId: effectivePromptModelId } =
+        ({ providerUserMessageId } =
           await params.operations.steerInFlightTurn(request.input.text, meta));
       } else {
         priorCompletedTurnId = latestCompletedTurnId;
@@ -534,7 +533,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           };
         }
         ownedPendingSend.providerInvocationStarted = true;
-        ({ providerUserMessageId, effectiveModelId: effectivePromptModelId } =
+        ({ providerUserMessageId } =
           await params.operations.sendTurnPrompt(request.input.text, meta));
         if (priorCompletedTurnId && providerUserMessageId) {
           publish({
@@ -564,7 +563,6 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
           retryable: false,
         };
       }
-      publishEffectiveModel(effectivePromptModelId);
       publishProviderIdentity();
       if (disposed) {
         return {
@@ -671,6 +669,12 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
       }
     },
     async updateConfiguration(request) {
+      if ((request.workspaceWrites ?? 'allow') !== launchWorkspaceWrites) {
+        return { status: 'unsupported', diagnostic: diagnostic(
+          'opencode_workspace_writes_update_requires_provider_restart',
+          'OpenCode server mode applies workspace-write policy when its process is launched.',
+        ) };
+      }
       if (request.permissionIntent.value !== launchPermissionIntent) {
         return {
           status: 'unsupported',
@@ -686,7 +690,6 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
         for (const update of projection.updates) {
           if (await params.operations.updateSessionRuntimeConfig(update) === 'deferred') deferred = true;
         }
-        if (!deferred) publishEffectiveModel(request.model.value);
         return {
           status: deferred ? 'deferred' : 'applied',
           changed: projection.changed,

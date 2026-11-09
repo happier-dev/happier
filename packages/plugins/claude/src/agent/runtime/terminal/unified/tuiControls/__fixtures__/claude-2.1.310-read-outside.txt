@@ -1,0 +1,21 @@
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Read outside the working directories
+ This will read /tmp/issue671-native-probe/outside-read-fixture.txt (outside working directory) via a symlink
+
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Read(/tmp/issue671-native-probe/workspace/outside-read-link-671.txt)
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Auto mode and the sandbox read outside the working directories without asking. Yes or No answers for this
+ read; the rest is for later reads. Block: the file tools refuse reads outside the working directories in
+ every project. The sandbox doesn't enforce it on this machine (off, filesystem rules relaxed, managed
+ read-path lock on, or working directory name has glob characters). Auto mode asks before each shell command
+ it can't check. To undo, remove permissions.blockReadsOutsideWorkingDirectories from your user settings;
+ file tools follow next session, sandboxed commands at once.
+
+ Allow this read outside the working directories?
+ ❯ 1. Yes, and keep allowing any reads outside the working directories
+   2. No, and block reads outside the working directories from now on
+   3. No, and ask again next time
+   4. Yes, but ask again next time
+
+ Esc to cancel · Tab to amend

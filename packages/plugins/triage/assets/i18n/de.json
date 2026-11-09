@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Alles andere",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Deployments",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Umgebungen",
+  "plugins.triage.surface.actions.subject.workflowRun": "Workflow-Ausführungen",
+  "plugins.triage.surface.actions.investigateRun": "Diese Ausführung untersuchen",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Keine Arbeitskopie",
   "plugins.triage.surface.actions.workspace.repository": "Das von mir ausgewählte Projekt",
   "plugins.triage.surface.actions.workspace.pullRequest": "Ein vorbereiteter Review-Worktree",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Verknüpfe sie mit Sessions, blockiere sie durch einen Pull Request, teile sie in Unteraufgaben.",
   "plugins.triage.tasks.firstRun.trackers.title": "Aufgaben aus einem Tracker holen",
   "plugins.triage.tasks.firstRun.trackers.description": "Sie bleiben in ihrem Tracker. Happier liest und bearbeitet sie dort.",
-  "plugins.triage.tasks.firstRun.trust": "Tracker werden live auf dem Gerät gelesen, das du wählst. Ihre Aufgaben werden nie in dein Konto kopiert."
+  "plugins.triage.tasks.firstRun.trust": "Tracker werden live auf dem Gerät gelesen, das du wählst. Ihre Aufgaben werden nie in dein Konto kopiert.",
+  "plugins.triage.surface.sources.permanent": "Ein erneuter Versuch behebt das nicht. Unter Details steht, was der Support braucht.",
+  "plugins.triage.surface.sources.supportCode": "Für den Support",
+  "plugins.triage.surface.failure.unreachableSuffix": "konnte nicht erreicht werden"
 }

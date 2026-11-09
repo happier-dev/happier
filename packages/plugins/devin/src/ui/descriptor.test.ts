@@ -1,7 +1,10 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
 import { DEVIN_UI_DESCRIPTOR } from './descriptor.js';
-import { DEVIN_UI_TRANSLATIONS } from './translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
 
 describe('Devin UI projection source', () => {
   it('uses the supplied theme-safe logo and complete localized provider labels', () => {
@@ -21,7 +24,7 @@ describe('Devin UI projection source', () => {
       }],
     });
     expect(DEVIN_UI_DESCRIPTOR.capabilityStates.mcpDelivery).toBe('supported');
-    for (const messages of Object.values(DEVIN_UI_TRANSLATIONS)) {
+    for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
       expect(messages).toMatchObject({
         'agentInput.agent.devin': 'Devin',
         'settingsAgents.plugins.devin.title': 'Devin',

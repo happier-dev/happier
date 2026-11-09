@@ -7,7 +7,9 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
+    "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" },
+    "./happier-plugin-ui/docker-sandboxes-machine-native": "./src/ui/renderSandboxesPage.tsx",
+    "./package.json": "./package.json"
   },
   "files": ["dist", "assets", ".happier-plugin", "package.json"],
   "scripts": {
@@ -15,9 +17,10 @@
     "test:local": "vitest run",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
-    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
     "build:finite": "pnpm --silent run build",
-    "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs"
+    "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
+    "build:ui": "happier-plugin-build-ui"
   },
   "dependencies": { "@happier-dev/plugin-sdk": "0.0.0", "@happier-dev/plugin-ui": "0.0.0" },
   "devDependencies": { "@types/node": "^22.0.0", "@types/react": "19.2.0", "react": "19.2.0", "react-native": "0.83.5", "vitest": "^3.2.4" }

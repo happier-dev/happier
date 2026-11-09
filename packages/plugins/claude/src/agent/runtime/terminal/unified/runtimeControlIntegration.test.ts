@@ -14,6 +14,26 @@ const CONTEXT = {
 } as const;
 
 describe('mapRuntimeConfigUpdateToDesired', () => {
+  it('carries the selected effort when disabling ultracode or changing models', () => {
+    const selectedContext = { ...CONTEXT, selectedEffort: 'medium', selectedUltracode: true };
+    expect(mapRuntimeConfigUpdateToDesired(
+      { configOption: { id: 'ultracode', value: false } }, selectedContext,
+    )).toEqual({ kind: 'desired', desired: { ultracode: false, reasoningEffort: 'medium' } });
+    expect(mapRuntimeConfigUpdateToDesired(
+      { modelId: 'claude-opus-5-5' }, selectedContext,
+    )).toEqual({ kind: 'desired', desired: { model: 'claude-opus-5-5', reasoningEffort: 'medium', ultracode: true } });
+    expect(mapRuntimeConfigUpdateToDesired(
+      { modelId: 'claude-sonnet-4-6' }, selectedContext,
+    )).toEqual({ kind: 'desired', desired: { model: 'claude-sonnet-4-6', reasoningEffort: 'medium' } });
+  });
+
+  it('restores selected ultracode after applying regular effort', () => {
+    expect(mapRuntimeConfigUpdateToDesired(
+      { configOption: { id: 'reasoning_effort', value: 'medium' } },
+      { ...CONTEXT, selectedUltracode: true },
+    )).toEqual({ kind: 'desired', desired: { reasoningEffort: 'medium', ultracode: true } });
+  });
+
   it('maps modelId / effort / ultracode / plan-mode directives onto the desired config', () => {
     expect(mapRuntimeConfigUpdateToDesired({ modelId: 'claude-sonnet-4-6' }, CONTEXT)).toEqual({
       kind: 'desired',
@@ -122,6 +142,9 @@ describe('mapRuntimeConfigUpdateToDesired', () => {
 
   it('fails the whole update over to the legacy path for non-controllable directives', () => {
     expect(mapRuntimeConfigUpdateToDesired({ modelId: 'default' }, CONTEXT).kind).toBe('not_controllable');
+    expect(mapRuntimeConfigUpdateToDesired({ modelId: 'default' }, {
+      ...CONTEXT, providerModel: { id: 'default', name: 'Opaque Provider default' },
+    }).kind).toBe('not_controllable');
     expect(mapRuntimeConfigUpdateToDesired({ fallbackModel: 'claude-haiku-4-5' }, CONTEXT).kind).toBe('not_controllable');
     expect(mapRuntimeConfigUpdateToDesired({ configOption: { id: 'mystery', value: 1 } }, CONTEXT).kind).toBe('not_controllable');
     expect(mapRuntimeConfigUpdateToDesired({ somethingNew: true }, CONTEXT).kind).toBe('not_controllable');

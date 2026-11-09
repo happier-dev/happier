@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Konto bota Telegram",
   "channels.telegram.remediation.credential.description": "Wybierz istniejące połączone konto bota Telegram; tokenów bota nie wpisuje się tutaj.",
   "channels.telegram.automation.setup.title": "Wybierz czat Telegram do obserwowania",
-  "channels.telegram.automation.setup.description": "Wybierz bota Telegram i czat, którego wiadomości mają uruchamiać tę automatyzację.",
+  "channels.telegram.automation.setup.description": "Wybierz bota Telegram i czat, którego wiadomości mają uruchamiać ten przepływ pracy.",
   "channels.telegram.automation.setup.submit": "Użyj tego czatu",
   "channels.telegram.automation.setup.credential": "Konto bota Telegram",
   "channels.telegram.automation.setup.chat": "Identyfikator czatu",

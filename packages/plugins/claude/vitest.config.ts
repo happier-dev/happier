@@ -23,10 +23,12 @@ export default defineConfig({
     environment: 'node',
     hookTimeout: 60_000,
     setupFiles: [uiDev('vitestSetup.ts')],
-    exclude: [...configDefaults.exclude, '**/mcpToolPolicy.contract.test.ts'],
+    exclude: ['**/*.rnw.test.tsx', ...configDefaults.exclude, '**/mcpToolPolicy.contract.test.ts'],
   },
   resolve: {
     alias: [
+      { find: /^react-native-svg$/, replacement: uiDev('testkit/mocks/reactNativeSvg.ts') },
+      { find: /^(?:.*[\\/])?node_modules[\\/]react-native-svg[\\/](?!lib[\\/]module[\\/](?:xml\.js|utils[\\/]fetchData\.js)$).*$/, replacement: uiDev('testkit/mocks/reactNativeSvg.ts') },
       { find: /^react-native-reanimated(?:\/.*)?$/, replacement: uiDev('reactNativeReanimatedStub.ts') },
       { find: /(?:^|[\\/])node_modules[\\/]react-native-reanimated[\\/].*$/, replacement: uiDev('reactNativeReanimatedStub.ts') },
       { find: /^react-native-keyboard-controller(?:\/.*)?$/, replacement: uiDev('reactNativeKeyboardControllerStub.ts') },

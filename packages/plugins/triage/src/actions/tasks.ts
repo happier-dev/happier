@@ -1,7 +1,7 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
@@ -20,6 +20,7 @@ import type {
 } from './tasksProtocol.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TriageLinkEntryToSessionActionResultV1Schema } from './sessionLinksProtocol.js';
 import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageSetTaskOriginErrorResultV1Schema } from './taskOriginProtocol.js';
+import { triageTaskWriteInvocationFailureV1 } from './taskWriteFailure.js';
 
 type TaskWriteRequest =
     | Readonly<{ role: 'create'; input: TriageCreateTaskActionInputV1 }>
@@ -38,16 +39,31 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
     const address = request.role === 'create'
         ? { source: request.input.source, kindId: request.input.kindId }
         : request.input.entryRef;
-    const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-    const observation = context.services.targetedContributions.observeForSelf(
-        TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
-    );
+    const readSetup = async () => {
+        const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
+        const observation = context.services.targetedContributions.observeForSelf(
+            TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
+        );
+        try {
+            const [row, admitted] = await Promise.all([
+                findConfiguredSourceInstanceRow(sourceInstances, request.input.sourceInstanceId, options),
+                observation.readCurrent(options),
+            ]);
+            throwIfAborted(context.signal);
+            return { row, admitted, observation };
+        } catch (error) {
+            observation.dispose();
+            throw error;
+        }
+    };
+    let setup: Awaited<ReturnType<typeof readSetup>>;
+    try { setup = await readSetup(); }
+    catch (error) {
+        // No source write has been dispatched; this failure cannot mean that it may have created or changed a task.
+        return { kind: 'failed', failure: { class: 'unknown', code: isPluginError(error) ? error.code : 'taskSourceUnavailable' } };
+    }
     try {
-        const [row, admitted] = await Promise.all([
-            findConfiguredSourceInstanceRow(sourceInstances, request.input.sourceInstanceId, options),
-            observation.readCurrent(options),
-        ]);
-        throwIfAborted(context.signal);
+        const { row, admitted } = setup;
         const configured = row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
         const source = indexTriageAdmittedSourcesV1(admitted.contributions).get(renderSourceQualifiedId(address.source));
         if (configured === null || row === null || !configuredSourceInstanceIsOwnedBy(row.value, address.source) || source === undefined) {
@@ -81,6 +97,10 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
             }
             return result;
         };
+        const invokeWrite = async (operation: () => Promise<unknown>): Promise<TriageTaskWriteResultV1> => {
+            try { return acceptResult(await operation()); }
+            catch (error) { return triageTaskWriteInvocationFailureV1(error); }
+        };
 
         // These are exact declared roles, not a provider verb/payload envelope.
         // Original host-issued handles pass through unchanged. There is one call,
@@ -91,7 +111,7 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
             if (request.input.initialStatusId !== undefined && kind.taskCapabilities?.initialStatuses === undefined) {
                 return { kind: 'refused', reason: 'unsupportedField' };
             }
-            return acceptResult(await context.services.actions.executeAdmittedTargetedOperation(operation, {
+            return await invokeWrite(() => context.services.actions.executeAdmittedTargetedOperation(operation, {
                 v: 1, instance: configured, kindId: request.input.kindId, fields: request.input.fields,
                 ...(request.input.initialStatusId === undefined ? {} : { initialStatusId: request.input.initialStatusId }),
             }, options));
@@ -105,18 +125,18 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         if (request.role === 'edit') {
             const operation = source.operations.edit;
             if (operation === undefined) return { kind: 'refused', reason: 'unsupportedOperation' };
-            return acceptResult(await context.services.actions.executeAdmittedTargetedOperation(operation, {
+            return await invokeWrite(() => context.services.actions.executeAdmittedTargetedOperation(operation, {
                 ...addressed, fields: request.input.fields,
             }, options));
         }
         const operation = source.operations.transition;
         if (operation === undefined) return { kind: 'refused', reason: 'unsupportedOperation' };
-        return acceptResult(await context.services.actions.executeAdmittedTargetedOperation(operation, {
+        return await invokeWrite(() => context.services.actions.executeAdmittedTargetedOperation(operation, {
             ...addressed, transitionId: request.input.transitionId,
             ...(request.input.fieldValues === undefined ? {} : { fieldValues: request.input.fieldValues }),
         }, options));
     } finally {
-        observation.dispose();
+        setup.observation.dispose();
     }
 }
 
@@ -131,7 +151,7 @@ export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<T
             try {
                 return await link();
             } catch (error) {
-                return isPluginError(error) && (error.code === 'denied' || error.code === 'cancelled') ? 'failed' as const : 'unknown' as const;
+                return triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' as const : 'unknown' as const;
             }
         };
         const linkSession = input.linkSession;

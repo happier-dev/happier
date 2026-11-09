@@ -57,7 +57,7 @@ type Attempt = {
   requestAccepted: boolean;
   answerSdp: string | null;
   stopRequested: boolean;
-  stopIssued: boolean;
+  stopStatus: 'pending' | 'succeeded' | 'failed' | null;
   requestedCloseObserved: boolean;
   stopPromise: Promise<PluginDiagnosticData | null> | null;
   terminal: AgentSessionRealtimeLifecycleEvent | null;
@@ -65,7 +65,7 @@ type Attempt = {
   unregisters: Array<() => void>;
   timer: ReturnType<typeof setTimeout> | null;
   settleStart(result: AgentSessionRealtimeStartResult): void;
-  startSettled: boolean;
+  startStatus: AgentSessionRealtimeStartResult['status'] | null;
   handle: AgentSessionRealtimeHandle;
 };
 
@@ -220,8 +220,8 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     target: Attempt,
     result: AgentSessionRealtimeStartResult,
   ): void => {
-    if (target.startSettled) return;
-    target.startSettled = true;
+    if (target.startStatus !== null) return;
+    target.startStatus = result.status;
     target.settleStart(result);
   };
 
@@ -246,10 +246,14 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
       !target.requestedCloseObserved
       || params.getThreadId() !== target.threadId
       || target.terminal?.kind !== 'terminal'
-      || target.terminal.reason !== 'stopped'
+      || (target.terminal.reason !== 'stopped' && target.startStatus !== 'started')
+      || target.stopStatus !== 'succeeded'
     ) {
       return;
     }
+    // Native Stop acknowledges enqueueing. Its successful response and ordered
+    // requested close jointly retire an established attachment, including one
+    // that failed. A negotiation failure still retains ambiguous admission.
     cleanupAttempt(target);
   };
 
@@ -260,25 +264,30 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     target.stopRequested = true;
     target.stopPromise = (async () => {
       try {
-        target.stopIssued = true;
+        target.stopStatus = 'pending';
         const response = await target.client.request('thread/realtime/stop', {
           threadId: target.threadId,
         });
         if (!isExactEmptyResponse(response)) {
+          target.stopStatus = 'failed';
           return diagnostic(
             'codex_realtime_stop_response_invalid',
             'Codex Realtime Voice returned an invalid stop response.',
           );
         }
+        target.stopStatus = 'succeeded';
         return null;
       } catch {
+        target.stopStatus = 'failed';
         return diagnostic(
           'codex_realtime_stop_failed',
           'Codex Realtime Voice could not confirm upstream stop.',
         );
       }
     })();
-    return await target.stopPromise;
+    const stopDiagnostic = await target.stopPromise;
+    maybeReleaseOwnedStop(target);
+    return stopDiagnostic;
   };
 
   const failNegotiation = (
@@ -609,7 +618,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         requestAccepted: false,
         answerSdp: null,
         stopRequested: false,
-        stopIssued: false,
+        stopStatus: null,
         requestedCloseObserved: false,
         stopPromise: null,
         terminal: null,
@@ -617,7 +626,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         unregisters: [] as Array<() => void>,
         timer: null,
         settleStart: settleResult,
-        startSettled: false,
+        startStatus: null,
         handle: null as unknown as AgentSessionRealtimeHandle,
       };
 
@@ -633,6 +642,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
               if (joined === CODEX_OPERATION_ABORTED) return { status: 'aborted' };
               if (joined) return { status: 'unavailable', diagnostic: joined };
             }
+            maybeReleaseOwnedStop(target);
             return { status: 'already_stopped' };
           }
           const stopDiagnostic = await waitForCodexOperationOrAbort(
@@ -783,13 +793,12 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
       register('thread/realtime/closed', (record) => {
         // Closed notifications have no attempt identity. A locally owned Stop
         // can release this thread fence only while the facade remains bound to
-        // that thread, after both its exact response terminalizes this handle
-        // and the ordered same-thread requested close arrives. The JSON-RPC
-        // callback queue may deliver either fact first. Every other close
-        // remains fenced until process exit.
+        // that thread, after its successful response and the ordered same-thread
+        // requested close arrive. The JSON-RPC callback queue may deliver either
+        // fact first. Failed negotiations retain their admission fence.
         if (target.stopRequested) {
           if (
-            target.stopIssued
+            target.stopStatus !== null
             && params.getThreadId() === target.threadId
             && isGeneratedRealtimeClosedNotification(record)
             && record.reason === 'requested'
@@ -807,10 +816,12 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         if (!target.terminal) {
           if (target.phase === 'active') {
             target.phase = 'terminal';
+            const cleanup = requestStop(target);
             publishTerminal(target, {
               kind: 'terminal',
               reason: 'upstream_closed',
             });
+            void cleanup;
           } else {
             failNegotiation(
               target,

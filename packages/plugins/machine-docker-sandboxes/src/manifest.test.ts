@@ -1,13 +1,13 @@
-import { DockerSandboxesLaunchV1Schema, DOCKER_SANDBOXES_ROLE_SCHEMAS } from './machine/schemas.js';
-import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ManagedDependencyStatus } from '@happier-dev/plugin-sdk/managed-services';
 import type { PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { DOCKER_SANDBOXES_PLUGIN } from './manifest.js';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { DockerSandboxesLaunchV1Schema, DOCKER_SANDBOXES_ROLE_SCHEMAS } from './machine/schemas.js';
 
 const resource = { sandboxName: 'happier-managed-row-1' };
 const inventory = JSON.stringify({ sandboxes: [{ name: resource.sandboxName, status: 'running' }] });
@@ -17,7 +17,7 @@ const exited = (stdout: Uint8Array, stderr = new Uint8Array()): PluginProcessRes
 });
 
 function fixture(run: ExecService['run'], version = '0.46.0') {
-  const status = vi.fn(async () => ({ state: 'ready', id: 'docker-sandboxes-cli', version, sourceId: 'system',
+  const status = vi.fn(async (): Promise<ManagedDependencyStatus> => ({ state: 'ready', id: 'docker-sandboxes-cli', version, sourceId: 'system',
     executable: { kind: 'managedDependency', id: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'docker-sandboxes-cli' } },
   }));
   // Only the external host process/dependency service boundary is supplied.
@@ -27,6 +27,47 @@ function fixture(run: ExecService['run'], version = '0.46.0') {
 }
 
 describe('activated Docker Sandboxes public role boundary', () => {
+  it('reports the declared missing native prerequisite without inventing an installer or probing a missing executable', async () => {
+    const run = vi.fn<ExecService['run']>();
+    const boundary = fixture(run);
+    boundary.status.mockResolvedValue({ state: 'missing', id: 'docker-sandboxes-cli', supported: true });
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    try {
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false,
+        prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id,
+          localId: 'docker-sandboxes-cli' } }, status: 'unavailable', repairAction: {
+            action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'install-docs' }, input: {},
+          } }] });
+      expect(run).not.toHaveBeenCalled();
+      // A failed dependency read is unknown, not evidence that the tool is missing.
+      boundary.status.mockRejectedValueOnce(new Error('dependency status did not answer'));
+      const unknown = await kit.invokeAction('check', {}, { surface: 'plugin' });
+      expect(unknown).toMatchObject({ available: false });
+      expect(unknown).not.toHaveProperty('prerequisites');
+    } finally { await kit.dispose(); }
+  });
+
+  it('qualifies every native template offered by options through the registered acquire role', async () => {
+    const templates = ['docker.io/example/first:1', 'docker.io/example/second:2'];
+    const run = vi.fn<ExecService['run']>(async request => exited(new TextEncoder().encode(
+      request.args?.[0] === 'template' ? templates.join('\n') : request.args?.[0] === 'ls' ? inventory : '')));
+    const boundary = fixture(run);
+    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
+    try {
+      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
+      expect(options.dimensions.image).toHaveLength(2);
+      for (const selected of options.dimensions.image) {
+        const projected = projectMachineProvisionerSelectionV1({ options, selection: { image: selected.id }, launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema });
+        expect(projected.kind).toBe('ready');
+        if (projected.kind !== 'ready') throw new Error('Native template did not project an executable launch');
+        const input = DOCKER_SANDBOXES_ROLE_SCHEMAS.acquireInput.parse({ launch: projected.launch, managedId: 'managed-row-1' });
+        expect(await kit.invokeAction('acquire', input, { surface: 'plugin' }))
+          .toMatchObject({ kind: 'bound', resource: { value: resource } });
+      }
+      expect(run.mock.calls.filter(([request]) => request.args?.[0] === 'create').map(([request]) => request.args?.[4])).toEqual(templates);
+    } finally { await kit.dispose(); }
+  });
+
   it('stays effect-free on activation and operates a compatible newer native CLI', async () => {
     const run = vi.fn<ExecService['run']>(async request => exited(new TextEncoder().encode(
       request.args?.[0] === 'template' ? 'docker.io/example/template:1\n' : request.args?.[0] === 'ls' ? inventory : '')));
@@ -79,30 +120,9 @@ describe('activated Docker Sandboxes public role boundary', () => {
 describe('brand mark', () => {
   it('declares its packaged brand mark through the generic brand Resource', () => {
     expect(DOCKER_SANDBOXES_PLUGIN.manifest.brand).toEqual({ iconResourceId: 'brand-icon' });
-    expect(DOCKER_SANDBOXES_PLUGIN.manifest.contributes.resources).toEqual([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]);
+    expect(DOCKER_SANDBOXES_PLUGIN.manifest.contributes.resources?.filter(({ id }) => id === 'brand-icon')).toEqual([{ id: 'brand-icon', kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }]);
     const asset = readFileSync(new URL('../assets/brand.png', import.meta.url));
     expect([...asset.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(asset.readUInt32BE(16)).toBe(asset.readUInt32BE(20));
   });
-  it('qualifies every native template offered by options through the registered acquire role', async () => {
-    const templates = ['docker.io/example/first:1', 'docker.io/example/second:2'];
-    const run = vi.fn<ExecService['run']>(async request => exited(new TextEncoder().encode(
-      request.args?.[0] === 'template' ? templates.join('\n') : request.args?.[0] === 'ls' ? inventory : '')));
-    const boundary = fixture(run);
-    const kit = await createPluginTestkit({ manifest: DOCKER_SANDBOXES_PLUGIN.manifest, module: DOCKER_SANDBOXES_PLUGIN, services: boundary.services });
-    try {
-      const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
-      expect(options.dimensions.image).toHaveLength(2);
-      for (const selected of options.dimensions.image) {
-        const projected = projectMachineProvisionerSelectionV1({ options, selection: { image: selected.id }, launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema });
-        expect(projected.kind).toBe('ready');
-        if (projected.kind !== 'ready') throw new Error('Native template did not project an executable launch');
-        const input = DOCKER_SANDBOXES_ROLE_SCHEMAS.acquireInput.parse({ launch: projected.launch, managedId: 'managed-row-1' });
-        expect(await kit.invokeAction('acquire', input, { surface: 'plugin' }))
-          .toMatchObject({ kind: 'bound', resource: { value: resource } });
-      }
-      expect(run.mock.calls.filter(([request]) => request.args?.[0] === 'create').map(([request]) => request.args?.[4])).toEqual(templates);
-    } finally { await kit.dispose(); }
-  });
-
 });

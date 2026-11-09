@@ -34,6 +34,7 @@ describe('Codex app-server permission profile params', () => {
       target: 'thread',
     })).toEqual({
       permissions: ':read-only',
+      approvalPolicy: 'never',
     });
 
     expect(buildCodexAppServerPermissionParams({
@@ -46,6 +47,7 @@ describe('Codex app-server permission profile params', () => {
       target: 'thread',
     })).toEqual({
       permissions: ':workspace',
+      approvalPolicy: 'never',
     });
 
     const dangerPolicy = {
@@ -142,7 +144,7 @@ describe('Codex app-server permission profile params', () => {
   test('retries only targeted unsupported permissions errors', () => {
     const requestParams = {
       threadId: 'thread_1',
-      permissions: { type: 'profile', id: ':workspace' },
+      permissions: ':workspace',
     };
 
     expect(shouldRetryWithoutCodexAppServerPermissionProfile(
@@ -153,6 +155,15 @@ describe('Codex app-server permission profile params', () => {
       }),
       requestParams,
     )).toBe(true);
+
+    expect(shouldRetryWithoutCodexAppServerPermissionProfile(
+      createCodexAppServerRpcError({
+        method: 'thread/resume',
+        code: -32600,
+        message: 'Invalid request: invalid type: map, expected a string',
+      }),
+      requestParams,
+    )).toBe(false);
 
     expect(shouldRetryWithoutCodexAppServerPermissionProfile(
       createCodexAppServerRpcError({

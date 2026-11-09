@@ -1,7 +1,7 @@
 import type { ConversationDeliveryLinkPreviewPolicyV1 } from '@happier-dev/channels-protocol/v1';
 
-// Slack truncates text above 40,000 characters. Core owns splitting; this
-// provider boundary must not silently accept native truncation.
+// Slack truncates text above 40,000 characters. Core owns splitting against
+// this provider-declared ceiling.
 // https://docs.slack.dev/reference/methods/chat.postMessage/ (2026-10-20)
 export const SLACK_MAX_MESSAGE_CODE_POINTS = 40_000;
 
@@ -13,9 +13,6 @@ export type SlackMessagePayload = Readonly<{
 export function createSlackMessagePayload(input: Readonly<{
   channelId: string; text: string; threadTs?: string; linkPreviewPolicy: ConversationDeliveryLinkPreviewPolicyV1;
 }>): SlackMessagePayload {
-  if (Array.from(input.text).length > SLACK_MAX_MESSAGE_CODE_POINTS) {
-    throw new Error('Slack text exceeds its native message limit.');
-  }
   // Explicit Slack references still carry notification semantics when automatic
   // parsing is disabled. Replace only their opening delimiter, preserving the
   // core's code-point budget instead of expanding text with HTML entities.

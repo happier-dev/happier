@@ -40,6 +40,81 @@ function createHarness(captures: readonly string[], onEnter?: () => Promise<void
 }
 
 describe('native occurrences through the generalized Claude dialog owner', () => {
+
+  it.each([
+    ['missing', {}, null],
+    ['malformed', { command: 671 }, null],
+    ['blank', { command: ' \n ' }, null],
+    ['prelude', { command: '  unset SYNTHETIC; export PROBE=1;\nprintf "first\\nsecond"\n  ' },
+      'unset SYNTHETIC; export PROBE=1;\nprintf "first\\nsecond"'],
+  ] as const)('keeps the correlated native Bash command contract for %s input', async (_label, toolInput, command) => {
+    const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-permission-clipped-command.txt', import.meta.url), 'utf8');
+    const questionIndex = screen.indexOf(' Do you want to proceed?');
+    const context = screen.slice(0, questionIndex + ' Do you want to proceed?'.length).trim();
+    const explanation = 'Permission rule Bash(cat *) requires confirmation for this command.\n /permissions to update rules\n\n Do you want to proceed?';
+    const h = createHarness([screen]);
+    try {
+      await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
+        tool_use_id: 'command-shape', tool_name: 'Bash', tool_input: toolInput, happierResponseLocation: 'app_and_terminal' });
+      await h.handler.handle(parseClaudeScreenState(screen));
+      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
+        question: command === null ? context : command + '\n\n' + explanation,
+      }] });
+      expect(h.port.sentKeys).toEqual([]);
+    } finally { await h.handler.dispose(); }
+  });
+
+
+  it('publishes the complete correlated Bash command with only the native post-command explanation', async () => {
+    const command = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-permission-clipped-command.sh.txt', import.meta.url), 'utf8').trim();
+    const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-permission-clipped-command.txt', import.meta.url), 'utf8');
+    const explanation = 'Permission rule Bash(cat *) requires confirmation for this command.\n /permissions to update rules\n\n Do you want to proceed?';
+    const h = createHarness([screen]);
+    try {
+      await h.handler.observeSessionHook({ hook_event_name: 'PreToolUse', session_id: 'native',
+        tool_use_id: 'long-command-1', tool_name: 'Bash', tool_input: { command } });
+      await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
+        tool_use_id: 'long-command-1', tool_name: 'Bash', tool_input: { command }, happierResponseLocation: 'app_and_terminal' });
+      await h.handler.handle(parseClaudeScreenState(screen));
+      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
+        question: command + '\n\n' + explanation,
+        options: [{ label: 'Yes', choice: 'option_1' }, { label: 'No', choice: 'option_2' }],
+      }] });
+      expect(h.port.sentKeys).toEqual([]);
+    } finally { await h.handler.dispose(); }
+  });
+
+
+  it('publishes native preview choices without an app freeform field', async () => {
+    const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-preview-single.initial.txt', import.meta.url), 'utf8');
+    const input: { questions: readonly unknown[] } = JSON.parse(readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-preview-input.json', import.meta.url), 'utf8'));
+    const h = createHarness([screen]);
+    try {
+      await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
+        tool_use_id: 'preview-question', tool_name: 'AskUserQuestion', tool_input: input,
+        happierResponseLocation: 'app_and_terminal' });
+      await h.handler.handle(parseClaudeScreenState(screen));
+      expect(h.pending[0]?.request).toMatchObject({ requestId: 'preview-question',
+        input: { questions: [expect.objectContaining({ freeform: false })] } });
+      expect(h.port.sentKeys).toEqual([]);
+    } finally { await h.handler.dispose(); }
+  });
+
+  it('publishes full hook-owned questions when the native tabs and question beginning are outside the viewport', async () => {
+    const screen = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-clipped.txt', import.meta.url), 'utf8').split('\n').slice(1).join('\n');
+    const input: { questions: readonly unknown[] } = JSON.parse(readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-question-clipped-input.json', import.meta.url), 'utf8'));
+    const h = createHarness([screen]);
+    try {
+      await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
+        tool_use_id: 'clipped-question-1', tool_name: 'AskUserQuestion', tool_input: input,
+        happierResponseLocation: 'app_and_terminal' });
+      await h.handler.handle(parseClaudeScreenState(screen));
+      expect(h.pending[0]?.request).toMatchObject({ requestId: 'clipped-question-1',
+        input: { questions: input.questions } });
+      expect(h.port.sentKeys).toEqual([]);
+    } finally { await h.handler.dispose(); }
+  });
+
   it('waits for paint then publishes the original tool ID without writing terminal bytes', async () => {
     const h = createHarness(['', SCREEN]);
     try {
@@ -222,6 +297,55 @@ describe('native occurrences through the generalized Claude dialog owner', () =>
     }
   });
 
+  it('retains its own clipped draft and the same pending occurrence after an interrupted answer', async () => {
+    const initial = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform.initial.txt', import.meta.url), 'utf8');
+    const filled = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform.filled.txt', import.meta.url), 'utf8');
+    const input: { questions: { question: string }[] } = JSON.parse(readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.316-question-long-freeform-input.json', import.meta.url), 'utf8'));
+    const text = ('This is harmless synthetic freeform text for an isolated diagnostic. The public fixture should preserve the selected status and explain each ordinary display change without changing any real settings. '.repeat(4)).trim();
+    const h = createHarness([initial, '']);
+    try {
+      const hook = { hook_event_name: 'ClaudeNativePrompt', session_id: 'native', tool_use_id: 'clipped-draft',
+        tool_name: 'AskUserQuestion', tool_input: input, happierResponseLocation: 'app_and_terminal' };
+      await h.handler.observeSessionHook(hook);
+      await h.handler.handle(parseClaudeScreenState(initial));
+      const pending = h.pending[0]!;
+      await expect(pending.options!.acknowledgeDecisionApplication!({ decision: 'approved',
+        answers: { [input.questions[0]!.question]: [text] } })).rejects.toThrow();
+      await h.handler.observeSessionHook(hook);
+      expect(await h.handler.handle(parseClaudeScreenState(filled))).toBe('waiting_for_user');
+      expect(pending.options!.signal!.aborted).toBe(false);
+      expect(h.pending).toHaveLength(1);
+      expect(h.port.sentLiteral).toEqual([text]);
+      expect(h.port.sentKeys).toEqual([]);
+    } finally { await h.handler.dispose(); }
+  });
+
+  it('keeps sent answers pending, verifies retries without replay, and settles only the observed provider answer', async () => {
+    const h = createHarness([SCREEN]);
+    try {
+      await h.hook('question-unconfirmed');
+      await h.handler.handle(parseClaudeScreenState(SCREEN));
+      const pending = h.pending[0]!;
+      const result = { decision: 'approved' as const, answers: { 'Which probe color?': ['Amber'] } };
+      const unconfirmed = { code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED', retryable: true };
+      await expect(pending.options!.acknowledgeDecisionApplication!(result)).rejects.toMatchObject(unconfirmed);
+      await h.hook('question-unconfirmed');
+      await expect(pending.options!.acknowledgeDecisionApplication!(result)).rejects.toMatchObject(unconfirmed);
+      await expect(pending.options!.acknowledgeDecisionApplication!({ decision: 'approved',
+        answers: { 'Which probe color?': ['Blue'] } })).rejects.toMatchObject(unconfirmed);
+      expect(h.port.sentKeys).toEqual(['Enter']);
+      expect(h.handler.hasPendingUserAction()).toBe(true);
+      expect(pending.options!.signal!.aborted).toBe(false);
+      await h.handler.observeSessionHook({ hook_event_name: 'PostToolUse', session_id: 'native',
+        tool_use_id: 'question-unconfirmed', tool_response: { answers: { 'Which probe color?': 'Amber' } } });
+      await vi.waitFor(() => expect(h.handler.hasPendingUserAction()).toBe(false));
+      expect(h.settleObservedDecision).toHaveBeenCalledWith(expect.objectContaining({
+        requestId: 'question-unconfirmed', decision: 'approved', answers: { 'Which probe color?': ['Amber'] },
+      }));
+      expect(h.port.sentKeys).toEqual(['Enter']);
+    } finally { await h.handler.dispose(); }
+  });
+
   it.each([true, false])('checks actual provider answers before app acknowledgement (matching: %s)', async (matching) => {
     let h!: ReturnType<typeof createHarness>;
     h = createHarness([SCREEN, BLUE, IDLE], async () => {
@@ -240,6 +364,41 @@ describe('native occurrences through the generalized Claude dialog owner', () =>
       expect(h.settleObservedDecision).toHaveBeenCalledWith(expect.objectContaining({ decision: 'approved',
         answers: { 'Which probe color?': [matching ? 'Blue' : 'Amber'] },
       }));
+    } finally { await h.handler.dispose(); }
+  });
+});
+
+
+describe('native Read scopes through the existing dialog owner', () => {
+  it.each([2, 3])('publishes exact scopes and applies native one-time choice %s', async (selected) => {
+    const initial = readFileSync(new URL('../tuiControls/__fixtures__/claude-2.1.310-read-outside.txt', import.meta.url), 'utf8');
+    const screen = (focused: number) => initial.replace(/^ [ ❯] (\d+)\./gmu,
+      (_, number: string) => ' ' + (focused + 1 === Number(number) ? '❯' : ' ') + ' ' + number + '.')
+      .replace(' · Tab to amend', focused === 1 || focused === 2 ? '' : ' · Tab to amend');
+    const h = createHarness([...Array.from({ length: selected + 1 }, (_, index) => screen(index)), IDLE]);
+    const labels = [
+      'Yes, and keep allowing any reads outside the working directories',
+      'No, and block reads outside the working directories from now on',
+      'No, and ask again next time',
+      'Yes, but ask again next time',
+    ];
+    try {
+      await h.handler.observeSessionHook({ hook_event_name: 'PreToolUse', session_id: 'native', tool_use_id: 'read-outside-1',
+        tool_name: 'Read', tool_input: { file_path: '/tmp/issue671-native-probe/workspace/outside-read-link-671.txt' } });
+      await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native', tool_use_id: 'read-outside-1',
+        tool_name: 'Read', tool_input: { file_path: '/tmp/issue671-native-probe/workspace/outside-read-link-671.txt' },
+        happierResponseLocation: 'app_and_terminal' });
+      await h.handler.handle(parseClaudeScreenState(initial));
+      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
+        options: labels.map((label, index) => ({ label, choice: 'option_' + (index + 1) })),
+      }] });
+      const result = { decision: 'approved' as const, answers: { claudeNativePermission: ['option_' + (selected + 1)] } };
+      await h.pending[0]!.options!.acknowledgeDecisionApplication!(result);
+      h.pending[0]!.resolve(result);
+      await vi.waitFor(() => expect(h.handler.hasPendingUserAction()).toBe(false));
+      expect(h.port.sentKeys).toEqual([...Array.from({ length: selected }, () => 'ArrowDown'), 'Enter']);
+      expect(h.port.sentLiteral).toEqual([]);
+      expect(h.handler.hasNativePrompt()).toBe(false);
     } finally { await h.handler.dispose(); }
   });
 });

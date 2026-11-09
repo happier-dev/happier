@@ -10,6 +10,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageProjectCandidateV1 } from '../../sessions/launchPlacement.js';
+import { readTriageActionExecutionPlacementV1 } from '../../sessions/actionLaunch.js';
 import type {
     TriageActionCheckoutResolutionV1,
     TriageActionExecutionPlacementV1,
@@ -143,20 +144,7 @@ export function triageNewSessionDraftSeedV1(
     const resolved = placement === undefined
         ? undefined
         : 'checkoutIntent' in placement
-            ? placement.placement.kind === 'pinned'
-                ? {
-                    executionTarget: placement.placement.target,
-                    directory: placement.placement.directory,
-                }
-                : placement.placement.kind === 'launch'
-                    ? {
-                        executionTarget: {
-                            serverId: placement.placement.candidate.serverId,
-                            machineId: placement.placement.candidate.machineId,
-                        },
-                        directory: placement.placement.candidate.rootPath,
-                    }
-                    : undefined
+            ? readTriageActionExecutionPlacementV1(placement.placement) ?? undefined
             : placement;
     const directory = pinnedDirectory || resolved?.directory?.trim();
     const executionTarget = pinnedDirectory ? undefined : resolved?.executionTarget;
@@ -170,6 +158,7 @@ export function triageNewSessionDraftSeedV1(
         ...(actionSeed?.profileId === undefined ? {} : { profileId: actionSeed.profileId }),
         ...(actionSeed === undefined ? {} : { checkoutIntent: actionSeed.checkoutIntent }),
         ...(directory ? { directory } : {}),
+        ...(pinnedDirectory || resolved?.directoryIntent === undefined ? {} : { directoryIntent: resolved.directoryIntent }),
         ...(executionTarget === undefined ? {} : { executionTarget }),
         ...(candidates === undefined ? {} : { candidates }),
     };

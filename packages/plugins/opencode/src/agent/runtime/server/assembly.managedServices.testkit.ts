@@ -86,6 +86,7 @@ export function createContextFixture(params: Readonly<{
     },
     config: { values: {} },
     managedServices: {
+      observeWorkload: async () => ({ kind: 'unavailable', reason: 'admission_unavailable' }),
       dependencies: {} as OpenCodeRuntimeContext['managedServices']['dependencies'],
       supervise: vi.fn(async () => managedServiceHandle({
         baseUrl: params.managedServerBaseUrl,

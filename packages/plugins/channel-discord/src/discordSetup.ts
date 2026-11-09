@@ -8,9 +8,11 @@ export const DISCORD_GUILDS_INTENT = 1 << 0;
 export const DISCORD_BASE_GATEWAY_INTENTS = DISCORD_GUILDS_INTENT | (1 << 9) | (1 << 12);
 
 export type DiscordRequiredPermission = Readonly<{
-  id: 'viewChannels' | 'sendMessages' | 'sendMessagesInThreads' | 'readMessageHistory';
+  id: 'viewChannels' | 'sendMessages' | 'sendMessagesInThreads' | 'readMessageHistory' | 'createPublicThreads';
   label: string;
   bit: bigint;
+  /** `starts`: needed only to open a new thread for a workflow-started conversation, never for endpoint readiness. */
+  purpose: 'conversation' | 'starts';
 }>;
 
 export type DiscordPermissionOverwriteEvidence = Readonly<{
@@ -33,12 +35,16 @@ export type DiscordEndpointPermissionVerification =
     }>
   | Readonly<{ kind: 'invalidEvidence' }>;
 
-/** One table is both the invite bitfield source and the user-facing list. */
+/**
+ * One table is the invite bitfield source, the user-facing list and (through
+ * `purpose`) the endpoint-readiness requirement.
+ */
 export const DISCORD_REQUIRED_PERMISSIONS = Object.freeze([
-  { id: 'viewChannels', label: 'View Channels', bit: 1n << 10n },
-  { id: 'sendMessages', label: 'Send Messages', bit: 1n << 11n },
-  { id: 'sendMessagesInThreads', label: 'Send Messages in Threads', bit: 1n << 38n },
-  { id: 'readMessageHistory', label: 'Read Message History', bit: 1n << 16n },
+  { id: 'viewChannels', label: 'View Channels', bit: 1n << 10n, purpose: 'conversation' },
+  { id: 'sendMessages', label: 'Send Messages', bit: 1n << 11n, purpose: 'conversation' },
+  { id: 'sendMessagesInThreads', label: 'Send Messages in Threads', bit: 1n << 38n, purpose: 'conversation' },
+  { id: 'readMessageHistory', label: 'Read Message History', bit: 1n << 16n, purpose: 'conversation' },
+  { id: 'createPublicThreads', label: 'Create Public Threads', bit: 1n << 35n, purpose: 'starts' },
 ] satisfies readonly DiscordRequiredPermission[]);
 
 const DISCORD_ADMINISTRATOR_PERMISSION = 1n << 3n;
@@ -61,10 +67,19 @@ function requiredPermissionsBitfield(): bigint {
 
 function requiredPermissionsForEndpoint(kind: 'shared' | 'thread'): readonly DiscordRequiredPermission[] {
   return DISCORD_REQUIRED_PERMISSIONS.filter((permission) => (
-    kind === 'thread'
-      ? permission.id !== 'sendMessages'
-      : permission.id !== 'sendMessagesInThreads'
+    permission.purpose === 'conversation'
+    && (kind === 'thread' ? permission.id !== 'sendMessages' : permission.id !== 'sendMessagesInThreads')
   ));
+}
+
+const DISCORD_STARTS_PERMISSION_NOTE = '(only for workflow-started conversations)';
+
+function requiredPermissionsText(): string {
+  return DISCORD_REQUIRED_PERMISSIONS
+    .map((permission) => (
+      permission.purpose === 'starts' ? `${permission.label} ${DISCORD_STARTS_PERMISSION_NOTE}` : permission.label
+    ))
+    .join(', ');
 }
 
 function applyOverwrite(permissions: bigint, overwrite: Readonly<{ allow: bigint; deny: bigint }>): bigint {
@@ -182,9 +197,7 @@ export function createDiscordSetupResult(
     outboundTextLimit: { maximum: DISCORD_MESSAGE_MAXIMUM_CODE_POINTS, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
     setupGuidance: {
       externalUrl: buildDiscordInviteUrl(applicationId),
-      requiredPermissionsLabel: DISCORD_REQUIRED_PERMISSIONS
-        .map((permission) => permission.label)
-        .join(', '),
+      requiredPermissionsLabel: requiredPermissionsText(),
       steps: [
         { title: 'Create an application in the Discord Developer Portal',
           externalUrl: 'https://discord.com/developers/applications' },
@@ -193,7 +206,7 @@ export function createDiscordSetupResult(
         { title: 'Invite the bot to your server with the required permissions',
           externalUrl: buildDiscordInviteUrl(applicationId),
           copyableValues: [
-            { label: 'Required permissions', value: DISCORD_REQUIRED_PERMISSIONS.map((permission) => permission.label).join(', ') },
+            { label: 'Required permissions', value: requiredPermissionsText() },
             { label: 'Permissions bitfield', value: requiredPermissionsBitfield().toString() },
           ] },
       ],

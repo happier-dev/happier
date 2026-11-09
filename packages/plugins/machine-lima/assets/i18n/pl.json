@@ -1,5 +1,6 @@
 {
-  "machineLima.presentation.kind": "VM",
+  "machineLima.presentation.customSize": "Własny rozmiar",
+  "machineLima.presentation.kind": "maszyna",
   "machineLima.presentation.description": "Lekka maszyna Linux do kodu, skryptów i serwerów programistycznych.",
   "machineLima.presentation.ready": "Zainstalowano",
   "machineLima.presentation.unavailable": "Nie zainstalowano",

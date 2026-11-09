@@ -40,7 +40,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "v": {
                   "const": 1
@@ -221,7 +221,7 @@
               "minLength": 1,
               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -308,13 +308,13 @@
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       },
                       "secondaryText": {
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       }
                     },
                     "required": [
@@ -372,13 +372,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -402,7 +402,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "v": {
                       "const": 1
@@ -477,13 +477,13 @@
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       },
                       "secondaryText": {
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       }
                     },
                     "required": [
@@ -541,13 +541,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -1026,13 +1026,13 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "retryNotBeforeMs": {
                             "maximum": 9007199254740991,
@@ -1335,13 +1335,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -1533,13 +1533,13 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "retryNotBeforeMs": {
                             "maximum": 9007199254740991,
@@ -1617,13 +1617,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -2152,7 +2152,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "v": {
                           "const": 1
@@ -2203,7 +2203,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "v": {
                       "const": 1
@@ -2267,13 +2267,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "retryNotBeforeMs": {
                               "maximum": 9007199254740991,
@@ -2377,13 +2377,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "routingToken": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "v": {
                                 "const": 1
@@ -2392,7 +2392,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               }
                             },
                             "required": [
@@ -2460,7 +2460,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   {
                                     "const": null
@@ -2471,7 +2471,29 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
+                              },
+                              "branches": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "base": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "head": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 7181
+                                  }
+                                },
+                                "required": [
+                                  "head",
+                                  "base"
+                                ],
+                                "type": "object"
                               },
                               "completedAtMs": {
                                 "maximum": 9007199254740991,
@@ -2487,13 +2509,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "dueDate": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "facts": {
                                 "items": {
@@ -2503,7 +2525,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     "importance": {
                                       "anyOf": [
@@ -2522,7 +2544,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     "value": {
                                       "anyOf": [
@@ -2536,7 +2558,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -2555,7 +2577,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -2652,7 +2674,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -2808,6 +2830,36 @@
                                               "type": "string",
                                               "x-happier-max-utf8-bytes": 128
                                             },
+                                            "locator": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "displayPath": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                },
+                                                "routingToken": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                },
+                                                "v": {
+                                                  "const": 1
+                                                },
+                                                "webUrl": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                }
+                                              },
+                                              "required": [
+                                                "v"
+                                              ],
+                                              "type": "object"
+                                            },
                                             "source": {
                                               "additionalProperties": false,
                                               "properties": {
@@ -2829,6 +2881,12 @@
                                                 "localId"
                                               ],
                                               "type": "object"
+                                            },
+                                            "title": {
+                                              "minLength": 1,
+                                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                              "type": "string",
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -2940,13 +2998,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "scopeLabel": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "scopeUnitId": {
                                 "minLength": 1,
@@ -2971,7 +3029,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "presentation": {
                                     "anyOf": [
@@ -3015,7 +3073,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "taskCapabilities": {
                                 "additionalProperties": false,
@@ -3128,7 +3186,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "state": {
                                           "additionalProperties": false,
@@ -3147,7 +3205,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             },
                                             "presentation": {
                                               "anyOf": [
@@ -3211,7 +3269,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "requiredFields": {
                                           "items": {
@@ -3232,7 +3290,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -3258,7 +3316,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -3284,7 +3342,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   },
                                                   "options": {
                                                     "items": {
@@ -3300,7 +3358,7 @@
                                                           "minLength": 1,
                                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                           "type": "string",
-                                                          "x-happier-max-utf8-bytes": 7184
+                                                          "x-happier-max-utf8-bytes": 7181
                                                         }
                                                       },
                                                       "required": [
@@ -3336,7 +3394,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   },
                                                   "options": {
                                                     "items": {
@@ -3352,7 +3410,7 @@
                                                           "minLength": 1,
                                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                           "type": "string",
-                                                          "x-happier-max-utf8-bytes": 7184
+                                                          "x-happier-max-utf8-bytes": 7181
                                                         }
                                                       },
                                                       "required": [
@@ -3388,7 +3446,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -3419,7 +3477,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             },
                                             "presentation": {
                                               "anyOf": [
@@ -3476,7 +3534,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "v": {
                                 "const": 1
@@ -3563,7 +3621,7 @@
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                         "type": "string",
-                                        "x-happier-max-utf8-bytes": 7184
+                                        "x-happier-max-utf8-bytes": 7181
                                       }
                                     },
                                     "required": [
@@ -3701,13 +3759,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "retryNotBeforeMs": {
                                 "maximum": 9007199254740991,
@@ -3829,13 +3887,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "retryNotBeforeMs": {
                               "maximum": 9007199254740991,
@@ -3939,13 +3997,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "routingToken": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "v": {
                                 "const": 1
@@ -3954,7 +4012,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               }
                             },
                             "required": [
@@ -4022,7 +4080,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   {
                                     "const": null
@@ -4033,7 +4091,29 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
+                              },
+                              "branches": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "base": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 7181
+                                  },
+                                  "head": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 7181
+                                  }
+                                },
+                                "required": [
+                                  "head",
+                                  "base"
+                                ],
+                                "type": "object"
                               },
                               "completedAtMs": {
                                 "maximum": 9007199254740991,
@@ -4049,13 +4129,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "dueDate": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "facts": {
                                 "items": {
@@ -4065,7 +4145,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     "importance": {
                                       "anyOf": [
@@ -4084,7 +4164,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     "value": {
                                       "anyOf": [
@@ -4098,7 +4178,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -4117,7 +4197,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -4214,7 +4294,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -4370,6 +4450,36 @@
                                               "type": "string",
                                               "x-happier-max-utf8-bytes": 128
                                             },
+                                            "locator": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "displayPath": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                },
+                                                "routingToken": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                },
+                                                "v": {
+                                                  "const": 1
+                                                },
+                                                "webUrl": {
+                                                  "minLength": 1,
+                                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                  "type": "string",
+                                                  "x-happier-max-utf8-bytes": 7181
+                                                }
+                                              },
+                                              "required": [
+                                                "v"
+                                              ],
+                                              "type": "object"
+                                            },
                                             "source": {
                                               "additionalProperties": false,
                                               "properties": {
@@ -4391,6 +4501,12 @@
                                                 "localId"
                                               ],
                                               "type": "object"
+                                            },
+                                            "title": {
+                                              "minLength": 1,
+                                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                              "type": "string",
+                                              "x-happier-max-utf8-bytes": 7181
                                             }
                                           },
                                           "required": [
@@ -4502,13 +4618,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "scopeLabel": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "scopeUnitId": {
                                 "minLength": 1,
@@ -4533,7 +4649,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "presentation": {
                                     "anyOf": [
@@ -4577,7 +4693,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "taskCapabilities": {
                                 "additionalProperties": false,
@@ -4690,7 +4806,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "state": {
                                           "additionalProperties": false,
@@ -4709,7 +4825,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             },
                                             "presentation": {
                                               "anyOf": [
@@ -4773,7 +4889,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "requiredFields": {
                                           "items": {
@@ -4794,7 +4910,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -4820,7 +4936,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -4846,7 +4962,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   },
                                                   "options": {
                                                     "items": {
@@ -4862,7 +4978,7 @@
                                                           "minLength": 1,
                                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                           "type": "string",
-                                                          "x-happier-max-utf8-bytes": 7184
+                                                          "x-happier-max-utf8-bytes": 7181
                                                         }
                                                       },
                                                       "required": [
@@ -4898,7 +5014,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   },
                                                   "options": {
                                                     "items": {
@@ -4914,7 +5030,7 @@
                                                           "minLength": 1,
                                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                           "type": "string",
-                                                          "x-happier-max-utf8-bytes": 7184
+                                                          "x-happier-max-utf8-bytes": 7181
                                                         }
                                                       },
                                                       "required": [
@@ -4950,7 +5066,7 @@
                                                     "minLength": 1,
                                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                     "type": "string",
-                                                    "x-happier-max-utf8-bytes": 7184
+                                                    "x-happier-max-utf8-bytes": 7181
                                                   }
                                                 },
                                                 "required": [
@@ -4981,7 +5097,7 @@
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                               "type": "string",
-                                              "x-happier-max-utf8-bytes": 7184
+                                              "x-happier-max-utf8-bytes": 7181
                                             },
                                             "presentation": {
                                               "anyOf": [
@@ -5038,7 +5154,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "v": {
                                 "const": 1
@@ -5125,7 +5241,7 @@
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                         "type": "string",
-                                        "x-happier-max-utf8-bytes": 7184
+                                        "x-happier-max-utf8-bytes": 7181
                                       }
                                     },
                                     "required": [
@@ -5263,13 +5379,13 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "retryNotBeforeMs": {
                                 "maximum": 9007199254740991,
@@ -5373,13 +5489,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -5630,13 +5746,13 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "routingToken": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "v": {
                   "const": 1
@@ -5645,7 +5761,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -6099,6 +6215,7 @@
                     }
                   ]
                 },
+                "detailData": {},
                 "dispatchEvidence": {
                   "additionalProperties": false,
                   "properties": {
@@ -6235,13 +6352,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "routingToken": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "v": {
                       "const": 1
@@ -6250,7 +6367,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -6318,7 +6435,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         {
                           "const": null
@@ -6329,7 +6446,29 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "branches": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "base": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7181
+                        },
+                        "head": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 7181
+                        }
+                      },
+                      "required": [
+                        "head",
+                        "base"
+                      ],
+                      "type": "object"
                     },
                     "completedAtMs": {
                       "maximum": 9007199254740991,
@@ -6345,13 +6484,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "dueDate": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "facts": {
                       "items": {
@@ -6361,7 +6500,7 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "importance": {
                             "anyOf": [
@@ -6380,7 +6519,7 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "value": {
                             "anyOf": [
@@ -6394,7 +6533,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -6413,7 +6552,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -6510,7 +6649,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -6666,6 +6805,36 @@
                                     "type": "string",
                                     "x-happier-max-utf8-bytes": 128
                                   },
+                                  "locator": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "displayPath": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 7181
+                                      },
+                                      "routingToken": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 7181
+                                      },
+                                      "v": {
+                                        "const": 1
+                                      },
+                                      "webUrl": {
+                                        "minLength": 1,
+                                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                        "type": "string",
+                                        "x-happier-max-utf8-bytes": 7181
+                                      }
+                                    },
+                                    "required": [
+                                      "v"
+                                    ],
+                                    "type": "object"
+                                  },
                                   "source": {
                                     "additionalProperties": false,
                                     "properties": {
@@ -6687,6 +6856,12 @@
                                       "localId"
                                     ],
                                     "type": "object"
+                                  },
+                                  "title": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -6798,13 +6973,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "scopeLabel": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "scopeUnitId": {
                       "minLength": 1,
@@ -6829,7 +7004,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "presentation": {
                           "anyOf": [
@@ -6873,7 +7048,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "taskCapabilities": {
                       "additionalProperties": false,
@@ -6986,7 +7161,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "state": {
                                 "additionalProperties": false,
@@ -7005,7 +7180,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "presentation": {
                                     "anyOf": [
@@ -7069,7 +7244,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "requiredFields": {
                                 "items": {
@@ -7090,7 +7265,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         }
                                       },
                                       "required": [
@@ -7116,7 +7291,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         }
                                       },
                                       "required": [
@@ -7142,7 +7317,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "options": {
                                           "items": {
@@ -7158,7 +7333,7 @@
                                                 "minLength": 1,
                                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                 "type": "string",
-                                                "x-happier-max-utf8-bytes": 7184
+                                                "x-happier-max-utf8-bytes": 7181
                                               }
                                             },
                                             "required": [
@@ -7194,7 +7369,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         },
                                         "options": {
                                           "items": {
@@ -7210,7 +7385,7 @@
                                                 "minLength": 1,
                                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                 "type": "string",
-                                                "x-happier-max-utf8-bytes": 7184
+                                                "x-happier-max-utf8-bytes": 7181
                                               }
                                             },
                                             "required": [
@@ -7246,7 +7421,7 @@
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 7184
+                                          "x-happier-max-utf8-bytes": 7181
                                         }
                                       },
                                       "required": [
@@ -7277,7 +7452,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "presentation": {
                                     "anyOf": [
@@ -7334,7 +7509,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "v": {
                       "const": 1
@@ -7621,7 +7796,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             }
                           },
                           "required": [
@@ -7801,13 +7976,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -8089,13 +8264,13 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "routingToken": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "v": {
                   "const": 1
@@ -8104,7 +8279,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -8175,7 +8350,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "deletions": {
                           "maximum": 9007199254740991,
@@ -8186,7 +8361,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "headRevision": {
                           "minLength": 1,
@@ -8254,13 +8429,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "retryNotBeforeMs": {
                               "maximum": 9007199254740991,
@@ -8321,7 +8496,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "id": {
                                 "minLength": 1,
@@ -8333,7 +8508,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "required": {
                                 "anyOf": [
@@ -8439,7 +8614,7 @@
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       },
                       "importance": {
                         "anyOf": [
@@ -8458,7 +8633,7 @@
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       },
                       "value": {
                         "anyOf": [
@@ -8472,7 +8647,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               }
                             },
                             "required": [
@@ -8491,7 +8666,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               }
                             },
                             "required": [
@@ -8588,7 +8763,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               }
                             },
                             "required": [
@@ -8686,7 +8861,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             {
                               "const": null
@@ -8731,13 +8906,13 @@
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 "requiredPermissions": {
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 "retryNotBeforeMs": {
                                   "maximum": 9007199254740991,
@@ -8782,13 +8957,13 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "type": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -8875,7 +9050,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             {
                               "const": null
@@ -8936,7 +9111,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     {
                                       "const": null
@@ -9109,7 +9284,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               {
                                 "const": null
@@ -9120,7 +9295,7 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "id": {
                             "minLength": 1,
@@ -9132,13 +9307,13 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "titleKey": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           },
                           "variants": {
                             "items": {
@@ -9158,13 +9333,13 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     },
                                     "titleKey": {
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     }
                                   },
                                   "required": [
@@ -9224,7 +9399,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             {
                               "const": null
@@ -9235,7 +9410,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "id": {
                           "minLength": 1,
@@ -9247,13 +9422,13 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "titleKey": {
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "variants": {
                           "items": {
@@ -9273,13 +9448,13 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "titleKey": {
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   }
                                 },
                                 "required": [
@@ -9349,7 +9524,7 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 7184
+                            "x-happier-max-utf8-bytes": 7181
                           }
                         },
                         "required": [
@@ -9423,7 +9598,7 @@
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 7184
+                                "x-happier-max-utf8-bytes": 7181
                               },
                               "verb": {
                                 "anyOf": [
@@ -9492,13 +9667,13 @@
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 "requiredPermissions": {
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 "retryNotBeforeMs": {
                                   "maximum": 9007199254740991,
@@ -9575,13 +9750,13 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "title": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -9633,13 +9808,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -9925,7 +10100,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -10081,13 +10256,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -10366,7 +10541,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -10808,6 +10983,7 @@
                             }
                           ]
                         },
+                        "detailData": {},
                         "dispatchEvidence": {
                           "additionalProperties": false,
                           "properties": {
@@ -10944,13 +11120,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "routingToken": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "v": {
                               "const": 1
@@ -10959,7 +11135,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             }
                           },
                           "required": [
@@ -11027,7 +11203,7 @@
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 {
                                   "const": null
@@ -11038,7 +11214,29 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
+                            },
+                            "branches": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "base": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 7181
+                                },
+                                "head": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 7181
+                                }
+                              },
+                              "required": [
+                                "head",
+                                "base"
+                              ],
+                              "type": "object"
                             },
                             "completedAtMs": {
                               "maximum": 9007199254740991,
@@ -11054,13 +11252,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "dueDate": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "facts": {
                               "items": {
@@ -11070,7 +11268,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "importance": {
                                     "anyOf": [
@@ -11089,7 +11287,7 @@
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                     "type": "string",
-                                    "x-happier-max-utf8-bytes": 7184
+                                    "x-happier-max-utf8-bytes": 7181
                                   },
                                   "value": {
                                     "anyOf": [
@@ -11103,7 +11301,7 @@
                                             "minLength": 1,
                                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                             "type": "string",
-                                            "x-happier-max-utf8-bytes": 7184
+                                            "x-happier-max-utf8-bytes": 7181
                                           }
                                         },
                                         "required": [
@@ -11122,7 +11320,7 @@
                                             "minLength": 1,
                                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                             "type": "string",
-                                            "x-happier-max-utf8-bytes": 7184
+                                            "x-happier-max-utf8-bytes": 7181
                                           }
                                         },
                                         "required": [
@@ -11219,7 +11417,7 @@
                                             "minLength": 1,
                                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                             "type": "string",
-                                            "x-happier-max-utf8-bytes": 7184
+                                            "x-happier-max-utf8-bytes": 7181
                                           }
                                         },
                                         "required": [
@@ -11375,6 +11573,36 @@
                                             "type": "string",
                                             "x-happier-max-utf8-bytes": 128
                                           },
+                                          "locator": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "displayPath": {
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "type": "string",
+                                                "x-happier-max-utf8-bytes": 7181
+                                              },
+                                              "routingToken": {
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "type": "string",
+                                                "x-happier-max-utf8-bytes": 7181
+                                              },
+                                              "v": {
+                                                "const": 1
+                                              },
+                                              "webUrl": {
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "type": "string",
+                                                "x-happier-max-utf8-bytes": 7181
+                                              }
+                                            },
+                                            "required": [
+                                              "v"
+                                            ],
+                                            "type": "object"
+                                          },
                                           "source": {
                                             "additionalProperties": false,
                                             "properties": {
@@ -11396,6 +11624,12 @@
                                               "localId"
                                             ],
                                             "type": "object"
+                                          },
+                                          "title": {
+                                            "minLength": 1,
+                                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                            "type": "string",
+                                            "x-happier-max-utf8-bytes": 7181
                                           }
                                         },
                                         "required": [
@@ -11507,13 +11741,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "scopeUnitId": {
                               "minLength": 1,
@@ -11538,7 +11772,7 @@
                                   "minLength": 1,
                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
-                                  "x-happier-max-utf8-bytes": 7184
+                                  "x-happier-max-utf8-bytes": 7181
                                 },
                                 "presentation": {
                                   "anyOf": [
@@ -11582,7 +11816,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "taskCapabilities": {
                               "additionalProperties": false,
@@ -11695,7 +11929,7 @@
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                         "type": "string",
-                                        "x-happier-max-utf8-bytes": 7184
+                                        "x-happier-max-utf8-bytes": 7181
                                       },
                                       "state": {
                                         "additionalProperties": false,
@@ -11714,7 +11948,7 @@
                                             "minLength": 1,
                                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                             "type": "string",
-                                            "x-happier-max-utf8-bytes": 7184
+                                            "x-happier-max-utf8-bytes": 7181
                                           },
                                           "presentation": {
                                             "anyOf": [
@@ -11778,7 +12012,7 @@
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                         "type": "string",
-                                        "x-happier-max-utf8-bytes": 7184
+                                        "x-happier-max-utf8-bytes": 7181
                                       },
                                       "requiredFields": {
                                         "items": {
@@ -11799,7 +12033,7 @@
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                   "type": "string",
-                                                  "x-happier-max-utf8-bytes": 7184
+                                                  "x-happier-max-utf8-bytes": 7181
                                                 }
                                               },
                                               "required": [
@@ -11825,7 +12059,7 @@
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                   "type": "string",
-                                                  "x-happier-max-utf8-bytes": 7184
+                                                  "x-happier-max-utf8-bytes": 7181
                                                 }
                                               },
                                               "required": [
@@ -11851,7 +12085,7 @@
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                   "type": "string",
-                                                  "x-happier-max-utf8-bytes": 7184
+                                                  "x-happier-max-utf8-bytes": 7181
                                                 },
                                                 "options": {
                                                   "items": {
@@ -11867,7 +12101,7 @@
                                                         "minLength": 1,
                                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                         "type": "string",
-                                                        "x-happier-max-utf8-bytes": 7184
+                                                        "x-happier-max-utf8-bytes": 7181
                                                       }
                                                     },
                                                     "required": [
@@ -11903,7 +12137,7 @@
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                   "type": "string",
-                                                  "x-happier-max-utf8-bytes": 7184
+                                                  "x-happier-max-utf8-bytes": 7181
                                                 },
                                                 "options": {
                                                   "items": {
@@ -11919,7 +12153,7 @@
                                                         "minLength": 1,
                                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                         "type": "string",
-                                                        "x-happier-max-utf8-bytes": 7184
+                                                        "x-happier-max-utf8-bytes": 7181
                                                       }
                                                     },
                                                     "required": [
@@ -11955,7 +12189,7 @@
                                                   "minLength": 1,
                                                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                                   "type": "string",
-                                                  "x-happier-max-utf8-bytes": 7184
+                                                  "x-happier-max-utf8-bytes": 7181
                                                 }
                                               },
                                               "required": [
@@ -11986,7 +12220,7 @@
                                             "minLength": 1,
                                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                             "type": "string",
-                                            "x-happier-max-utf8-bytes": 7184
+                                            "x-happier-max-utf8-bytes": 7181
                                           },
                                           "presentation": {
                                             "anyOf": [
@@ -12043,7 +12277,7 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "v": {
                               "const": 1
@@ -12330,7 +12564,7 @@
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                       "type": "string",
-                                      "x-happier-max-utf8-bytes": 7184
+                                      "x-happier-max-utf8-bytes": 7181
                                     }
                                   },
                                   "required": [
@@ -12510,13 +12744,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "retryNotBeforeMs": {
                               "maximum": 9007199254740991,
@@ -12624,13 +12858,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -12931,7 +13165,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -13095,13 +13329,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -13389,7 +13623,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -13594,13 +13828,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -13879,7 +14113,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -14048,13 +14282,13 @@
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
-                              "x-happier-max-utf8-bytes": 7184
+                              "x-happier-max-utf8-bytes": 7181
                             },
                             "retryNotBeforeMs": {
                               "maximum": 9007199254740991,
@@ -14148,13 +14382,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -14442,7 +14676,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -14548,7 +14782,7 @@
                       "webUrl": {
                         "minLength": 1,
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 7184
+                        "x-happier-max-utf8-bytes": 7181
                       }
                     },
                     "required": [
@@ -14612,13 +14846,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -14909,7 +15143,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -14996,13 +15230,13 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "requiredPermissions": {
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         },
                         "retryNotBeforeMs": {
                           "maximum": 9007199254740991,
@@ -15450,13 +15684,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -15735,7 +15969,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -15821,13 +16055,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -16126,7 +16360,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -16216,7 +16450,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -16307,7 +16541,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -16401,7 +16635,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -16432,6 +16666,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -16509,7 +16798,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -16592,13 +16881,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -16681,7 +16970,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -16737,13 +17026,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -17042,7 +17331,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -17132,7 +17421,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -17226,7 +17515,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -17257,6 +17546,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -17334,7 +17678,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -17417,13 +17761,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -17506,7 +17850,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -17562,13 +17906,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -17861,7 +18205,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -17950,7 +18294,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18044,7 +18388,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18075,6 +18419,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -18152,7 +18551,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18235,13 +18634,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -18324,7 +18723,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18380,13 +18779,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -18679,7 +19078,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -18768,7 +19167,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18862,7 +19261,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -18893,6 +19292,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -18970,7 +19424,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19053,13 +19507,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -19142,7 +19596,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19198,13 +19652,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -19502,7 +19956,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -19570,7 +20024,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19640,7 +20094,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19669,6 +20123,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -19724,7 +20233,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19805,13 +20314,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -19872,7 +20381,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -19926,13 +20435,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -20230,7 +20739,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -20298,7 +20807,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -20368,7 +20877,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -20397,6 +20906,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -20452,7 +21016,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -20533,13 +21097,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -20600,7 +21164,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -20654,13 +21218,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -20978,7 +21542,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -21070,7 +21634,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -21164,7 +21728,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -21195,6 +21759,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -21272,7 +21891,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -21355,13 +21974,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -21444,7 +22063,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -21500,13 +22119,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -21820,7 +22439,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -21937,7 +22556,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22032,7 +22651,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22063,6 +22682,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -22140,7 +22814,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22223,13 +22897,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -22312,7 +22986,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22368,13 +23042,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -22691,7 +23365,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -22761,7 +23435,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22831,7 +23505,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22860,6 +23534,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -22915,7 +23644,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -22996,13 +23725,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -23063,7 +23792,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -23117,13 +23846,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -23440,7 +24169,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -23510,7 +24239,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -23580,7 +24309,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -23609,6 +24338,61 @@
                       "const": false
                     }
                   ]
+                },
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requiredPermissions": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 7181
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
                 },
                 "kind": {
                   "const": "refused"
@@ -23664,7 +24448,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -23745,13 +24529,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -23812,7 +24596,7 @@
                     "webUrl": {
                       "minLength": 1,
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -23866,13 +24650,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -26003,7 +26787,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -26062,13 +26846,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -26153,7 +26937,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -26209,7 +26993,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -26478,13 +27262,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -26569,7 +27353,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -26625,7 +27409,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -27847,7 +28631,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -27906,13 +28690,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -27997,7 +28781,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -28053,7 +28837,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -28322,13 +29106,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -28413,7 +29197,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -28469,7 +29253,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -29690,7 +30474,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -29750,13 +30534,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -29841,7 +30625,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -29897,7 +30681,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -30166,13 +30950,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -30257,7 +31041,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -30313,7 +31097,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -31529,7 +32313,7 @@
             "routingToken": {
               "minLength": 1,
               "type": "string",
-              "x-happier-max-utf8-bytes": 7184
+              "x-happier-max-utf8-bytes": 7181
             },
             "v": {
               "const": 1
@@ -31588,13 +32372,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -31679,7 +32463,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -31735,7 +32519,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -32004,13 +32788,13 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     },
                     "retryNotBeforeMs": {
                       "maximum": 9007199254740991,
@@ -32095,7 +32879,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -32151,7 +32935,7 @@
                         "webUrl": {
                           "minLength": 1,
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 7184
+                          "x-happier-max-utf8-bytes": 7181
                         }
                       },
                       "required": [
@@ -32228,6 +33012,13 @@
         "title": "Comment on a GitLab issue"
       },
       {
+        "confirmation": {
+          "confirmLabel": "Prepare workspace",
+          "title": "Prepare GitLab review workspace"
+        },
+        "confirmationWhen": {
+          "presentUserUi": false
+        },
         "connectedAccountPurposeBindings": [
           {
             "path": "instance.binding.account",
@@ -32492,13 +33283,13 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "routingToken": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "v": {
                   "const": 1
@@ -32507,7 +33298,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -32566,7 +33357,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "serverId": {
                   "minLength": 1,
@@ -32592,6 +33383,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -32602,7 +33396,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "created": {
                   "anyOf": [
@@ -32711,7 +33505,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -32818,7 +33612,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Prepare a GitLab merge-request review workspace"
       },
@@ -33087,13 +33882,13 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "routingToken": {
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "v": {
                   "const": 1
@@ -33102,7 +33897,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 }
               },
               "required": [
@@ -33155,7 +33950,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -33174,7 +33969,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 7184
+                      "x-happier-max-utf8-bytes": 7181
                     }
                   },
                   "required": [
@@ -33201,7 +33996,7 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 7184
+                  "x-happier-max-utf8-bytes": 7181
                 },
                 "serverId": {
                   "minLength": 1,

@@ -21,6 +21,18 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export const claudeHandoffSurface = {
+    resolveNativeTranscriptPathCandidate: async ({ identity, runtimeDescriptorV1 }, context) => {
+        const remoteSessionId = readClaudeProviderIdentityValue(identity.vendorResumeId);
+        const configDir = runtimeDescriptorV1.agentId === 'claude'
+            ? readNonEmptyString(runtimeDescriptorV1.agent.configDir) : null;
+        if (!remoteSessionId || !configDir) return null;
+        const file = await resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir }, env: process.env, remoteSessionId,
+            signal: context.signal,
+        });
+        return file ? { path: file.filePath, containmentRoot: configDir } : null;
+    },
+
     evaluateAvailability: ({ sessionId }) => readClaudeProviderIdentityValue(sessionId)
         ? { available: true as const }
         : { available: false as const, reasonCode: 'missing_metadata' as const },

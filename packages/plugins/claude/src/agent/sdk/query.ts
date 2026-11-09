@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { createClaudePromptSettlementTracker, type ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
 export type { ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
+import { readSessionHookSidechainAgentId } from '../hooks/sidechain.js';
+import { buildClaudeSdkSessionHooks, CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID } from '../hooks/settings.js';
 
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { createClaudeManagedMcpPolicyConflictError } from '../mcp/managedPolicy.js';
@@ -15,7 +17,7 @@ import type {
     SDKUserMessage,
 } from './types.js';
 import { materializeClaudeMcpConfigArgsForSpawn } from '../mcp/materializeConfigArgs.js';
-import { buildClaudeSettingSourcesArgs, resolveClaudeLaunchSettingsOverlayArgs, resolveClaudeNativeToolPolicyArgs } from '../runtime/launchSettings.js';
+import { buildClaudeSettingSourcesArgs, resolveClaudeLaunchSettingsOverlayArgs } from '../runtime/launchSettings.js';
 import { buildClaudePluginDirArgs } from '../runtime/pluginDirArgs.js';
 import { materializeClaudeStartupInstructions } from '../runtime/startupInstructions.js';
 
@@ -84,6 +86,8 @@ type ControlRequestRecord = Readonly<{
         subtype: string;
         tool_name?: string;
         input?: unknown;
+        callback_id?: string;
+        tool_use_id?: string;
     }>;
 }>;
 
@@ -165,6 +169,7 @@ function buildClaudeArgs(prompt: QueryPrompt, options: QueryOptions = {}): strin
     if (options.maxTurns) args.push('--max-turns', String(options.maxTurns));
     if (options.model) args.push('--model', options.model);
     if (options.effort) args.push('--effort', options.effort);
+    if (options.onSessionHook) args.push('--include-hook-events');
     if (options.canCallTool) {
         if (typeof prompt === 'string') {
             throw new Error('canCallTool callback requires stream-json input.');
@@ -220,13 +225,15 @@ function buildClaudeArgs(prompt: QueryPrompt, options: QueryOptions = {}): strin
     args.push(...(options.extraArgs ?? []));
     const pluginArgs = buildClaudePluginDirArgs({ args });
     const skillOverrides = Object.fromEntries((options.skills?.nativeDisables ?? []).map(item => [item.name, 'off' as const]));
-    const toolPolicyArgs = [...(Object.keys(skillOverrides).length ? resolveClaudeLaunchSettingsOverlayArgs({
+    const toolPolicyArgs = [...resolveClaudeLaunchSettingsOverlayArgs({
         args: pluginArgs,
         interactionKind: 'noninteractive_sdk', permissionMode: options.permissionMode ?? null, launchSettings: {},
         skillOverrides,
+        launchEnv: options.env,
+        cwd: options.cwd,
         allowedTools: options.allowedTools,
         unlistedTools: options.unlistedTools,
-    }) : resolveClaudeNativeToolPolicyArgs(pluginArgs, { allowedTools: options.allowedTools, unlistedTools: options.unlistedTools }))];
+    })];
     if (typeof prompt === 'string') {
         toolPolicyArgs.push('--print', prompt.trim());
     } else {
@@ -425,7 +432,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
     }
 
     async interrupt(): Promise<void> {
-        const handle = await this.handlePromise;
+        const handle = this.handle ?? await this.handlePromise;
         await this.writeRecordOrThrow(handle.client, {
             type: 'control_request',
             request: { subtype: 'interrupt' },
@@ -553,7 +560,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         }
         this.controlControllers.clear();
         this.rejectPendingControlResponses(new Error('Claude SDK query disposed before control response.'));
-        const handle = await this.handlePromise.catch(() => null);
+        const handle = await this.handlePromise.catch(() => this.handle);
         try {
             await handle?.dispose({ code: 'CLAUDE_SDK_QUERY_DISPOSED' });
         } catch (error) {
@@ -618,7 +625,6 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         this.unsubscribe = handle.client.subscribe((record) => {
             void this.handleRecord(record);
         });
-        void this.pumpPrompt(handle.client, this.config.prompt, options.abort);
         handle.process.exit.then(
             async (result) => {
                 await cleanup().catch(() => undefined);
@@ -642,6 +648,10 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                 this.messages.fail(failure);
             },
         );
+        if (options.onSessionHook) {
+            await this.requestControl({ subtype: 'initialize', hooks: buildClaudeSdkSessionHooks() }, handle);
+        }
+        void this.pumpPrompt(handle.client, this.config.prompt, options.abort);
         return handle;
     }
 
@@ -759,8 +769,8 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         this.messages.enqueue(record);
     }
 
-    private async requestControl(request: OutboundControlRequest): Promise<unknown> {
-        const handle = await this.handlePromise;
+    private async requestControl(request: OutboundControlRequest, startedHandle?: ClaudeSdkExecClientHandle): Promise<unknown> {
+        const handle = startedHandle ?? await this.handlePromise;
         this.controlRequestSequence += 1;
         const requestId = `claude-sdk-control-${this.controlRequestSequence}`;
         const response = new Promise<unknown>((resolve, reject) => {
@@ -806,6 +816,8 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         this.controlControllers.set(record.request_id, controller);
         try {
             const response = await this.processControlRequest(record, controller.signal);
+            // Native cancellation has abandoned this callback; it expects no late reply.
+            if (controller.signal.aborted && record.request.subtype === 'hook_callback') return;
             await this.writeRecordOrThrow(handle.client, {
                 type: 'control_response',
                 response: {
@@ -815,12 +827,17 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                 },
             });
         } catch (error) {
+            if (controller.signal.aborted && record.request.subtype === 'hook_callback') return;
             await this.writeRecordOrThrow(handle.client, {
                 type: 'control_response',
                 response: {
                     subtype: 'error',
                     request_id: record.request_id,
-                    error: error instanceof Error ? error.message : String(error),
+                    // Observation failures used to remain inside the loopback consumer. Do not
+                    // copy its private error text into native hook output or persisted transcripts.
+                    error: record.request.subtype === 'hook_callback'
+                        ? 'Claude SDK session hook observation failed.'
+                        : error instanceof Error ? error.message : String(error),
                 },
             });
         } finally {
@@ -831,7 +848,18 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
     private async processControlRequest(
         record: ControlRequestRecord,
         signal: AbortSignal,
-    ): Promise<PermissionResult | OAuthTokenRefreshResult> {
+    ): Promise<PermissionResult | OAuthTokenRefreshResult | Readonly<Record<string, never>>> {
+        if (record.request.subtype === 'hook_callback') {
+            const onSessionHook = this.config.options?.onSessionHook;
+            if (!onSessionHook || record.request.callback_id !== CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID || !isRecord(record.request.input)) {
+                throw new Error('Unknown Claude SDK session hook callback.');
+            }
+            await onSessionHook({
+                ...record.request.input,
+                ...(typeof record.request.tool_use_id === 'string' ? { tool_use_id: record.request.tool_use_id } : {}),
+            }, { signal });
+            return {};
+        }
         if (record.request.subtype === 'oauth_token_refresh') {
             const getOAuthToken: GetOAuthTokenCallback | undefined = this.config.options?.getOAuthToken;
             if (!getOAuthToken) {
@@ -845,9 +873,11 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                 throw new Error('canCallTool callback is not provided.');
             }
             const toolName = typeof record.request.tool_name === 'string' ? record.request.tool_name : '';
+            const agentId = readSessionHookSidechainAgentId(record.request);
             return canCallTool(toolName, normalizeToolInput(record.request.input), {
                 requestId: record.request_id,
                 signal,
+                ...(agentId ? { agentId } : {}),
             });
         }
         throw new Error(`Unsupported control request subtype: ${record.request.subtype}`);

@@ -317,15 +317,19 @@ describe('Claude JSONL projection', () => {
         }
     });
 
-    it('projects plain root user messages to direct text transcript rows', () => {
+    it.each([
+        { entrypoint: 'cli', content: 'hello' },
+        { entrypoint: 'sdk-ts', content: [{ type: 'text', text: 'hello' }] },
+    ])('projects root user prompts from $entrypoint to direct text transcript rows', ({ entrypoint, content }) => {
         const projected = projectClaudeJsonlLineToDirectMessages({
             fileRelPath: 'session.jsonl',
             lineStartOffsetBytes: 42,
             lineValue: {
                 type: 'user',
                 uuid: 'user-1',
+                entrypoint,
                 timestamp: '2026-06-06T00:00:00.000Z',
-                message: { content: 'hello' },
+                message: { content },
             },
         });
 

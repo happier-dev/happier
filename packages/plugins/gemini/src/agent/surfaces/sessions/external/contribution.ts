@@ -122,9 +122,10 @@ export const geminiExternalSessionsContribution: AgentExternalSessionsContributi
         request.signal.throwIfAborted();
         const file = files[index]!;
         let transcript: Awaited<ReturnType<typeof readGeminiTranscript>>;
-        try { transcript = await readGeminiTranscript(file.filePath, request.signal); }
+        try { transcript = await readGeminiTranscript(file.filePath, request.signal, control); }
         catch (error) {
           request.signal.throwIfAborted();
+          if (error instanceof ExternalSessionContentSearchYield) return bounded(page(next()), request);
           if (!(error instanceof UnsupportedGeminiTranscript)) throw error;
           partial = true; after = file.filePath; continue;
         }

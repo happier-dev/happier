@@ -14,7 +14,6 @@ export type DiscordIdentifyPermit = Readonly<{
 export type DiscordIdentifyConcurrency = Readonly<{
   acquire(input: Readonly<{
     applicationId: string;
-    maxConcurrency: number;
     signal: AbortSignal;
   }>): Promise<DiscordIdentifyPermit>;
 }>;
@@ -42,12 +41,6 @@ function requireApplicationId(applicationId: string): string {
   const normalized = applicationId.trim();
   if (!normalized) throw new Error('Discord application ID is required for Identify concurrency.');
   return normalized;
-}
-
-function requireMaxConcurrency(maxConcurrency: number): void {
-  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency <= 0) {
-    throw new Error('Discord Identify max concurrency must be a positive safe integer.');
-  }
 }
 
 export function createDiscordIdentifyConcurrency(): DiscordIdentifyConcurrencyLifecycle {
@@ -112,7 +105,6 @@ export function createDiscordIdentifyConcurrency(): DiscordIdentifyConcurrencyLi
   return Object.freeze({
     async acquire(input) {
       const applicationId = requireApplicationId(input.applicationId);
-      requireMaxConcurrency(input.maxConcurrency);
       if (input.signal.aborted) {
         throw input.signal.reason ?? new Error('Discord Identify was cancelled.');
       }

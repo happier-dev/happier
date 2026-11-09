@@ -1,5 +1,5 @@
 import type { AgentConnectedAccountSharedStateFileMergeV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { parseCodexRolloutFilename } from '../../../../rollout/discovery/indexData.js';
+import { parseCodexRolloutFilename, resolveCodexLogicalRolloutPath } from '../../../../rollout/discovery/indexData.js';
 
 type CodexJsonlStateFile = Readonly<{
   name: 'history.jsonl' | 'session_index.jsonl';
@@ -67,6 +67,7 @@ function resolveMissingSessionIndexLines(current: string | null, incoming: strin
 
 export const reconcileCodexSharedJsonlState: AgentConnectedAccountSharedStateFileMergeV1 = (input) => {
   if ((input.entryPath.startsWith('sessions/') || input.entryPath.startsWith('archived_sessions/'))
+    && input.entryPath === resolveCodexLogicalRolloutPath(input.entryPath)
     && parseCodexRolloutFilename(input.entryPath)) {
     const current = input.currentContents ?? '';
     const incoming = input.incomingContents;

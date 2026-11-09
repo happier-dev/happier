@@ -1,4 +1,5 @@
 import type { TriageDataActionContext } from '../actions/dataContext.js';
+import { triageTaskWriteInvocationFailureV1 } from '../actions/taskWriteFailure.js';
 
 import { isPluginActionApprovalRequestCreated, type ActionApprovalRequestCreatedResult, type PluginActionInputById, type PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import {
@@ -14,6 +15,7 @@ import {
 import { INTERNAL_TASK_SOURCE_V1, INTERNAL_TASK_SOURCE_LABEL_V1, internalTaskLocalRefV1, internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from './identity.js';
 export { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from './identity.js';
 import { isInternalTaskConfiguredInstanceV1 } from './configuration.js';
+import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from './failure.js';
 export { INTERNAL_TASK_DRAFT_V1, isInternalTaskConfiguredInstanceV1 } from './configuration.js';
 
 export type TaskList = Extract<PluginActionResultById['tasks.internal.list'], { status: 'ok' }>;
@@ -21,7 +23,7 @@ type TaskRead = Extract<PluginActionResultById['tasks.internal.read'], { status:
 type Task = TaskList['todos'][number];
 type TaskFields = PluginActionInputById['tasks.internal.edit']['fields'];
 type TaskReadContext = Pick<TriageDataActionContext, 'signal'> & Readonly<{ services: Pick<TriageDataActionContext['services'], 'actions'> }>;
-const UNAVAILABLE = { class: 'transient', code: 'accountDataUnavailable' } as const;
+const UNAVAILABLE = INTERNAL_TASK_DATA_UNAVAILABLE_V1;
 const INVALID_ADDRESS = { class: 'unsupportedContract', code: 'invalidTaskAddress' } as const;
 
 export const INTERNAL_TASK_STATES_V1 = ['backlog', 'unstarted', 'started', 'completed', 'canceled'] as const;
@@ -246,7 +248,7 @@ type HostWriteResult = PluginActionResultById['tasks.internal.edit'];
 async function invokeWrite(operation: () => Promise<HostWriteResult | ActionApprovalRequestCreatedResult>,
   context: TriageDataActionContext): Promise<TriageTaskWriteResultV1> {
   try { return writeResult(await operation()); }
-  catch (error) { if (context.signal.aborted) throw error; return { kind: 'uncertain', failure: UNAVAILABLE }; }
+  catch (error) { if (context.signal.aborted) throw error; return triageTaskWriteInvocationFailureV1(error); }
 }
 function writeResult(result: HostWriteResult | ActionApprovalRequestCreatedResult): TriageTaskWriteResultV1 {
   if (isPluginActionApprovalRequestCreated(result)) return { kind: 'refused', reason: 'approvalRequired' };

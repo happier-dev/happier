@@ -436,6 +436,15 @@ describe("the source's own write in the header", () => {
     expect((await fixture.getByRole('button', { name: 'Review' })).state?.disabled).not.toBe(true);
   });
 
+  it('says nothing under the row while the source read is still out, so the tabs below do not move', async () => {
+    const fixture = await mountSourceWrite({
+      title: 'Merge', reading: true, disabledReason: 'Reading the current pull request…', pending: false,
+      execute: async () => { throw new Error('Merge must not run'); },
+    }, 'reading-keeps-the-row-still');
+    await fixture.getByRole('button', { name: 'Review' });
+    await expect(fixture.queryByText('Reading the current pull request…')).resolves.toBeUndefined();
+  });
+
   it('asks which method before it merges, and passes exactly the chosen one', async () => {
     const calls: (string | undefined)[] = [];
     const fixture = await mountSourceWrite({

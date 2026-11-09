@@ -1,4 +1,4 @@
-import { readClaudeOauthCredentialOrganizationId } from '@happier-dev/plugin-sdk/first-party/claude';
+import { readClaudeOauthCredentialOrganizationId } from '@happier-dev/protocol/providers/claude/oauth-profile';
 import { readClaudeNativeAccountIdentity, reconcileClaudeNativeAccountConfig } from '../native/accountIdentity.js';
 import type {
     OauthCredentialRecord,
@@ -76,6 +76,7 @@ export type ClaudeConnectedServiceRuntimeFailureClassification = Readonly<{
   expectedCredentialRevision?: string | null;
   sourceProviderAccountId?: string | null;
   sourceProviderOrganizationId?: string | null;
+  providerReportedOrganizationId?: string | null;
   sourceAccountLabel?: string | null;
   resetsAtMs: number | null;
   retryAfterMs?: number | null;
@@ -125,6 +126,7 @@ export type ClassifyClaudeConnectedServiceRuntimeAuthFailureInput = Readonly<{
   credentialRevision?: string | null;
   sourceProviderAccountId?: string | null;
   sourceProviderOrganizationId?: string | null;
+  providerReportedOrganizationId?: string | null;
   sourceAccountLabel?: string | null;
   error: unknown;
   normalizedDetails?: Pick<ClaudeSessionRuntimeIssue, 'usageLimit' | 'temporaryThrottle'>;
@@ -248,9 +250,9 @@ function runtimeFailureIdentity(
       ? { groupGeneration: input.groupGeneration }
       : {}),
     ...(input.credentialRevision ? { expectedCredentialRevision: input.credentialRevision } : {}),
-    ...(input.sourceProviderAccountId ? { sourceProviderAccountId: input.sourceProviderAccountId } : {}),
-    ...(input.sourceProviderAccountId && input.sourceProviderOrganizationId
-      ? { sourceProviderOrganizationId: input.sourceProviderOrganizationId } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'sourceProviderAccountId') ? {sourceProviderAccountId: input.sourceProviderAccountId ?? null} : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'sourceProviderOrganizationId') ? {sourceProviderOrganizationId: input.sourceProviderOrganizationId ?? null} : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'providerReportedOrganizationId') ? {providerReportedOrganizationId: input.providerReportedOrganizationId ?? null} : {}),
     ...(input.sourceProviderAccountId && input.sourceAccountLabel ? { sourceAccountLabel: input.sourceAccountLabel } : {}),
   };
 }
@@ -319,9 +321,10 @@ function readSelectionIds(selection: unknown): Readonly<{
   groupId: string | null;
   groupGeneration: number | null;
   credentialRevision: string | null;
-  sourceProviderAccountId: string | null;
-  sourceProviderOrganizationId: string | null;
+  sourceProviderAccountId?: string | null;
+  sourceProviderOrganizationId?: string | null;
   sourceAccountLabel: string | null;
+  providerReportedOrganizationId?: string | null;
 }> {
   const record = readRecord(selection);
   return {
@@ -332,12 +335,11 @@ function readSelectionIds(selection: unknown): Readonly<{
     groupId: readString(record?.groupId),
     groupGeneration: readNonnegativeInteger(record?.groupGeneration ?? record?.generation),
     credentialRevision: readString(record?.credentialRevision),
-    sourceProviderAccountId:
-      readString(record?.sourceProviderAccountId),
-    sourceProviderOrganizationId:
-      readString(record?.sourceProviderOrganizationId),
+    ...(record && Object.prototype.hasOwnProperty.call(record, 'sourceProviderAccountId') ? {sourceProviderAccountId: readString(record.sourceProviderAccountId)} : {}),
+    ...(record && Object.prototype.hasOwnProperty.call(record, 'sourceProviderOrganizationId') ? {sourceProviderOrganizationId: readString(record.sourceProviderOrganizationId)} : {}),
     sourceAccountLabel:
       readString(record?.sourceAccountLabel),
+    ...(record && Object.prototype.hasOwnProperty.call(record, 'providerReportedOrganizationId') ? {providerReportedOrganizationId: readString(record.providerReportedOrganizationId)} : {}),
   };
 }
 
@@ -482,7 +484,15 @@ export function createClaudeConnectedServiceRuntimeAuthAdapter(): ClaudeConnecte
         },
       });
     },
-    async materializeActiveProfile() {
+    async materializeActiveProfile(input) {
+      const selection = readSelectionIds(input.selection);
+      if (selection.serviceId === 'happier.agent.claude/claude-subscription'
+        && selection.groupId && selection.profileId) {
+        // The host rewrites the pool's shared Claude home; Claude reads its new
+        // credentials between requests, including within a turn. Actual hot apply
+        // still requires the generation-bound native-auth writer and verifier.
+        return { supported: true, supportsInTurnApply: true };
+      }
       return { supported: false, recovery: 'restart_resume' };
     },
     canHotApply(input) {

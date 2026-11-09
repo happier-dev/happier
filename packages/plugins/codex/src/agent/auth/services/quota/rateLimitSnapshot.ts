@@ -1,6 +1,8 @@
 import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import type { AgentAccountUsageMeter } from '@happier-dev/plugin-sdk/agents/runtime';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
+import { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from '../../../../connectedAccounts/planLabels.js';
 
 export const CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -13,7 +15,7 @@ function readString(value: unknown): string | null {
 }
 
 function readFiniteNumber(value: unknown): number | null {
-  if (typeof value === 'string' && value.trim().length === 0) return null;
+  if (typeof value !== 'number' && (typeof value !== 'string' || value.trim().length === 0)) return null;
   const numeric = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -208,7 +210,8 @@ function readCodexRateLimitRecord(rawSnapshot: unknown): Record<string, unknown>
 export function readCodexRateLimitSnapshotPlanLabel(rawSnapshot: unknown): string | null {
   const raw = readCodexRateLimitRecord(rawSnapshot);
   const envelope = isRecord(rawSnapshot) ? rawSnapshot : {};
-  return readString(raw.planType ?? raw.plan_type ?? envelope.planType ?? envelope.plan_type);
+  const plan = readString(raw.planType ?? raw.plan_type ?? envelope.planType ?? envelope.plan_type);
+  return resolveConnectedAccountPlanLabel(plan, CODEX_ACCOUNT_USAGE_PLAN_METADATA);
 }
 
 export function readCodexRateLimitSnapshotAccountLabel(rawSnapshot: unknown): string | null {

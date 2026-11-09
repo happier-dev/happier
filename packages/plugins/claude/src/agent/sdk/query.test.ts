@@ -1,4 +1,5 @@
-import { readFile, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -96,6 +97,102 @@ async function* prompt() {
 }
 
 describe('Claude plugin SDK query', () => {
+    it('initializes hooks before input and delivers callbacks', async () => {
+        const { ctx, stream, spawnClient } = createContextFixture();
+        const observed: unknown[] = [];
+        const running = query(ctx, { prompt: prompt(), options: {
+            onSessionHook: async (input) => { observed.push(input); },
+        } });
+        try {
+            await vi.waitFor(() => expect(stream.written[0]).toMatchObject({
+                type: 'control_request', request: { subtype: 'initialize', hooks: {
+                    UserPromptSubmit: [{ hookCallbackIds: ['happier-session-hook'] }],
+                    PostToolUse: [{ hookCallbackIds: ['happier-session-hook'] }],
+                } },
+            }));
+            expect(stream.written).toHaveLength(1);
+            const initialization = stream.written[0] as { request_id: string };
+            await stream.emit({ type: 'control_response', response: { subtype: 'success', request_id: initialization.request_id, response: {} } });
+            await vi.waitFor(() => expect(stream.written).toContainEqual(expect.objectContaining({ type: 'user' })));
+            const submitted = stream.written.find((record): record is { type: 'user'; uuid: string } =>
+                !!record && typeof record === 'object' && 'type' in record && record.type === 'user' && 'uuid' in record && typeof record.uuid === 'string');
+            expect(submitted).toBeDefined();
+            await stream.emit({ ...submitted, message: { role: 'user', content: 'private prompt fixture' } });
+            await expect(running.promptTransportOutcome).resolves.toEqual({ kind: 'accepted' });
+            const input = { hook_event_name: 'PostToolUse', session_id: 'native-1', tool_name: 'Agent', tool_response: { status: 'async_launched', agentId: 'child-1' } };
+            await stream.emit({ type: 'control_request', request_id: 'hook-1', request: { subtype: 'hook_callback', callback_id: 'happier-session-hook', tool_use_id: 'exact-native-tool', input } });
+            await vi.waitFor(() => expect(stream.written).toContainEqual({ type: 'control_response', response: { subtype: 'success', request_id: 'hook-1', response: {} } }));
+            expect(observed).toEqual([{ ...input, tool_use_id: 'exact-native-tool' }]);
+            expect(spawnClient).toHaveBeenCalledOnce();
+        } finally { await running.dispose(); }
+    });
+
+    it('cancels an in-process hook without writing a late callback response', async () => {
+        const { ctx, stream } = createContextFixture();
+        let hookSignal: AbortSignal | undefined;
+        let hookCompleted = false;
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const running = query(ctx, { prompt: prompt(), options: { onSessionHook: async (_input, { signal }) => { hookSignal = signal; await held; hookCompleted = true; } } });
+        try {
+            await vi.waitFor(() => expect(stream.written[0]).toMatchObject({ type: 'control_request' }));
+            const initialization = stream.written[0] as { request_id: string };
+            await stream.emit({ type: 'control_response', response: { subtype: 'success', request_id: initialization.request_id, response: {} } });
+            await stream.emit({ type: 'control_request', request_id: 'cancel-hook', request: { subtype: 'hook_callback', callback_id: 'happier-session-hook', input: { hook_event_name: 'SessionStart', session_id: 'native' } } });
+            await vi.waitFor(() => expect(hookSignal).toBeDefined());
+            await stream.emit({ type: 'control_cancel_request', request_id: 'cancel-hook' });
+            expect(hookSignal?.aborted).toBe(true);
+            release();
+            await vi.waitFor(() => expect(hookCompleted).toBe(true));
+            expect(stream.written).not.toContainEqual(expect.objectContaining({ response: expect.objectContaining({ request_id: 'cancel-hook' }) }));
+        } finally { release(); await running.dispose(); }
+    });
+
+    it('settles unsupported hook initialization before any prompt and disposes the owned child', async () => {
+        const { ctx, stream } = createContextFixture();
+        const dispose = vi.spyOn(stream.handle, 'dispose');
+        const running = query(ctx, { prompt: prompt(), options: { onSessionHook: async () => {} } });
+        try {
+            await vi.waitFor(() => expect(stream.written[0]).toMatchObject({ type: 'control_request' }));
+            const initialization = stream.written[0] as { request_id: string };
+            await stream.emit({ type: 'control_response', response: { subtype: 'error', request_id: initialization.request_id, error: 'Unsupported initialize' } });
+            await expect(running.next()).rejects.toThrow('Unsupported initialize');
+            expect(stream.written).not.toContainEqual(expect.objectContaining({ type: 'user' }));
+        } finally { await running.dispose(); }
+        expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('interrupts and disposes a child whose hook initialization is still pending', async () => {
+        const { ctx, stream } = createContextFixture();
+        const dispose = vi.spyOn(stream.handle, 'dispose');
+        const running = query(ctx, { prompt: prompt(), options: { onSessionHook: async () => {} } });
+        await vi.waitFor(() => expect(stream.written[0]).toMatchObject({ type: 'control_request' }));
+        await running.interrupt();
+        expect(stream.written).toContainEqual({ type: 'control_request', request: { subtype: 'interrupt' } });
+        await running.dispose();
+        expect(dispose).toHaveBeenCalledOnce();
+        expect(stream.written).not.toContainEqual(expect.objectContaining({ type: 'user' }));
+    });
+
+    it('does not copy private observation errors into native hook responses or the transcript stream', async () => {
+        const { ctx, stream } = createContextFixture();
+        const onMessageReceived = vi.fn();
+        const running = query(ctx, { prompt: prompt(), onMessageReceived, options: {
+            onSessionHook: async () => { throw new Error('synthetic-private-hook-error'); },
+        } });
+        try {
+            await vi.waitFor(() => expect(stream.written[0]).toMatchObject({ type: 'control_request' }));
+            const initialization = stream.written[0] as { request_id: string };
+            await stream.emit({ type: 'control_response', response: { subtype: 'success', request_id: initialization.request_id, response: {} } });
+            await stream.emit({ type: 'control_request', request_id: 'failed-hook', request: {
+                subtype: 'hook_callback', callback_id: 'happier-session-hook', input: { hook_event_name: 'PostToolUse', session_id: 'native' },
+            } });
+            await vi.waitFor(() => expect(stream.written).toContainEqual(expect.objectContaining({ response: expect.objectContaining({ request_id: 'failed-hook', subtype: 'error' }) })));
+            expect(JSON.stringify(stream.written)).not.toContain('synthetic-private-hook-error');
+            expect(onMessageReceived).not.toHaveBeenCalled();
+        } finally { await running.dispose(); }
+    });
+
     it('delivers skills beside other plugins once and merges path-local native overrides', async () => {
         const { ctx, spawnClient } = createContextFixture();
         const running = query(ctx, { prompt: prompt(), options: {
@@ -213,7 +310,10 @@ describe('Claude plugin SDK query', () => {
         expect(args).not.toContain('--allow-dangerously-skip-permissions');
         expect(args).not.toContain('--allowed-tools');
         expect(args).not.toContain('--permission-mode=bypassPermissions');
-        expect(args).not.toContain('--settings');
+        expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+        expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '')).toMatchObject({ permissions: {
+            allow: [], defaultMode: 'dontAsk', disableBypassPermissionsMode: 'disable',
+        } });
         await running.dispose();
     });
 
@@ -302,7 +402,7 @@ describe('Claude plugin SDK query', () => {
         ]));
     });
 
-    it('emits a single inline --settings overlay for the settingsJson query option', async () => {
+    it.each([false, true])('merges one inline settings overlay for native and pool SDK queries (pool=%s)', async (pool) => {
         const { ctx, spawnClient } = createContextFixture();
 
         query(ctx, {
@@ -311,11 +411,19 @@ describe('Claude plugin SDK query', () => {
                 cwd: '/tmp/project',
                 model: 'claude-opus-4-8',
                 settingsJson: '{"ultracode":true}',
+                ...(pool ? { env: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+                    kind: 'group', serviceId: 'happier.agent.claude/claude-subscription', groupId: 'pool',
+                    activeProfileId: 'first', fallbackProfileId: 'first', generation: 1,
+                    credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', policy: {},
+                }]) } } : {}),
             },
         });
 
         const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
-        expect(args).toEqual(expect.arrayContaining(['--settings', '{"ultracode":true}']));
+        const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+        expect(settings.ultracode).toBe(true);
+        if (pool) expect(settings.autoContinueAtUsageLimit).toBe(false);
+        else expect(settings).not.toHaveProperty('autoContinueAtUsageLimit');
         expect(args.filter((arg) => arg === '--settings')).toHaveLength(1);
     });
 
@@ -438,21 +546,23 @@ describe('Claude plugin SDK query', () => {
     });
 
     it('lets an explicit settingsPath win over settingsJson (one --settings only)', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'claude-sdk-explicit-settings-'));
+        const settingsPath = join(root, 'settings.json');
+        await writeFile(settingsPath, JSON.stringify({ theme: 'light' }));
         const { ctx, spawnClient } = createContextFixture();
-
-        query(ctx, {
+        const running = query(ctx, {
             prompt: prompt(),
-            options: {
-                cwd: '/tmp/project',
-                settingsPath: '/tmp/settings.json',
-                settingsJson: '{"ultracode":true}',
-            },
+            options: { cwd: root, settingsPath, settingsJson: '{"ultracode":true}' },
         });
-
-        const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
-        expect(args).toEqual(expect.arrayContaining(['--settings', '/tmp/settings.json']));
-        expect(args.filter((arg) => arg === '--settings')).toHaveLength(1);
-        expect(args).not.toContain('{"ultracode":true}');
+        try {
+            const args = spawnClient.mock.calls[0]?.[0].launch.args ?? [];
+            expect(args).toEqual(expect.arrayContaining(['--settings', settingsPath]));
+            expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+            expect(args).not.toContain('{"ultracode":true}');
+        } finally {
+            await running.dispose();
+            await rm(root, { recursive: true, force: true });
+        }
     });
 
     it('passes a [1m] extended-context model id through --model unmutated', async () => {

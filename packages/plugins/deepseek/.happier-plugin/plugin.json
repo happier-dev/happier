@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -61,11 +62,20 @@
                 "deepseek-chat",
                 "deepseek-reasoner"
               ],
+              "contextWindowTokens": 1000000,
               "id": "deepseek-v4-flash",
               "name": "DeepSeek V4 Flash"
             },
             {
+              "contextWindowTokens": 1000000,
               "id": "deepseek-v4-pro",
+              "inlineCompletion": {
+                "maxOutputTokens": 4096,
+                "operationId": "native-fim",
+                "outputTokens": 4096,
+                "promptOverheadTokens": 3,
+                "tokenAccounting": "utf8-bytes"
+              },
               "name": "DeepSeek V4 Pro"
             }
           ]
@@ -98,7 +108,8 @@
               },
               "id": "deepseek-openai-bearer",
               "protocols": [
-                "openai-chat"
+                "openai-chat",
+                "openai-completions"
               ],
               "uses": [
                 "probe",
@@ -108,6 +119,17 @@
           ]
         },
         "endpointTemplates": [
+          {
+            "baseUrl": "https://api.deepseek.com/beta",
+            "capabilities": {
+              "reasoningControls": "unsupported",
+              "statefulResponses": "unsupported",
+              "streaming": "supported",
+              "toolRoundTrips": "unsupported"
+            },
+            "id": "deepseek-fim",
+            "protocol": "openai-completions"
+          },
           {
             "baseUrl": "https://api.deepseek.com/anthropic",
             "capabilities": {
@@ -132,6 +154,15 @@
           }
         ],
         "id": "deepseek",
+        "inlineCompletion": [
+          {
+            "endpointTemplateId": "deepseek-fim",
+            "id": "native-fim",
+            "mode": "native-fim",
+            "path": "/beta/completions",
+            "wireFormat": "openai-text-completions"
+          }
+        ],
         "kind": "frontier",
         "legacyProfileMigrations": [
           {
@@ -188,6 +219,14 @@
           }
         ],
         "name": "DeepSeek",
+        "usageSources": [
+          {
+            "endpointTemplateId": "deepseek-openai-chat",
+            "id": "balance",
+            "parser": "deepseek-balance",
+            "path": "/user/balance"
+          }
+        ],
         "v": 1,
         "websiteUrl": "https://www.deepseek.com"
       }
@@ -211,9 +250,9 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -230,8 +269,8 @@
   },
   "description": "Use DeepSeek models through Anthropic- or OpenAI-compatible agents.",
   "displayName": "DeepSeek",
-  "engines": {
-    "happier": "^0.0.0"
+  "entrypoints": {
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

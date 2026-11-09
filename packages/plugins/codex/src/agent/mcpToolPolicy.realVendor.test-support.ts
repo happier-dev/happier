@@ -73,6 +73,7 @@ export async function openRealCodexMcpSession(request: AgentSessionOpenRequest, 
       const pending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
       const requests = new Map<string, (request: { id: number | string; params: unknown }) => Promise<unknown>>();
       const notifications = new Set<(message: { method: string; params: unknown }) => Promise<void> | void>();
+      const notificationReceipts = new Set<(message: { method: string; params: unknown; receivedAtMs: number }) => void>();
       let next = 0; let stderr = '';
       const write = (record: unknown) => new Promise<void>((resolve, reject) => child.stdin.write(`${JSON.stringify(record)}\n`, error => error ? reject(error) : resolve()));
       lines.on('line', line => {
@@ -85,7 +86,11 @@ export async function openRealCodexMcpSession(request: AgentSessionOpenRequest, 
           if (message.id !== undefined) {
             const handler = requests.get(message.method);
             void Promise.resolve(handler ? handler(message) : null).then(result => write({ id: message.id, result }));
-          } else for (const listener of notifications) void listener(message);
+          } else {
+            const receivedAtMs = Date.now();
+            for (const listener of notificationReceipts) listener({ ...message, receivedAtMs });
+            for (const listener of notifications) void listener(message);
+          }
         } else {
           const waiter = pending.get(message.id); pending.delete(message.id);
           if (message.error) waiter?.reject(new Error(JSON.stringify(message.error))); else waiter?.resolve(message.result);
@@ -105,6 +110,7 @@ export async function openRealCodexMcpSession(request: AgentSessionOpenRequest, 
           const id = ++next; const result = new Promise((resolve, reject) => pending.set(id, { resolve, reject })); void write({ id, method, params }); return result; },
         notify: (method: string, params: unknown) => write({ method, ...(params === undefined ? {} : { params }) }),
         onRequest(method: string, handler: (request: { id: number | string; params: unknown }) => Promise<unknown>) { requests.set(method, handler); return { dispose() { requests.delete(method); } }; },
+        onNotificationReceived(listener: (message: { method: string; params: unknown; receivedAtMs: number }) => void) { notificationReceipts.add(listener); return { dispose() { notificationReceipts.delete(listener); } }; },
         onNotification(listener: (message: { method: string; params: unknown }) => Promise<void> | void) { notifications.add(listener); return { dispose() { notifications.delete(listener); } }; },
       } };
     } },

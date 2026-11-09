@@ -1,12 +1,9 @@
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   ConversationProviderConnectionReadResultV1Schema,
-  ConversationProviderConnectionStopInputV1Schema,
-  ConversationProviderConnectionStopResultV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
   ConversationTransportFactReportResultV1Schema,
   type ConversationProviderConnectionReconciliationSnapshotV1,
-  type ConversationProviderConnectionStopResultV1,
   type ConversationTransportFactReportInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -14,7 +11,6 @@ import { isPluginError, type Disposable, type PluginInvocationContext } from '@h
 import { projectPluginEventSourceConnectionStatusV1, type PluginEventSourceConnectionStatusV1 } from '@happier-dev/plugin-sdk/events';
 
 import {
-  assertDiscordChannelsCoreCaller,
   materializeExactDiscordBotToken,
   readDiscordConnectionConfiguration,
 } from './discordActions.js';
@@ -41,7 +37,6 @@ import {
 
 const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
 const RECOVERY_INTERVAL_MS = 30_000;
-const STOP_WAIT_MS = 2_000;
 // Discord permits 1,000 Gateway session starts per 24-hour window. A
 // connection reservation permits one Discord application key per Account, so
 // this bounded recheck stays below that budget even if the Portal takes time
@@ -59,15 +54,12 @@ type DiscordGatewaySupervisorClock = Readonly<{
 
 type PendingTransportFact = ConversationTransportFactReportInputV1['fact'];
 
-type WorkerStopIntent = 'reconcile' | 'explicit' | 'generationRetired' | 'authorityUnavailable';
+type WorkerStopIntent = 'reconcile' | 'generationRetired';
 
 /**
- * Why stopping a still-resumable session justifies a continuity-loss fact in
- * authority-loss cases: an authoritative listing/reading failure and generation
- * retirement. Both discard the worker's process-local resume coordinates, so
- * the replacement session can only Identify fresh and may miss everything
- * Discord dispatched in the interval; queueing the existing gap through the
- * pending fact owner is the continuity proof the replacement cannot make.
+ * Generation retirement discards the worker's process-local resume coordinates.
+ * A replacement can only Identify fresh and may miss dispatches in the interval,
+ * so the pending fact owner retains that unproven continuity.
  */
 const UNPROVEN_CONTINUITY_GAP_FACT = Object.freeze({
   kind: 'historyGap',
@@ -86,8 +78,8 @@ type WorkerEntry = {
   worker: DiscordGatewayWorker | null;
   stopIntent: WorkerStopIntent | null;
   replacementSnapshot: ConversationProviderConnectionReconciliationSnapshotV1 | null;
-  explicitStopAuthorityEpoch: number | null;
   completion: Promise<void>;
+  supervisorLogger: BackgroundServiceContext['services']['logger'];
 };
 
 /**
@@ -105,7 +97,6 @@ export type DiscordGatewaySupervisorOptions = Readonly<{
   workerFactory?: DiscordGatewayWorkerFactory;
   clock?: DiscordGatewaySupervisorClock;
   reconciliationIntervalMs?: number;
-  stopWaitMs?: number;
 }>;
 
 export type DiscordGatewaySupervisor = Readonly<{
@@ -118,7 +109,6 @@ export type DiscordGatewaySupervisor = Readonly<{
     snapshot: ConversationProviderConnectionReconciliationSnapshotV1,
     context: PluginInvocationContext,
   ): Promise<void>;
-  stop(input: unknown, context: PluginInvocationContext): Promise<ConversationProviderConnectionStopResultV1>;
   dispose(): Promise<void>;
 }>;
 
@@ -159,50 +149,14 @@ function connectionFactKey(snapshot: ConversationProviderConnectionReconciliatio
 function connectionFingerprint(snapshot: ConversationProviderConnectionReconciliationSnapshotV1): string {
   return JSON.stringify({
     connectionId: snapshot.connectionId,
-    authorityEpoch: snapshot.authorityEpoch,
     providerConnectionKey: snapshot.providerConnectionKey,
     providerConfigVersion: snapshot.providerConfigVersion,
-    providerConfig: snapshot.providerConfig,
+    providerConfig: readDiscordConnectionConfiguration(snapshot),
     credentialRef: snapshot.credentialRef,
     enabled: snapshot.enabled,
     deletionState: snapshot.deletionState,
     requiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent,
   });
-}
-
-function isJsonRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function sameJsonValue(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((entry, index) => sameJsonValue(entry, right[index]));
-  }
-  if (!isJsonRecord(left) || !isJsonRecord(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return leftKeys.length === rightKeys.length
-    && leftKeys.every((key, index) => key === rightKeys[index]
-      && sameJsonValue(left[key], right[key]));
-}
-
-function isExactFrozenOldWorker(input: Readonly<{
-  snapshot: ConversationProviderConnectionReconciliationSnapshotV1;
-  request: ReturnType<typeof ConversationProviderConnectionStopInputV1Schema.parse>;
-}>): boolean {
-  const { snapshot, request } = input;
-  return request.authorityEpoch > 1
-    && snapshot.connectionId === request.connectionId
-    && snapshot.authorityEpoch === request.authorityEpoch - 1
-    && snapshot.providerConnectionKey === request.providerConnectionKey
-    && snapshot.providerConfigVersion === request.providerConfigVersion
-    && sameJsonValue(snapshot.providerConfig, request.providerConfig)
-    && sameJsonValue(snapshot.credentialRef, request.credentialRef);
 }
 
 function isAbort(error: unknown, signal: AbortSignal): boolean {
@@ -308,44 +262,14 @@ function automationSourceStatusFromWorkerResult(
   return null;
 }
 
-function waitForCompletion(
-  completion: Promise<void>,
-  signal: AbortSignal,
-  clock: DiscordGatewaySupervisorClock,
-  timeoutMs: number,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve(false);
-      return;
-    }
-    let settled = false;
-    const finish = (value: boolean): void => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', onAbort);
-      clock.clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = clock.setTimeout(() => finish(false), timeoutMs);
-    const onAbort = (): void => finish(false);
-    signal.addEventListener('abort', onAbort, { once: true });
-    void completion.then(() => finish(true), () => finish(true));
-  });
-}
-
 export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisorOptions = {}): DiscordGatewaySupervisor {
   const clock = options.clock ?? DEFAULT_CLOCK;
   const workerFactory = options.workerFactory ?? startDiscordGatewayWorker;
   const identifyConcurrency = createDiscordIdentifyConcurrency();
   const resolveRuntimeFacts = options.resolveRuntimeFacts ?? requireDiscordGatewayRuntimeFactsFromCoreSnapshot;
   const reconciliationIntervalMs = options.reconciliationIntervalMs ?? RECOVERY_INTERVAL_MS;
-  const stopWaitMs = options.stopWaitMs ?? STOP_WAIT_MS;
   if (!Number.isSafeInteger(reconciliationIntervalMs) || reconciliationIntervalMs <= 0) {
     throw new Error('Discord Gateway reconciliation interval must be a positive safe integer.');
-  }
-  if (!Number.isSafeInteger(stopWaitMs) || stopWaitMs <= 0) {
-    throw new Error('Discord Gateway stop wait must be a positive safe integer.');
   }
 
   // Gateway reconciliation owns only workers and transport facts. Event
@@ -361,7 +285,6 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
   // reason that repair can fix.
   const terminalReasonByFingerprint = new Map<string, DiscordGatewayTerminalReason>();
   const blockedUntilByFingerprint = new Map<string, number>();
-  const reportedNotRunning = new Set<string>();
   let supervisorAbort: AbortController | null = null;
   let runPromise: Promise<void> | null = null;
   let disposed = false;
@@ -396,9 +319,15 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
   };
 
   const stopWorker = (entry: WorkerEntry, intent: WorkerStopIntent): void => {
-    if (entry.stopIntent === null || intent === 'explicit') entry.stopIntent = intent;
+    if (entry.stopIntent === null) entry.stopIntent = intent;
     if (!entry.controller.signal.aborted) entry.controller.abort(new Error(`Discord Gateway worker stopped for ${intent}.`));
     entry.worker?.stop();
+    entry.supervisorLogger.info('[Discord Gateway] Worker stop requested', {
+      phase: 'workerStopRequested', connectionId: entry.snapshot.connectionId,
+      intent: entry.stopIntent, settleOutcome: 'stillPending', workerPresent: entry.worker !== null,
+      oldRequiresFullSharedMessageContent: entry.snapshot.requiresFullSharedMessageContent,
+      requiresFullSharedMessageContent: entry.replacementSnapshot?.requiresFullSharedMessageContent ?? null,
+    });
   };
 
   const stopAllWorkers = (intent: WorkerStopIntent): void => {
@@ -412,12 +341,11 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         ? result.transportFact
         : undefined;
     if (transportFact !== undefined) addFact(entry.snapshot, transportFact);
-    // Authority loss and generation retirement attribute the gap to the old
-    // authority. A material reconciliation replacement instead attributes its
-    // distinct provider-history gap to the successor below. Explicit stops
-    // report their own stopConfirmed custody and never create either gap.
+    // Generation retirement attributes the gap to the old authority.
+    // A material reconciliation replacement instead attributes its
+    // distinct provider-history gap to the successor below.
     if (
-      (entry.stopIntent === 'authorityUnavailable' || entry.stopIntent === 'generationRetired')
+      entry.stopIntent === 'generationRetired'
       && result.kind === 'stopped'
       && result.unprovenContinuity === true
     ) {
@@ -431,18 +359,12 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     ) {
       // The old Gateway cannot prove it resumed through the material
       // configuration change. Attribute the existing provider-history gap to
-      // the successor authority so core blocks that replacement until the
-      // fact has been projected; the retired snapshot is no longer current.
+      // the successor authority so core retains the notice before starting
+      // that replacement; the retired snapshot is no longer current.
       addFact(entry.replacementSnapshot, REPLACEMENT_CONTINUITY_GAP_FACT);
     }
     const providerReadinessFact = providerReadinessFactFromWorkerResult(result);
     if (providerReadinessFact !== undefined) addFact(entry.snapshot, providerReadinessFact);
-    if (entry.stopIntent === 'explicit') {
-      addFact({
-        ...entry.snapshot,
-        authorityEpoch: entry.explicitStopAuthorityEpoch ?? entry.snapshot.authorityEpoch,
-      }, { kind: 'stopConfirmed', reason: 'explicitStop' });
-    }
     // Queue truthful current attention before retaining the no-retry memo. The
     // next reconciliation publishes the fact through core's existing owner,
     // then the unchanged fingerprint remains terminal.
@@ -483,6 +405,10 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     ) return;
     const runtime = resolveRuntimeFacts(snapshot);
     let result: DiscordGatewayWorkerResult = { kind: 'stopped' };
+    context.services.logger.info('[Discord Gateway] Worker attempt', {
+      phase: 'workerAttempt', connectionId: snapshot.connectionId,
+      requiresFullSharedMessageContent: runtime.requiresFullSharedMessageContent,
+    });
     try {
       const configuration = readDiscordConnectionConfiguration(snapshot);
       if ('kind' in configuration) {
@@ -530,7 +456,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       const worker = workerFactory({
         connection: {
           connectionId: snapshot.connectionId,
-          authorityEpoch: snapshot.authorityEpoch,
+          get authorityEpoch() { return entry.snapshot.authorityEpoch; },
           applicationId: configuration.applicationId,
           botUserId: configuration.botUserId,
           token,
@@ -563,12 +489,13 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
           ) return;
           if (status === 'ready') {
             blockedUntilByFingerprint.delete(entry.fingerprint);
-            addFact(snapshot, { kind: 'providerReadiness', status: 'ready' });
+            addFact(entry.snapshot, { kind: 'providerReadiness', status: 'ready' });
           }
-          await projectDiscordAutomationSourceConnectionStatus(snapshot, status, context);
+          await projectDiscordAutomationSourceConnectionStatus(entry.snapshot, status, context);
         },
         signal: context.signal,
         identifyConcurrency,
+        logger: context.services.logger,
       });
       entry.worker = worker;
       result = await worker.result;
@@ -580,6 +507,15 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         };
       }
     } finally {
+      // The host retires the worker Action's logger when stop aborts it. The
+      // still-current supervisor owns the observation of that worker's result.
+      entry.supervisorLogger.info('[Discord Gateway] Worker settled', {
+        phase: 'workerSettled', connectionId: snapshot.connectionId, resultKind: result.kind,
+        settleOutcome: 'settled', intent: entry.stopIntent,
+        ...('reason' in result ? { reason: result.reason } : {}),
+        ...(result.kind === 'notReady' ? { reason: result.failure.reason } : {}),
+        ...(result.kind === 'blocked' ? { retryAtMs: result.retryAtMs } : {}),
+      });
       recordWorkerResult(entry, result);
       const sourceStatus = automationSourceStatusFromWorkerResult(result);
       if (
@@ -604,10 +540,14 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       worker: null,
       stopIntent: null,
       replacementSnapshot: null,
-      explicitStopAuthorityEpoch: null,
       completion: Promise.resolve(),
+      supervisorLogger: context.services.logger,
     };
     workers.set(snapshot.connectionId, entry);
+    context.services.logger.info('[Discord Gateway] Worker starting', {
+      phase: 'workerStart', connectionId: snapshot.connectionId,
+      requiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent,
+    });
     entry.completion = (async () => {
       try {
         await context.services.actions.execute(
@@ -620,12 +560,22 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         );
       } catch (error) {
         if (!isAbort(error, controller.signal) && workers.get(snapshot.connectionId) === entry) {
+          context.services.logger.info('[Discord Gateway] Worker admission failed', {
+            phase: 'workerAdmissionFailed', connectionId: snapshot.connectionId,
+            errorCode: isPluginError(error) ? error.code : 'unknown',
+          });
           recordWorkerResult(entry, {
             kind: 'notReady',
             failure: { kind: 'notReady', reason: 'network', diagnostic: 'Discord Gateway worker could not be initialized.' },
           });
         }
       } finally {
+        context.services.logger.info('[Discord Gateway] Worker attempt settled', {
+          phase: 'workerAttemptSettled', connectionId: snapshot.connectionId,
+          settleOutcome: 'settled', intent: entry.stopIntent,
+          oldRequiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent,
+          requiresFullSharedMessageContent: entry.replacementSnapshot?.requiresFullSharedMessageContent ?? null,
+        });
         if (workers.get(snapshot.connectionId) === entry) workers.delete(snapshot.connectionId);
         // A worker that stops unexpectedly is no longer healthy. Reuse the
         // existing recovery interval, without shortening an explicit provider
@@ -640,14 +590,26 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     })();
   };
 
+  const skipWorker = (
+    snapshot: ConversationProviderConnectionReconciliationSnapshotV1,
+    context: BackgroundServiceContext,
+    reason: string,
+    details: Readonly<Record<string, string | number | boolean | null>> = {},
+  ): false => {
+    context.services.logger.info('[Discord Gateway] Worker reconciliation decision', {
+      phase: 'workerDecision', connectionId: snapshot.connectionId, decision: 'skip', reason,
+      requiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent, ...details,
+    });
+    return false;
+  };
+
   const reportPendingFacts = async (snapshot: ConversationProviderConnectionReconciliationSnapshotV1, context: BackgroundServiceContext): Promise<boolean> => {
-    if (updateRequired || context.signal.aborted) return false;
+    if (updateRequired || context.signal.aborted) return skipWorker(snapshot, context, updateRequired ? 'collectionUpdateRequired' : 'invocationAborted');
     const key = connectionFactKey(snapshot);
     const facts = pendingFacts.get(key);
     if (!facts || facts.length === 0) return true;
-    let blocksAdmission = false;
     for (const fact of facts) {
-      if (updateRequired || context.signal.aborted) return false;
+      if (updateRequired || context.signal.aborted) return skipWorker(snapshot, context, updateRequired ? 'collectionUpdateRequired' : 'invocationAborted');
       let result: unknown;
       try {
         result = await context.services.actions.execute(
@@ -660,16 +622,18 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
         );
       } catch (error) {
         if (!stopOnCollectionUpdateRequired(error, context)) retryReconciliation();
-        return false;
+        return skipWorker(snapshot, context, 'transportFactReportFailed', {
+          factKind: fact.kind, errorCode: isPluginError(error) ? error.code : 'unknown',
+        });
       }
       const parsed = ConversationTransportFactReportResultV1Schema.safeParse(result);
       if (!parsed.success) {
         retryReconciliation();
-        return false;
+        return skipWorker(snapshot, context, 'transportFactReportInvalidResult', { factKind: fact.kind });
       }
       if (parsed.data.kind === 'staleAuthority') {
         pendingFacts.delete(key);
-        return false;
+        return skipWorker(snapshot, context, 'transportFactStaleAuthority', { factKind: fact.kind });
       }
       if (fact.kind === 'historyGap') {
         await projectDiscordAutomationSourceConnectionStatus(
@@ -677,15 +641,10 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
           'historyGap',
           context,
         );
-        // The report mutates Channels' canonical connection admission state.
-        // Do not let this stale pre-report snapshot start a successor worker.
-        // A later reconciliation can start normally only after Channels has
-        // explicitly cleared the gap and returns the connection again.
-        blocksAdmission = true;
       }
     }
     pendingFacts.delete(key);
-    return !blocksAdmission;
+    return true;
   };
 
   /**
@@ -693,8 +652,8 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
    * act on a connection, re-read that exact caller-filtered id from Channels'
    * Account authority. The empty or malformed result is intentionally treated
    * as no current connection, never as permission to use the list snapshot.
-   * A read failure is reported separately so the supervisor can treat the
-   * stop of a still-resumable worker as an authority loss, not as removal.
+   * A failed read cannot start a worker or prove an existing one was revoked.
+   * Core still revalidates authority for every observation and transport fact.
    */
   const readCurrentConnection = async (
     listed: ConversationProviderConnectionReconciliationSnapshotV1,
@@ -715,26 +674,25 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       );
     } catch (error) {
       stopOnCollectionUpdateRequired(error, context);
+      skipWorker(listed, context, 'authorityReadFailed', { errorCode: isPluginError(error) ? error.code : 'unknown' });
       return { kind: 'readFailed' };
     }
     const parsed = ConversationProviderConnectionReadResultV1Schema.safeParse(result);
-    if (!parsed.success) return { kind: 'readFailed' };
+    if (!parsed.success) {
+      skipWorker(listed, context, 'authorityReadInvalidResult');
+      return { kind: 'readFailed' };
+    }
     const entries = Object.entries(parsed.data);
-    if (entries.length !== 1) return { kind: 'readFailed' };
+    if (entries.length !== 1) {
+      skipWorker(listed, context, entries.length === 0 ? 'authorityReadNotCurrent' : 'authorityReadInvalidCardinality');
+      return { kind: 'readFailed' };
+    }
     const [connectionId, snapshot] = entries[0]!;
-    return connectionId === listed.connectionId && snapshot.connectionId === listed.connectionId
-      ? { kind: 'snapshot', snapshot }
-      : { kind: 'readFailed' };
-  };
-
-  /**
-   * Stops the exact workers whose reconciliation authority could not be
-   * established and waits for their outcomes, so their continuity facts are
-   * queued before the next reconciliation can publish or restart admission.
-   */
-  const stopWorkersForAuthorityLoss = async (entries: readonly WorkerEntry[]): Promise<void> => {
-    for (const entry of entries) stopWorker(entry, 'authorityUnavailable');
-    await Promise.allSettled(entries.map((entry) => entry.completion));
+    if (connectionId !== listed.connectionId || snapshot.connectionId !== listed.connectionId) {
+      skipWorker(listed, context, 'authorityReadIdentityMismatch');
+      return { kind: 'readFailed' };
+    }
+    return { kind: 'snapshot', snapshot };
   };
 
   const reconcile = async (context: BackgroundServiceContext): Promise<void> => {
@@ -752,34 +710,45 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       );
     } catch (error) {
       if (stopOnCollectionUpdateRequired(error, context)) return;
-      await stopWorkersForAuthorityLoss([...workers.values()]);
+      context.services.logger.info('[Discord Gateway] Connection discovery failed', {
+        phase: 'reconciliationFailed', errorCode: isPluginError(error) ? error.code : 'unknown',
+      });
       retryReconciliation();
       return;
     }
     const parsed = ConversationProviderConnectionsSnapshotV1Schema.safeParse(source);
     if (!parsed.success) {
-      await stopWorkersForAuthorityLoss([...workers.values()]);
       retryReconciliation();
       return;
     }
+    context.services.logger.info('[Discord Gateway] Connections reconciled', {
+      phase: 'reconciliation', connectionCount: Object.keys(parsed.data).length,
+    });
 
     const snapshots: ConversationProviderConnectionReconciliationSnapshotV1[] = [];
-    const authorityLossFactKeys = new Set<string>();
+    const currentIds = new Set<string>();
+    const unreadFactKeys = new Set<string>();
     for (const listed of Object.values(parsed.data)) {
       const read = await readCurrentConnection(listed, context);
       if (updateRequired || context.signal.aborted) return;
       if (read.kind === 'readFailed') {
         retryReconciliation();
-        // The list proves the connection exists; only its authoritative read
-        // failed. Stopping its worker is an authority loss, not a removal.
+        // Preserve the listed worker and any pending facts until a successful
+        // read establishes current authority or a later list proves removal.
+        currentIds.add(listed.connectionId);
+        unreadFactKeys.add(connectionFactKey(listed));
         const entry = workers.get(listed.connectionId);
         if (entry !== undefined) {
-          authorityLossFactKeys.add(connectionFactKey(entry.snapshot));
-          await stopWorkersForAuthorityLoss([entry]);
+          unreadFactKeys.add(connectionFactKey(entry.snapshot));
         }
         continue;
       }
       snapshots.push(read.snapshot);
+      context.services.logger.info('[Discord Gateway] Current connection', {
+        phase: 'connectionRead', connectionId: read.snapshot.connectionId,
+        enabled: read.snapshot.enabled, deletionState: read.snapshot.deletionState,
+        requiresFullSharedMessageContent: read.snapshot.requiresFullSharedMessageContent,
+      });
     }
     const retainedFingerprints = new Set(snapshots.map(connectionFingerprint));
     for (const entry of workers.values()) retainedFingerprints.add(entry.fingerprint);
@@ -791,10 +760,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     }
     const retainedFactKeys = new Set(snapshots.map(connectionFactKey));
     for (const entry of workers.values()) retainedFactKeys.add(connectionFactKey(entry.snapshot));
-    for (const factKey of authorityLossFactKeys) retainedFactKeys.add(factKey);
-    for (const factKey of reportedNotRunning) {
-      if (!retainedFactKeys.has(factKey)) reportedNotRunning.delete(factKey);
-    }
+    for (const factKey of unreadFactKeys) retainedFactKeys.add(factKey);
     // A queued fact is only ever published against a reconciled connection and
     // authority epoch. Once that pair leaves reconciliation nothing can select
     // it again, so retaining the payload for the rest of the daemon generation
@@ -803,44 +769,60 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       if (!retainedFactKeys.has(factKey)) pendingFacts.delete(factKey);
     }
 
-    const currentIds = new Set<string>();
     for (const snapshot of snapshots) {
       currentIds.add(snapshot.connectionId);
-      const factKey = connectionFactKey(snapshot);
       const fingerprint = connectionFingerprint(snapshot);
       const existing = workers.get(snapshot.connectionId);
+      const comparison = {
+        connectionId: snapshot.connectionId,
+        fingerprintMatches: existing === undefined ? null : existing.fingerprint === fingerprint,
+        oldRequiresFullSharedMessageContent: existing?.snapshot.requiresFullSharedMessageContent ?? null,
+        requiresFullSharedMessageContent: snapshot.requiresFullSharedMessageContent,
+      };
+      context.services.logger.info('[Discord Gateway] Worker fingerprint compared', {
+        phase: 'workerComparison', ...comparison,
+      });
       if (existing && existing.fingerprint !== fingerprint) {
         // Discord Resume cannot change Identify intents. Wait for the worker
         // owning the old strict demand to finish, then the next authoritative
         // reconciliation starts a fresh IDENTIFY under the new demand.
+        context.services.logger.info('[Discord Gateway] Worker reconciliation decision', {
+          phase: 'workerDecision', ...comparison, decision: 'stop-and-replace',
+        });
         existing.replacementSnapshot = snapshot;
         stopWorker(existing, 'reconcile');
         continue;
       }
+      if (existing) existing.snapshot = snapshot;
 
-      if (snapshot.deletionState === 'pendingStopReconciliation') {
-        const hasPendingStopConfirmation = (pendingFacts.get(factKey) ?? []).some(
-          (fact) => fact.kind === 'stopConfirmed',
-        );
-        if (!workers.has(snapshot.connectionId) && !reportedNotRunning.has(factKey) && !hasPendingStopConfirmation) {
-          addFact(snapshot, { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' });
-          reportedNotRunning.add(factKey);
-        }
-        await reportPendingFacts(snapshot, context);
+      if (!isEligibleSocketConnection(snapshot)) {
+        skipWorker(snapshot, context, 'connectionIneligible', { enabled: snapshot.enabled, deletionState: snapshot.deletionState });
         continue;
       }
-      if (!isEligibleSocketConnection(snapshot)) continue;
       if (!await reportPendingFacts(snapshot, context)) {
-        const active = workers.get(snapshot.connectionId);
-        if (active) stopWorker(active, 'reconcile');
         continue;
       }
-      if (workers.get(snapshot.connectionId)?.fingerprint === fingerprint) continue;
-      if (terminalReasonByFingerprint.has(fingerprint)) continue;
+      if (workers.get(snapshot.connectionId)?.fingerprint === fingerprint) {
+        context.services.logger.info('[Discord Gateway] Worker reconciliation decision', {
+          phase: 'workerDecision', ...comparison, decision: 'keep',
+        });
+        continue;
+      }
+      const terminalReason = terminalReasonByFingerprint.get(fingerprint);
+      if (terminalReason !== undefined) {
+        skipWorker(snapshot, context, 'terminalFailure', { terminalReason });
+        continue;
+      }
       const blockedUntil = blockedUntilByFingerprint.get(fingerprint);
-      if (blockedUntil !== undefined && clock.now() < blockedUntil) continue;
+      if (blockedUntil !== undefined && clock.now() < blockedUntil) {
+        skipWorker(snapshot, context, 'providerRetryDeadline', { retryAtMs: blockedUntil });
+        continue;
+      }
       blockedUntilByFingerprint.delete(fingerprint);
       const runtime = resolveRuntimeFacts(snapshot);
+      context.services.logger.info('[Discord Gateway] Worker reconciliation decision', {
+        phase: 'workerDecision', ...comparison, decision: 'start',
+      });
       startWorker(snapshot, runtime, context);
     }
 
@@ -926,26 +908,6 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     }
   };
 
-  const stop = async (input: unknown, context: PluginInvocationContext): Promise<ConversationProviderConnectionStopResultV1> => {
-    assertDiscordChannelsCoreCaller(context);
-    const request = ConversationProviderConnectionStopInputV1Schema.parse(input);
-    const entry = workers.get(request.connectionId);
-    if (!entry) {
-      return ConversationProviderConnectionStopResultV1Schema.parse({ kind: 'notRunning' });
-    }
-    if (!isExactFrozenOldWorker({ snapshot: entry.snapshot, request })) {
-      return ConversationProviderConnectionStopResultV1Schema.parse({
-        kind: 'notReady',
-        reason: 'invalidConfiguration',
-        diagnostic: 'Discord Gateway worker does not match the frozen old connection stop request.',
-      });
-    }
-    entry.explicitStopAuthorityEpoch = request.authorityEpoch;
-    stopWorker(entry, 'explicit');
-    const stopped = await waitForCompletion(entry.completion, context.signal, clock, stopWaitMs);
-    return ConversationProviderConnectionStopResultV1Schema.parse({ kind: stopped ? 'stopped' : 'pending' });
-  };
-
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
@@ -956,7 +918,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
   };
 
   return Object.freeze({
-    run, reconcile, runWorkerAttempt, stop, dispose,
+    run, reconcile, runWorkerAttempt, dispose,
     invalidateConnections() { invalidateSupervisor(); },
   });
 }

@@ -1,6 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agents/runtime';
+import { readCodexAuthTokensFromNativeHome } from '../../../cli/auth/environment.js';
 import { CODEX_SUPPORTED_RUNTIME_VERSION, CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY } from '../../../cli/supportedRuntime.js';
 import type { DisposableCodexAppServerClient } from '../client.js';
 import { codexProcessExitedSuccessfully } from '../connection.js';
@@ -15,8 +17,9 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
     configOverrides?: readonly string[];
     cwd?: string;
     allowedMcpServerKeys?: readonly string[];
+    nativeHome?: AgentSessionNativeHomeService;
     signal?: AbortSignal;
-}>): Promise<Pick<DisposableCodexAppServerClient['launchFeatures'], 'toolRestrictionSupportedModelIds'>> {
+}>): Promise<Pick<DisposableCodexAppServerClient['launchFeatures'], 'toolRestrictionSupportedModelIds' | 'toolRestrictionAccountId'>> {
     if (params.client.launchFeatures.nativeVersion !== CODEX_SUPPORTED_RUNTIME_VERSION) {
         throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime', message: CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY });
     }
@@ -35,9 +38,14 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
     ))) {
         throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime', message: 'Codex has enabled MCP servers outside the host-selected recipe.' });
     }
+    // The declared native home and launch environment select the same Account
+    // used by the native model probe; no default-user catalog can supply proof.
+    const auth = await readCodexAuthTokensFromNativeHome(params.nativeHome);
+    const fileAuth = config && typeof config === 'object'
+        && (config as { cli_auth_credentials_store?: unknown }).cli_auth_credentials_store === 'file';
     const result = await params.exec.run({
         executable: params.executable,
-        args: ['debug', 'models'],
+        args: ['debug', 'models', ...(params.configOverrides ?? []).flatMap(override => ['-c', override])],
         cwd: { root: 'workspace', relativePath: '' },
         env: params.env,
         timeoutMs: params.timeoutMs,
@@ -55,5 +63,7 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
             const entry = model as Readonly<{ slug?: unknown; tool_mode?: unknown }>;
             return typeof entry.slug === 'string' && entry.tool_mode === 'code_mode_only' ? [entry.slug] : [];
         }),
+        ...(fileAuth && auth.accountId && auth.accessToken && !params.env.CODEX_API_KEY?.trim() && !params.env.CODEX_ACCESS_TOKEN?.trim()
+            ? { toolRestrictionAccountId: auth.accountId } : {}),
     };
 }

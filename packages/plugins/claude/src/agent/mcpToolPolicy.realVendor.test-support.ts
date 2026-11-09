@@ -75,6 +75,7 @@ export async function createClaudeMcpRealVendorBoundary(input: Readonly<{
   const hooks = createSessionHooksService({ happyHomeDir: input.home, hasCapability: () => true,
     addDisposable(disposable) { disposables.add(disposable); } });
   const sessionHooks: AgentSessionHostServices['sessionHooks'] = {
+    observeSessionHook: request => hooks.observeSessionHook({ ...request, providerId: 'claude', sessionId: input.sessionId }),
     startServer: request => hooks.startServer({ ...request, providerId: 'claude', sessionId: input.sessionId,
       lifecycle: { kind: 'session', sessionId: input.sessionId } }),
     resolveForwarderAssets: () => hooks.resolveForwarderAssets(),

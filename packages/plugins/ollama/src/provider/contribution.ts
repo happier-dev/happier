@@ -54,11 +54,19 @@ export const OLLAMA_PROVIDER_CONTRIBUTION = {
     },
   ],
   catalog: {
-    source: 'probe',
+    source: 'static+probe',
     manualModelPolicy: 'allowed',
+    // Exact base checkpoint and byte-level BPE: Qwen/Qwen2.5-Coder-1.5B
+    // tokenizer.json; Ollama's base template uses the three FIM markers.
+    staticModels: [{ id: 'qwen2.5-coder:1.5b-base', name: 'Qwen2.5 Coder 1.5B Base', contextWindowTokens: 32768,
+      inlineCompletion: { operationId: 'native-fim', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 3 } },
+      { id: 'hf.co/sweepai/sweep-next-edit-1.5B:latest', name: 'Sweep Next Edit 1.5B', contextWindowTokens: 8192,
+        nextEdit: { operationId: 'next-edit', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 0 } }],
     sourceRegistryVersion: OLLAMA_CATALOG_SOURCE_REGISTRY_VERSION,
     probes: [{ endpointTemplateId: 'ollama-native', path: '/api/tags', parser: 'ollama-tags' }],
   },
+  inlineCompletion: [{ id: 'native-fim', mode: 'native-fim', endpointTemplateId: 'ollama-native', path: '/api/generate', wireFormat: 'ollama-generate' },
+    { id: 'next-edit', mode: 'next-edit-codec', codec: 'rewrite-window-v1', endpointTemplateId: 'ollama-native', path: '/api/generate', wireFormat: 'ollama-generate' }],
   managedRuntime: {
     kind: 'managed',
     endpointTemplateIds: [

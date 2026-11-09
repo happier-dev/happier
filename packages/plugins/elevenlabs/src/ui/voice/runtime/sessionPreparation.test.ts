@@ -5,6 +5,7 @@ import {
   ElevenLabsVoiceProviderSettingsSchema,
 } from '../../../protocol/voice/index.js';
 import { createElevenLabsSessionPreparationService } from './sessionPreparation.js';
+import { ELEVENLABS_AGENT_CLIENT_EVENTS } from '../operations.js';
 
 const mocks = {
   alert: vi.fn(),
@@ -68,6 +69,7 @@ function agentResponse(agentId = 'agent-1') {
     headers: { 'content-type': 'application/json' },
     body: new TextEncoder().encode(JSON.stringify({
       agent_id: agentId, tags: ['happier_voice_config_v1'],
+      conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
       platform_settings: {
         auth: { enable_auth: true },
         overrides: { conversation_config_override: {
@@ -118,6 +120,25 @@ describe('createElevenLabsSessionPreparationService', () => {
     }));
     await expect(createService().prepare({
       controlSessionId: 'needs-update', requestedTargetSessionId: null,
+      settings: {}, credentials: credentials(), hostedConversation: null,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
+    })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'realtime_agent_update_required' } });
+    expect(mocks.requestAccountOperation.mock.calls.map(([request]) => request.operationId)).toEqual(['agent']);
+  });
+
+  it('requires an Agent update when assistant transcript events are disabled despite current permissions', async () => {
+    const current = JSON.parse(new TextDecoder().decode(agentResponse().body));
+    mocks.requestAccountOperation.mockResolvedValueOnce({
+      ...agentResponse(),
+      body: new TextEncoder().encode(JSON.stringify({
+        ...current,
+        conversation_config: { conversation: {
+          client_events: ELEVENLABS_AGENT_CLIENT_EVENTS.filter(event => event !== 'agent_response'),
+        } },
+      })),
+    });
+    await expect(createService().prepare({
+      controlSessionId: 'transcript-disabled', requestedTargetSessionId: null,
       settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'realtime_agent_update_required' } });

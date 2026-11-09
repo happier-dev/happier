@@ -110,8 +110,9 @@ describe('createClaudeUnifiedTuiControlController — ultracode (session-only se
   const ULTRACODE_OK = ['Set effort level to ultracode', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 
   it('applies ultracode via /effort ultracode under the launchOption change key', async () => {
-    const port = createFakeControlPort({ captures: [IDLE, IDLE, ULTRACODE_OK] });
+    const port = createFakeControlPort({ captures: [IDLE, IDLE, ULTRACODE_OK, IDLE, IDLE, EFFORT_OK] });
     const controller = await controllerFor(port);
+    controller.reconcileFromStatusline({ model: 'claude-opus-4-8', reasoningEffort: 'high' });
 
     const outcome = await controller.applyDesiredRuntimeConfig({
       desired: { ultracode: true },
@@ -127,6 +128,8 @@ describe('createClaudeUnifiedTuiControlController — ultracode (session-only se
       status: 'applied',
       effective: 'ultracode',
     });
+    await controller.applyDesiredRuntimeConfig({ desired: { reasoningEffort: 'high' } });
+    expect(port.sentLiteral).toEqual(['/effort ultracode', '/effort high']);
   });
 
   it('orders ultracode after the effort control and skips the off-path when effort was just set', async () => {
@@ -540,6 +543,26 @@ describe('createClaudeUnifiedTuiControlController — applyPermissionModeInFligh
 });
 
 describe('createClaudeUnifiedTuiControlController — reconcileFromStatusline (lane Y effective-truth feed)', () => {
+  it.each(['statusline', 'prompt-submit', 'control'])('retires an old model effort witness after a model-only %s observation', async source => {
+    const port = createFakeControlPort({ captures: [
+      ...(source === 'control' ? [IDLE, IDLE, MODEL_OK] : []),
+      IDLE, IDLE, EFFORT_OK,
+    ] });
+    const controller = await controllerFor(port);
+    controller.reconcileFromStatusline({ model: 'claude-fable-5', reasoningEffort: 'high' });
+    if (source === 'control') {
+      await controller.applyDesiredRuntimeConfig({ desired: { model: 'sonnet' } });
+    } else if (source === 'statusline') {
+      controller.reconcileFromStatusline({ model: 'claude-sonnet-4-6' });
+    } else {
+      controller.reconcileAfterProviderPromptSubmit({ model: 'claude-sonnet-4-6' });
+    }
+    expect(controller.getLastVerifiedRuntimeConfig().reasoningEffort).toBeNull();
+    const outcome = await controller.applyDesiredRuntimeConfig({ desired: { reasoningEffort: 'high' } });
+    expect(outcome.changes.find(change => change.key === 'reasoningEffort')?.timing).not.toBe('skipped_already_effective');
+    expect(port.sentLiteral).toContain('/effort high');
+  });
+
   it('folds statusline model/effort into lastVerified without touching the mode marker', async () => {
     const port = createFakeControlPort({ captures: [IDLE] });
     const controller = await controllerFor(port);
@@ -581,7 +604,7 @@ describe('createClaudeUnifiedTuiControlController — reconcileFromStatusline (l
   it('ignores absent fields (haiku omits effort) and a fully-empty update is a no-op', async () => {
     const port = createFakeControlPort({ captures: [IDLE] });
     const controller = await controllerFor(port);
-    controller.reconcileAfterProviderPromptSubmit({ reasoningEffort: 'high', permissionMode: 'acceptEdits' });
+    controller.reconcileAfterProviderPromptSubmit({ model: 'claude-haiku-4-5', reasoningEffort: 'high', permissionMode: 'acceptEdits' });
 
     controller.reconcileFromStatusline({ model: 'claude-haiku-4-5' });
     expect(controller.getLastVerifiedRuntimeConfig()).toMatchObject({

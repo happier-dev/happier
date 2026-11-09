@@ -1,6 +1,7 @@
 {
-  "machineLima.presentation.kind": "VM",
-  "machineLima.presentation.description": "Eine leichte Linux-VM für Code, Skripte und Entwicklungsserver.",
+  "machineLima.presentation.customSize": "Eigene Größe",
+  "machineLima.presentation.kind": "Rechner",
+  "machineLima.presentation.description": "Ein schlanker Linux-Rechner für Code, Skripte und Entwicklungsserver.",
   "machineLima.presentation.ready": "Installiert",
   "machineLima.presentation.unavailable": "Nicht installiert",
   "machineLima.presentation.lima_2_required": "Lima 2 erforderlich",

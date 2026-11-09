@@ -25,14 +25,14 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             ...result, modelUsage: { 'claude-sonnet-4-6': { inputTokens: 100 } },
         } })).toBeNull();
     });
-    it('uses whole-call model usage rather than the latest main-loop turn for resumed multi-model results', () => {
+    it.each(['claude-sonnet-4-6', null])('preserves resumed multi-model accounting with main-model evidence %s', (mainModelId) => {
         const observation = buildClaudeSdkResultUsageObservation({
-            modelId: 'claude-sonnet-4-6',
+            modelId: mainModelId,
             result: {
                 type: 'result', subtype: 'success', uuid: 'summary-record', session_id: 'resumed-session',
-                usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.3,
+                usage: { input_tokens: 10, output_tokens: 2, iterations: [{ type: 'message', input_tokens: 10, output_tokens: 2 }] }, total_cost_usd: 0.3,
                 modelUsage: {
-                    'claude-sonnet-4-6': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 3, cacheCreationInputTokens: 4 },
+                    'claude-sonnet-4-6': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, contextWindow: 200_000 },
                     'claude-haiku-4-5': { inputTokens: 80, outputTokens: 5, cacheReadInputTokens: 2, cacheCreationInputTokens: 1 },
                 },
             },
@@ -41,6 +41,10 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             tokens: { input: 180, output: 25, cacheRead: 5, cacheWrite: 5, reasoning: 0, total: 215 },
             cost: { reportedUsd: 0.3, costSource: 'provider_reported_api_equivalent' } });
         expect(observation).not.toHaveProperty('inferenceId');
+        expect(observation).toMatchObject({
+            contextWindowTokens: mainModelId ? 200_000 : null,
+            contextSnapshot: { modelId: mainModelId, usedTokens: 12 },
+        });
     });
 
     it('rejects a summary missing whole-call counters instead of publishing a false zero or per-turn final total', () => {

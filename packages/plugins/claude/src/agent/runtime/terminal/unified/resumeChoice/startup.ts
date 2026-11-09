@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeepStrictEqual } from 'node:util';
 import { StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswersV1 } from '@happier-dev/plugin-sdk/sessions';
-import { isAskUserQuestionToolName, normalizeAskUserQuestionInputForPublication, buildNativeAskUserQuestionAnswersForClaude, normalizeNativeAskUserQuestionAnswers } from '../../../../permissions/askUserQuestion.js';
+import { isAskUserQuestionToolName, normalizeAskUserQuestionInputForPublication, buildAskUserQuestionAnswersForClaude, normalizeNativeAskUserQuestionAnswers } from '../../../../permissions/askUserQuestion.js';
 import { isSidechainSessionHook, isClaudeSidechainRuntimeEvidence } from '../../../../hooks/sidechain.js';
-import { answerClaudeNativeQuestion, matchesClaudeNativeQuestionScreen } from '../tuiControls/nativeQuestion.js';
+import { answerClaudeNativeQuestion, resolveClaudeNativeQuestionWithAnswerState, type ClaudeNativeQuestionAnswerState } from '../tuiControls/nativeQuestion.js';
 import { parseClaudeNativePermissionScreen } from '../tuiControls/nativePermissionScreen.js';
 import { DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS } from '../tuiControls/types.js';
 
@@ -71,6 +72,7 @@ type NativePrompt = {
   toolName: string;
   toolInput: unknown;
   responseLocation: 'app_and_terminal' | 'terminal_only';
+  questionAnswerState: ClaudeNativeQuestionAnswerState;
   observedAnswers?: unknown;
   observedApproved?: boolean;
 };
@@ -207,7 +209,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       : pendingNativePrompt?.toolUseId === toolUseId ? pendingNativePrompt : null
   );
   const questionsFor = (prompt: NativePrompt): readonly unknown[] => {
-    const publication = readObject(normalizeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput));
+    const publication = readObject(normalizeAskUserQuestionInputForPublication(prompt.toolName, prompt.toolInput, { native: true }));
     return Array.isArray(publication?.questions) ? publication.questions : [];
   };
   const isCurrent = (dialog: ClaudeUnifiedVisibleNativeToolDialog): boolean => (
@@ -218,7 +220,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
     if (prompt) {
       const questions = questionsFor(prompt);
       if (isAskUserQuestionToolName(prompt.toolName) && screen.nativeQuestionPresentation) {
-        if (prompt.toolUseId && matchesClaudeNativeQuestionScreen(screen.nativeQuestionPresentation, questions)) {
+        if (prompt.toolUseId && resolveClaudeNativeQuestionWithAnswerState(screen.nativeQuestionPresentation, questions, prompt.questionAnswerState)) {
           return { ...prompt, kind: 'native', dialogId: 'ask_user_question', owner: null,
             questions, questionId: 'claudeNativeQuestion', requestReason: 'claude_native_question',
             header: 'Claude question', question: '', options: [] };
@@ -227,9 +229,13 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       }
       const permission = !isAskUserQuestionToolName(prompt.toolName) ? parseClaudeNativePermissionScreen(screen.text) : null;
       if (permission && prompt.toolUseId && (!permission.amended || permission.kind === 'plan')) {
+        const nativeCommand = prompt.toolName === 'Bash' ? readObject(prompt.toolInput)?.command : undefined;
+        const command = typeof nativeCommand === 'string' && nativeCommand.trim() ? nativeCommand.trim() : null;
         return { ...prompt, kind: 'native', dialogId: 'tool_permission', owner: null,
           questions: [], questionId: 'claudeNativePermission', requestReason: 'claude_native_permission',
-          header: prompt.toolName, question: permission.context, permissionPresentation: permission,
+          header: prompt.toolName,
+          question: command ? command + '\n\n' + (permission.explanation ?? permission.context) : permission.context,
+          permissionPresentation: permission,
           options: permission.options.map((option, index) => ({ choice: `option_${index + 1}`,
             label: option.label, description: '', answer: { kind: 'selection', targetLabel: option.label } })) };
       }
@@ -242,7 +248,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
   const observedStructuredAnswers = (prompt: NativePrompt): StructuredQuestionAnswersV1 | undefined => {
     const actual = readObject(prompt.observedAnswers);
     if (!actual) return undefined;
-    if (pendingAppAnswers && nativeAnswersMatch(actual, buildNativeAskUserQuestionAnswersForClaude(questionsFor(prompt), pendingAppAnswers))) {
+    if (pendingAppAnswers && nativeAnswersMatch(actual, buildAskUserQuestionAnswersForClaude(questionsFor(prompt), pendingAppAnswers, 'native'))) {
       return pendingAppAnswers;
     }
     return normalizeNativeAskUserQuestionAnswers(questionsFor(prompt), actual) ?? undefined;
@@ -324,6 +330,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
         return;
       }
       nativePrompt = { occurrenceId: toolUseId ?? randomUUID(), toolUseId, sessionId, toolName, toolInput,
+        questionAnswerState: { drafts: new Map(), questionIndex: -1 },
         responseLocation: data.happierResponseLocation === 'terminal_only' ? 'terminal_only' : 'app_and_terminal' };
       if (previous && previous.occurrenceId !== nativePrompt.occurrenceId && !applyingDecision) await cancelPending();
     } else if ((event === 'PostToolUse' || event === 'PostToolUseFailure') && id) {
@@ -459,11 +466,16 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
           if (!parsed.success) return false;
           pendingAppAnswers = parsed.data;
           const applied = await answerClaudeNativeQuestion({ port: params.port, questions: dialog.questions,
-            answers: parsed.data, isCurrent: () => isCurrent(dialog), wait: params.wait, settleMs: params.settleMs,
+            answers: parsed.data, state: prompt?.questionAnswerState, isCurrent: () => isCurrent(dialog), wait: params.wait, settleMs: params.settleMs,
+            onFailure: (failure) => params.ctx.logger.warn('[ClaudeUnifiedTerminal] Native question answer failed', failure),
             verifyPollIntervalMs: params.verifyPollIntervalMs, verifyPollTimeoutMs: params.verifyPollTimeoutMs,
             verifyApplied: () => prompt?.observedAnswers === undefined ? 'pending'
-              : nativeAnswersMatch(prompt.observedAnswers, buildNativeAskUserQuestionAnswersForClaude(dialog.questions, parsed.data)) ? 'matched' : 'mismatched',
+              : nativeAnswersMatch(prompt.observedAnswers, buildAskUserQuestionAnswersForClaude(dialog.questions, parsed.data, 'native')) ? 'matched' : 'mismatched',
           });
+          if (applied.status === 'submitted' || applied.status === 'failed' && applied.reason === 'native_question_already_submitted') {
+            params.ctx.logger.warn('[ClaudeUnifiedTerminal] Native question submission confirmation pending');
+            throw new PluginError({ code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED', retryable: true });
+          }
           return applied.status === 'answered';
         }
         const value = result.answers?.[dialog.questionId]?.[0];
@@ -658,6 +670,10 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       }
 
       const owner = dialog.owner;
+      if (owner?.kind === 'prompt_injection') {
+        if (!await cancelPending()) return 'waiting_for_user';
+        return 'unhandled';
+      }
       if (owner?.kind === 'slash_controls') {
         if (params.isRuntimeControlInFlight?.() === true) return 'unhandled';
         if (isStartupActive() && params.runtimeConfig) {
@@ -670,7 +686,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
         return publish(dialog);
       }
       if (dialog.dialogId === 'trust_folder') return handleTrustFolderDialog(dialog, screen);
-      // null owner (usage_limit, safeguard_pause): always publish for a user decision.
+      // Unowned dialogs (such as safeguard_pause) require a user decision.
       return publish(dialog);
   };
   return Object.freeze({

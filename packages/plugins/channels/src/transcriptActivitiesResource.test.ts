@@ -1,4 +1,6 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
+import { MemoryCollection as MemoryAccountCollection } from './testkit/memoryCollection.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,66 +19,6 @@ import {
 import { TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME } from './transcriptActivitiesResource.js';
 import { resourceText } from './testkit/resourceContract.js';
 
-import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
-class MemoryAccountCollection {
-  readonly rows = new Map<string, Readonly<{
-    rowId: string;
-    revision: number;
-    value: Record<string, unknown>;
-  }>>();
-
-  async get(rowId: string) {
-    return this.rows.get(rowId) ?? null;
-  }
-
-  async put(value: Record<string, unknown>, input: Readonly<{
-    expectedRevision: number | 'absent';
-  }>) {
-    const rowId = value.id;
-    if (typeof rowId !== 'string') throw new Error('row id is required');
-    const current = this.rows.get(rowId);
-    if ((input.expectedRevision === 'absent' && current !== undefined)
-      || (typeof input.expectedRevision === 'number'
-        && (current === undefined || current.revision !== input.expectedRevision))) {
-      throw new Error('conflict');
-    }
-    const row = { rowId, revision: (current?.revision ?? 0) + 1, value };
-    this.rows.set(rowId, row);
-    return row;
-  }
-
-  async query(request: Readonly<{
-    index?: string;
-    prefix?: readonly string[];
-    cursor?: string;
-    limit?: number;
-  }>) {
-    assertChannelsTestCollectionQueryLimit(request.limit);
-    const matching = [...this.rows.values()]
-      .filter((row) => {
-        if (request.index === 'by-kind') {
-          return row.value['record-kind'] === request.prefix?.[0];
-        }
-        if (request.index === 'by-owner-attention') {
-          return row.value['connection-id'] === request.prefix?.[0]
-            && row.value['binding-id'] === request.prefix?.[1];
-        }
-        return true;
-      })
-      .sort((left, right) => left.rowId.localeCompare(right.rowId));
-    const start = request.cursor === undefined
-      ? 0
-      : matching.findIndex((row) => row.rowId === request.cursor) + 1;
-    const limit = request.limit ?? matching.length;
-    const rows = matching.slice(Math.max(0, start), Math.max(0, start) + limit);
-    const next = matching[Math.max(0, start) + limit];
-    return {
-      rows,
-      ...(next === undefined ? {} : { nextCursor: rows.at(-1)?.rowId }),
-      changeCursor: 1,
-    };
-  }
-}
 
 function sessionBindingRecord(bindingId: string, sessionId: string): Record<string, unknown> {
   return {
@@ -85,6 +27,7 @@ function sessionBindingRecord(bindingId: string, sessionId: string): Record<stri
     v: 1,
     'connection-id': 'connection-1',
     'binding-id': bindingId,
+    'session-id': sessionId,
     'created-at': 1,
     'updated-at': 1,
     payload: {
@@ -125,7 +68,7 @@ function bindingDeliveryObligation(bindingId: string, controlId: string): Conver
     endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
     content: { text: `Private delivery body for ${controlId}.` },
     deliveryKey: `delivery:${controlId}`,
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -142,20 +85,18 @@ function accountStorageFor(
 }
 
 function createWatchableCollection() {
-  let listener: (() => void) | undefined;
-  const dispose = vi.fn(() => { listener = undefined; });
-  return {
-    watch: vi.fn((_request: unknown, next: () => void) => {
-      listener = next;
-      return { dispose };
+  const collection = new MemoryAccountCollection();
+  const originalWatch = collection.watch.bind(collection);
+  const dispose = vi.fn();
+  return Object.assign(collection, {
+    watch: vi.fn((...args: Parameters<MemoryAccountCollection['watch']>) => {
+      const observation = originalWatch(...args);
+      return { dispose: () => { dispose(); observation.dispose(); } };
     }),
-    emit() {
-      listener?.();
-    },
+    emit: () => collection.resetObservation(),
     dispose,
-  };
+  });
 }
-
 describe('Channels transcript Activities Resource', () => {
   it('projects only the host Session binding\'s retained custody through the declared generic Resource', async () => {
     const state = new MemoryAccountCollection();
@@ -220,11 +161,11 @@ describe('Channels transcript Activities Resource', () => {
       throw new Error('Expected canonical custody state updates.');
     }
 
-    const serialized = await TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.read({
+    const serialized = await TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
 
     expect(JSON.parse(resourceText(serialized))).toEqual({
       version: 1,
@@ -244,40 +185,40 @@ describe('Channels transcript Activities Resource', () => {
     expect(serialized).not.toContain('session-b');
   });
 
-  it('requires a host-stamped Session context and invalidates only through existing Collections', () => {
+  it('requires a host-stamped Session context and invalidates only through existing Collections', async () => {
     const state = createWatchableCollection();
     const deliveries = createWatchableCollection();
     const accountStorage = accountStorageFor(state, deliveries);
     const invalidate = vi.fn();
 
-    expect(() => TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.observe(invalidate, {
+    expect(() => TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.observe(invalidate, createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'global' },
       accountStorage,
-    })).toThrow(expect.objectContaining({
+    }))).toThrow(expect.objectContaining({
       code: 'channels_transcript_activities_resource_session_context_required',
     }));
 
-    const observation = TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.observe(invalidate, {
+    const observation = await TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME.observe(invalidate, createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage,
-    });
+    }));
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(state.watch).toHaveBeenCalledWith({
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
+      index: 'by-session-kind-binding-update-v1',
+      prefix: ['session-a', CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
     }, expect.any(Function));
-    expect(deliveries.watch).toHaveBeenCalledWith({ kind: 'collection' }, expect.any(Function));
+    expect(deliveries.watch).not.toHaveBeenCalled();
 
-    observation.dispose();
+    await observation.dispose();
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(state.dispose).toHaveBeenCalledOnce();
-    expect(deliveries.dispose).toHaveBeenCalledOnce();
+    expect(deliveries.dispose).not.toHaveBeenCalled();
   });
 });

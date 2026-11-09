@@ -1,9 +1,16 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { prepareGeminiNativeMcpShaping } from './shaping.js';
+import { readGeminiNativePathEnvironment, resolveGeminiNativePolicyPaths } from '../utils/configPaths.js';
+
+// Observe the real filesystem boundary without replacing native policy parsing.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 const cleanups: Array<() => void | Promise<void>> = [];
 
@@ -18,6 +25,177 @@ afterEach(async () => {
 });
 
 describe('prepareGeminiNativeMcpShaping', () => {
+  it('inherits only native path selectors and honors explicit launch values and unsets on every platform', () => {
+    const inherited = { GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/native/policy.json',
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: '/native/defaults.json', UNRELATED_SECRET: 'must-not-forward' };
+    expect(readGeminiNativePathEnvironment({}, [], inherited)).toEqual({
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/native/policy.json', GEMINI_CLI_SYSTEM_DEFAULTS_PATH: '/native/defaults.json',
+    });
+    const selected = readGeminiNativePathEnvironment({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/session/policy.json' },
+      ['GEMINI_CLI_SYSTEM_DEFAULTS_PATH'], inherited);
+    expect(selected).toEqual({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/session/policy.json' });
+    expect(resolveGeminiNativePolicyPaths(selected, 'linux').systemDefaultsPath).toBe('/session/system-defaults.json');
+    expect(resolveGeminiNativePolicyPaths({}, 'win32')).toEqual({
+      systemSettingsPath: 'C:\\ProgramData\\gemini-cli\\settings.json',
+      systemDefaultsPath: 'C:\\ProgramData\\gemini-cli\\system-defaults.json',
+    });
+    expect(resolveGeminiNativePolicyPaths({}, 'darwin').systemSettingsPath)
+      .toBe('/Library/Application Support/GeminiCli/settings.json');
+    expect(resolveGeminiNativePolicyPaths({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: '/native/policy.json ',
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: '/native/defaults.json ' }, 'linux')).toEqual({
+      systemSettingsPath: '/native/policy.json ', systemDefaultsPath: '/native/defaults.json ',
+    });
+    for (const selector of ['\\policy.json', '/policy.json', 'C:policy.json']) {
+      expect(() => resolveGeminiNativePolicyPaths({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: selector }, 'win32'))
+        .toThrow(expect.objectContaining({ code: 'gemini_provider_auth_policy_unavailable' }));
+    }
+    expect(() => resolveGeminiNativePolicyPaths({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: ' ' }, 'linux'))
+      .toThrow(expect.objectContaining({ code: 'gemini_provider_auth_policy_unavailable' }));
+  });
+
+  it('reads Windows native path selectors with the child environment key identity', () => {
+    expect(readGeminiNativePathEnvironment({ gemini_cli_system_settings_path: 'C:\\managed\\settings.json' }, [],
+      { GEMINI_CLI_SYSTEM_SETTINGS_PATH: 'C:\\inherited\\settings.json' }, 'win32'))
+      .toEqual({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: 'C:\\managed\\settings.json' });
+    expect(readGeminiNativePathEnvironment({}, ['gemini_cli_system_settings_path'],
+      { GEMINI_CLI_SYSTEM_SETTINGS_PATH: 'C:\\inherited\\settings.json' }, 'win32')).toEqual({});
+  });
+  it.each(['oauth-personal', 'vertex-ai'])('pins bound API auth in the copied user settings while preserving policy (%s)', async selectedType => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    mkdirSync(join(sourceHome, '.gemini'));
+    const settings = { theme: 'dark', tools: { sandbox: true }, security: {
+      folderTrust: { enabled: true }, auth: { selectedType, enforcedType: 'gemini-api-key' },
+    } };
+    const sourcePath = join(sourceHome, '.gemini', 'settings.json');
+    writeFileSync(sourcePath, JSON.stringify(settings));
+    const prepared = await prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(sourceHome, 'system.json'),
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    cleanups.push(prepared.cleanup);
+    expect(JSON.parse(readFileSync(join(prepared.env.HOME, '.gemini', 'settings.json'), 'utf8'))).toEqual({
+      ...settings, security: { ...settings.security, auth: { ...settings.security.auth, selectedType: 'gemini-api-key' } },
+    });
+    expect(JSON.parse(readFileSync(sourcePath, 'utf8'))).toEqual(settings);
+    expect(prepared.env).not.toHaveProperty('GEMINI_CLI_SYSTEM_SETTINGS_PATH');
+  });
+
+  it('refuses conflicting native System authentication before creating a replacement policy', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const systemPath = join(sourceHome, 'system.json');
+    const policy = { security: { auth: { selectedType: 'oauth-personal' } }, tools: { sandbox: true } };
+    writeFileSync(systemPath, JSON.stringify(policy));
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_auth_policy_conflict', retryable: false });
+    expect(JSON.parse(readFileSync(systemPath, 'utf8'))).toEqual(policy);
+  });
+
+  it('checks the native verbatim System selector rather than a trimmed neighboring file', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const systemPath = join(sourceHome, 'system.json ');
+    writeFileSync(systemPath.trim(), '{}');
+    writeFileSync(systemPath, JSON.stringify({ security: { auth: { selectedType: 'vertex-ai' } } }));
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_auth_policy_conflict', retryable: false });
+  });
+
+  it('does not replace an existing native System policy for a bound no-tools launch', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const systemPath = join(sourceHome, 'system.json');
+    const policy = { security: { auth: { enforcedType: 'gemini-api-key' } }, tools: { sandbox: true } };
+    writeFileSync(systemPath, JSON.stringify(policy));
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, { allowedTools: [], unlistedTools: 'deny' }, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_native_policy_unsupported', retryable: false });
+    expect(JSON.parse(readFileSync(systemPath, 'utf8'))).toEqual(policy);
+  });
+
+  it('keeps native defaults reachable when bound no-tools restrictions need their own System file', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const defaultsPath = join(sourceHome, 'defaults.json');
+    const systemPath = join(sourceHome, 'system.json');
+    const policy = { tools: { sandbox: true }, security: { auth: { enforcedType: 'gemini-api-key' } } };
+    writeFileSync(defaultsPath, JSON.stringify(policy));
+    writeFileSync(systemPath, '{}');
+    const reads = vi.mocked(readFileSync);
+    reads.mockClear();
+    const prepared = await prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: defaultsPath,
+    }, { allowedTools: [], unlistedTools: 'deny' }, undefined, { type: 'gemini-api-key', cwd: workspace });
+    cleanups.push(prepared.cleanup);
+    expect(reads.mock.calls.filter(([path]) => path === systemPath)).toHaveLength(1);
+    expect(reads.mock.calls.filter(([path]) => path === defaultsPath)).toHaveLength(1);
+    expect(prepared.env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH).toBe(defaultsPath);
+    expect(JSON.parse(readFileSync(defaultsPath, 'utf8'))).toEqual(policy);
+  });
+
+  it('refuses a potentially active conflicting workspace auth choice without copying its policy', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    mkdirSync(join(workspace, '.gemini'));
+    writeFileSync(join(workspace, '.gemini', 'settings.json'), JSON.stringify({
+      security: { auth: { selectedType: 'vertex-ai' } },
+    }));
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(sourceHome, 'system.json'),
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_auth_policy_conflict', retryable: false });
+  });
+
+  it('refuses malformed native policy instead of treating it as absent', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const systemPath = join(sourceHome, 'system.json');
+    writeFileSync(systemPath, '[]');
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_auth_policy_unavailable', retryable: false });
+  });
+
+  it('refuses relative native policy selectors rather than inspecting a different working directory', async () => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: 'relative-policy.json', GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_auth_policy_unavailable', retryable: false });
+  });
+
+  it.each([
+    { experimental: { dynamicModelConfiguration: true } },
+    { modelConfigs: { customOverrides: [{ match: {}, modelConfig: { model: 'native-other-model' } }] } },
+  ])('refuses native model-routing configuration without modifying it (%j)', async settings => {
+    const sourceHome = createSourceHome();
+    const workspace = createSourceHome();
+    mkdirSync(join(sourceHome, '.gemini'));
+    const settingsPath = join(sourceHome, '.gemini', 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify(settings));
+    const pending = prepareGeminiNativeMcpShaping({ HOME: sourceHome,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(sourceHome, 'system.json'), GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(sourceHome, 'defaults.json'),
+    }, undefined, undefined, { type: 'gemini-api-key', cwd: workspace });
+    void pending.then(prepared => cleanups.push(prepared.cleanup), () => undefined);
+    await expect(pending).rejects.toMatchObject({ code: 'gemini_provider_model_policy_unsupported', retryable: false });
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual(settings);
+  });
+
   it('delivers a linked session skill and unions native disables only in the copied settings', async () => {
     const sourceHome = createSourceHome();
     const deliveryRoot = createSourceHome();

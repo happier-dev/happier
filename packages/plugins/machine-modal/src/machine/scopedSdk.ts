@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { createModalProvisionerRoles } from './roles.js';
 import { MODAL_ACCOUNT_PURPOSE, MODAL_ENV_KEYS } from './connectedAccount.js';
 
@@ -49,7 +51,9 @@ export async function invokeScopedModalRole(role: ModalRole, input: unknown, con
         else {
           const code = typeof result === 'object' && result !== null && 'code' in result && typeof result.code === 'string'
             && /^(?:modal_[a-z_]+|invalid_request)$/.test(result.code) ? result.code : 'modal_native_unavailable';
-          reject(Object.assign(new Error('Modal native operation unavailable'), { code }));
+          const nativeCause = MachineProvisionerNativeCauseV1Schema.safeParse(
+            typeof result === 'object' && result !== null && 'nativeCause' in result ? result.nativeCause : undefined);
+          reject(new PluginError({ code, ...(nativeCause.success ? { details: { nativeCause: nativeCause.data } } : {}) }));
         }
       });
       worker.once('error', () => { cleanup(); reject(Object.assign(new Error('Modal SDK worker unavailable'), { code: 'modal_sdk_unavailable' })); });

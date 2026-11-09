@@ -12,7 +12,7 @@ import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { QuotaFetchError, parseProviderResetAt } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
-import { mapCodexRateLimitSnapshotToUsageMeters } from './rateLimitSnapshot.js';
+import { mapCodexRateLimitSnapshotToUsageMeters, readCodexRateLimitSnapshotPlanLabel } from './rateLimitSnapshot.js';
 import {
   OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDIT_CONSUME_URL,
   OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL,
@@ -353,7 +353,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
           })
         : undefined;
 
-      const planLabel = normalizeNonEmptyString(data.plan_type);
+      const planLabel = readCodexRateLimitSnapshotPlanLabel(data);
       return buildCodexProviderHttpQuotaSnapshot({
         record,
         now,

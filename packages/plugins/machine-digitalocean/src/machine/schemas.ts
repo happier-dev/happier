@@ -11,7 +11,9 @@ export const dropletLaunchSchema = defineProtocolObject({
   publicNetworking: defineProtocolObject({ ipv6: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
 }, closed);
 export const dropletResourceSchema = defineProtocolObject({ dropletId: portableId, ownedVolumeIds: defineProtocolArray(portableText) }, closed);
-export const dropletNativeOperationSchema = defineProtocolObject({ recoveryTag: portableText }, closed);
+export const dropletNativeOperationSchema = defineProtocolUnion([
+  defineProtocolObject({ recoveryTag: portableText }, closed), dropletResourceSchema,
+]);
 // The host derives tolerant stored projections from these declared schemas.
 // Leaf role inputs arrive through strict action admission, never stored parsing.
 export const bootstrapSshPublicKeySchema = z.string().check(z.regex(/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)) [A-Za-z0-9+/=]+(?: [^\r\n]*)?$/));

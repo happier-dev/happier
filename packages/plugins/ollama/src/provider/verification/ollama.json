@@ -1,16 +1,24 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.ollama/ollama",
-  "reviewedAt": "2026-07-31",
+  "reviewedAt": "2026-10-28",
   "sources": [
     { "id": "openai-compat", "kind": "official-doc", "url": "https://docs.ollama.com/api/openai-compatibility", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
     { "id": "tags", "kind": "official-doc", "url": "https://docs.ollama.com/api/tags", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
     { "id": "cli", "kind": "official-doc", "url": "https://docs.ollama.com/cli", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
-    { "id": "faq", "kind": "official-doc", "url": "https://docs.ollama.com/faq", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" }
+    { "id": "faq", "kind": "official-doc", "url": "https://docs.ollama.com/faq", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "generate", "kind": "official-doc", "url": "https://docs.ollama.com/api/generate", "accessedAt": "2026-10-23", "revision": "current-2026-10-23" },
+    { "id": "qwen-coder-base", "kind": "official-doc", "url": "https://ollama.com/library/qwen2.5-coder:1.5b-base", "accessedAt": "2026-10-23", "revision": "02e0f2817a89" },
+    { "id": "qwen-coder-config", "kind": "official-doc", "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B/blob/main/config.json", "accessedAt": "2026-10-23", "revision": "df3ce67" },
+    { "id": "qwen-coder-tokenizer", "kind": "official-doc", "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B/blob/main/tokenizer.json", "accessedAt": "2026-10-23", "revision": "current-2026-10-23" },
+    { "id": "next-edit-card", "kind": "official-doc", "url": "https://huggingface.co/sweepai/sweep-next-edit-1.5B/blob/409016591c6c1a94f545f22328a85a3516118f34/README.md", "accessedAt": "2026-10-25", "revision": "409016591c6c1a94f545f22328a85a3516118f34" },
+    { "id": "next-edit-format", "kind": "official-doc", "url": "https://huggingface.co/sweepai/sweep-next-edit-1.5B/blob/409016591c6c1a94f545f22328a85a3516118f34/run_model.py", "accessedAt": "2026-10-25", "revision": "409016591c6c1a94f545f22328a85a3516118f34" }
   ],
   "facts": [
     { "path": "catalog.probes.ollama-native.ollama-tags", "sourceIds": ["tags"], "status": "verified" },
     { "path": "catalog.source", "sourceIds": ["tags", "cli"], "status": "verified" },
+    { "path": "catalog.staticModels.qwen2.5-coder:1.5b-base", "sourceIds": ["qwen-coder-base", "qwen-coder-config", "qwen-coder-tokenizer", "generate"], "status": "verified" },
+    { "path": "catalog.staticModels.hf.co/sweepai/sweep-next-edit-1.5B:latest", "sourceIds": ["next-edit-card", "next-edit-format", "qwen-coder-tokenizer", "generate"], "status": "verified" },
     { "path": "discovery.availabilityProbe", "sourceIds": ["tags"], "status": "verified" },
     { "path": "discovery.catalogFallback", "sourceIds": ["cli"], "status": "verified" },
     { "path": "discovery.installedCheck", "sourceIds": ["cli"], "status": "verified" },
@@ -38,6 +46,8 @@
     { "path": "managedRuntime.endpointTemplateIds.ollama-openai-chat", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "managedRuntime.endpointTemplateIds.ollama-openai-responses", "sourceIds": ["openai-compat"], "status": "verified" },
     { "path": "managedRuntime.kind", "sourceIds": ["cli"], "status": "verified" },
-    { "path": "websiteUrl", "sourceIds": ["faq"], "status": "verified" }
+    { "path": "websiteUrl", "sourceIds": ["faq"], "status": "verified" },
+    { "path": "inlineCompletion.native-fim", "sourceIds": ["generate"], "status": "verified" },
+    { "path": "inlineCompletion.next-edit", "sourceIds": ["generate", "next-edit-card", "next-edit-format"], "status": "verified" }
   ]
 }

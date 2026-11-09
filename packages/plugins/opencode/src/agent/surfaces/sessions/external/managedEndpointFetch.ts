@@ -1,10 +1,9 @@
-import { toNativeResponse } from '../../../runtime/server/transport.js';
 import type {
   AgentExternalSessionsManagedEndpointRead,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { normalizeString } from '../../../runtime/server/openCodeParsing.js';
-import type { OpenCodeNativeFetch } from '../../../runtime/server/transport.js';
+import { toNativeResponse, type OpenCodeNativeFetch } from '../../../runtime/server/transport.js';
 
 /**
  * The synthetic origin a managed-endpoint request is expressed against. The

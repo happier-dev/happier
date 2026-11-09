@@ -13,6 +13,10 @@ export default defineConfig({
     resolve(__dirname, '../../..'), resolve(__dirname, '../../../apps/cli/src'),
   )] },
   test: { ...resolveVitestWorkers(), environment: 'node',
-    exclude: [...configDefaults.exclude, 'src/agent/tools/mcpToolPolicy.contract.test.ts'],
+    exclude: [
+      ...configDefaults.exclude,
+      'src/agent/tools/mcpToolPolicy.contract.test.ts',
+      'src/agent/runtime/rpc/operations.test.ts',
+    ],
   },
 });

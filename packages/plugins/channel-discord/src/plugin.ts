@@ -45,7 +45,7 @@ import {
   setupDiscordAutomationMessageSource,
 } from './discordAutomationEvent.js';
 import { admitDiscordAutomationEvent } from './discordAutomationEventAdmission.js';
-import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 
 const discordProviderProtocol = ConversationProvidersContributionProtocolV1;
 const discordProviderOperations = discordProviderProtocol.operations;
@@ -54,7 +54,6 @@ const connectionTestOperation = discordProviderOperations.connectionTest;
 const endpointResolveOperation = discordProviderOperations.endpointResolve;
 const messageDeliverOperation = discordProviderOperations.messageDeliver;
 const attachmentFetchOperation = discordProviderOperations.attachmentFetch;
-const connectionStopOperation = discordProviderOperations.connectionStop;
 const automationEventAdmitOperation = discordProviderOperations.automationEventAdmit;
 
 /**
@@ -86,7 +85,6 @@ type DiscordGatewayActivationBindings = Readonly<{
     input: unknown,
     context: Parameters<DiscordGatewaySupervisor['runWorkerAttempt']>[1],
   ) => Promise<void>;
-  stop: DiscordGatewaySupervisor['stop'];
   setup(): () => Promise<void>;
 }>;
 
@@ -118,9 +116,6 @@ function createDiscordGatewayActivationBindings(): DiscordGatewayActivationBindi
         context,
       );
     },
-    async stop(input, context) {
-      return await requireCurrentSupervisor().stop(input, context);
-    },
     setup() {
       if (currentSupervisor !== null) {
         throw new Error('Discord Gateway supervisor is already active.');
@@ -146,8 +141,7 @@ function createDiscordPlugin() {
   version: '0.0.0',
   displayName: 'Discord Channels',
   description: 'Connects Discord conversations to Happier Channels.',
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
+  activation: { events: [], configuration: { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'channel-state' }] } },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   brand: { iconResourceId: DISCORD_BRAND_RESOURCE_ID },
   hostAccess: {
@@ -200,9 +194,34 @@ function createDiscordPlugin() {
       path: 'assets/brand.png',
       contentType: 'image/png',
     },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   ui: {
-    translations: DISCORD_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   connectedAccountDescriptors: {
     [DISCORD_BOT_CONNECTED_ACCOUNT_ID]: {
@@ -215,6 +234,12 @@ function createDiscordPlugin() {
             {
               id: 'bot-token',
               kind: 'manual',
+              setup: {
+                url: 'https://discord.com/developers/applications',
+                checklist: ['Create or select an application in the Discord Developer Portal and open its Bot settings.', 'Copy its bot token; if it is no longer visible, Reset Token creates a replacement and invalidates the old token.', 'Paste the bot token here.'],
+                createKeyTitle: 'Open Discord applications',
+              },
+              credentialOrigin: 'authentication',
               directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
               title: 'Bot token',
               outcomeReconciliation: 'none',
@@ -248,8 +273,8 @@ function createDiscordPlugin() {
       run: gatewayActivationBindings.runWorkerAttempt,
     },
     [DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
-      title: 'Watch a Discord channel for Automations',
-      description: 'Resolves a Discord channel to immutable source facts for an Automation Event.',
+      title: 'Watch a Discord channel for Workflows',
+      description: 'Resolves a Discord channel to immutable source facts for a Workflow Event.',
       surfaces: ['plugin'],
       inputSchema: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       inputHints: DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
@@ -262,8 +287,8 @@ function createDiscordPlugin() {
       run: setupDiscordAutomationMessageSource,
     },
     [DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {
-      title: 'Admit Discord Automation Event',
-      description: 'Admits one frozen Discord Automation Event obligation through the current source definitions.',
+      title: 'Admit Discord Workflow Event',
+      description: 'Admits one frozen Discord Workflow Event obligation through the current source definitions.',
       surfaces: automationEventAdmitOperation.declaration.surfaces,
       dangerLevel: automationEventAdmitOperation.declaration.dangerLevel,
       inputSchema: automationEventAdmitOperation.declaration.input.schema.jsonSchema,
@@ -345,16 +370,6 @@ function createDiscordPlugin() {
       }],
       run: deliverDiscordMessage,
     },
-    [DISCORD_CHANNEL_ACTION_IDS.connectionStop]: {
-      title: 'Stop Discord Gateway connection',
-      description: 'Stops the selected Discord Gateway connection.',
-      surfaces: connectionStopOperation.declaration.surfaces,
-      dangerLevel: connectionStopOperation.declaration.dangerLevel,
-      inputSchema: connectionStopOperation.declaration.input.schema.jsonSchema,
-      resultSchema: connectionStopOperation.declaration.resultSchema.jsonSchema,
-      hostAccess: ['discord-gateway', 'discord-rest', DISCORD_BOT_CREDENTIAL_PURPOSE],
-      run: gatewayActivationBindings.stop,
-    },
     [DISCORD_CHANNEL_ACTION_IDS.attachmentFetch]: {
       title: 'Fetch Discord attachments',
       description: 'Fetches native files for an admitted Discord message at Session materialization.',
@@ -376,7 +391,10 @@ function createDiscordPlugin() {
           event: { pluginId: 'happier.channels', localId: 'connections-invalidated-v1' },
         },
       },
-      handler: gatewayActivationBindings.invalidateConnections,
+      handler: (_event, context) => {
+        context.services.logger.info('[Discord Gateway] Connections invalidated', { phase: 'connectionsInvalidated' });
+        gatewayActivationBindings.invalidateConnections();
+      },
     },
     [DISCORD_AUTOMATION_MESSAGE_EVENT_ID]: {
       declaration: {
@@ -425,7 +443,6 @@ function createDiscordPlugin() {
             ),
             messageDeliver: discordProviderOperations.messageDeliver.bind(DISCORD_CHANNEL_ACTION_IDS.messageDeliver),
             attachmentFetch: attachmentFetchOperation.bind(DISCORD_CHANNEL_ACTION_IDS.attachmentFetch),
-            connectionStop: discordProviderOperations.connectionStop.bind(DISCORD_CHANNEL_ACTION_IDS.connectionStop),
           },
         }),
       },

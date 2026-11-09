@@ -23,5 +23,6 @@
   "machineCrabbox.presentation.description": "來自協調器或本地容器的開發機器。",
   "machineCrabbox.presentation.ready": "就緒",
   "machineCrabbox.presentation.unavailable": "帳戶不可用",
-  "machineCrabbox.presentation.provider_unavailable": "此電腦上無法使用 Crabbox"
+  "machineCrabbox.presentation.provider_unavailable": "此電腦上無法使用 Crabbox",
+  "machineCrabbox.presentation.coordinatorDescription": "來自你連接的 Crabbox 協調器的伺服器。"
 }

@@ -273,9 +273,14 @@ type PiRuntimeTurnOperations = Readonly<{
   resetOrDisposeRuntime(): Promise<void>;
 }>;
 
+type PiRuntimeFailureEvent = Extract<PiRuntimeEvent, { kind: 'runtime-ended' }> & Readonly<{
+  diagnostic: PluginDiagnosticData;
+}>;
+
 type RuntimeOperationsWithRecordHandler = PiRuntimeTurnOperations & Readonly<{
   handleRuntimeRecord(record: Readonly<Record<string, unknown>>): void;
   handleProcessExit(result: Parameters<Parameters<PiJsonStreamRpcClient['onExit']>[0]>[0]): void;
+  handleRuntimeFailure(event: PiRuntimeFailureEvent, failure?: Error): void;
 }>;
 
 function readString(value: unknown): string | null {
@@ -515,7 +520,7 @@ function createRuntimeOperations(params: Readonly<{
   let settledTurnFailure: Error | null = null;
   let pendingCompletion: PendingCompletion | null = null;
   let disposalStarted = false;
-  let unexpectedExitPublished = false;
+  let runtimeFailurePublished = false;
   let publishedProviderSessionId: string | null = null;
   let pendingPromptAdmission: PendingPromptAdmission | null = null;
   let pendingCancellation: PendingCancellation | null = null;
@@ -778,34 +783,39 @@ function createRuntimeOperations(params: Readonly<{
     }
   }
 
-  function handleProcessExit(
-    result: Parameters<Parameters<PiJsonStreamRpcClient['onExit']>[0]>[0],
+  function handleRuntimeFailure(
+    event: PiRuntimeFailureEvent,
+    failure = new Error(event.diagnostic?.message ?? 'Pi runtime failed'),
   ): void {
-    if (disposalStarted || unexpectedExitPublished) return;
-    unexpectedExitPublished = true;
-    const failure = result.error;
+    if (disposalStarted || runtimeFailurePublished) return;
+    runtimeFailurePublished = true;
     const turn = activeTurn;
     const completion = pendingCompletion;
     if (turn) {
-      const emittedAtMs = Date.now();
       params.publishRuntimeEvent({
         kind: 'turn-failed',
-        emittedAtMs,
+        emittedAtMs: event.emittedAtMs,
         turnId: turn.turnId,
-        ...(turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
-        diagnostic: diagnostic('pi_rpc_unexpected_exit', failure.message),
+        ...(event.cause !== 'protocolError' && turn.agentTurnId ? { agentTurnId: turn.agentTurnId } : {}),
+        diagnostic: event.diagnostic,
       });
     }
     settledTurnFailure = failure;
     clearActiveTurn();
     completion?.reject(failure);
-    params.publishRuntimeEvent({
-        kind: 'runtime-ended',
-        emittedAtMs: Date.now(),
-        cause: 'processExited',
-        retryable: true,
-        diagnostic: diagnostic('pi_rpc_unexpected_exit', failure.message),
-      });
+    params.publishRuntimeEvent(event);
+  }
+
+  function handleProcessExit(
+    result: Parameters<Parameters<PiJsonStreamRpcClient['onExit']>[0]>[0],
+  ): void {
+    handleRuntimeFailure({
+      kind: 'runtime-ended',
+      emittedAtMs: Date.now(),
+      cause: 'processExited',
+      retryable: true,
+      diagnostic: diagnostic('pi_rpc_unexpected_exit', result.error.message),
+    }, result.error);
   }
 
   return {
@@ -1106,6 +1116,7 @@ function createRuntimeOperations(params: Readonly<{
       }
     },
     handleProcessExit,
+    handleRuntimeFailure,
   };
 }
 
@@ -1444,15 +1455,11 @@ async function createPiConversationRuntimeOperations(
     }
     if (event.kind === 'runtime-ended') terminalRuntimeEventPublished = true;
   };
-  const publishMalformedRuntimeEventDiagnostic = (
-    event: unknown,
-    issues: ReadonlyArray<Readonly<{ message: string }>>,
-  ): void => {
+  const publishMalformedRuntimeEventDiagnostic = (): void => {
     params.logger.warn('[PiRuntime] rejected malformed AgentSessionRuntimeEvent payload');
     if (malformedRuntimeEventPublished) return;
     malformedRuntimeEventPublished = true;
-    const eventKind = isRecord(event) && typeof event.kind === 'string' ? event.kind : null;
-    const diagnosticEvent: PiRuntimeEvent = {
+    const diagnosticEvent: PiRuntimeFailureEvent = {
       kind: 'runtime-ended',
       emittedAtMs: Math.max(0, Math.trunc(Date.now())),
       cause: 'protocolError',
@@ -1461,16 +1468,14 @@ async function createPiConversationRuntimeOperations(
         code: 'malformed_runtime_event',
         severity: 'error',
         message: 'Pi emitted a malformed native runtime event',
-        details: {
-          eventKind,
-          issues: issues.slice(0, 5).map((issue) => ({
-            message: issue.message,
-          })),
-        },
       },
     };
-    sequence += 1;
-    publishParsedRuntimeEvent(diagnosticEvent);
+    if (operations) {
+      operations.handleRuntimeFailure(diagnosticEvent);
+    } else {
+      sequence += 1;
+      publishParsedRuntimeEvent(diagnosticEvent);
+    }
   };
   const publishRuntimeEvent = (event: PiRuntimeEvent): void => {
     const observedEvent = { ...event, emittedAtMs: event.emittedAtMs ?? Date.now() };
@@ -1481,7 +1486,7 @@ async function createPiConversationRuntimeOperations(
         sessionId: happierSessionId,
       });
       if (!parsed.success) {
-        publishMalformedRuntimeEventDiagnostic(event, parsed.error.issues);
+        publishMalformedRuntimeEventDiagnostic();
         return;
       }
     }
@@ -1563,6 +1568,7 @@ async function createPiConversationRuntimeOperations(
     onEvent(record) {
       const extensionUserInput = parsePiExtensionUserInput(record);
       if (extensionUserInput !== null) {
+        operations?.handleRuntimeRecord(record);
         // Submission provenance is supplied by Pi's input hook, never inferred from user echoes.
         publishRuntimeEvent({
           kind: 'transcript-message-committed',
@@ -1599,9 +1605,7 @@ async function createPiConversationRuntimeOperations(
       }
       if (record.type === 'runtime_event') {
         if (!happierSessionId || !isRecord(record.event)) {
-          publishMalformedRuntimeEventDiagnostic(record.event, [{
-            message: 'Detached Pi runtimes do not accept Session-enveloped runtime events.',
-          }]);
+          publishMalformedRuntimeEventDiagnostic();
           return;
         }
         const { sequence: _sequence, sessionId: _sessionId, ...event } = record.event;
@@ -1610,6 +1614,7 @@ async function createPiConversationRuntimeOperations(
       }
       const blockingExtensionUiRequest = parsePiBlockingExtensionUiRequest(record);
       if (blockingExtensionUiRequest) {
+        operations?.handleRuntimeRecord(record);
         handleBlockingExtensionUiRequest(blockingExtensionUiRequest);
         return;
       }

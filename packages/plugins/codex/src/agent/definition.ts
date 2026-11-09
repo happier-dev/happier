@@ -1,5 +1,5 @@
 import { codexStateSharingDescriptor } from './auth/services/state/sharing/descriptor.js';
-import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/protocol/agents/codex/native-home-policy';
 import type { PluginCustomAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
 import type { AgentSessionCompactionCapability } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -16,6 +16,10 @@ export const AGENT_STATE_SHARING_DESCRIPTOR = {
 // IMPORTANT: this must stay JSON-serializable (data-only).
 const CODEX_AGENT_ID = 'codex';
 
+/** The native app-server dispatches verified image blocks on both new turns and steers. */
+export const CODEX_NATIVE_SESSION_MEDIA_CAPABILITIES = Object.freeze({
+  acceptsImageInput: { supported: true },
+} as const);
 
 export const CODEX_NATIVE_SESSION_COMPACTION_CAPABILITIES = Object.freeze({
   events: true,

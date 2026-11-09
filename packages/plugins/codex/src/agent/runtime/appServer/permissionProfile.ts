@@ -45,7 +45,10 @@ export function buildCodexAppServerLegacyPermissionParams(params: Readonly<{
   target: CodexAppServerPermissionTarget;
 }>): Record<string, unknown> {
   const sandboxPolicy = params.policy.sandboxPolicy
-    ?? (params.policy.sandbox === 'read-only' ? { type: 'readOnly' } : undefined);
+    ?? (params.policy.sandbox === 'read-only' ? { type: 'readOnly' }
+      : params.policy.sandbox === 'workspace-write' ? { type: 'workspaceWrite' }
+      : params.policy.sandbox === 'danger-full-access' ? { type: 'dangerFullAccess' }
+      : undefined);
   return {
     ...(params.policy.approvalPolicy !== undefined ? { approvalPolicy: params.policy.approvalPolicy } : {}),
     ...(params.policy.approvalsReviewer ? { approvalsReviewer: params.policy.approvalsReviewer } : {}),
@@ -75,7 +78,11 @@ export function buildCodexAppServerPermissionParams(params: Readonly<{
   }
   const id = resolveCodexAppServerPermissionProfileId(params.policy);
   return id
-    ? { permissions: id }
+    ? {
+      permissions: id,
+      ...(params.policy.approvalPolicy !== undefined ? { approvalPolicy: params.policy.approvalPolicy } : {}),
+      ...(params.policy.approvalsReviewer ? { approvalsReviewer: params.policy.approvalsReviewer } : {}),
+    }
     : buildCodexAppServerLegacyPermissionParams({
       policy: params.policy,
       target: params.target,

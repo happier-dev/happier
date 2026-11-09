@@ -8,7 +8,7 @@ const options: AgentAcpRuntimeOptions = {
   transport: {
     kind: 'stdio', executable: { kind: 'systemTool', id: KIMI_ACP_COMMAND.toolId },
     args: [...KIMI_ACP_COMMAND.args],
-    timeouts: { initializeMs: 90_000, idleMs: 500, toolCallMs: 120_000 },
+    timeouts: { initializeMs: 90_000, idleMs: 500 },
   },
   initialSessionModeId: 'default',
   disableSessionModeUpdates: true,

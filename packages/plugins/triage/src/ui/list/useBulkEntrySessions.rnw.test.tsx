@@ -60,7 +60,7 @@ describe('bulk authoring route', () => {
         expect(resolveTriageBulkStartRouteV1(
             'oneSessionPerEntry',
             'reuseWorkspace',
-            'Fix this entry.',
+            'Fix this.',
         )).toBe('direct');
     });
 });

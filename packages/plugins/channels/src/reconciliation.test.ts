@@ -145,7 +145,7 @@ describe('Conversation provider reconciliation', () => {
           const page = await collection.query(request);
           pages += 1;
           rows += page.rows.length;
-          return { ...page, changeCursor: forceCursorDrift && request.cursor !== undefined ? 2 : page.changeCursor };
+          return { ...page, changeCursor: forceCursorDrift ? pages : page.changeCursor };
         },
       }) } } },
     } as unknown as PluginInvocationContext;
@@ -163,8 +163,10 @@ describe('Conversation provider reconciliation', () => {
         .resolves.toMatchObject({ [connectionId]: { requiresFullSharedMessageContent: true } });
     }
     expect({ exactReadCost, reconciliationCost: { pages, rows } }).toEqual({
-      exactReadCost: { pages: 1, rows: 11 },
-      reconciliationCost: { pages: 54, rows: 1_100 },
+      // Two family-prefix queries avoid paying for any census or obligation
+      // history without requiring unrelated Account writes to stop.
+      exactReadCost: { pages: 2, rows: 11 },
+      reconciliationCost: { pages: 104, rows: 1_100 },
     });
 
     // An exact read must still observe revocation after discovery rather than
@@ -178,8 +180,8 @@ describe('Conversation provider reconciliation', () => {
     await expect(readConversationProviderConnectionForInvocation({ connectionId: 'missing-connection' }, context))
       .resolves.toEqual({});
 
-    // Scope narrowing must not weaken the same-cursor proof when a single
-    // connection itself spans pages.
+    // Unrelated Account activity between families and pages does not invalidate
+    // current connection authority or prevent the demand projection.
     const binding = collection.rows.get('binding-0-0')!;
     for (let index = 0; index < 200; index += 1) {
       const bindingId = `binding-0-extra-${index}`;
@@ -188,7 +190,7 @@ describe('Conversation provider reconciliation', () => {
     }
     forceCursorDrift = true;
     await expect(readConversationProviderConnectionForInvocation({ connectionId: 'connection-0' }, context))
-      .rejects.toMatchObject({ code: 'channels_reconciliation_snapshot_changed', retryable: true });
+      .resolves.toMatchObject({ 'connection-0': { enabled: false, authorityEpoch: 5 } });
   });
 
   it('follows current host-stamped source custody at the same route and refuses another Home, Machine or plugin', () => {
@@ -353,7 +355,7 @@ describe('Conversation provider reconciliation', () => {
     ]);
   });
 
-  it('withholds only an unaccepted destructive transfer replacement until old-stop custody settles or is explicitly accepted', () => {
+  it('keeps retained stop and loss disclosures inert when projecting the current placement', () => {
     const unacceptedDestructive = reconciliationConnectionState({
       connectionId: 'destructive-transfer-pending',
       overlapSafety: 'safe',
@@ -365,7 +367,7 @@ pendingOldTransportStop: pendingTransferStop({
     });
     const safeTransfer = reconciliationConnectionState({
       connectionId: 'safe-transfer-pending',
-      overlapSafety: 'destructive',
+      overlapSafety: 'safe',
 pendingOldTransportStop: pendingTransferStop({
         overlapSafety: 'safe',
         acceptedPossibleLoss: false,
@@ -403,7 +405,7 @@ pendingOldTransportStop: pendingTransferStop({
     });
     const stoppedDestructive = reconciliationConnectionState({
       connectionId: 'destructive-transfer-stopped',
-      overlapSafety: 'destructive',
+      overlapSafety: 'safe',
       pendingOldTransportStop: null,
     });
     const invocation = {
@@ -423,15 +425,17 @@ pendingOldTransportStop: pendingTransferStop({
     };
 
     expect(Object.keys(listConversationProviderConnectionsForCaller(invocation))).toEqual([
+      unacceptedDestructive.connectionId,
       safeTransfer.connectionId,
       providerExclusiveTransfer.connectionId,
       acceptedDestructive.connectionId,
+      incoherentAcceptedTransfer.connectionId,
       stoppedDestructive.connectionId,
     ]);
     expect(readConversationProviderConnectionForCaller({
       ...invocation,
       connectionId: unacceptedDestructive.connectionId,
-    })).toEqual({});
+    })).toMatchObject({ [unacceptedDestructive.connectionId]: { authorityEpoch: 4 } });
   });
 
   it('projects endpoint-retarget custody without treating it as an old physical transport stop', () => {
@@ -447,7 +451,7 @@ pendingOldTransportStop: pendingTransferStop({
     }))).toEqual(['connection-1']);
   });
 
-  it('withholds a history-gapped replacement from ordinary reconciliation', () => {
+  it('reconciles a history-gap notice without hiding an eligible replacement', () => {
     const historyGapFreeReplacement = reconciliationConnectionState({
       connectionId: 'history-gap-free-transfer',
 pendingOldTransportStop: pendingTransferStop({
@@ -480,6 +484,7 @@ pendingOldTransportStop: pendingTransferStop({
 
     expect(Object.keys(listConversationProviderConnectionsForCaller(invocation))).toEqual([
       historyGapFreeReplacement.connectionId,
+      incompatibleReplacement.connectionId,
     ]);
     expect(readConversationProviderConnectionForCaller({
       ...invocation,
@@ -488,7 +493,7 @@ pendingOldTransportStop: pendingTransferStop({
     expect(readConversationProviderConnectionForCaller({
       ...invocation,
       connectionId: incompatibleReplacement.connectionId,
-    })).toEqual({});
+    })).toHaveProperty(incompatibleReplacement.connectionId);
   });
 
   it('derives only the full-shared-content demand from current enabled binding policy', () => {
@@ -643,10 +648,7 @@ pendingOldTransportStop: pendingTransferStop({
     })).toThrow('one exact key per connection ID');
   });
 
-  it('fails closed with the retryable snapshot outcome when one binding read drifts mid-scan', async () => {
-    // 200 rows per page (PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1) forces the 256-row
-    // binding read onto a second page whose changed cursor must never silently
-    // collapse into an empty "every mode deliverable" answer.
+  it('keeps shared-input restrictions when an unrelated Account cursor moves between binding pages', async () => {
     const bindingRow = {
       rowId: 'binding-1',
       revision: 1,
@@ -655,7 +657,7 @@ pendingOldTransportStop: pendingTransferStop({
         'record-kind': 'binding',
         'connection-id': 'connection-1',
         'binding-id': 'binding-1',
-        payload: {},
+        payload: { enabled: true, endpoint: { audience: 'shared' }, inputMode: 'allAllowedMessages' },
       },
     };
     let queryCount = 0;
@@ -680,10 +682,7 @@ pendingOldTransportStop: pendingTransferStop({
       context,
       connectionId: 'connection-1',
       sharedEndpointInputModes: ['directMentionsOnly'],
-    })).rejects.toMatchObject({
-      code: 'channels_reconciliation_snapshot_changed',
-      retryable: true,
-    });
+    })).resolves.toEqual(['allAllowedMessages']);
     expect(queryCount).toBe(2);
   });
 });

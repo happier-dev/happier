@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "监视 Discord 频道",
-  "discord.automation.messageSource.setup.description": "选择 Discord 机器人以及消息应触发此自动化的频道。",
+  "discord.automation.messageSource.setup.description": "选择 Discord 机器人以及消息应触发此工作流的频道。",
   "discord.automation.messageSource.setup.submit": "监视频道",
   "discord.automation.messageSource.setup.credential": "Discord 机器人账户",
   "discord.automation.messageSource.setup.credential.description": "选择现有的 Discord 机器人连接账户；此处从不输入机器人令牌。",

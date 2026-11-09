@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "選択したサイズ、イメージ、リージョンのクラウド Droplet。",
+  "machineDigitalOcean.account.tokenHint": "DigitalOcean の個人アクセストークンを使用します。コントロールパネルの Account → API → Tokens から作成してください。",
+  "machineDigitalOcean.presentation.kind": "マシン",
+  "machineDigitalOcean.presentation.description": "選択したサイズ、イメージ、リージョンのクラウドマシン。",
   "machineDigitalOcean.presentation.ready": "アカウント接続済み",
   "machineDigitalOcean.presentation.unavailable": "アカウント利用不可",
   "machineDigitalOcean.network.ipv4": "IPv4 のみ",

@@ -100,34 +100,41 @@
       "types": "./dist/ui/predecessorMessageMeta.d.ts",
       "react-native": "./dist/ui/predecessorMessageMeta.js",
       "default": "./dist/ui/predecessorMessageMeta.js"
-    }
+    },
+    "./happier-plugin-ui/claude-agent-settings-native": "./src/ui/agentSettings.tsx"
   },
   "files": [
     "dist",
     ".happier-plugin",
-    "package.json"
+    "package.json",
+    "assets"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
     "build:finite": "pnpm --silent run build",
     "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "vitest run && vitest run --config vitest.mcpToolPolicy.config.ts",
+    "test:local": "vitest run && vitest run --config vitest.rnw.config.ts && vitest run --config vitest.mcpToolPolicy.config.ts",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json -p tsconfig.ui.json",
+    "build:ui": "happier-plugin-build-ui"
   },
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "string-width": "8.1.0",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@happier-dev/plugin-ui": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/agents": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
     "@types/react-test-renderer": "^19.1.0",
-    "react-test-renderer": "19.2.0"
+    "react-test-renderer": "19.2.0",
+    "react": "19.2.0",
+    "@types/react": "19.2.0",
+    "react-native": "0.83.5"
   }
 }

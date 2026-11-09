@@ -5,6 +5,7 @@ import type {
   AgentProviderBindingPrepared,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createHash } from 'node:crypto';
+import { normalizeProviderCredentialHeaderName } from '@happier-dev/plugin-sdk/providers';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'spawnEnv' }>['env'];
@@ -12,7 +13,7 @@ type ProviderCredentialTransport = NonNullable<
   AgentProviderBindingMaterializeInput['binding']['runtimeCredentialTransport']
 >;
 
-export const CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 3;
+export const CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 4;
 
 export const CLAUDE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'ANTHROPIC_BASE_URL',
@@ -88,14 +89,20 @@ function transportsEqual(
 }
 
 function resolveCredential(input: AgentProviderBindingMaterializeInput): Readonly<{
-  envKey: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' | null;
-  value: string | null;
+  apiKey: string | null;
+  authToken: string | null;
+  headers: Readonly<Record<string, string>>;
+  redactionValues: readonly string[];
 }> {
+  const headers = { ...input.binding.endpoint.publicHeaders };
+  let apiKey: string | null = null;
+  let authToken: string | null = null;
+  const redactionValues: string[] = [];
   if (input.credential.kind === 'none') {
     if (input.binding.runtimeCredentialTransport !== null) {
       throw new Error('Claude provider binding credential does not match its selected transport');
     }
-    return { envKey: null, value: null };
+    return { apiKey, authToken, headers, redactionValues };
   }
 
   const { transport, value } = input.credential;
@@ -107,21 +114,44 @@ function resolveCredential(input: AgentProviderBindingMaterializeInput): Readonl
     || transport.destination.kind !== 'httpHeader') {
     throw new Error('Claude provider binding does not support this credential transport');
   }
-  const header = transport.destination.name.toLowerCase();
-  if (header === 'authorization' && transport.destination.format === 'bearer') {
-    return { envKey: 'ANTHROPIC_AUTH_TOKEN', value };
+  const supplied = input.credential.additionalCredentials ?? [];
+  const declared = transport.additionalCredentials ?? [];
+  if (supplied.length !== declared.length || new Set(supplied.map(row => row.slotId)).size !== supplied.length) {
+    throw new Error('Claude provider binding companion credentials do not match the selected transport');
   }
-  if (header === 'x-api-key' && transport.destination.format === 'raw') {
-    return { envKey: 'ANTHROPIC_API_KEY', value };
+  const materials = [{ destination: transport.destination, value }, ...declared.map(row => {
+    const material = supplied.find(candidate => candidate.slotId === row.slotId);
+    if (!material) throw new Error('Claude provider binding companion credential is missing');
+    return { destination: row.destination, value: material.value };
+  })];
+  const names = new Set(Object.keys(headers).map(name => name.toLowerCase()));
+  for (const material of materials) {
+    const { destination, value: secret } = material;
+    if (destination.kind !== 'httpHeader' || (destination.format !== 'raw' && destination.format !== 'bearer')) {
+      throw new Error('Claude provider binding does not support this credential transport');
+    }
+    const header = normalizeProviderCredentialHeaderName(destination.name);
+    if (!secret || /[\u0000-\u001f\u007f]/u.test(secret) || names.has(header)) {
+      throw new Error('Claude provider binding credential header is invalid or collides with another header');
+    }
+    names.add(header);
+    const rendered = destination.format === 'bearer' ? `Bearer ${secret}` : secret;
+    redactionValues.push(secret, rendered);
+    if (header === 'authorization' && destination.format === 'bearer') authToken = secret;
+    else if (header === 'x-api-key' && destination.format === 'raw') apiKey = secret;
+    else headers[header] = rendered;
   }
-  throw new Error('Claude provider binding does not support this credential transport');
+  if (!apiKey && !authToken) {
+    throw new Error('Claude provider binding requires native startup authentication');
+  }
+  return { apiKey, authToken, headers, redactionValues };
 }
 
 function buildOwnedEnvironment(input: Readonly<{
   baseUrl: string;
   customHeaders: string | null;
-  credentialKey: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_AUTH_TOKEN' | null;
-  credentialValue: string | null;
+  apiKey: string | null;
+  authToken: string | null;
   helperModels: AgentProviderBindingMaterializeInput['binding']['claudeHelperModels'];
   sessionModelId: string;
 }>): ProviderBindingEnvOverlay {
@@ -135,8 +165,10 @@ function buildOwnedEnvironment(input: Readonly<{
       ? input.baseUrl
       : name === 'ANTHROPIC_CUSTOM_HEADERS'
         ? input.customHeaders
-      : name === input.credentialKey
-        ? input.credentialValue
+      : name === 'ANTHROPIC_API_KEY'
+        ? input.apiKey
+      : name === 'ANTHROPIC_AUTH_TOKEN'
+        ? input.authToken
         : name === 'ANTHROPIC_DEFAULT_HAIKU_MODEL' && pins !== null
           ? pins.fast
         : name === 'ANTHROPIC_DEFAULT_SONNET_MODEL' && pins !== null
@@ -176,12 +208,13 @@ async function materializeClaudeProviderBindingV1(
     kind: 'spawnEnv',
     env: buildOwnedEnvironment({
       baseUrl: input.binding.endpoint.normalizedUrl,
-      customHeaders: renderCustomHeaders(input.binding.endpoint.publicHeaders),
-      credentialKey: credential.envKey,
-      credentialValue: credential.value,
+      customHeaders: renderCustomHeaders(credential.headers),
+      apiKey: credential.apiKey,
+      authToken: credential.authToken,
       helperModels: input.binding.claudeHelperModels,
       sessionModelId: input.binding.selection.model.id,
     }),
+    ...(credential.redactionValues.length ? { additionalRedactionValues: credential.redactionValues } : {}),
   };
 }
 

@@ -14,6 +14,6 @@ export function projectCodexNativeHistoryItem(item: Readonly<Record<string, unkn
   }
   const events = projectCodexAppServerToolEventsFromNotification({ method: 'item/completed', notificationParams: { item } });
   if (events.length) return events;
-  if (item.type === 'reasoning' || item.type === 'hookPrompt') return [];
+  if (item.type === 'reasoning' || item.type === 'hookPrompt' || item.type === 'contextCompaction') return [];
   throw new Error('Codex native history contains an unsupported transcript item');
 }

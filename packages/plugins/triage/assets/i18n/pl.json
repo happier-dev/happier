@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Wszystko inne",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Wdrożenia",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Środowiska",
+  "plugins.triage.surface.actions.subject.workflowRun": "Uruchomienia przepływów pracy",
+  "plugins.triage.surface.actions.investigateRun": "Zbadaj to uruchomienie",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Bez kopii roboczej",
   "plugins.triage.surface.actions.workspace.repository": "Projekt, który wskażę",
   "plugins.triage.surface.actions.workspace.pullRequest": "Przygotowane drzewo robocze przeglądu",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Łącz je z sesjami, blokuj pull requestem, dziel na podzadania.",
   "plugins.triage.tasks.firstRun.trackers.title": "Pobierz zadania z trackera",
   "plugins.triage.tasks.firstRun.trackers.description": "Zostają w swoim trackerze. Happier czyta je i edytuje tam.",
-  "plugins.triage.tasks.firstRun.trust": "Trackery są czytane na żywo na wybranej maszynie. Ich zadania nigdy nie są kopiowane do twojego konta."
+  "plugins.triage.tasks.firstRun.trust": "Trackery są czytane na żywo na wybranej maszynie. Ich zadania nigdy nie są kopiowane do twojego konta.",
+  "plugins.triage.surface.sources.permanent": "Ponowna próba tego nie naprawi. W Szczegółach jest to, czego potrzebuje pomoc techniczna.",
+  "plugins.triage.surface.sources.supportCode": "Dla pomocy technicznej",
+  "plugins.triage.surface.failure.unreachableSuffix": "nie udało się połączyć"
 }

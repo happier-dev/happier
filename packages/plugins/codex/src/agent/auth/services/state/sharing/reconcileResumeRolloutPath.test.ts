@@ -160,3 +160,22 @@ describe('reconcileCodexResumeRolloutPath', () => {
     await expect(access(fixture.databasePath)).rejects.toThrow();
   });
 });
+
+ it.each([false, true])('preserves the logical index path for a compressed rollout (stale=%s)', async stale => {
+  const fixture = await createFixture();
+  await writeFile(`${fixture.rolloutPath}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+  await rm(fixture.rolloutPath);
+  const indexedPath = stale ? join(fixture.codexHome, '..', 'removed-generation', 'rollout.jsonl') : fixture.rolloutPath;
+  const database = new DatabaseSync(fixture.databasePath);
+  try {
+    database.prepare('INSERT INTO threads (id, rollout_path) VALUES (?, ?)').run(fixture.vendorResumeId, indexedPath);
+  } finally {
+    database.close();
+  }
+  const processEnv = { CODEX_HOME: fixture.codexHome, CODEX_SQLITE_HOME: fixture.sqliteHome };
+  expect(await reconcileCodexResumeRolloutPath({ processEnv, cwd: fixture.codexHome, vendorResumeId: fixture.vendorResumeId })).toBe(true);
+  expect(readIndexedPath(fixture.databasePath, fixture.vendorResumeId)).toBe(fixture.rolloutPath);
+  expect(await resolveExistingCodexIndexedRolloutPath({ processEnv, cwd: fixture.codexHome,
+    vendorResumeId: fixture.vendorResumeId, signal: new AbortController().signal,
+  })).toBe(`${fixture.rolloutPath}.zst`);
+});

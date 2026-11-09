@@ -442,3 +442,21 @@ describe('Claude external transcript continuity evidence', () => {
         expect(outcome.readAfterOutcome).toBe('source_replaced');
     });
 });
+
+
+it('preserves UUID-free credential_org through historical and appended ordered source observations', async () => {
+  const fixture = await createTranscript(0, 0);
+  const row = {type: 'attachment', attachment: {type: 'credential_org', organizationUuid: 'native-org'}, sessionId: fixture.remoteSessionId, timestamp: 1000};
+  await writeFile(fixture.transcriptPath, JSON.stringify(row) + '\n');
+  const input = {source: fixture.source, env: fixture.env, providerSessionId: fixture.remoteSessionId, projection: 'terminal' as const, maxItems: 10, maxBytes: 65536};
+  const initial = await pageClaudeExternalSessionTranscript({...input, direction: 'older'});
+  expect(initial.items).toMatchObject([{raw: {role: 'source_observation', content: row}}]);
+  if (!initial.tailCursor) throw new Error('Missing terminal source tail cursor');
+  const appended = {...row, timestamp: 2000};
+  await appendFile(fixture.transcriptPath, JSON.stringify(appended) + '\n');
+  const live = await readAfterClaudeExternalSessionTranscript({...input, cursor: initial.tailCursor});
+  expect(live.items).toMatchObject([{raw: {role: 'source_observation', content: appended}}]);
+  expect(initial.items[0]?.id).not.toEqual(live.items[0]?.id);
+  if (!live.nextCursor) throw new Error('Missing advanced source cursor');
+  expect((await readAfterClaudeExternalSessionTranscript({...input, cursor: live.nextCursor})).items).toEqual([]);
+});

@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,19 +7,18 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { TRANSLATED_TRIAGE_EMPTY_KINDS_V1, readTriageListEmptyStateKeys } from './shell/emptyState.js';
-import { TRIAGE_UI_TRANSLATIONS } from './translations.js';
-import { PLUGIN_MANIFEST as LINEAR_MANIFEST } from '../../../linear/src/manifest.js';
-import { PLUGIN_MANIFEST as JIRA_MANIFEST } from '../../../jira/src/manifest.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
 
 
-const LOCALES = Object.keys(TRIAGE_UI_TRANSLATIONS) as readonly (keyof typeof TRIAGE_UI_TRANSLATIONS)[];
+const LOCALES = Object.keys(PACKAGED_UI_TRANSLATIONS) as readonly (keyof typeof PACKAGED_UI_TRANSLATIONS)[];
 const CATALOGS = [
-    { id: 'triage', root: new URL('..', import.meta.url), messages: TRIAGE_UI_TRANSLATIONS },
+    { id: 'triage', root: new URL('..', import.meta.url), messages: PACKAGED_UI_TRANSLATIONS },
     ...[
-        { id: 'linear', root: new URL('../../../linear/src/', import.meta.url), manifest: LINEAR_MANIFEST },
-        { id: 'jira', root: new URL('../../../jira/src/', import.meta.url), manifest: JIRA_MANIFEST },
-    ].map(({ id, root, manifest }) => ({
-        id, root, messages: Object.fromEntries(manifest.contributes.ui.translations.map((row) => [row.locale, row.messages])),
+        { id: 'linear', root: new URL('../../../linear/src/', import.meta.url) },
+        { id: 'jira', root: new URL('../../../jira/src/', import.meta.url) },
+    ].map(({ id, root }) => ({
+        id, root, messages: readPluginTranslationResources(new URL('../', root)),
     })),
 ];
 
@@ -79,7 +80,7 @@ describe('the Triage UI catalog', () => {
         for (const kind of TRANSLATED_TRIAGE_EMPTY_KINDS_V1) {
             const keys = readTriageListEmptyStateKeys(kind);
             for (const locale of LOCALES) {
-                const messages: Readonly<Record<string, string>> = TRIAGE_UI_TRANSLATIONS[locale];
+                const messages: Readonly<Record<string, string>> = PACKAGED_UI_TRANSLATIONS[locale];
                 expect(messages[keys.title], `${locale} ${kind} title`).toEqual(expect.any(String));
                 expect(messages[keys.description], `${locale} ${kind} description`)
                     .toEqual(expect.any(String));

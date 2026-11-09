@@ -1,6 +1,7 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { OPENROUTER_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { parseOpenRouterCredits, parseOpenRouterKeyUsage, parseOpenRouterRequestCost } from './provider/usage/parsers.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.provider.openrouter',
@@ -11,9 +12,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
   },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [], optional: [] },
   providers: {
-    openrouter: { declaration: OPENROUTER_PROVIDER_CONTRIBUTION },
+    openrouter: { declaration: OPENROUTER_PROVIDER_CONTRIBUTION, requestCostParser: parseOpenRouterRequestCost, usageParsers: {
+      'openrouter-key-usage': parseOpenRouterKeyUsage, 'openrouter-account-credits': parseOpenRouterCredits,
+    } },
   },
 });

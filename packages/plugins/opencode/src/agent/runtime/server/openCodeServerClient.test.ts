@@ -31,6 +31,102 @@ const HEALTHY_MANAGED_SERVICE_SNAPSHOT = Object.freeze({
   diagnosticsTruncated: false,
 }) satisfies ManagedServiceSnapshot;
 
+describe('OpenCode semantic event custody while catalog projection awaits', () => {
+  it('drains admitted semantic work before reporting a transport read failure', async () => {
+    const owner = new AbortController();
+    let ingress: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let startProjection!: () => void;
+    let releaseProjection!: () => void;
+    const started = new Promise<void>(resolve => { startProjection = resolve; });
+    const held = new Promise<void>(resolve => { releaseProjection = resolve; });
+    const failure = new Error('native event stream failed');
+    const projected: string[] = [];
+    const unavailable: unknown[] = [];
+    const client = createClient({ request: async () => ({
+      ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'text/event-stream' },
+      body: new ReadableStream<Uint8Array>({ start(controller) {
+        ingress = controller;
+        controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'));
+      } }),
+    }) });
+    const done = client.subscribeGlobalEvents({ signal: owner.signal,
+      onEvent: async (event) => {
+        projected.push(event.type ?? '');
+        if (event.type === 'session.updated') { startProjection(); await held; }
+      },
+      onUnavailable(error) { unavailable.push(error); owner.abort(); },
+    });
+    const emit = (type: string) => ingress!.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties: { sessionID: 'ses-1' } })}\n\n`));
+    try {
+      await vi.waitFor(() => expect(ingress).toBeDefined());
+      emit('session.updated');
+      await started;
+      emit('session.error');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      ingress!.error(failure);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(unavailable).toEqual([]);
+      releaseProjection();
+      await done;
+      expect(projected).toEqual(['server.connected', 'session.updated', 'session.error']);
+      expect(unavailable).toEqual([failure]);
+    } finally { owner.abort(); releaseProjection(); await done; }
+  });
+
+  it.each(['cancel', 'reject'] as const)('retires queued semantic work when an admitted projection is stopped (%s)', async (outcome) => {
+    const owner = new AbortController();
+    let ingress: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let startProjection!: () => void;
+    let releaseProjection!: () => void;
+    let rejectProjection!: (error: Error) => void;
+    const started = new Promise<void>(resolve => { startProjection = resolve; });
+    const held = new Promise<void>((resolve, reject) => { releaseProjection = resolve; rejectProjection = reject; });
+    const failure = new Error('catalog projection failed');
+    const projected: string[] = [];
+    let connections = 0;
+    const unavailable: unknown[] = [];
+    const client = createClient({ request: async (request) => ({
+      ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'text/event-stream' },
+      body: new ReadableStream<Uint8Array>({ start(controller) {
+        ingress = controller;
+        connections += 1;
+        controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'
+          + (connections > 1 ? 'data: {"type":"session.error","properties":{"sessionID":"ses-1"}}\n\n' : '')));
+        request.signal?.addEventListener('abort', () => controller.error(request.signal?.reason), { once: true });
+      } }),
+    }) });
+    const done = client.subscribeGlobalEvents({
+      signal: owner.signal,
+      onEvent: async (event, delivery) => {
+        projected.push(event.type ?? '');
+        if (event.type === 'session.updated') { startProjection(); await held; }
+        if (event.type === 'session.error' && delivery.connectionGeneration === 2) owner.abort();
+      },
+      onUnavailable(error) { unavailable.push(error); },
+    });
+    let settled = false;
+    void done.then(() => { settled = true; });
+    const emit = (type: string) => ingress!.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type, properties: { sessionID: 'ses-1' } })}\n\n`));
+    try {
+      await vi.waitFor(() => expect(ingress).toBeDefined());
+      emit('session.updated');
+      await started;
+      emit('session.error');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(projected).toEqual(['server.connected', 'session.updated']);
+      if (outcome === 'cancel') owner.abort('disposed');
+      else rejectProjection(failure);
+      await vi.waitFor(() => expect(settled).toBe(true));
+      releaseProjection();
+      await Promise.resolve();
+      expect(projected).toEqual(outcome === 'cancel' ? ['server.connected', 'session.updated']
+        : ['server.connected', 'session.updated', 'server.connected', 'session.error']);
+      expect(unavailable).toEqual(outcome === 'cancel' ? [] : [failure]);
+    } finally { owner.abort(); releaseProjection(); await done; }
+  });
+
+});
+
 describe('native V2 terminal transcript through the server runtime', () => {
   it('projects settled native turns once and diagnoses failed history reads without stopping the listener', async () => {
     const directory = '/repo';
@@ -1616,6 +1712,7 @@ describe('createOpenCodeServerClient (OpenCode V2 beta dialect)', () => {
           role: 'assistant',
           sessionID: 'ses-1',
           providerID: 'anthropic',
+          modelID: 'claude-opus-5',
           // V2 carries no parentID; the ordered preceding user message is the
           // only evidence for the anchor the current projection requires.
           parentID: 'msg_1',

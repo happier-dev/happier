@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema,
+  MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PLUGIN, PLUGIN_MANIFEST, ROLE_SCHEMAS } from './manifest.js';
+import { connectedAccountRuntime } from './account.js';
 import { BoatLaunchV1Schema } from './machine/schemas.js';
+import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 
 // Boat OpenAPI 3.1, fetched 2026-11-05: https://docs.boat.dev/openapi/boat-v1.yaml.
 // Only the vendor HTTP boundary is replaced; Account activation and role schemas are real.
@@ -41,7 +44,79 @@ async function fixture(options: { trial?: boolean; permission?: string; health?:
   return { host, requests, http };
 }
 
-describe('Boat mandatory TTL configuration', () => {
+describe('Boat documented contract gaps', () => {
+  it.each([{ kind: 'blank' }, { kind: 'named-snapshot', name: 'base' }, { kind: 'fork', sandboxId: 'bx_abcdefgh' }])(
+    'labels $kind creates and recovers a lost reply by exact label without another allocation', async source => {
+      const { host, requests } = await fixture({ lostReply: true, secondPage: true });
+      try {
+        const result = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('acquire', {
+          managedId: 'managed-gaps', launch: { size: 'default', source },
+        }));
+        expect(result.kind).toBe('pending');
+        if (result.kind !== 'pending') throw new Error('Expected pending create');
+        expect(requests.find(request => request.method === 'POST')?.body).toMatchObject({
+          labels: { 'happier-managed-id': 'managed-gaps' }, ttlSeconds: null,
+        });
+        const recovered = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('reconcile', { nativeOperation: result.nativeOperationRef.value }));
+        expect(recovered).toMatchObject({ kind: 'bound', resource: { value: { sandboxId: 'bx_23456789' } } });
+        expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
+        expect(requests.filter(request => request.label !== null).map(request => request.label))
+          .toEqual(['happier-managed-id=managed-gaps', 'happier-managed-id=managed-gaps']);
+      } finally { await host.dispose(); }
+    });
+
+  it.each([0, 2])('keeps %i label matches indeterminate instead of guessing or creating', async matches => {
+    const { host, requests } = await fixture({ matches });
+    try {
+      const result = await host.invokeAction('reconcile', { correlation: { managedId: 'managed-gaps', requestId: 'original',
+        launch: { size: 'small', source: { kind: 'blank' } } } });
+      expect(ROLE_SCHEMAS.acquireResult.parse(result)).toMatchObject({ kind: 'unknown', recovery: { reference: 'managed-gaps' } });
+      expect(requests).toEqual([expect.objectContaining({ method: 'GET', label: 'happier-managed-id=managed-gaps' })]);
+    } finally { await host.dispose(); }
+  });
+
+  it('binds correlation-only recovery to the same sandbox', async () => {
+    const { host } = await fixture();
+    try {
+      expect(await host.invokeAction('reconcile', { correlation: { managedId: 'managed-gaps', requestId: 'original',
+        launch: { size: 'small', source: { kind: 'blank' } } } })).toMatchObject({ kind: 'bound', resource: { value: { sandboxId: 'bx_23456789' } } });
+    } finally { await host.dispose(); }
+  });
+
+  it('offers saved snapshots and revalidates them before allocation', async () => {
+    const { host, requests } = await fixture();
+    try {
+      expect(await host.invokeAction('options', {})).toMatchObject({ dimensions: { image: expect.arrayContaining([
+        expect.objectContaining({ assignments: [{ path: 'source', value: { kind: 'named-snapshot', name: 'base' } }] }),
+      ]) } });
+      expect(await host.invokeAction('acquire', { managedId: 'managed-gaps', launch: { size: 'small', source: { kind: 'named-snapshot', name: 'base' } } }))
+        .toMatchObject({ kind: 'bound' });
+      expect(requests.filter(request => request.path.endsWith('/saved-snapshots'))).toHaveLength(2);
+    } finally { await host.dispose(); }
+  });
+
+  it('keeps init in the creating path and refuses bootstrap until ready', async () => {
+    const { host, requests } = await fixture({ state: 'init' });
+    try {
+      expect(MachineProvisionerObservationV1Schema.parse(await host.invokeAction('inspect', { resource: { sandboxId: 'bx_23456789' } })))
+        .toMatchObject({ availability: 'present', power: 'unknown', reason: 'native_resource_creating' });
+      await expect(host.invokeAction('bootstrap', { resource: { sandboxId: 'bx_23456789' }, bootstrapPublicKey: 'ssh-ed25519 AAAApublic' }))
+        .rejects.toMatchObject({ code: 'native_not_ready' });
+      expect(requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await host.dispose(); }
+  });
+
+  it('surfaces degraded health and cannot bootstrap a hung VM as healthy', async () => {
+    const { host, requests } = await fixture({ health: 'degraded' });
+    try {
+      expect(MachineProvisionerObservationV1Schema.parse(await host.invokeAction('inspect', { resource: { sandboxId: 'bx_23456789' } })))
+        .toMatchObject({ availability: 'unavailable', power: 'unknown', reason: 'native_resource_degraded' });
+      await expect(host.invokeAction('bootstrap', { resource: { sandboxId: 'bx_23456789' }, bootstrapPublicKey: 'ssh-ed25519 AAAApublic' }))
+        .rejects.toMatchObject({ code: 'native_resource_unavailable' });
+      expect(requests.every(request => request.method === 'GET')).toBe(true);
+    } finally { await host.dispose(); }
+  });
+
   it.each([true, false])('offers trial and paid configurations through the same provisioner (trial: %s)', async trial => {
     const { host, requests } = await fixture({ trial });
     try {
@@ -66,4 +141,54 @@ describe('Boat mandatory TTL configuration', () => {
     } finally { await host.dispose(); }
   });
 
+  it.each([
+    ['daily_limit_reached', 'native_daily_limit_reached'],
+    ['idempotency_key_reused', 'native_idempotency_mismatch'],
+    ['api_key_action_forbidden', 'native_api_key_action_forbidden'],
+  ])('retains definite allocation refusal %s without turning it into recovery', async (createRefusal, code) => {
+    const { host, requests } = await fixture({ createRefusal });
+    try {
+      const result = ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction('acquire', {
+        managedId: 'managed-gaps', launch: { size: 'small', source: { kind: 'blank' } },
+      }));
+      expect(result).toEqual({ kind: 'rejected', code, nativeCause: { httpStatusClass: '4xx' } });
+      expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
+      expect(JSON.stringify(result)).not.toContain('private vendor');
+    } finally { await host.dispose(); }
+  });
+
+  it.each(['api_key_action_forbidden', 'api_key_sandbox_forbidden', 'api_key_expired'])(
+    'preserves typed %s with actionable safe text through connect and check', async code => {
+      const { host, http } = await fixture({ permission: code });
+      try {
+        const result = MachineProvisionerCheckResultV1Schema.parse(await host.invokeAction('check', {}));
+        expect(result).toMatchObject({ available: false, code: `native_${code}`, status: { fallback: expect.stringMatching(/key/i) } });
+        const context = { signal: new AbortController().signal, configuration: { values: {} }, credentials: { get: async () => 'fixture-key' },
+          services: { http } } as unknown as ConnectedAccountReadContext;
+        expect(await connectedAccountRuntime.status(context)).toMatchObject({ diagnostic: { code: `native_${code}`, message: expect.stringMatching(/key/i) } });
+        expect(JSON.stringify(result)).not.toContain('private vendor');
+      } finally { await host.dispose(); }
+    });
+
+  it.each(['acquire', 'options', 'bootstrap', 'inspect', 'power', 'destroy', 'reconcile'])(
+    'preserves a permission refusal through the sibling %s role', async role => {
+      const { host } = await fixture({ permission: 'api_key_action_forbidden' });
+      const resource = { sandboxId: 'bx_23456789' };
+      const input = role === 'options' ? {} : role === 'acquire' ? { managedId: 'managed-gaps', launch: { size: 'small', source: { kind: 'blank' } } }
+        : role === 'bootstrap' ? { resource, bootstrapPublicKey: 'ssh-ed25519 AAAApublic' }
+        : role === 'reconcile' ? { nativeOperation: { kind: 'acquire', idempotencyKey: 'managed-gaps' } }
+        : role === 'power' ? { resource, intent: 'stop' } : { resource };
+      try {
+        if (role === 'acquire') {
+          expect(ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction(role, input)))
+            .toEqual({ kind: 'rejected', code: 'native_api_key_action_forbidden', nativeCause: { httpStatusClass: '4xx' } });
+        } else if (['options', 'bootstrap'].includes(role)) {
+          await expect(host.invokeAction(role, input)).rejects.toMatchObject({ code: 'native_api_key_action_forbidden', message: expect.stringContaining('permission') });
+        } else if (role === 'inspect') {
+          expect(await host.invokeAction(role, input)).toMatchObject({ availability: 'unavailable', reason: 'native_api_key_action_forbidden' });
+        } else if (role === 'reconcile') {
+          expect(await host.invokeAction(role, input)).toMatchObject({ kind: 'unknown', recovery: { reason: 'native_api_key_action_forbidden' } });
+        } else expect(await host.invokeAction(role, input)).toMatchObject({ kind: 'refused', code: 'native_api_key_action_forbidden' });
+      } finally { await host.dispose(); }
+    });
 });

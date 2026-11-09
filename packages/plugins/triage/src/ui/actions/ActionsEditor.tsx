@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { TriageActionSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import {
   Button,
   EmptyState,
@@ -94,13 +95,14 @@ type EditorTarget =
   | Readonly<{ kind: 'create'; baseRevision: string }>
   | Readonly<{ kind: 'update'; actionId: string; baseRevision: string }>;
 
-const SUBJECT_LABELS: Readonly<Record<string, Readonly<{ key: string; text: string }>>> = {
+const SUBJECT_LABELS: Readonly<Record<TriageActionSubjectV1, Readonly<{ key: string; text: string }>>> = {
   pullRequest: { key: 'plugins.triage.surface.actions.subject.pullRequest', text: 'Pull requests' },
   issue: { key: 'plugins.triage.surface.actions.subject.issue', text: 'Issues' },
   errorIssue: { key: 'plugins.triage.surface.actions.subject.errorIssue', text: 'Error groups' },
   other: { key: 'plugins.triage.surface.actions.subject.other', text: 'Everything else' },
   deploymentReceipt: { key: 'plugins.triage.surface.actions.subject.deploymentReceipt', text: 'Deploys' },
   deploymentEnvironment: { key: 'plugins.triage.surface.actions.subject.deploymentEnvironment', text: 'Environments' },
+  workflowRun: { key: 'plugins.triage.surface.actions.subject.workflowRun', text: 'Workflow Runs' },
 };
 
 const WORKSPACE_LABELS: Readonly<Record<string, Readonly<{ key: string; text: string }>>> = {

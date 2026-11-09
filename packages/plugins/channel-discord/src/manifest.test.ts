@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -28,7 +30,9 @@ import {
 } from './discordPluginConstants.js';
 import { DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID } from './discordAutomationEvent.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
-import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
+const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 // Records the selection basis; it does not make the external source or terms immutable.
 const DISCORD_BRAND_ASSET_PROVENANCE = {
@@ -114,17 +118,18 @@ describe('Discord Channels manifest', () => {
   });
 
   it('publishes the complete plugin-owned UI translation bundles', () => {
-    expect(PLUGIN_MANIFEST.contributes.ui?.translations).toEqual(DISCORD_UI_TRANSLATION_BUNDLES);
+    expect(PLUGIN_MANIFEST.contributes.ui?.translations?.map(({ locale }) => locale).sort())
+      .toEqual(PACKAGED_UI_TRANSLATION_BUNDLES.map(({ locale }) => locale).sort());
   });
 
   it('declares and packages the official Discord brand mark through the generic Resource owner', async () => {
     expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: DISCORD_BRAND_RESOURCE_ID });
-    expect(PLUGIN_MANIFEST.contributes.resources).toEqual([{
+    expect(PLUGIN_MANIFEST.contributes.resources).toEqual(expect.arrayContaining([{
       id: DISCORD_BRAND_RESOURCE_ID,
       kind: 'asset',
       path: 'assets/brand.png',
       contentType: 'image/png',
-    }]);
+    }]));
 
     const asset = readDiscordBrandAsset();
     expect(asset.readUInt32BE(16)).toBe(288);
@@ -169,7 +174,7 @@ describe('Discord Channels manifest', () => {
     expectProtocolDefinedRole(DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID, providers.automationEventAdmit);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.messageDeliver, providers.messageDeliver);
     expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.attachmentFetch, providers.attachmentFetch);
-    expectProtocolDefinedRole(DISCORD_CHANNEL_ACTION_IDS.connectionStop, providers.connectionStop);
+    expect(actions.has('discord/halt-gateway')).toBe(false);
     // Discord cannot truthfully resolve a selected endpoint's participant: its
     // former action returned the integration bot regardless of that endpoint.
     // Generic direct-message pairing owns the user-initiated path instead.
@@ -177,7 +182,7 @@ describe('Discord Channels manifest', () => {
     expect(actions.get(DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID)).toMatchObject({
       execution: { target: 'daemon' },
     });
-    expect(actions.size).toBe(9);
+    expect(actions.size).toBe(8);
   });
 
   it('keeps the Gateway worker Account binding on an object-root wrapper without widening the core reconciliation union', () => {

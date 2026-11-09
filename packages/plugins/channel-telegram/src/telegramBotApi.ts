@@ -1,4 +1,4 @@
-import { countConversationTextUnits, rethrowConversationProviderLifecycleFailureV1, type ConversationProviderFailureV1 } from '@happier-dev/channels-protocol/v1';
+import { rethrowConversationProviderLifecycleFailureV1, type ConversationProviderFailureV1 } from '@happier-dev/channels-protocol/v1';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 const TELEGRAM_BOT_API_BASE_URL = 'https://api.telegram.org';
@@ -7,16 +7,17 @@ const TELEGRAM_BOT_API_BASE_URL = 'https://api.telegram.org';
 export const TELEGRAM_MAX_DOWNLOAD_FILE_BYTES = 20 * 1024 * 1024;
 const TELEGRAM_MAX_UPDATE_ID = 2 ** 52 - 1;
 const TELEGRAM_MAX_UPDATE_OFFSET = TELEGRAM_MAX_UPDATE_ID + 1;
-const TELEGRAM_API_REQUEST_TIMEOUT_MS = 15_000;
+// Native getUpdates page bound: https://core.telegram.org/bots/api#getupdates
+export const TELEGRAM_MAX_GET_UPDATES_LIMIT = 100;
+// Telegram's server clamps getUpdates timeout to LONG_POLL_MAX_TIMEOUT.
+// https://github.com/tdlib/telegram-bot-api/blob/master/telegram-bot-api/Client.h
 export const TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS = 50;
-const TELEGRAM_LONG_POLL_DEADLINE_OVERHEAD_MS = 10_000;
 /**
  * Telegram's native per-message ceiling. Setup publishes it to the Channels
- * chunking owner, and the Bot API adapter rejects an oversized single message.
+ * chunking owner.
  */
 export const TELEGRAM_MAX_MESSAGE_CODE_POINTS = 4_096;
-const TELEGRAM_BOT_USERNAME = /^[A-Za-z0-9_]{5,32}$/;
-const NORMALIZED_CROCKFORD_TOKEN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+export const TELEGRAM_MAX_TOPIC_NAME_CODE_POINTS = 128;
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 type TelegramHttp = Pick<HttpService, 'request'>;
@@ -61,7 +62,6 @@ export type TelegramIncomingMessage = Readonly<{
   isTopicMessage: boolean;
   senderId: string | null;
   senderIsBot: boolean;
-  senderIsChat: boolean;
   text: string | null;
   textEntities: readonly TelegramTextEntity[];
   attachments: readonly TelegramIncomingAttachment[];
@@ -117,6 +117,10 @@ export type TelegramSendMessageResult =
     }>
   | Readonly<{ kind: 'outcomeUnknown' }>;
 
+export type TelegramCreateForumTopicResult =
+  | Readonly<{ kind: 'created'; messageThreadId: string }>
+  | Exclude<TelegramSendMessageResult, { kind: 'sent' }>;
+
 /**
  * A webhook deletion is externally observable. A response loss or a Telegram
  * 5xx cannot prove that the webhook remained installed, so callers must
@@ -128,6 +132,7 @@ export type TelegramDeleteWebhookResult =
   | Readonly<{ kind: 'outcomeUnknown' }>;
 
 export type TelegramBotApi = Readonly<{
+  createForumTopic(input: Readonly<{ chatId: string; name: string }>, options?: TelegramRequestOptions): Promise<TelegramCreateForumTopicResult>;
   downloadFile(input: Readonly<{ fileId: string; byteLength?: number }>, options?: TelegramRequestOptions): Promise<
     Readonly<{ kind: 'downloaded'; bytes: Uint8Array }> | ConversationProviderFailureV1
   >;
@@ -227,7 +232,7 @@ function mapReadFailure(envelope: Exclude<ReturnType<typeof parseBotApiEnvelope>
   return { kind: 'notReady', reason: 'network', diagnostic: envelope.description };
 }
 
-function mapSendFailure(envelope: Exclude<ReturnType<typeof parseBotApiEnvelope>, null | { ok: true }>): TelegramSendMessageResult {
+function mapSendFailure(envelope: Exclude<ReturnType<typeof parseBotApiEnvelope>, null | { ok: true }>): Exclude<TelegramSendMessageResult, { kind: 'sent' }> {
   if (envelope.errorCode === 429) {
     return envelope.retryAfterMs === undefined
       ? { kind: 'notSent', retry: 'safe', diagnostic: envelope.description }
@@ -359,7 +364,6 @@ function parseIncomingMessage(value: unknown): TelegramIncomingMessage | null {
     isTopicMessage: value.is_topic_message === true,
     senderId: senderId === null ? null : String(senderId),
     senderIsBot: sender?.isBot === true,
-    senderIsChat,
     text,
     textEntities,
     attachments: parseIncomingAttachments(value, String(messageId)),
@@ -390,18 +394,6 @@ function jsonBody(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
-export function createTelegramPairingDeepLink(input: Readonly<{
-  username: string;
-  token: string;
-}>): string | null {
-  const username = input.username.trim();
-  const token = input.token.trim();
-  if (!TELEGRAM_BOT_USERNAME.test(username) || !/bot$/i.test(username) || !NORMALIZED_CROCKFORD_TOKEN.test(token)) {
-    return null;
-  }
-  return `https://t.me/${username}?start=${token}`;
-}
-
 export function createTelegramBotApi(input: Readonly<{
   token: string;
   http: TelegramHttp;
@@ -414,7 +406,6 @@ export function createTelegramBotApi(input: Readonly<{
     method: string,
     body?: unknown,
     options?: TelegramRequestOptions,
-    timeoutMs = TELEGRAM_API_REQUEST_TIMEOUT_MS,
   ): Promise<ReturnType<typeof parseBotApiEnvelope>> {
     try {
       const response = await input.http.request({
@@ -422,7 +413,6 @@ export function createTelegramBotApi(input: Readonly<{
         method: 'POST',
         ...(body === undefined ? {} : { body: jsonBody(body), headers: { 'content-type': 'application/json' } }),
         redirect: 'error',
-        timeoutMs,
       }, options);
       return parseBotApiEnvelope(response.body);
     } catch (error) {
@@ -555,7 +545,7 @@ export function createTelegramBotApi(input: Readonly<{
         offset === null
         || !Number.isInteger(requestInput.limit)
         || requestInput.limit < 1
-        || requestInput.limit > 100
+        || requestInput.limit > TELEGRAM_MAX_GET_UPDATES_LIMIT
         || !Number.isInteger(requestInput.timeoutSeconds)
         || requestInput.timeoutSeconds < 0
         || requestInput.timeoutSeconds > TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS
@@ -567,10 +557,7 @@ export function createTelegramBotApi(input: Readonly<{
         limit: requestInput.limit,
         timeout: requestInput.timeoutSeconds,
         allowed_updates: ['message', 'edited_message'],
-      }, options, Math.max(
-        TELEGRAM_API_REQUEST_TIMEOUT_MS,
-        requestInput.timeoutSeconds * 1_000 + TELEGRAM_LONG_POLL_DEADLINE_OVERHEAD_MS,
-      ));
+      }, options);
       if (!envelope) return { kind: 'notReady', reason: 'network' };
       // Telegram serves one exclusive getUpdates consumer. A 409 here is the
       // restart-overlap conflict that Channels' bounded poll-failure budget
@@ -605,9 +592,23 @@ export function createTelegramBotApi(input: Readonly<{
       };
     },
 
+    async createForumTopic(topicInput, options) {
+      // Native Bot API topic-name boundary, not a Channels content limit.
+      if (!topicInput.chatId || !topicInput.name.trim() || [...topicInput.name].length > TELEGRAM_MAX_TOPIC_NAME_CODE_POINTS) {
+        return { kind: 'notSent', retry: 'never', diagnostic: 'Invalid Telegram topic name.' };
+      }
+      const envelope = await request('createForumTopic', { chat_id: topicInput.chatId, name: topicInput.name }, options);
+      if (!envelope) return { kind: 'outcomeUnknown' };
+      if (!envelope.ok) return mapSendFailure(envelope);
+      const result = isRecord(envelope.result) ? envelope.result : null;
+      const messageThreadId = result ? readSafeInteger(result.message_thread_id) : null;
+      return messageThreadId !== null && messageThreadId > 0
+        ? { kind: 'created', messageThreadId: String(messageThreadId) }
+        : { kind: 'outcomeUnknown' };
+    },
+
     async sendMessage(sendInput, options) {
-      if (!sendInput.chatId || !sendInput.text
-        || countConversationTextUnits(sendInput.text, 'unicodeCodePoints') > TELEGRAM_MAX_MESSAGE_CODE_POINTS) {
+      if (!sendInput.chatId || !sendInput.text) {
         return { kind: 'notSent', retry: 'never', diagnostic: 'Invalid Telegram message.' };
       }
       const replyToMessageId = sendInput.replyToMessageId ? parseOffset(sendInput.replyToMessageId) : null;

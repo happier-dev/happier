@@ -248,8 +248,9 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
   }, [canOpenSurface, hostApi, text]);
 
   const refreshPluginList = React.useCallback((afterReload = false): Promise<void> => {
-    // Pending prerequisites defer the read; settled refusals use the Action's existing error contract.
-    if (readiness.pending) return Promise.resolve();
+    // Pending or unready prerequisites defer the read; admission (a readiness revision) starts it.
+    // Settled refusals use the Action's existing error contract.
+    if (readiness.pending || readiness.ready === false) return Promise.resolve();
     if (inventoryRead.current && !afterReload) return inventoryRead.current;
     if (!hostApi) {
       setError({ kind: 'inventory', code: 'host_api_unavailable',
@@ -262,7 +263,8 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
     // Only that current read may publish inventory, errors or loading state.
     const read = Promise.resolve().then(async () => {
       try {
-        const result = await hostApi.executeAction('plugins.list', {});
+        // The list shows identity, state and diagnostics only, so it asks for the summary projection.
+        const result = await hostApi.executeAction('plugins.list', { projection: 'summary' });
         if (inventoryRead.current !== read) return;
         const inventory = readPluginsListResult(result);
         if (inventory.ok) {
@@ -284,7 +286,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
     });
     inventoryRead.current = read;
     return read;
-  }, [hostApi, readiness.pending, text]);
+  }, [hostApi, readiness.pending, readiness.ready, text]);
 
   React.useEffect(() => {
     void refreshPluginList();

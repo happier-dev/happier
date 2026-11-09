@@ -5,10 +5,6 @@ import { DEVIN_ACP_RUNTIME_DECLARATION } from './runtimeDeclaration.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 describe('Devin declarative ACP runtime', () => {
-  it('is accepted by the host-owned ACP runtime contract', () => {
-    expect(parsePluginManifest(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-  });
-
   it('launches the probed Devin ACP command through the declared system tool', () => {
     expect(DEVIN_ACP_RUNTIME_DECLARATION).toMatchObject({
       kind: 'acp',

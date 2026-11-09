@@ -83,7 +83,7 @@ export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS = {
   },
   description: {
     key: 'channels.telegram.automation.setup.description',
-    fallback: 'Pick the Telegram bot and the chat whose messages should start this Automation.',
+    fallback: 'Pick the Telegram bot and the chat whose messages should start this Workflow.',
   },
   submitLabel: {
     key: 'channels.telegram.automation.setup.submit',
@@ -209,7 +209,7 @@ export async function admitTelegramAutomationEvent(
 ): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertTelegramChannelsCoreCaller(context);
   const request = ConversationProviderAutomationEventAdmitInputV1Schema.parse(input);
-  return admitCheckpointedPluginEventObservationV1({
+  const disposition = await admitCheckpointedPluginEventObservationV1({
     eventRef: request.candidate.eventRef,
     sourceInstanceId: request.candidate.sourceInstanceId,
     sourceContractVersion: request.candidate.sourceContractVersion,
@@ -219,11 +219,12 @@ export async function admitTelegramAutomationEvent(
     observedDelta: request.observedDelta,
     payload: request.candidate.payload,
   }, context);
+  return { kind: disposition.kind };
 }
 
 export function throwTelegramAutomationSetupInvalid(): never {
   throw new PluginError({
     code: 'telegram_automation_source_input_invalid',
-    message: 'The Telegram Automation Event source input is invalid.',
+    message: 'The Telegram Workflow Event source input is invalid.',
   });
 }

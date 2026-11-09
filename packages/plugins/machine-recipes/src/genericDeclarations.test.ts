@@ -6,6 +6,22 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-
 import { installPackage } from './installPackage.js';
 import { googleChrome } from './googleChrome.js';
 import { evaluateInputPredicate } from '@happier-dev/protocol/inputs/inputPredicates';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+
+it('shows the reviewed package choice without empty editors for unrelated managers (lab R2 install)', () => {
+  const recipe = MachineRecipeV1Schema.parse({ id: 'install-package', ...installPackage });
+  const inputHints = normalizePluginActionInputHintsV2(recipe.inputHints, recipe.inputSchema);
+  const fields = (input: unknown) => resolveEffectiveInputFields({ inputHints }, input).map(field => field.path);
+  expect(fields({})).toEqual(['package.manager']);
+  expect(fields({ apt: [{ name: 'hello' }] })).toEqual(['apt']);
+  expect(fields({ package: { manager: 'apt', apt: { name: 'hello' } } })).toEqual([
+    'package.manager', 'package.apt.name', 'package.apt.version',
+  ]);
+  expect(fields({ package: { manager: 'brew', brew: { name: 'hello', kind: 'formula' } } })).toEqual([
+    'package.manager', 'package.brew.name', 'package.brew.version', 'package.brew.kind',
+  ]);
+});
 
 it('publishes exact-package software and the bot-owned browser bundle through the existing data families', () => {
   const parsed = parsePluginManifest(PLUGIN_MANIFEST);

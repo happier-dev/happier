@@ -1,6 +1,6 @@
 import {
   classifyProviderLimitEvidence,
-} from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 type RuntimeLimitCategory = ReturnType<typeof classifyProviderLimitEvidence>['category'];
 import type {

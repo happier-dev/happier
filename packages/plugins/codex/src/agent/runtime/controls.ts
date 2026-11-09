@@ -88,6 +88,16 @@ async function withControlClient<T>(
   }
 }
 
+/** Native status-only writes preserve the provider's objective, budget and counters. */
+export function setCodexGoal(
+  client: Pick<Awaited<ReturnType<typeof createCodexNativeAppServerClient>>, 'request'>,
+  threadId: string,
+  mutation: Parameters<AgentSessionGoalControl['set']>[0],
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return client.request('thread/goal/set', { threadId, ...mutation }, { signal });
+}
+
 export function createCodexGoalControl(
   goalProjection: CodexGoalProjection,
   withClient: typeof withControlClient = async (context, run, onInitialize) => {
@@ -122,7 +132,7 @@ export function createCodexGoalControl(
       try {
         const response = await withClient(context, async (client) => {
           stage = 'thread/goal/set';
-          return await client.request('thread/goal/set', { threadId, ...mutation }, { signal: context.signal });
+          return await setCodexGoal(client, threadId, mutation, context.signal);
         }, () => { stage = 'initialize'; });
         phase = 'host_publication_rejected';
         stage = 'host_publication';

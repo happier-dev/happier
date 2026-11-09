@@ -1,17 +1,19 @@
 {
-  "name": "@happier-dev/plugins-lang-markdown",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0"
+  "name": "@happier-dev/plugins-lang-markdown", "version": "0.0.0", "private": true, "type": "module",
+  "main": "./dist/index.js", "types": "./dist/index.d.ts", "license": "MIT",
+  "files": ["dist", ".happier-plugin", "THIRD_PARTY_NOTICES.md", "package.json"],
+  "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build:finite": "pnpm --silent run build",
+    "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
-  "devDependencies": {
-    "typescript": "^5.9.2"
+  "exports": {
+    ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" }
   },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only"
-    }
-  }
+  "dependencies": { "@happier-dev/plugin-sdk": "0.0.0" },
+  "devDependencies": { "typescript": "^5.9.2" }
 }

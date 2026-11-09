@@ -308,7 +308,7 @@ describe('Discord message parser', () => {
     }
   });
 
-  it('keeps only genuinely unroutable deletes out of ingress while preserving authenticated bodyless refusals', () => {
+  it('preserves authenticated bodyless refusals for unsupported messages', () => {
     expect(parseDiscordMessageDispatch({
       event: 'MESSAGE_UPDATE',
       payload: message({ edited_timestamp: '2024-01-02T03:05:05.000Z' }),
@@ -320,12 +320,6 @@ describe('Discord message parser', () => {
       occurrenceId: 'discord:message:message-1:edit:2024-01-02T03:05:05.000Z',
       message: { id: 'message-1', revision: '2024-01-02T03:05:05.000Z' },
     });
-    expect(parseDiscordMessageDispatch({
-      event: 'MESSAGE_DELETE',
-      payload: message(),
-      channel: { kind: 'shared', channelId: 'channel-1' },
-      context,
-    })).toEqual({ kind: 'notIngress', reason: 'delete' });
     expect(parseDiscordMessageDispatch({
       event: 'MESSAGE_CREATE',
       payload: message({ type: 7 }),

@@ -11,6 +11,14 @@ import {
 import { buildOpenCodeManagedLaunchEnvironment } from '../runtime/server/spawnSpec.js';
 
 describe('OpenCode permission policy', () => {
+  it('keeps explicit workspace denial above permissive permission intent', () => {
+    const config = resolveOpenCodePermissionConfig('yolo', 'deny');
+    expect(config.read).toBe('allow');
+    for (const tool of ['edit', 'write', 'patch', 'apply_patch', 'multiedit', 'bash', 'task']) {
+      expect(config[tool], tool).toBe('deny');
+    }
+    expect(resolveOpenCodePermissionConfig('yolo', 'allow').write).toBe('allow');
+  });
   it('spawns with the composed default launch environment and retains native safe-tool approval', () => {
     const env = buildOpenCodeManagedLaunchEnvironment(undefined, 'default');
     const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(process.env.OPENCODE_PERMISSION)'], { env, encoding: 'utf8' });

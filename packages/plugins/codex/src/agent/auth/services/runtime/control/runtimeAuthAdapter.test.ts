@@ -52,9 +52,8 @@ describe('Codex runtime auth adapter', () => {
     });
   });
 
-  it('returns a public runtime usage observation without writing the retired quota snapshot store', async () => {
+  it('returns a public runtime usage observation from the provider probe', async () => {
     const record = buildCodexCredential();
-    const retiredRuntimeQuotaSnapshots = { recordSnapshot: vi.fn() };
     const adapter = createCodexConnectedServiceRuntimeAuthAdapter();
 
     await expect(adapter.probeQuota({
@@ -83,7 +82,6 @@ describe('Codex runtime auth adapter', () => {
         source: 'runtimeSignal',
       },
     });
-    expect(retiredRuntimeQuotaSnapshots.recordSnapshot).not.toHaveBeenCalled();
   });
 
   it('applies the selected generation through the canonical session runtime callback', async () => {

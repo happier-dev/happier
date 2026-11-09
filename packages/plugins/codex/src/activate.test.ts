@@ -21,6 +21,7 @@ describe('activate', () => {
       'hooks',
       'managedDependencies',
       'mcp',
+      'resources',
       'settings',
       'systemTools',
       'ui',
@@ -89,6 +90,7 @@ describe('activate', () => {
           externalSessions: {
             resolveSource: expect.any(Function),
             listCandidates: expect.any(Function),
+            hydrateCandidates: expect.any(Function),
             resolveLinkIdentity: expect.any(Function),
             resolveLinkedIdentity: expect.any(Function),
             pageTranscript: expect.any(Function),
@@ -123,6 +125,7 @@ describe('activate', () => {
         CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput),
       );
       expect(Object.keys(agent?.externalSessions ?? {}).sort()).toEqual([
+        'hydrateCandidates',
         'listCandidates',
         'pageTranscript',
         'readAccounting',
@@ -153,9 +156,19 @@ describe('activate', () => {
       ]));
       const discovery = activation.registration('mcp.discoverySources', 'config');
       if (!discovery) throw new Error('Missing Codex MCP discovery registration');
+      // Native config discovery publishes detected rows, including stdio;
+      // docs/plugin-platform.md defines the detectedServers contract.
       await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
         items: [],
-        endpoints: [],
+        detectedServers: [{
+          provider: 'codex',
+          name: 'docs',
+          transport: 'stdio',
+          stdio: { command: 'codex-mcp', args: ['--project', 'docs'] },
+          envKeys: [],
+          enabled: null,
+          source: { kind: 'user', path: join(codexHome, 'config.toml') },
+        }],
         warnings: [],
       });
     } finally {

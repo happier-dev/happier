@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "批注",
+  "plugins.appContext.annotation.note": "你的备注",
+  "plugins.appContext.annotation.save": "保存备注",
+  "plugins.appContext.annotation.saved": "备注已保存",
+  "plugins.appContext.annotation.refused": "暂时无法保存此备注，内容仍保留在这里。如果你正在编辑待发送的消息，请先完成编辑。",
+  "plugins.appContext.annotation.unavailable": "此批注不可用。"
+}

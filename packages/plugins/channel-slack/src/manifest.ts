@@ -39,8 +39,8 @@ function createSlackPlugin() {
   return definePlugin({
     id: SLACK_PLUGIN_ID, version: '0.0.0', displayName: 'Slack Channels',
     description: 'Connects Slack conversations to Happier Channels.',
-    engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    activation: { events: [], configuration: { accountCollections: [{ pluginId: 'happier.channels', collectionId: 'channel-state' }] } },
     hostAccess: { required: [
       { id: 'slack-web-api', capability: 'network', reason: 'Verify Slack identities and conversations and send messages through the Web API.',
         scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://slack.com' }], methods: ['GET', 'POST'] } },
@@ -54,6 +54,12 @@ function createSlackPlugin() {
         declaration: {
           title: 'Slack bot', description: 'Bot and app-level credentials for one Slack workspace using Socket Mode.',
           authentication: { defaultModeId: 'bot-tokens', modes: [{ id: 'bot-tokens', kind: 'manual',
+            setup: {
+              url: 'https://api.slack.com/apps',
+              checklist: ['Create or select your Slack app, add the bot scopes and event subscriptions you need, and install it to your workspace.', 'Copy its Bot User OAuth Token from OAuth & Permissions.', 'Enable Socket Mode and generate an app-level token with connections:write for the same app, then paste both tokens here.'],
+              createKeyTitle: 'Open Slack apps',
+            },
+            credentialOrigin: 'authentication',
             title: 'Bot and app tokens', outcomeReconciliation: 'none',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             fields: [
@@ -62,11 +68,6 @@ function createSlackPlugin() {
               { id: 'appToken', title: 'App-level token', description: 'Generate an xapp- token with connections:write and enable Socket Mode for the same app.',
                 schema: { type: 'string', minLength: 1 }, secret: true },
             ],
-      setup: {
-              url: 'https://api.slack.com/apps',
-              checklist: ['Create or select your Slack app, add the bot scopes and event subscriptions you need, and install it to your workspace.', 'Copy its Bot User OAuth Token from OAuth & Permissions.', 'Enable Socket Mode and generate an app-level token with connections:write for the same app, then paste both tokens here.'],
-              createKeyTitle: 'Open Slack apps',
-            },
           }] },
         }, runtime: slackConnectedAccountRuntime,
       },
@@ -106,12 +107,6 @@ function createSlackPlugin() {
         inputSchema: roles.messageDeliver.declaration.input.schema.jsonSchema, resultSchema: roles.messageDeliver.declaration.resultSchema.jsonSchema,
         hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: deliverSlackMessage,
       },
-      [SLACK_CHANNEL_ACTION_IDS.connectionStop]: {
-        title: 'Stop Slack Socket Mode', description: 'Stop the exact selected Slack observer through its current supervisor.',
-        surfaces: roles.connectionStop.declaration.surfaces, dangerLevel: roles.connectionStop.declaration.dangerLevel,
-        inputSchema: roles.connectionStop.declaration.input.schema.jsonSchema, resultSchema: roles.connectionStop.declaration.resultSchema.jsonSchema,
-        run: (input, context) => current().stop(input, context),
-      },
       [SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID]: {
         title: 'Run Slack Socket Mode worker', description: 'Run one observer attempt with the exact Connected Account binding.',
         surfaces: ['plugin'], inputSchema: workerInputSchema, hostAccess: socketAccess, connectedAccountPurposeBindings: credentialBindings,
@@ -126,7 +121,7 @@ function createSlackPlugin() {
     contributesTo: { 'happier.channels': { providers: { [SLACK_CHANNEL_PROVIDER_CONTRIBUTION_ID]: protocol.contribute({ descriptor: { v: 1, displayName: 'Slack' }, operations: {
       setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), connectionTest: roles.connectionTest.bind(SLACK_CHANNEL_ACTION_IDS.connectionTest),
       endpointResolve: roles.endpointResolve.bind(SLACK_CHANNEL_ACTION_IDS.endpointResolve), principalResolve: roles.principalResolve.bind(SLACK_CHANNEL_ACTION_IDS.principalResolve),
-      messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver), connectionStop: roles.connectionStop.bind(SLACK_CHANNEL_ACTION_IDS.connectionStop),
+      messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver),
     } }) } } },
     setup() {
       if (supervisor) throw new Error('Slack Socket Mode supervisor is already active.');

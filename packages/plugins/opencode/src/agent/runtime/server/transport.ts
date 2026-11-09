@@ -12,7 +12,7 @@ import type {
 
 export type OpenCodeNativeFetch = (
   input: string | URL,
-  init?: RequestInit,
+  init?: RequestInit & Readonly<{ interactive?: true }>,
 ) => Promise<Response>;
 
 export type OpenCodeServerTransport = Readonly<{
@@ -70,6 +70,35 @@ function composeSignals(
   return AbortSignal.any(signals);
 }
 
+function toNativeResponseBody(body: ManagedServiceResponse['body']): ReadableStream<Uint8Array> | null {
+  // Hosts still return native streams. Adapt only structural/cross-realm bodies.
+  if (body === null || body instanceof ReadableStream) return body;
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          controller.close();
+          reader.releaseLock();
+        } else {
+          controller.enqueue(chunk.value);
+        }
+      } catch (error) {
+        controller.error(error);
+        reader.releaseLock();
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
 export function toNativeResponse(response: Pick<ManagedServiceResponse, 'body' | 'status' | 'statusText' | 'headers'>): Response {
   return new Response(toNativeResponseBody(response.body), {
     status: response.status,
@@ -87,6 +116,7 @@ export function createOpenCodeServerTransport(params: Readonly<{
     const signal = composeSignals(params.signal, init.signal);
     const response = await params.managedService.request({
       pathAndQuery: String(input),
+      ...(init.interactive === true ? { interactive: true } : {}),
       ...(init.method === undefined ? {} : { method: normalizeHttpMethod(init.method) }),
       ...(init.headers === undefined ? {} : { headers: headersToRecord(new Headers(init.headers)) }),
       ...(body === undefined ? {} : { body }),
@@ -123,34 +153,5 @@ export function createOpenCodeServerTransport(params: Readonly<{
   return Object.freeze({
     request,
     fetch: fetchBound,
-  });
-}
-
-function toNativeResponseBody(body: ManagedServiceResponse['body']): ReadableStream<Uint8Array> | null {
-  // Hosts still return native streams. Adapt only structural/cross-realm bodies.
-  if (body === null || body instanceof ReadableStream) return body;
-  const reader = body.getReader();
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          controller.close();
-          reader.releaseLock();
-        } else {
-          controller.enqueue(chunk.value);
-        }
-      } catch (error) {
-        controller.error(error);
-        reader.releaseLock();
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        reader.releaseLock();
-      }
-    },
   });
 }

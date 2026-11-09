@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  AgentProviderBindingMaterializationV1Schema,
-  ProviderConnectionIdSchema,
-  resolveProviderBindingCompatibilityWithFingerprintV1,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type {
   AgentProviderBindingMaterializeInput,
   AgentProviderBindingPrepareInput,
@@ -11,6 +9,9 @@ import type {
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
+import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../vercel-ai-gateway/src/provider/contribution.js';
+import { CLOUDFLARE_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../cloudflare-ai-gateway/src/provider/contribution.js';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_anthropic_gateway');
 
@@ -95,6 +96,89 @@ function managedMaterializeInput(
 }
 
 describe('Claude provider-binding adapter V1', () => {
+  it('refuses a custom-only materialization without native startup authentication', async () => {
+    const transport = { ...apiKeyTransport, destination: { kind: 'httpHeader' as const, name: 'x-private-gateway', format: 'raw' as const } };
+    const base = materializeInput();
+    await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...base,
+      binding: { ...base.binding, runtimeCredentialTransport: transport },
+      credential: { kind: 'apiKey', transport, value: 'gateway-key' },
+    })).rejects.toThrow();
+  });
+
+  it.each([
+    ['Vercel', VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION],
+    ['Cloudflare', CLOUDFLARE_AI_GATEWAY_PROVIDER_CONTRIBUTION],
+  ] as const)('selects and materializes the real %s contribution through the same owner', async (_name, contribution) => {
+    const selected = selectProviderRuntimeCredentialTransportV1({ transports: contribution.credential.transports,
+      protocol: 'anthropic', agent: PLUGIN_MANIFEST.contributes.agents[0].providerRequirements });
+    expect(selected).not.toBeNull();
+    if (!selected) throw new Error('Expected an admitted Anthropic transport');
+    const base = materializeInput();
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...base,
+      binding: { ...base.binding, runtimeCredentialTransport: selected },
+      credential: { kind: 'apiKey', transport: selected, value: 'gateway-key',
+        additionalCredentials: (selected.additionalCredentials ?? []).map(row => ({ slotId: row.slotId, value: 'upstream-key' })) },
+    });
+    const env = Object.fromEntries(output.env.map(row => [row.name, row.value]));
+    if (selected.destination.name === 'authorization') {
+      expect(env).toMatchObject({ ANTHROPIC_AUTH_TOKEN: 'gateway-key', ANTHROPIC_API_KEY: null });
+    } else {
+      expect(env).toMatchObject({ ANTHROPIC_API_KEY: 'upstream-key', ANTHROPIC_AUTH_TOKEN: null,
+        ANTHROPIC_CUSTOM_HEADERS: `${selected.destination.name}: Bearer gateway-key` });
+    }
+  });
+
+  it.each(['raw', 'bearer'] as const)('selects and materializes a generic %s custom credential header', async (format) => {
+    const transport = { ...apiKeyTransport, id: 'custom-header',
+      destination: { kind: 'httpHeader' as const, name: 'x-private-gateway', format },
+      additionalCredentials: [{ slotId: 'upstreamKey', destination: apiKeyTransport.destination }] };
+    const support = PLUGIN_MANIFEST.contributes.agents[0].providerRequirements;
+    const selected = selectProviderRuntimeCredentialTransportV1({ transports: [transport], agent: support, protocol: 'anthropic' });
+    expect(selected).toEqual(transport);
+    const input = materializeInput();
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      binding: { ...input.binding, runtimeCredentialTransport: selected },
+      credential: { kind: 'apiKey', transport, value: 'private-gateway-value',
+        additionalCredentials: [{ slotId: 'upstreamKey', value: 'upstream-key' }] },
+    });
+    expect(Object.fromEntries(output.env.map(row => [row.name, row.value]))).toMatchObject({
+      ANTHROPIC_API_KEY: 'upstream-key', ANTHROPIC_AUTH_TOKEN: null,
+      ANTHROPIC_CUSTOM_HEADERS: `x-private-gateway: ${format === 'bearer' ? 'Bearer ' : ''}private-gateway-value`,
+    });
+    expect(output.additionalRedactionValues).toContain('private-gateway-value');
+  });
+
+  it('materializes independent upstream and gateway keys and refuses missing or colliding companions', async () => {
+    const transport = { ...apiKeyTransport, id: 'two-keys',
+      destination: { kind: 'httpHeader' as const, name: 'x-gateway-token', format: 'bearer' as const },
+      additionalCredentials: [{ slotId: 'upstreamKey', destination: apiKeyTransport.destination }] };
+    const selected = selectProviderRuntimeCredentialTransportV1({ transports: [transport],
+      agent: PLUGIN_MANIFEST.contributes.agents[0].providerRequirements, protocol: 'anthropic' });
+    expect(selected).toEqual(transport);
+    const base = materializeInput();
+    const input = { ...base, binding: { ...base.binding, runtimeCredentialTransport: selected },
+      credential: { kind: 'apiKey' as const, transport, value: 'gateway-secret',
+        additionalCredentials: [{ slotId: 'upstreamKey', value: 'upstream-secret' }] } };
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(input);
+    expect(Object.fromEntries(output.env.map(row => [row.name, row.value]))).toMatchObject({
+      ANTHROPIC_API_KEY: 'upstream-secret', ANTHROPIC_AUTH_TOKEN: null,
+      ANTHROPIC_CUSTOM_HEADERS: 'x-gateway-token: Bearer gateway-secret',
+    });
+    expect(output.additionalRedactionValues).toEqual(expect.arrayContaining(['gateway-secret', 'Bearer gateway-secret', 'upstream-secret']));
+    await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      credential: { kind: 'apiKey', transport, value: 'gateway-secret' },
+    })).rejects.toThrow();
+    await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      binding: { ...input.binding, endpoint: { ...input.binding.endpoint, publicHeaders: { 'X-Gateway-Token': 'spoof' } } },
+    })).rejects.toThrow();
+    await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      credential: { ...input.credential, additionalCredentials: [{ slotId: 'upstreamKey', value: 'bad\r\nInjected: value' }] },
+    })).rejects.toThrow();
+    await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input,
+      credential: { ...input.credential, value: 'bad\nprimary' },
+    })).rejects.toThrow();
+  });
+
   it('preserves native alias environment on external Provider bindings', async () => {
     const ambient = { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'user-native-pin' };
     const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput());
@@ -141,20 +225,21 @@ describe('Claude provider-binding adapter V1', () => {
   it('declares static Anthropic support that exactly agrees with the executable adapter', () => {
     const support = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
 
-    expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion).toBe(3);
+    expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion).toBe(4);
     expect(support).toEqual({
       acceptsProtocols: ['anthropic'],
       required: { streaming: true, toolRoundTrips: true },
       credentialSupport: {
         supportsNoAuth: true,
+        supportsAdditionalCredentials: true,
+        requiredApiKeyTransports: [
+          { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+          { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+        ],
         apiKeyTransports: [
           {
             protocol: 'anthropic',
-            destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
-          },
-          {
-            protocol: 'anthropic',
-            destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] },
+            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
           },
         ],
       },
@@ -311,7 +396,7 @@ describe('Claude provider-binding adapter V1', () => {
       id: 'unsupported',
       protocols: ['anthropic'],
       uses: ['runtime'],
-      destination: { kind: 'httpHeader', name: 'authorization', format: 'raw' },
+      destination: { kind: 'httpHeader', name: 'authorization', format: { template: 'Token {secret}' } },
     } as const;
 
     await expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({

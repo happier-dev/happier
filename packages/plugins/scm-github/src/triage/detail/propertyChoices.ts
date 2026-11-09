@@ -1,5 +1,5 @@
 import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
-import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageSourceFailureV1, TriageTaskFieldChoicesV1 } from '@happier-dev/triage-protocol/v1';
 
 import { decodeGithubJsonResponse, type GithubApiClientV1 } from '../../observations/githubApiClient.js';
 import { classifyGithubResponseFailure, classifyGithubTransportFailure, isGithubSuccessStatus } from '../errors.js';
@@ -77,4 +77,32 @@ export function fitGithubPropertyChoices(
     if (isExternalActionResultWithinResponseEnvelopeLimitV1(candidate)) propertyChoices = candidate.propertyChoices;
   }
   return Object.freeze({ ...overview, propertyChoices });
+}
+
+/**
+ * The repository directory as a task's field choices, on the exact read that asked. A directory that could not be
+ * read, or that would not fit the read's Action envelope, is omitted: that field keeps typed names rather than
+ * offering a partial list as complete.
+ */
+export function fitGithubTaskFieldChoices<Observation extends object>(
+  observation: Observation,
+  choices: GithubPropertyChoicesV1,
+): Observation | (Observation & Readonly<{ taskFieldChoices: TriageTaskFieldChoicesV1 }>) {
+  const members = {
+    ...(choices.assignees.kind === 'available'
+      ? { assigneeIds: choices.assignees.choices.map(({ login }) => ({ id: login, label: login })) } : {}),
+    ...(choices.labels.kind === 'available'
+      ? { labelIds: choices.labels.choices.map(name => ({ id: name, label: name })) } : {}),
+  };
+  if (Object.keys(members).length === 0) return observation;
+  if (isExternalActionResultWithinResponseEnvelopeLimitV1({ ...observation, taskFieldChoices: members })) {
+    return Object.freeze({ ...observation, taskFieldChoices: members });
+  }
+  for (const key of ['labelIds', 'assigneeIds'] as const) {
+    const member = members[key];
+    if (member !== undefined && isExternalActionResultWithinResponseEnvelopeLimitV1({ ...observation, taskFieldChoices: { [key]: member } })) {
+      return Object.freeze({ ...observation, taskFieldChoices: { [key]: member } });
+    }
+  }
+  return observation;
 }

@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { definePlugin, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
 import type { SessionSendRequest } from '@happier-dev/plugin-sdk/sessions';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import { describe, expect, it } from 'vitest';
 
@@ -39,9 +39,10 @@ async function slackJourney(options: Readonly<{ rateLimited?: boolean; disableAf
   const admissions: UserTextRequest[] = [];
   const eventTime = Math.floor(Date.now() / 1000);
   let answer: string | undefined;
+  let answerSeq = 0;
   let core: Awaited<ReturnType<typeof createChannelsJourneyFixture>> | undefined;
   const sockets = new Set<PluginWebSocketConnection>();
-  const http: PluginServices['http'] = {
+  const http: PluginServices['http'] = createPluginHttpFixture({
     async openWebSocket() {
       let greeted = false;
       let close!: () => void;
@@ -83,7 +84,7 @@ async function slackJourney(options: Readonly<{ rateLimited?: boolean; disableAf
       }
       throw new Error(`Unexpected Slack HTTP request ${request.method} ${request.url}`);
     },
-  };
+  });
   const roles = ConversationProvidersContributionProtocolV1.operations;
   const definition = definePlugin({ id: pluginId, version: '0.0.0', actions: {
     setup: { title: 'Native Slack setup', surfaces: roles.setup.declaration.surfaces, dangerLevel: roles.setup.declaration.dangerLevel,
@@ -137,13 +138,14 @@ async function slackJourney(options: Readonly<{ rateLimited?: boolean; disableAf
         return { status: 'accepted', localId: 'slack-input-1' };
       },
     } : null } as unknown as PluginServices['sessions'];
-    const actions = { async execute(action: string) {
+    const actions = { async execute(action: string, input: JsonValue) {
       if (action === 'session.permission.remote.pending.list') return { requests: [], truncated: false, nextCursor: null };
       if (action !== 'session.transcript.get') throw new Error(`Unexpected host Action ${action}`);
       const source = admissions[0]?.source;
-      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: answer === undefined ? 0 : 1,
-        nextCursor: answer === undefined ? '0' : '1', hasMore: false, items: answer === undefined ? [] : [{
-          kind: 'assistantText', sessionId: 'session-1', seq: 1, itemId: 'slack-answer-1', turnId: 'slack-turn-1', final: 'completed', text: answer,
+      const cursor = isChannelStateJsonRecord(input) ? Number(input.cursor ?? 0) : 0;
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: answerSeq,
+        nextCursor: String(answerSeq), hasMore: false, items: answer === undefined || answerSeq <= cursor ? [] : [{
+          kind: 'assistantText', sessionId: 'session-1', seq: answerSeq, itemId: `slack-answer-${answerSeq}`, turnId: `slack-turn-${answerSeq}`, final: 'completed', text: answer,
           consumedInputs: [{ localId: 'slack-input-1', origin: { v: 1, producer: 'pluginSession', actor: 'collaborator',
             sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: source?.sourceRef, sourceRevisionOrEpoch: source?.sourceRevisionOrEpoch } } }],
         }] };
@@ -154,14 +156,14 @@ async function slackJourney(options: Readonly<{ rateLimited?: boolean; disableAf
     await core.state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-1', targetSessionId: 'session-1',
       transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: Date.now() }), { expectedRevision: 'absent' });
     const journey = core;
-    return { ...journey, prepared, admissions, nativeMessages, consumed, answer(text: string) { answer = text; },
+    return { ...journey, prepared, admissions, nativeMessages, consumed, answer(text: string) { answer = text; answerSeq += 1; },
       async ingestSlack(eventId = 'Ev1', event: Readonly<Record<string, unknown>> = {}) {
         const normalized = mapSlackEventToIngress({ identity, channel: { id: 'C1', isIm: false, isMpim: false, isPrivate: false, isArchived: false },
           payload: { type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: eventId, event_time: eventTime,
             event: { type: 'message', user: 'U1', channel: 'C1', text: '<@UBOT> inspect this deployment',
               ts: `${eventTime}.000002`, thread_ts: rootTs, ...event } } });
         if (normalized === null) return;
-        await journey.ingest({ connectionId: 'connection-1', entry: { observation: normalized, eventCandidate: null } });
+        await journey.ingest({ connectionId: 'connection-1', authorityEpoch: 1, entry: { observation: normalized, eventCandidate: null } });
       },
       validateWrites() {
         for (const [collection, definition] of [[journey.state, CHANNEL_STATE_COLLECTION], [journey.deliveries, CHANNEL_DELIVERIES_COLLECTION]] as const) {
@@ -222,14 +224,20 @@ describe('Slack through registered Channels ingress and Session projection', () 
     } finally { await journey.dispose(); }
   });
 
-  it('keeps the accepted Slack receipt and stops later chunks when the connection is disabled', async () => {
+  it('finishes claimed Slack chunks and stops the next delivery when the connection is disabled', async () => {
     const journey = await slackJourney({ disableAfterFirstChunk: true });
     try {
-      await journey.ingestSlack(); journey.answer('x'.repeat(journey.prepared.outboundTextLimit!.maximum + 1));
+      const text = 'x'.repeat(journey.prepared.outboundTextLimit!.maximum + 1);
+      await journey.ingestSlack(); journey.answer(text);
       await journey.outward();
-      expect(journey.nativeMessages).toHaveLength(1);
+      expect(journey.nativeMessages).toHaveLength(2);
+      expect(journey.nativeMessages.map(message => message.text).join('')).toBe(text);
       const custody = [...journey.deliveries.rows.values()].find(row => row.value['record-kind'] === 'outward-delivery');
-      expect(custody?.value.payload).toMatchObject({ state: 'partial', providerMessageIds: ['1700000001.000001'] });
+      expect(custody?.value.payload).toMatchObject({ state: 'delivered', providerMessageIds: ['1700000001.000001', '1700000001.000002'] });
+      expect((await journey.state.get('connection-1'))?.value.payload).toMatchObject({ enabled: false });
+      journey.answer('A distinct later reply must not be sent after disablement.');
+      await journey.outward();
+      expect(journey.nativeMessages).toHaveLength(2);
       journey.validateWrites();
     } finally { await journey.dispose(); }
   });

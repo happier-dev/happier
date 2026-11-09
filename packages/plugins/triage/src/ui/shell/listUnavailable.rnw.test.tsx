@@ -7,6 +7,8 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderSurface as renderShellSurface } from '../surface.js';
+import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
+import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 
@@ -23,7 +25,7 @@ import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralShar
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountUnreadableShell(failure: PluginError): Promise<PluginUiTestkit> {
+async function mountUnreadableShell(failure: PluginError, durableStateReachable = false): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -41,9 +43,13 @@ async function mountUnreadableShell(failure: PluginError): Promise<PluginUiTestk
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                // Every read fails the same way: the list, the pins and the
-                // saved views, so nothing about the reader is reachable.
-                executeAction: async () => { throw failure; },
+                // The aggregate read fails; optionally keep the independent
+                // durable pins and saved views reachable.
+                executeAction: async ({ action }) => {
+                    if (durableStateReachable && action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) return { v: 1, views: [] };
+                    if (durableStateReachable && action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
+                    throw failure;
+                },
                 replacePageLocation: ({ subPath }) => subPath,
             },
         });
@@ -60,8 +66,30 @@ afterEach(async () => {
 });
 
 describe('a PRs & Issues page that could not read anything', () => {
+    it('discloses the failed list read Code and Request ID while pins remain readable', async () => {
+        const shell = await mountUnreadableShell(new PluginError({
+            code: 'timeout', retryable: false, details: { requestId: 'list-read-r120' },
+            diagnostics: [{ code: 'plugin_ui_action_outcome_unknown', severity: 'error' }],
+        }), true);
+
+        await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
+        await expect(shell.queryByText('list-read-r120')).resolves.toBeUndefined();
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Details' }));
+        });
+        await expect(shell.getByText('Code')).resolves.toBeDefined();
+        await expect(shell.getByText('timeout plugin_ui_action_outcome_unknown')).resolves.toBeDefined();
+        await expect(shell.getByText('Request ID')).resolves.toBeDefined();
+        await expect(shell.getByText('list-read-r120')).resolves.toBeDefined();
+        const band = [...document.querySelectorAll('[role="status"]')].find(node =>
+            node.textContent?.includes('The list could not be read'))?.parentElement;
+        expect(band?.textContent).toContain('Manage sources');
+        // Details opens beneath the line, not in its action slot.
+        expect(band?.parentElement?.textContent).toContain('Details');
+    });
+
     it('keeps its toolbar and says what failed in words, with the code behind Details', async () => {
-        const shell = await mountUnreadableShell(new PluginError({ code: 'unavailable', retryable: true }));
+        const shell = await mountUnreadableShell(new PluginError({ code: 'unavailable', retryable: true }), true);
 
         await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
         // The page is still the page: its name leads the same one header (lab `merged-offline`), and its lens and
@@ -74,6 +102,12 @@ describe('a PRs & Issues page that could not read anything', () => {
         await expect(shell.getByRole('button', { name: 'Details' })).resolves.toBeDefined();
         // A retry can work, so the state offers one beside the message.
         await expect(shell.getByRole('button', { name: 'Try again' })).resolves.toBeDefined();
+        // DETAIL-FOLLOWUP: diagnostics and recovery belong to this one failure line.
+        const lines = [...document.querySelectorAll('[role="status"]')].filter(node =>
+            node.textContent?.includes('The list could not be read'));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]?.parentElement?.textContent).toContain('Try again');
+        expect(lines[0]?.parentElement?.parentElement?.textContent).toContain('Details');
     });
 
     it('offers no retry the host says cannot succeed', async () => {

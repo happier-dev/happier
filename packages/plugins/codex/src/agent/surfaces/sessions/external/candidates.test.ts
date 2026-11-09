@@ -12,7 +12,6 @@ import {
   decodeCodexExternalSessionIndexCursor,
   encodeCodexExternalSessionCandidateCursor,
   encodeCodexExternalSessionIndexCursor,
-  resolveCodexExternalSessionAppServerListBudgetMs,
 } from './candidates.js';
 
 function jsonl(value: unknown): string {
@@ -21,6 +20,7 @@ function jsonl(value: unknown): string {
 
 // `fast` must select the bounded rollout path without invoking app-server I/O.
 const fastModeExec = {} as ExecService;
+const unicodeTitleWithEscapedText = `${'界'.repeat(5_000)}${'"'.repeat(4_990)} 尾`;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -146,20 +146,14 @@ describe('Codex external-session candidate helpers', () => {
     }))).toBeNull();
   });
 
-  it('resolves app-server listing budget from Codex external-session env', () => {
-    expect(resolveCodexExternalSessionAppServerListBudgetMs({})).toBe(3_000);
-    expect(resolveCodexExternalSessionAppServerListBudgetMs({
-      HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '1250',
-    })).toBe(1250);
-    expect(resolveCodexExternalSessionAppServerListBudgetMs({
-      HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '-1',
-    })).toBe(3_000);
-  });
-
   it.each([
-    ['session_title_set', 'Plain Alias Codex Title'],
-    ['mcp__happy__session_title_set', 'MCP Alias Codex Title'],
-  ])('hydrates rollout-backed titles directly from the %s alias', async (toolName, expectedTitle) => {
+    ['session_title_set', 'Plain Alias Codex Title', 'Plain Alias Codex Title'],
+    ['mcp__happy__session_title_set', 'MCP Alias Codex Title', 'MCP Alias Codex Title'],
+    ['session_title_set', `${'Long candidate title '.repeat(8)}searchable title suffix`, `${'Long candidate title '.repeat(8)}searchable title suffix`],
+    ['session_title_set', 'x '.repeat(5_001), `${'x '.repeat(4_998)}x...`],
+    ['session_title_set', `${'x '.repeat(4_998)}😀suffix`, `${'x '.repeat(4_998)}...`],
+    ['session_title_set', unicodeTitleWithEscapedText, unicodeTitleWithEscapedText],
+  ])('hydrates rollout-backed titles directly from the %s alias', async (toolName, sourceTitle, expectedTitle) => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-24T00:00:00.000Z'));
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-external-title-'));
     try {
@@ -188,7 +182,7 @@ describe('Codex external-session candidate helpers', () => {
               type: 'function_call',
               call_id: `title-call-${remoteSessionId}`,
               name: toolName,
-              arguments: JSON.stringify({ title: expectedTitle }),
+              arguments: JSON.stringify({ title: sourceTitle }),
             },
           }),
         ].join(''),
@@ -232,6 +226,12 @@ describe('Codex external-session candidate helpers', () => {
           cwd: '/repo/codex',
         },
       });
+
+      const titleSearch = await listCodexSessionCandidates({
+        ...request,
+        searchTerm: expectedTitle.replace(/\.{3}$/, '').slice(-22),
+      });
+      expect(titleSearch.candidates.map((candidate) => candidate.remoteSessionId)).toContain(remoteSessionId);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

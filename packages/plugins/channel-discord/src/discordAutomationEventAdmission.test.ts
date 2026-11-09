@@ -1,4 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { ConversationProviderAutomationEventAdmitResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { admitSessionSocketPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -92,6 +94,37 @@ function createContext(
 }
 
 describe('Discord Automation Event admission bridge', () => {
+  it.each([
+    { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+    { kind: 'rejoined', runId: 'run-1', checkpointSafe: true },
+    { kind: 'skipped', reason: 'filtered', checkpointSafe: true },
+  ] as const)('projects $kind SDK admission metadata onto the closed Channels wire result', async result => {
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') return {
+        kind: 'page', definitions: [sourceDefinition()], nextCursor: null, revision: '7',
+      };
+      if (actionId === 'automation.event.admit') return { results: [result] };
+      if (actionId === 'automation.event.source.status.report') return {};
+      throw new Error(`unexpected ${actionId}`);
+    });
+    const request = admissionInput();
+    const invocation = createContext(execute);
+    const disposition = await admitSessionSocketPluginEventObservationV1({
+      ...request.candidate,
+      occurrenceId: request.occurrenceId,
+      occurredAt: request.occurredAt,
+      observationReceivedAt: request.observationReceivedAt,
+      observedDelta: 1,
+    }, invocation);
+    expect(disposition).toMatchObject({ kind: 'checkpointSafe', admissions: [expect.objectContaining({ result })] });
+    expect(ConversationProviderAutomationEventAdmitResultV1Schema.safeParse(disposition).success).toBe(false);
+
+    const wireResult = await admitDiscordAutomationEvent(request, invocation);
+
+    expect(ConversationProviderAutomationEventAdmitResultV1Schema.parse(wireResult)).toEqual({ kind: 'checkpointSafe' });
+    expect(wireResult).toEqual({ kind: 'checkpointSafe' });
+  });
+
   it('admits a frozen Channels Event obligation to the exact current source', async () => {
     const admitted: unknown[] = [];
     const statuses: unknown[] = [];

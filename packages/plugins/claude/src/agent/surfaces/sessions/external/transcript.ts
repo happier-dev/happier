@@ -132,7 +132,7 @@ function projectForwardLine(params: Parameters<typeof projectClaudeJsonlLineReco
         const workflowEvidence = parseClaudeWorkflowFacts(params.lineValue).length > 0;
         // Replay and live share the runtime's correlation authority for task results and reports.
         const runtimeDecidesTask = runtimeDecidesPeer || isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(params.lineValue));
-        if (runtimeDecidesTask || userPrompt || classification.rawType === 'queue-operation' || (classification.rawType === 'attachment' && queuedCommand)) {
+        if (runtimeDecidesTask || userPrompt || classification.rawType === 'queue-operation' || (classification.rawType === 'attachment' && (queuedCommand || classification.credentialOrganization !== undefined))) {
             const parsed = nativeObservationContent.safeParse(projectClaudeNativeTranscriptObservation(params.lineValue));
             if (!parsed.success) return { disposition: 'unsupported', items: [] };
             return {
@@ -169,7 +169,7 @@ function projectHistoricalLine(
     if (selected) return projectForwardLine(params, projection, undefined, true, includeMediaReferences);
     if (projection !== 'terminal') return { disposition: 'known_non_transcript', items: [] };
     const classification = classifyClaudeNativeTranscriptRow(params.lineValue);
-    if (classification.sidechain || parseClaudeWorkflowFacts(params.lineValue).length === 0) {
+    if (classification.sidechain || (classification.credentialOrganization === undefined && parseClaudeWorkflowFacts(params.lineValue).length === 0)) {
         return { disposition: 'known_non_transcript', items: [] };
     }
     const parsed = nativeObservationContent.safeParse(projectClaudeNativeTranscriptObservation(params.lineValue));

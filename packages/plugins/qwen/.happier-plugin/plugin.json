@@ -61,6 +61,9 @@
           "acpRegistryIds": [
             "qwen-code"
           ],
+          "agentCliSystemTool": {
+            "toolId": "qwen-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -196,10 +199,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -242,6 +246,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -252,7 +257,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],

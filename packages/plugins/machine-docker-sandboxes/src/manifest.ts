@@ -1,8 +1,10 @@
 import { Buffer } from 'node:buffer';
-import { machinePresentationLabel, machineCheckPresentation, DOCKER_SANDBOXES_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
+  observeMachineProvisionerNativeRead,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
@@ -18,12 +20,15 @@ function errorCode(error: unknown) {
   return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
     ? error.code : 'docker_sandbox_unavailable';
 }
+class MissingDockerSandboxesDependency extends Error {
+  readonly code = 'docker_sandbox_unavailable';
+}
 async function provider(context: PluginInvocationContext) {
   // A system declaration uses the shared dependency owner. No vendor download,
   // license grant, install or native daemon effect occurs during discovery.
   const status = await context.services.managedServices.dependencies.status(DOCKER_SANDBOXES_DEPENDENCY_ID, { signal: context.signal });
   if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
-    throw Object.assign(new Error('native Docker Sandboxes executable unavailable'), { code: 'docker_sandbox_unavailable' });
+    throw new MissingDockerSandboxesDependency('native Docker Sandboxes executable unavailable');
   }
   return createDockerSandboxesProvider(context.services.exec, status.executable, context.invokedAtMs, context.signal);
 }
@@ -33,6 +38,7 @@ function privateBytes(value: string) {
 
 export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
   title: 'Docker Sandboxes', icon: 'cube', resourceKind: 'docker-sandbox', schemaVersion: 1,
+  enrollmentRole: 'sandbox',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxName',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }],
@@ -46,25 +52,70 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
   id: DOCKER_SANDBOXES_PLUGIN_ID, version: '0.0.0', displayName: 'Docker Sandbox Machines',
   // The provider's own mark beside its name in Machines: Docker's mark from Simple Icons 13.21.0 (CC0-1.0), brand blue #2496ED.
   brand: { iconResourceId: 'brand-icon' },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
-  description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
+  description: 'Native local Docker Sandboxes with retained names and private bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate the exact reviewed Docker Sandbox.',
     scope: { executables: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }] },
   }], optional: [] },
   managedDependencies: { [DOCKER_SANDBOXES_DEPENDENCY_ID]: {
     id: DOCKER_SANDBOXES_DEPENDENCY_ID, title: 'Docker Sandboxes', executable: 'sbx',
-    description: 'User-installed sbx v0.46.0 under the Docker subscription license.',
+    description: 'User-installed sbx under the Docker subscription license.',
     sources: [{ kind: 'system', executableNames: ['sbx'], versionArguments: ['version'] }],
   } },
-  ui: { translations: DOCKER_SANDBOXES_UI_TRANSLATION_BUNDLES },
+  ui: {
+    // The one Machine-page placement (plan 30 §3.7 `appPage × machine`): the sandboxes this Machine runs.
+    views: [{
+      id: 'sandboxes', container: 'appPage', target: { kind: 'machine' }, renderer: 'sandboxes-machine-native',
+      title: { key: 'machineDocker.page.title', fallback: 'Sandboxes' },
+      description: { key: 'machineDocker.page.description', fallback: 'Isolated machines for agent sessions on this machine.' },
+      instancePolicy: 'singleton',
+    }],
+    renderers: [{ id: 'sandboxes-machine-native', kind: 'reactNative', artifact: 'docker-sandboxes-machine-native', requiredHostMethods: ['executeAction'] }],
+    translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER },
   actions: {
+    'install-docs': { title: { key: 'machineDocker.page.getApp', fallback: 'Get Docker Sandboxes' },
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
+      execution: { target: 'client', client: { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate' },
+        platforms: ['web', 'ios', 'android'] },
+      inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+      resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]),
+    },
     check: { ...actionDefaults, title: 'Check Docker Sandboxes', dangerLevel: 'safe',
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
-        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error) }); }
+        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error),
+          ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
+            id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
+            repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-docs' }, input: {} } }] } : {}),
+        }); }
       },
     },
     options: { ...actionDefaults, title: 'Discover Docker Sandbox templates', dangerLevel: 'safe',
@@ -97,7 +148,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).inspect(input.resource); }
-        catch (error) { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: errorCode(error) }; }
+        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
       },
     },
     power: { ...actionDefaults, title: 'Change Docker Sandbox power', dangerLevel: 'writesLocal',

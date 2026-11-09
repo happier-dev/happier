@@ -1,8 +1,8 @@
-import { ProviderContributionV1Schema, type ProviderContribution } from '@happier-dev/plugin-sdk/providers';
+import type { ProviderContribution } from '@happier-dev/plugin-sdk/providers';
 
 import { ANTHROPIC_STATIC_MODELS } from './catalog.js';
 
-export const ANTHROPIC_PROVIDER_CONTRIBUTION: ProviderContribution = ProviderContributionV1Schema.parse({
+export const ANTHROPIC_PROVIDER_CONTRIBUTION: ProviderContribution = {
   v: 1,
   id: 'anthropic',
   name: 'Anthropic',
@@ -11,7 +11,7 @@ export const ANTHROPIC_PROVIDER_CONTRIBUTION: ProviderContribution = ProviderCon
   endpointTemplates: [{
     id: 'anthropic',
     protocol: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
+    baseUrl: 'https://api.anthropic.com/',
     publicHeaders: { 'anthropic-version': '2023-06-01' },
     capabilities: {
       streaming: 'supported',
@@ -36,11 +36,18 @@ export const ANTHROPIC_PROVIDER_CONTRIBUTION: ProviderContribution = ProviderCon
     source: 'static+probe',
     manualModelPolicy: 'allowed',
     membershipPolicy: 'probe-authoritative',
-    staticModels: ANTHROPIC_STATIC_MODELS,
+    staticModels: ANTHROPIC_STATIC_MODELS.map(({ modelOptions, ...model }) => ({
+      ...model,
+      ...(modelOptions ? { modelOptions: modelOptions.map(({ options, overridesWhenOn, ...option }) => ({
+        ...option,
+        ...(options ? { options: [...options] } : {}),
+        ...(overridesWhenOn ? { overridesWhenOn: { ...overridesWhenOn, optionIds: [...overridesWhenOn.optionIds] } } : {}),
+      })) } : {}),
+    })),
     probes: [{
       endpointTemplateId: 'anthropic',
       path: '/v1/models?limit=1000',
       parser: 'anthropic-models',
     }],
   },
-});
+};

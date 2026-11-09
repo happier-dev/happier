@@ -9,7 +9,7 @@ import {
     isAskUserQuestionToolName,
     normalizeAskUserQuestionInputForPublication,
     normalizeAskUserQuestionAnswers,
-    buildNativeAskUserQuestionAnswersForClaude,
+    buildAskUserQuestionAnswersForClaude,
 } from './askUserQuestion.js';
 
 export const CLAUDE_NATIVE_QUESTION_REQUEST_SOURCE = 'claude_native_question';
@@ -58,7 +58,7 @@ function resolveAllowedToolInput(
     if (!isAskUserQuestionToolName(toolName)) return baseInput;
 
     const answers = result.answers && Array.isArray(normalizedInput.questions)
-        ? buildNativeAskUserQuestionAnswersForClaude(normalizedInput.questions, result.answers)
+        ? buildAskUserQuestionAnswersForClaude(normalizedInput.questions, result.answers, 'hook')
         : normalizeAskUserQuestionAnswers(result.answers);
     return answers ? { ...baseInput, answers } : baseInput;
 }

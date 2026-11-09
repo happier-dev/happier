@@ -104,7 +104,7 @@ async function fixture(definition: ProviderConformanceDefinition, options: { rou
       births.push(value);
       return { type: 'success', disposition: 'created', sessionId, attestedContext: request.attestedContext,
         executionTarget: { serverId: 'conformance-server', machineId: 'conformance-machine' },
-        organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+        organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
     }
     if (action === 'session.permission.remote.pending.list') return { requests: [], truncated: false };
     if (action !== 'session.transcript.get') throw new Error(`Unexpected host Action ${action}`);
@@ -135,12 +135,21 @@ async function fixture(definition: ProviderConformanceDefinition, options: { rou
   } catch (error) { await journey.dispose(); await adapter.dispose(); throw error; }
   return { adapter, journey, admissions, births,
     receive: (message: ProviderConformanceMessage) => adapter.receive(journey, message),
-    async answer(text: string) {
-      const user = [...transcript].reverse().find(item => item.kind === 'userText');
+    async answer(text: string, inputIndex?: number) {
+      const users = transcript.filter(item => item.kind === 'userText');
+      const user = inputIndex === undefined ? users.at(-1) : users[inputIndex];
       if (!user || user.kind !== 'userText') throw new Error('An answer requires admitted input');
-      transcript.push({ kind: 'assistantText', sessionId, seq: transcript.length + 1, itemId: 'conformance-answer',
-        turnId: 'conformance-turn', final: 'completed', text, consumedInputs: [{ localId: user.localId, origin: user.origin }] });
+      const seq = transcript.length + 1;
+      transcript.push({ kind: 'assistantText', sessionId, seq, itemId: `conformance-answer-${seq}`,
+        turnId: `conformance-turn-${user.localId}`, final: 'completed', text, consumedInputs: [{ localId: user.localId, origin: user.origin }] });
       await journey.outward();
+    },
+    async pause() {
+      const row = await journey.state.get('conformance-binding');
+      if (!row) throw new Error('Missing binding');
+      await journey.invoke('binding/set-enabled-v1', {
+        bindingId: row.rowId, expectedRevision: row.revision, enabled: false,
+      });
     },
     assertRows() {
       for (const [collection, definition] of [[journey.state, CHANNEL_STATE_COLLECTION], [journey.deliveries, CHANNEL_DELIVERIES_COLLECTION]] as const) {
@@ -244,32 +253,41 @@ export function defineProviderConformanceJourneys(definition: ProviderConformanc
       } finally { await f.dispose(); }
     });
 
-    it('stops unstarted native chunks when authority is revoked after the first accepted effect (FIX-LIVE34)', async () => {
+    it('refuses an outward send when its binding is paused before the send claim', async () => {
       const f = await fixture(definition);
       try {
         await f.receive({ id: 10, text: 'question' });
+        await f.pause();
+        await f.answer('answer after pause');
+        expect(f.adapter.sent).toEqual([]);
+        f.assertRows();
+      } finally { await f.dispose(); }
+    });
+
+    it('finishes a claimed send and observes a later pause at the next send boundary', async () => {
+      const f = await fixture(definition);
+      try {
+        await f.receive({ id: 10, text: 'first question' });
+        await f.receive({ id: 11, text: 'next question admitted before pause' });
         if (f.adapter.nativeLimit === undefined) {
-          // Email has no native text ceiling: revoke before its sole effect.
-          const row = await f.journey.state.get(String(f.adapter.connection.id));
-          if (!row) throw new Error('Missing connection');
-          await f.journey.state.put({ ...row.value, payload: { ...record(row.value.payload), enabled: false } }, { expectedRevision: row.revision });
-          await f.answer('long answer');
-          expect(f.adapter.sent).toEqual([]);
+          await f.answer('first answer', 0);
+          await f.pause();
         } else {
           if (!f.adapter.afterSend) throw new Error('Chunked adapters must expose the native acceptance boundary');
-          f.adapter.afterSend(async () => {
-            const row = await f.journey.state.get('conformance-binding');
-            if (!row) throw new Error('Missing binding');
-            await f.journey.state.put({ ...row.value, payload: { ...record(row.value.payload), enabled: false } }, { expectedRevision: row.revision });
-          });
-          await f.answer('x'.repeat(f.adapter.nativeLimit * 2 + 1));
-          expect(f.adapter.sent).toHaveLength(1);
-          expect([...f.journey.deliveries.rows.values()].map(row => row.value.payload)).toContainEqual(expect.objectContaining({ state: 'partial', providerMessageIds: expect.any(Array) }));
-          const partial = [...f.journey.deliveries.rows.values()].map(row => record(row.value.payload)).find(payload => payload.state === 'partial');
-          expect(partial?.providerMessageIds).toHaveLength(1);
-          await f.journey.outward();
-          expect(f.adapter.sent).toHaveLength(1);
+          // Owner-approved Part B5 supersedes FIX-LIVE34's per-chunk settings read.
+          // The provider fixture pauses through the real Action after its first acceptance.
+          f.adapter.afterSend(() => f.pause());
+          await f.answer('x'.repeat(f.adapter.nativeLimit * 2 + 1), 0);
         }
+        const acceptedChunks = f.adapter.nativeLimit === undefined ? 1 : 3;
+        expect(f.adapter.sent).toHaveLength(acceptedChunks);
+        const delivered = [...f.journey.deliveries.rows.values()].map(row => record(row.value.payload))
+          .find(payload => payload.state === 'delivered');
+        expect(delivered?.providerMessageIds).toHaveLength(acceptedChunks);
+        // A separate admitted turn has a distinct final item and custody identity.
+        await f.answer('next answer after pause', 1);
+        await f.journey.outward();
+        expect(f.adapter.sent).toHaveLength(acceptedChunks);
         f.assertRows();
       } finally { await f.dispose(); }
     });

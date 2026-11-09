@@ -54,7 +54,7 @@ export type DiscordInboundMessageEvidence = DiscordInboundMessageRoutingEvidence
 
 export type DiscordRoutableNonAdmissionEvidence = DiscordInboundMessageRoutingEvidence & Readonly<{
   kind: 'routableNonAdmission';
-  reason: 'messageTooLarge' | 'unsupportedContent' | 'unsupportedEdit';
+  reason: 'unsupportedContent' | 'unsupportedEdit';
 }>;
 
 export type DiscordMessageParseResult =
@@ -63,7 +63,6 @@ export type DiscordMessageParseResult =
   | Readonly<{
       kind: 'notIngress';
       reason:
-        | 'delete'
         | 'invalidPayload';
     }>;
 
@@ -284,12 +283,11 @@ function isAllowedWithoutMessageContent(
 }
 
 export function parseDiscordMessageDispatch(input: Readonly<{
-  event: 'MESSAGE_CREATE' | 'MESSAGE_UPDATE' | 'MESSAGE_DELETE';
+  event: 'MESSAGE_CREATE' | 'MESSAGE_UPDATE';
   payload: unknown;
   channel: DiscordChannelAddress;
   context: DiscordMessageParseContext;
 }>): DiscordMessageParseResult {
-  if (input.event === 'MESSAGE_DELETE') return { kind: 'notIngress', reason: 'delete' };
   if (!isRecord(input.payload)) return { kind: 'notIngress', reason: 'invalidPayload' };
 
   const payload = input.payload;

@@ -214,7 +214,7 @@ describe('registered Session PR URL attach', () => {
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'readRelations',
         credentialRef: { ...credential, accountId: 'another-account' },
         pullRequest: { repositoryId: '77', number: 12 },
-      }, { surface: 'plugin', services })).toEqual({ kind: 'relations', links: [] });
+      }, { surface: 'plugin', services })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1' }] });
       expect(await core.invokeAction('session-pull-request-binding-v1', input, {
         surface: 'mcp', services,
       })).toEqual(result);

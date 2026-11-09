@@ -1,4 +1,6 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
+import { MemoryCollection as MemoryAccountCollection } from './testkit/memoryCollection.js';
 import { ComposerControlStateV1Schema } from '@happier-dev/plugin-sdk/ui';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import { describe, expect, it, vi } from 'vitest';
@@ -18,7 +20,6 @@ import {
 } from './sessionConversationsResource.js';
 import { SESSION_INFO_RESOURCE_RUNTIME } from './sessionInfoResource.js';
 import { createConversationSessionProjectionFrontierRow } from './sessionProjection.js';
-import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
@@ -26,92 +27,7 @@ import {
 import { resourceText } from './testkit/resourceContract.js';
 import type { ConversationDeliveryCustodyState } from './deliveryCustody.js';
 
-class MemoryAccountCollection {
-  readonly rows = new Map<string, Readonly<{
-    rowId: string;
-    revision: number;
-    value: Record<string, unknown>;
-  }>>();
-
-  async get(rowId: string) {
-    return this.rows.get(rowId) ?? null;
-  }
-
-  async put(value: Record<string, unknown>, input: Readonly<{
-    expectedRevision: number | 'absent';
-  }>) {
-    const rowId = value.id;
-    if (typeof rowId !== 'string') throw new Error('row id is required');
-    const current = this.rows.get(rowId);
-    if ((input.expectedRevision === 'absent' && current !== undefined)
-      || (typeof input.expectedRevision === 'number'
-        && (current === undefined || current.revision !== input.expectedRevision))) {
-      throw new Error('conflict');
-    }
-    const row = { rowId, revision: (current?.revision ?? 0) + 1, value };
-    this.rows.set(rowId, row);
-    return row;
-  }
-
-  async query(request: Readonly<{
-    index?: string;
-    prefix?: readonly string[];
-    cursor?: string;
-    limit?: number;
-  }>) {
-    assertChannelsTestCollectionQueryLimit(request.limit);
-    const matching = [...this.rows.values()]
-      .filter((row) => {
-        if (request.index === 'by-kind') {
-          return row.value['record-kind'] === request.prefix?.[0];
-        }
-        if (request.index === 'by-owner-attention') {
-          return row.value['connection-id'] === request.prefix?.[0]
-            && row.value['binding-id'] === request.prefix?.[1];
-        }
-        if (request.index === 'by-connection-binding-v2') {
-          return row.value['connection-id'] === request.prefix?.[0]
-            && (row.value['binding-id'] ?? null) === (request.prefix?.[1] ?? null)
-            && row.value['record-kind'] === request.prefix?.[2]
-            && row.value.attention === request.prefix?.[3];
-        }
-        return true;
-      })
-      .sort((left, right) => left.rowId.localeCompare(right.rowId));
-    const start = request.cursor === undefined
-      ? 0
-      : matching.findIndex((row) => row.rowId === request.cursor) + 1;
-    const limit = request.limit ?? matching.length;
-    const rows = matching.slice(Math.max(0, start), Math.max(0, start) + limit);
-    const next = matching[Math.max(0, start) + limit];
-    return {
-      rows,
-      ...(next === undefined ? {} : { nextCursor: rows.at(-1)?.rowId }),
-      changeCursor: 1,
-    };
-  }
-}
-
-class WatchableMemoryAccountCollection extends MemoryAccountCollection {
-  private readonly listeners = new Set<() => void>();
-
-  override async put(value: Record<string, unknown>, input: Readonly<{
-    expectedRevision: number | 'absent';
-  }>) {
-    const row = await super.put(value, input);
-    for (const listener of [...this.listeners]) listener();
-    return row;
-  }
-
-  watch(_request: unknown, next: () => void) {
-    this.listeners.add(next);
-    return {
-      dispose: () => {
-        this.listeners.delete(next);
-      },
-    };
-  }
-}
+class WatchableMemoryAccountCollection extends MemoryAccountCollection {}
 
 function sessionBindingRecord(bindingId: string, sessionId: string): Record<string, unknown> {
   return {
@@ -120,6 +36,7 @@ function sessionBindingRecord(bindingId: string, sessionId: string): Record<stri
     v: 1,
     'connection-id': 'connection-1',
     'binding-id': bindingId,
+    'session-id': sessionId,
     'created-at': 1,
     'updated-at': 1,
     payload: {
@@ -163,7 +80,7 @@ function bindingDeliveryObligation(
     endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
     content: { text: `Private delivery body for ${controlId}.` },
     deliveryKey: `delivery:${controlId}`,
-    mentionPolicy: 'suppress',
+
     linkPreviewPolicy: 'suppress',
   };
 }
@@ -199,28 +116,18 @@ function accountStorageFor(state: unknown, deliveries: unknown): PluginAccountSt
 }
 
 function createWatchableCollection() {
-  const listeners = new Set<() => void>();
+  const collection = new MemoryAccountCollection();
+  const originalWatch = collection.watch.bind(collection);
   const dispose = vi.fn();
-  return {
-    watch: vi.fn((_request: unknown, next: () => void) => {
-      listeners.add(next);
-      return {
-        dispose() {
-          listeners.delete(next);
-          dispose();
-        },
-      };
+  return Object.assign(collection, {
+    watch: vi.fn((...args: Parameters<MemoryAccountCollection['watch']>) => {
+      const observation = originalWatch(...args);
+      return { dispose: () => { dispose(); observation.dispose(); } };
     }),
-    emit() {
-      for (const listener of [...listeners]) listener();
-    },
-    emitWatch(index: number) {
-      [...listeners][index]?.();
-    },
+    emit: () => collection.resetObservation(),
     dispose,
-  };
+  });
 }
-
 async function seedBoundSession(): Promise<Readonly<{
   state: MemoryAccountCollection;
   deliveries: MemoryAccountCollection;
@@ -245,11 +152,11 @@ async function readControlStates(
   deliveries: MemoryAccountCollection,
   sessionId: string,
 ): Promise<Readonly<{ chip: unknown; attention: unknown }>> {
-  const options = {
+  const options = createTestResourceInvocationContext({
     signal: new AbortController().signal,
     context: { kind: 'session' as const, sessionId },
     accountStorage: accountStorageFor(state, deliveries),
-  };
+  });
   return {
     chip: ComposerControlStateV1Schema.parse(JSON.parse(resourceText(
       await SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.read(options),
@@ -309,16 +216,16 @@ describe('Channels Session conversations Composer control state', () => {
 
   it('publishes no external conversation content, principal, or foreign Session identity', async () => {
     const { state, deliveries } = await seedBoundSession();
-    const serialized = await SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
 
     expect(resourceText(serialized)).toBe('{"visible":true,"count":1}');
   });
 
-  it('requires a host-stamped Session context and invalidates only through existing Collections', () => {
+  it('requires a host-stamped Session context and invalidates only through existing Collections', async () => {
     const state = createWatchableCollection();
     const deliveries = createWatchableCollection();
     const accountStorage = accountStorageFor(state, deliveries);
@@ -328,59 +235,66 @@ describe('Channels Session conversations Composer control state', () => {
       SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME,
       SESSION_CONVERSATIONS_ATTENTION_CONTROL_STATE_RESOURCE_RUNTIME,
     ]) {
-      expect(() => runtime.observe(invalidate, {
+      expect(() => runtime.observe(invalidate, createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'global' },
         accountStorage,
-      })).toThrow(expect.objectContaining({
+      }))).toThrow(expect.objectContaining({
         code: 'channels_session_conversations_resource_session_context_required',
       }));
     }
 
-    const observation = SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.observe(invalidate, {
+    const observation = await SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.observe(invalidate, createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage,
-    });
+    }));
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(state.watch).toHaveBeenNthCalledWith(1, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
+      index: 'by-session-kind-binding-update-v1',
+      prefix: ['session-a', CHANNEL_STATE_RECORD_KIND.binding],
       order: 'asc',
     }, expect.any(Function));
-    expect(state.watch).toHaveBeenNthCalledWith(2, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.connection],
-      order: 'asc',
-    }, expect.any(Function));
-    expect(state.watch).toHaveBeenNthCalledWith(3, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
-      order: 'asc',
-    }, expect.any(Function));
-    expect(deliveries.watch).toHaveBeenCalledWith({ kind: 'collection' }, expect.any(Function));
+    expect(state.watch).toHaveBeenCalledOnce();
+    expect(deliveries.watch).not.toHaveBeenCalled();
 
-    observation.dispose();
+    await observation.dispose();
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(4);
-    expect(state.dispose).toHaveBeenCalledTimes(3);
-    expect(deliveries.dispose).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(state.dispose).toHaveBeenCalledOnce();
+    expect(deliveries.dispose).not.toHaveBeenCalled();
   });
 
   it('refuses the Composer control state when Account storage was not admitted', async () => {
-    await expect(SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.read({
+    await expect(SESSION_CONVERSATIONS_CONTROL_STATE_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
-    })).rejects.toMatchObject({
+    }))).rejects.toMatchObject({
       code: 'channels_session_conversations_resource_account_storage_unavailable',
     });
   });
 });
 
 describe('Channels Session conversations Resource', () => {
+  it('exposes producer-set external facts using only provider and conversation display names', async () => {
+    const { state, deliveries } = await seedBoundSession();
+    const options = createTestResourceInvocationContext({
+      signal: new AbortController().signal,
+      context: { kind: 'session', sessionId: 'session-a' },
+      accountStorage: accountStorageFor(state, deliveries),
+    });
+    const result = JSON.parse(resourceText(await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(options)));
+    expect(result.externalConversations).toEqual([{
+      bindingId: 'binding-a',
+      providerPluginId: 'example.channel.provider',
+      conversationDisplayName: 'External conversation',
+    }]);
+    expect(JSON.stringify(result.externalConversations)).not.toMatch(/recipe-private|principal-private|endpoint-private|provider-connection-1|session-b/);
+  });
+
   it('selects the latest custody across every page of the retained binding index', async () => {
     const { state, deliveries } = await seedBoundSession();
     const store = createConversationOutwardDeliveryCollectionStore({
@@ -401,11 +315,11 @@ describe('Channels Session conversations Resource', () => {
         value: { ...template.value, id: rowId, 'updated-at': 200 + index },
       });
     }
-    const result = JSON.parse(resourceText(await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const result = JSON.parse(resourceText(await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    }))) as Readonly<{ lastDeliveries?: unknown }>;
+    })))) as Readonly<{ lastDeliveries?: unknown }>;
     expect(result.lastDeliveries).toEqual([{
       bindingId: 'binding-a', atMs: 200 + PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, outcome: 'pending',
     }]);
@@ -424,21 +338,21 @@ describe('Channels Session conversations Resource', () => {
     const row = deliveries.rows.get(created.record.custodyId);
     if (row === undefined) throw new Error('Expected retained collection row.');
     deliveries.rows.set(row.rowId, { ...row, value: { ...row.value, 'updated-at': 'unreadable' } });
-    await expect(SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    await expect(SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    })).rejects.toMatchObject({ code: 'channels_session_conversations_resource_delivery_row_invalid' });
+    }))).rejects.toMatchObject({ code: 'channels_session_conversations_resource_delivery_row_invalid' });
   });
 
   it('rereads the mounted list after canonical delivery custody settles', async () => {
     const { state, deliveries } = await seedBoundSession();
     let now = 100;
-    const options = {
+    const options = createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session' as const, sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    };
+    });
     const store = createConversationOutwardDeliveryCollectionStore({
       stateCollection: state as never,
       deliveriesCollection: deliveries as never,
@@ -448,7 +362,7 @@ describe('Channels Session conversations Resource', () => {
     const created = await store.ensure(bindingDeliveryObligation('binding-a', 'mounted'));
     if (created.kind !== 'created') throw new Error('Expected canonical custody.');
     let refreshed: Promise<unknown> | undefined;
-    const observation = SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(() => {
+    const observation = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(() => {
       refreshed = Promise.resolve(SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(options)).then((result) => (
         (JSON.parse(resourceText(result)) as Readonly<{ lastDeliveries?: unknown }>).lastDeliveries
       ));
@@ -461,7 +375,7 @@ describe('Channels Session conversations Resource', () => {
     });
     expect(refreshed).toBeDefined();
     await expect(refreshed).resolves.toEqual([{ bindingId: 'binding-a', atMs: 200, outcome: 'delivered' }]);
-    observation.dispose();
+    await observation.dispose();
   });
 
   it.each([
@@ -505,11 +419,11 @@ describe('Channels Session conversations Resource', () => {
         },
       });
       if (changed.kind !== 'updated') throw new Error('Expected canonical custody update.');
-      const serialized = resourceText(await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+      const serialized = resourceText(await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         signal: new AbortController().signal,
         context: { kind: 'session', sessionId: 'session-a' },
         accountStorage: accountStorageFor(state, deliveries),
-      }));
+      })));
       const projection = JSON.parse(serialized) as Readonly<{ lastDeliveries?: unknown }>;
       expect(projection.lastDeliveries).toEqual([{ bindingId: 'binding-a', atMs: 300, outcome }]);
       expect(serialized).not.toContain('Private delivery body');
@@ -520,11 +434,11 @@ describe('Channels Session conversations Resource', () => {
   it('projects the current Session conversation counts through the shared declarative grammar', async () => {
     const { state, deliveries } = await seedBoundSession();
 
-    const serialized = await SESSION_INFO_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_INFO_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
 
     expect(JSON.parse(resourceText(serialized))).toEqual({
       version: 1,
@@ -543,11 +457,11 @@ describe('Channels Session conversations Resource', () => {
   it('publishes only the bindings whose canonical target is exactly this Session', async () => {
     const { state, deliveries } = await seedBoundSession();
 
-    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
 
     expect(JSON.parse(resourceText(serialized))).toEqual({
       bindings: [{
@@ -563,6 +477,8 @@ describe('Channels Session conversations Resource', () => {
         deletionState: 'none',
       }],
       attention: [],
+      externalConversations: [{ bindingId: 'binding-a', providerPluginId: CONNECTION_AUTHORITY.providerPluginId,
+        conversationDisplayName: 'External conversation' }],
     });
     expect(resourceText(serialized)).not.toContain('session-b');
     expect(resourceText(serialized)).not.toContain('principal-private');
@@ -582,11 +498,11 @@ describe('Channels Session conversations Resource', () => {
     }), { expectedRevision: 'absent' });
     await state.put(sessionBindingRecord('binding-a', 'session-a'), { expectedRevision: 'absent' });
 
-    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
     expect((JSON.parse(resourceText(serialized)) as Readonly<{ attention: unknown }>).attention).toEqual([
       { bindingId: 'binding-a', reason: 'providerCredentialInvalid' },
     ]);
@@ -609,11 +525,11 @@ describe('Channels Session conversations Resource', () => {
       payload: { ...(paused.payload as Record<string, unknown>), enabled: false },
     }, { expectedRevision: 'absent' });
 
-    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
     expect((JSON.parse(resourceText(serialized)) as Readonly<{ attention: unknown }>).attention).toEqual([
       { bindingId: 'binding-a', reason: 'bindingDisabled' },
     ]);
@@ -638,11 +554,11 @@ describe('Channels Session conversations Resource', () => {
       now: 100,
     }), { expectedRevision: 'absent' });
 
-    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
     expect((JSON.parse(resourceText(serialized)) as Readonly<{ attention: unknown }>).attention).toEqual([
       {
         bindingId: 'binding-a',
@@ -664,56 +580,16 @@ describe('Channels Session conversations Resource', () => {
     await state.put(sessionBindingRecord('binding-long', longSessionId), { expectedRevision: 'absent' });
     await state.put(sessionBindingRecord('binding-sibling', siblingSessionId), { expectedRevision: 'absent' });
 
-    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session', sessionId: longSessionId },
       accountStorage: accountStorageFor(state, deliveries),
-    });
+    }));
     const parsed = JSON.parse(resourceText(serialized)) as Readonly<{
       bindings: readonly Readonly<{ bindingId: string }>[];
     }>;
 
     expect(parsed.bindings.map(({ bindingId }) => bindingId)).toEqual(['binding-long']);
-  });
-
-  it('invalidates the Session list when binding, connection, or delivery custody changes', () => {
-    const state = createWatchableCollection();
-    const deliveries = createWatchableCollection();
-    const invalidate = vi.fn();
-
-    const observation = SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(invalidate, {
-      signal: new AbortController().signal,
-      context: { kind: 'session', sessionId: 'session-a' },
-      accountStorage: accountStorageFor(state, deliveries),
-    });
-
-    expect(deliveries.watch).toHaveBeenCalledWith({ kind: 'collection' }, expect.any(Function));
-    expect(state.watch).toHaveBeenNthCalledWith(1, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.binding],
-      order: 'asc',
-    }, expect.any(Function));
-    expect(state.watch).toHaveBeenNthCalledWith(2, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.connection],
-      order: 'asc',
-    }, expect.any(Function));
-    expect(state.watch).toHaveBeenNthCalledWith(3, {
-      index: 'by-kind',
-      prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
-      order: 'asc',
-    }, expect.any(Function));
-    state.emitWatch(0);
-    expect(invalidate).toHaveBeenCalledTimes(1);
-    state.emitWatch(1);
-    expect(invalidate).toHaveBeenCalledTimes(2);
-    deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(3);
-    observation.dispose();
-    expect(state.dispose).toHaveBeenCalledTimes(3);
-    expect(deliveries.dispose).toHaveBeenCalledOnce();
-    deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(3);
   });
 
   it('rereads the mounted Session projection after a connection-only state change', async () => {
@@ -728,13 +604,13 @@ describe('Channels Session conversations Resource', () => {
       outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
     }), { expectedRevision: 'absent' });
     await state.put(sessionBindingRecord('binding-a', 'session-a'), { expectedRevision: 'absent' });
-    const options = {
+    const options = createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'session' as const, sessionId: 'session-a' },
       accountStorage: accountStorageFor(state, deliveries),
-    };
+    });
     let refreshed: Promise<Readonly<{ attention: readonly unknown[] }>> | undefined;
-    const observation = SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(() => {
+    const observation = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(() => {
       refreshed = Promise.resolve(SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(options)).then((result) => (
         JSON.parse(resourceText(result)) as Readonly<{ attention: readonly unknown[] }>
       ));
@@ -750,13 +626,16 @@ describe('Channels Session conversations Resource', () => {
       },
     }, { expectedRevision: connection.revision });
 
+    await vi.waitFor(() => expect(refreshed).toBeDefined());
     if (refreshed === undefined) {
       throw new Error('Expected the connection watch to refresh the mounted Session projection.');
     }
     await expect(refreshed).resolves.toEqual({
       bindings: expect.any(Array),
       attention: [{ bindingId: 'binding-a', reason: 'connectionDisabled' }],
+      externalConversations: [{ bindingId: 'binding-a', providerPluginId: CONNECTION_AUTHORITY.providerPluginId,
+        conversationDisplayName: 'External conversation' }],
     });
-    observation.dispose();
+    await observation.dispose();
   });
 });

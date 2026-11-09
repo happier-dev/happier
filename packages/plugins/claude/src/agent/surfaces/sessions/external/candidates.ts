@@ -290,6 +290,7 @@ async function buildCandidate(
   return {
     remoteSessionId: params.session.remoteSessionId,
     ...(indexedTitle?.title ? { title: indexedTitle.title } : {}),
+    ...(indexedTitle?.cwd ? { cwd: indexedTitle.cwd } : {}),
     updatedAtMs: params.session.updatedAtMs,
     activity: deriveExternalSessionActivity({
       updatedAtMs: params.session.updatedAtMs,
@@ -638,9 +639,11 @@ export async function listClaudeExternalSessionCandidates(
   const linePatterns = search.searchTarget === 'content'
     ? claudeContentSearchLinePatterns(searchTerm, text => findExternalSessionContentMatchRange(text, searchTerm) ? text : null) : null;
   const prefilterBatch = async (startIndex: number) => {
+    throwIfAborted(params.signal);
     const entries = traversed.entries.slice(startIndex, startIndex + limit);
     const metadata = new Map(await Promise.all(entries.map(async entry =>
       [entry.filePath, await stat(entry.filePath, { bigint: true })] as const)));
+    throwIfAborted(params.signal);
     const offsets = linePatterns === null ? null : await prefilterExternalSessionContentPaths({
       query: searchTerm, paths: entries.map(entry => entry.filePath),
       ripgrep: params.ripgrep!, signal: params.signal, logger: params.logger,
@@ -648,7 +651,13 @@ export async function listClaudeExternalSessionCandidates(
     });
     return { metadata, offsets };
   };
-  let remainingPrefilters: Map<number, Awaited<ReturnType<typeof prefilterBatch>>> | undefined;
+  // Observe a speculative failure immediately, even if the current batch fills
+  // the page. The host cancels invocation-owned native work on settlement.
+  const admitPrefilter = (startIndex: number) => prefilterBatch(startIndex).then(
+    value => ({ status: 'fulfilled' as const, value }),
+    (reason: unknown) => ({ status: 'rejected' as const, reason }),
+  );
+  let lookahead: { startIndex: number; result: ReturnType<typeof admitPrefilter> } | undefined;
   let prefilteredThroughIndex = 0;
   let previousScanPosition = scanPosition;
   let previousSourceGeneration = traversed.sourceGeneration;
@@ -726,25 +735,21 @@ export async function listClaudeExternalSessionCandidates(
     previousSourceGeneration = session.sourceGeneration;
     if (search.searchTarget === 'content' && !(traversalIndex === 0 && contentCursor?.contentProgress)) {
       if (traversalIndex >= prefilteredThroughIndex) {
-        // Let an immediately full hit page publish after its first batch. Once
-        // that batch cannot fill the page, scan the remaining admitted frontier
-        // concurrently instead of paying each rg startup/read in sequence.
-        // Keep the existing per-batch output budget and ordered native decoder;
-        // no source cursor advances merely because its prefilter has completed.
-        if (prefilteredThroughIndex > 0 && linePatterns !== null && !remainingPrefilters) {
-          const starts = Array.from({ length: Math.ceil((traversed.entries.length - traversalIndex) / limit) },
-            (_, index) => traversalIndex + index * limit);
-          const outcomes = await Promise.allSettled(starts.map(prefilterBatch));
-          // Observe every batch outcome even on failure/cancellation. Process
-          // teardown remains with the host's shared invocation signal.
-          remainingPrefilters = new Map(outcomes.map((outcome, index) => {
-            if (outcome.status === 'rejected') throw outcome.reason;
-            return [starts[index]!, outcome.value];
-          }));
+        const current = lookahead?.startIndex === traversalIndex
+          ? lookahead.result : admitPrefilter(traversalIndex);
+        lookahead = undefined;
+        const nextIndex = traversalIndex + limit;
+        // Keep the first batch serial for an immediately full page. Once it
+        // needs more results, pipeline the current batch with just its successor;
+        // ordered decoding alone advances the frontier. Reuse the containing
+        // deadline and measured file cost for this admission too.
+        if (traversalIndex > 0 && nextIndex < traversed.entries.length &&
+          (params.deadlineAtMs === undefined || params.deadlineAtMs - Date.now() > longestFileDurationMs)) {
+          lookahead = { startIndex: nextIndex, result: admitPrefilter(nextIndex) };
         }
-        const prefilter = remainingPrefilters
-          ? remainingPrefilters.get(traversalIndex)! : await prefilterBatch(traversalIndex);
-        remainingPrefilters?.delete(traversalIndex);
+        const outcome = await current;
+        if (outcome.status === 'rejected') throw outcome.reason;
+        const prefilter = outcome.value;
         prefilteredThroughIndex = traversalIndex + limit;
         prefilterMetadata = prefilter.metadata;
         prefilteredLineOffsets = prefilter.offsets;

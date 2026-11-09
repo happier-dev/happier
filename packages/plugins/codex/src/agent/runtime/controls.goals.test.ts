@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentSessionGoalControlContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionGoalControlContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -8,6 +8,61 @@ import { createCodexNativeSessionControls } from './controls.js';
 import { createCodexAgentRuntime } from './engine.js';
 
 describe('Codex live Session Goal routing', () => {
+  it.each(['failed', 'interrupted'] as const)('keeps a usage-limited Goal blocked after %s work', async status => {
+    const engine = await createCodexAgentRuntime({ plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+      agent: { id: 'codex' }, signal: new AbortController().signal });
+    if (!engine.sessions) throw new Error('Missing Codex Session factory');
+    await withCodexNativeAttachFixture(async fixture => {
+      const session = await fixture.openConfiguredSession();
+      const events: AgentSessionRuntimeEvent[] = [];
+      session.watch(event => events.push(event));
+      fixture.emitNotification('thread/goal/updated', { threadId: 'fresh-thread', goal: { threadId: 'fresh-thread',
+        objective: 'Keep the goal', status: 'usageLimited', updatedAt: 1_776_272_460 } });
+      await session.send({ inputIds: ['failed-recovery-input'], input: { text: 'Try to continue.' },
+        delivery: { kind: 'newTurn', turnId: 'failed-recovery-turn' } });
+      fixture.emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status,
+        ...(status === 'failed' ? { error: { message: 'Usage limit reached', codexErrorInfo: 'usageLimitExceeded' } } : {}) } });
+      await vi.waitFor(() => expect(events.some(event => event.kind === (status === 'failed' ? 'turn-failed' : 'turn-cancelled'))).toBe(true));
+      expect(fixture.requests.filter(request => request.method === 'thread/goal/set')).toEqual([]);
+      await session.dispose();
+    }, { sessionFactory: engine.sessions });
+  });
+  it.each(['usageLimited', 'paused', 'complete'] as const)('reactivates only a still usage-limited native Goal after successful work (%s)', async currentStatus => {
+    const engine = await createCodexAgentRuntime({ plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+      agent: { id: 'codex' }, signal: new AbortController().signal });
+    if (!engine.sessions) throw new Error('Missing Codex Session factory');
+    let rereadGoal: Record<string, unknown> | undefined;
+    await withCodexNativeAttachFixture(async fixture => {
+      const session = await fixture.openConfiguredSession();
+      const events: AgentSessionRuntimeEvent[] = [];
+      session.watch(event => events.push(event));
+      const publish = vi.fn(async (_snapshot: Parameters<AgentSessionGoalControlContext['goalSource']['publish']>[0]) => (
+        { status: 'applied' as const, revision: 'goal-recovery' }
+      ));
+      const context = { signal: new AbortController().signal, services: { exec: fixture.exec },
+        session: { id: 'actual-happier-session', cwd: fixture.directory, activity: 'active',
+          providerSessionId: 'fresh-thread', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
+        goalSource: { publish } } as unknown as AgentSessionGoalControlContext;
+      const retained = { threadId: 'fresh-thread', objective: 'Finish the retained goal', tokenBudget: 40_000,
+        tokensUsed: 7_000, timeUsedSeconds: 90, createdAt: 1_776_272_400, updatedAt: 1_776_272_460 };
+      fixture.emitNotification('thread/goal/updated', { threadId: 'fresh-thread', goal: { ...retained, status: 'usageLimited' } });
+      await session.send({ inputIds: ['recovery-input'], input: { text: 'Continue after quota recovery.' },
+        delivery: { kind: 'newTurn', turnId: 'recovery-turn' } });
+      // Native truth may have changed without a Goal notification reaching this runtime.
+      rereadGoal = { ...retained, status: currentStatus };
+      fixture.emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
+      await vi.waitFor(() => expect(events.some(event => event.kind === 'turn-complete')).toBe(true));
+      if (currentStatus === 'usageLimited') {
+        await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === 'thread/goal/set'))
+          .toEqual([{ method: 'thread/goal/set', params: { threadId: 'fresh-thread', status: 'active' } }]));
+      } else expect(fixture.requests.filter(request => request.method === 'thread/goal/set')).toEqual([]);
+      await expect(session.goals!.get(context)).resolves.toMatchObject({ status: 'applied' });
+      expect(publish.mock.lastCall?.[0]).toMatchObject({ items: [{ title: retained.objective,
+        status: currentStatus === 'usageLimited' ? 'active' : currentStatus, tokenBudget: 40_000,
+        tokensUsed: 7_000, timeUsedSeconds: 90 }] });
+      await session.dispose();
+    }, { sessionFactory: engine.sessions, goalRead: () => { const result = rereadGoal; rereadGoal = undefined; return result; } });
+  });
   it('refuses a live factory-control bypass with zero new native processes', async () => {
     await withCodexNativeAttachFixture(async fixture => {
       await fixture.openConfiguredSession();

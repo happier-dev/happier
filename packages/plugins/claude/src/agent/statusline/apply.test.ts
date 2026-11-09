@@ -47,6 +47,21 @@ describe('createClaudeStatuslineApplier', () => {
         expect(harness.onEffectiveModel).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: 'native-new-selection' }));
     });
 
+    it('refines effort only for the model already observed by this applier', async () => {
+        const harness = createHarness();
+        await harness.applier.applyModelEvidence({ source: 'control', modelId: null, reasoningEffort: 'high' });
+        expect(harness.onEffectiveModel).not.toHaveBeenCalled();
+        await harness.applier.applyModelEvidence({ source: 'control', modelId: 'actual-model' });
+        expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({ modelId: 'actual-model', effortLevel: null });
+        await harness.applier.applyModelEvidence({ source: 'control', modelId: null, reasoningEffort: 'medium' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'actual-model', reasoningEffort: 'medium' });
+        expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({ modelId: 'actual-model', effortLevel: 'medium' });
+        await harness.applier.applyModelEvidence({ source: 'control', modelId: 'new-model' });
+        expect(harness.onRuntimeTruth).toHaveBeenLastCalledWith({ modelId: 'new-model', effortLevel: null });
+        await harness.applier.applyModelEvidence({ source: 'control', modelId: null, reasoningEffort: 'low' });
+        expect(harness.onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'new-model', reasoningEffort: 'low' });
+    });
+
     it('publishes effective model identity and the direct context window once', async () => {
         const harness = createHarness();
 
@@ -59,6 +74,28 @@ describe('createClaudeStatuslineApplier', () => {
             displayName: 'Fable 5',
             contextWindowTokens: 1_000_000,
         });
+    });
+
+    it('keeps actual evidence dedupe current when a prior durable notification completes late', async () => {
+        let releaseNotification!: () => void;
+        const heldNotification = new Promise<void>(resolve => { releaseNotification = resolve; });
+        const onEffectiveModel = vi.fn();
+        const applier = createClaudeStatuslineApplier({
+            logger: { debug: vi.fn(), warn: vi.fn() },
+            readIdentity: () => ({ providerSessionId: null, transcriptPath: null }),
+            onEffectiveModel,
+            onModelChanged: async change => {
+                if (change.modelId === 'model-b') await heldNotification;
+            },
+        });
+        await applier.applyModelEvidence({ source: 'control', modelId: 'model-a' });
+        const delayedB = applier.applyModelEvidence({ source: 'control', modelId: 'model-b' });
+        await applier.applyModelEvidence({ source: 'control', modelId: 'model-c' });
+        releaseNotification();
+        await delayedB;
+        await applier.applyModelEvidence({ source: 'control', modelId: 'model-b' });
+        expect(applier.readRuntimeTruth().modelId).toBe('model-b');
+        expect(onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'model-b' });
     });
 
     it('emits model changes through the semantic sink without a metadata writer', async () => {
@@ -81,9 +118,11 @@ describe('createClaudeStatuslineApplier', () => {
             .fn()
             .mockRejectedValueOnce(new Error('durable custody rejected'))
             .mockResolvedValueOnce(undefined);
+        const onEffectiveModel = vi.fn();
         const applier = createClaudeStatuslineApplier({
             logger: { debug: vi.fn(), warn: vi.fn() },
             readIdentity: () => ({ providerSessionId: null, transcriptPath: null }),
+            onEffectiveModel,
             onModelChanged,
         });
         const changedPayload = {
@@ -93,6 +132,8 @@ describe('createClaudeStatuslineApplier', () => {
 
         await applier.apply(basePayload);
         await expect(applier.apply(changedPayload)).rejects.toThrow('durable custody rejected');
+        await applier.applyModelEvidence({ source: 'control', modelId: null, reasoningEffort: 'medium' });
+        expect(onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'claude-opus-4-8', reasoningEffort: 'medium' });
         await expect(applier.apply(changedPayload)).resolves.toBeUndefined();
 
         expect(onModelChanged).toHaveBeenCalledTimes(2);

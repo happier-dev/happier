@@ -657,7 +657,7 @@ const PREPARATION_UNSUPPORTED_COPY = 'This source cannot prepare a review worksp
 describe('Edit action… opens the one actions editor through the Triage page', () => {
     const FIX_ONLY = [{ actionId: 'fix', label: 'Fix', enabled: true, appliesTo: ['pullRequest'], profileId: null,
         workspaceMode: 'reference_only', target: { kind: 'agent', promptInvocationId: null,
-            seededFallbackInstruction: 'Fix this entry.', delivery: 'compose' } }];
+            seededFallbackInstruction: 'Fix this.', delivery: 'compose' } }];
     // The page every surface opens the editor on: core pages, the Triage list and its detail, and the standalone detail.
     const EDITOR = { view: { pluginId: 'happier.triage', localId: 'triage' }, input: { v: 1, kind: 'actionEditor', actionId: 'fix' } };
 
@@ -1203,7 +1203,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: 'profile-1',
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         resolveDirectStart(harness, '/workspaces/example');
         const shell = await mountShell(harness);
@@ -1285,7 +1285,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: 'profile-1',
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         harness.setProfiles([{
             id: 'profile-1',
@@ -1337,7 +1337,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: 'profile-1',
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         harness.setProfiles([{ id: 'profile-1', name: 'Repair', placement: 'automatic',
             checkout: 'reuse_workspace', preferredAgentTargetKey: 'backend:claude' }]);
@@ -1360,7 +1360,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(draftsOpened).toBe(0);
         expect(harness.startRequests).toEqual([]);
         expect(newSessionSeeds).toHaveLength(1);
-        expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this entry.');
+        expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this.');
     }, 60_000);
 
     it('sends the entry to the Session the reader picks, creating none', async () => {
@@ -1428,7 +1428,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: 'profile-1',
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         harness.setProfiles([{
             id: 'profile-1',
@@ -1488,7 +1488,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: null,
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         harness.setRegistry({
             items: [projectRow({ machineId: 'machine-b' })],
@@ -1737,7 +1737,7 @@ describe('the entry action controls on the mounted detail header', () => {
             appliesTo: ['pullRequest', 'issue', 'errorIssue'],
             profileId: 'profile-1',
             workspaceMode: 'repository',
-            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this entry.', delivery: 'send' },
+            target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this.', delivery: 'send' },
         }]);
         harness.setProfiles([{ id: 'profile-1', name: 'Repair', placement: 'automatic', preferredAgentTargetKey: 'backend:claude' }]);
         harness.setBackends([{

@@ -7,6 +7,8 @@ export default defineConfig({
   ...inMemoryConfig,
   test: {
     ...inMemoryConfig.test,
-    include: ['src/agent/runtime/appServer/interactions.mcpApprovalSubject.test.ts'],
+    include: [
+      'src/agent/runtime/appServer/interactions.mcpApprovalSubject.test.ts',
+    ],
   },
 });

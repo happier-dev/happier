@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Tout le reste",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Déploiements",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Environnements",
+  "plugins.triage.surface.actions.subject.workflowRun": "Exécutions de workflows",
+  "plugins.triage.surface.actions.investigateRun": "Examiner cette exécution",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Aucune copie de travail",
   "plugins.triage.surface.actions.workspace.repository": "Le projet que je choisis",
   "plugins.triage.surface.actions.workspace.pullRequest": "Un worktree de relecture préparé",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Liez-les à des sessions, bloquez-les sur une pull request, découpez-les en sous-tâches.",
   "plugins.triage.tasks.firstRun.trackers.title": "Importer des tâches d’un tracker",
   "plugins.triage.tasks.firstRun.trackers.description": "Elles restent dans leur tracker. Happier les lit et les modifie là-bas.",
-  "plugins.triage.tasks.firstRun.trust": "Les trackers sont lus en direct sur la machine de votre choix. Leurs tâches ne sont jamais copiées dans votre compte."
+  "plugins.triage.tasks.firstRun.trust": "Les trackers sont lus en direct sur la machine de votre choix. Leurs tâches ne sont jamais copiées dans votre compte.",
+  "plugins.triage.surface.sources.permanent": "Réessayer n’y changera rien. Détails contient ce dont le support a besoin.",
+  "plugins.triage.surface.sources.supportCode": "Pour le support",
+  "plugins.triage.surface.failure.unreachableSuffix": "n’a pas pu être joint"
 }

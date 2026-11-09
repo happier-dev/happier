@@ -61,7 +61,8 @@
                   "todo"
                 ]
               }
-            ]
+            ],
+            "workspaceWrites": "deny"
           },
           "skills": {
             "delivery": "none",
@@ -147,14 +148,12 @@
           },
           "install": {
             "docsUrl": "https://opencode.ai",
-            "guideUrl": "https://opencode.ai/docs",
+            "guideUrl": "https://dev.opencode.ai/v2/docs/",
             "managed": {
+              "allowBuild": true,
               "binaryName": "opencode",
               "kind": "managed_package",
-              "packageBinarySetup": {
-                "kind": "opencode_platform_binary"
-              },
-              "packageName": "opencode-ai"
+              "packageName": "@opencode/cli"
             },
             "manual": {
               "kind": "command"
@@ -167,6 +166,7 @@
                 ".opencode/bin"
               ]
             },
+            "npmPackageName": "opencode-ai",
             "recommendationOrder": 40
           }
         },
@@ -255,11 +255,12 @@
               {
                 "destination": {
                   "formats": [
-                    "raw",
                     "bearer"
                   ],
                   "kind": "httpHeader",
-                  "names": "anyValidated"
+                  "names": [
+                    "authorization"
+                  ]
                 },
                 "protocol": "openai-responses"
               },
@@ -364,10 +365,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -657,6 +659,7 @@
       }
     ],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -683,7 +686,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -699,9 +701,6 @@
     "workflows": []
   },
   "displayName": "OpenCode",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

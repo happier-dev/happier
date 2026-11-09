@@ -259,7 +259,6 @@ describe('Discord Gateway worker', () => {
       const identifyConcurrency = {
         async acquire(input: Readonly<{
           applicationId: string;
-          maxConcurrency: number;
           signal: AbortSignal;
         }>) {
           const permit = await gate.acquire(input);
@@ -290,7 +289,6 @@ describe('Discord Gateway worker', () => {
       let nextGranted = false;
       const next = gate.acquire({
         applicationId: 'application-1',
-        maxConcurrency: 1,
         signal: new AbortController().signal,
       }).then((permit) => {
         nextGranted = true;
@@ -306,6 +304,7 @@ describe('Discord Gateway worker', () => {
   });
 
   it('uses the host WebSocket, current Gateway Bot facts, current provider role proof, and core admission without a checkpoint', async () => {
+    const info = vi.fn();
     const socket = socketWithFrames([
       { op: 10, d: { heartbeat_interval: 60_000 } },
       {
@@ -401,10 +400,17 @@ describe('Discord Gateway worker', () => {
       api,
       webSockets: { openWebSocket },
       admitObservation,
+      logger: { info },
       signal: new AbortController().signal,
     });
 
     await expect(worker.result).resolves.toEqual({ kind: 'terminal', reason: 'authenticationFailed' });
+    expect(info.mock.calls).toEqual(expect.arrayContaining([
+      [expect.any(String), expect.objectContaining({ phase: 'identifySent', requiresFullSharedMessageContent: true })],
+      [expect.any(String), expect.objectContaining({ phase: 'gatewayReady', messageContentIntentActive: true })],
+      [expect.any(String), expect.objectContaining({ phase: 'messageReceived', event: 'MESSAGE_CREATE', contentEmpty: false })],
+    ]));
+    expect(JSON.stringify(info.mock.calls)).not.toMatch(/bot-token|hello through a role mention|human-1|role-before-message/);
     expect(getGatewayBot).toHaveBeenCalledTimes(1);
     expect(openWebSocket).toHaveBeenCalledWith(
       { url: 'wss://gateway.discord.gg/?v=10&encoding=json' },

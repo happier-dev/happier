@@ -56,6 +56,10 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
   }),
   z.extend(ProviderTurnEventBaseSchema, {
     kind: z.literal('turn-progress'),
+    retry: z.optional(z.strictObject({
+      attempt: z.number().check(z.int(), z.positive()),
+      reason: z.enum(['connection_failed', 'rate_limited', 'server_error', 'unknown']),
+    })),
   }),
   z.extend(ProviderTurnEventBaseSchema, {
     kind: z.literal('turn-agent-id-observed'),
@@ -132,11 +136,6 @@ export const ClaudeProviderEventSchema = z.discriminatedUnion('kind', [
      * machine and never writes it to a server record.
      */
     nativeSessionLogPath: z.optional(z.string().check(z.maxLength(4_096), z.trim(), z.minLength(1))),
-  }),
-  z.extend(ProviderEventBaseSchema, {
-    kind: z.literal('session-ended'),
-    agentSessionId: z.optional(providerIdentity()),
-    reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
   }),
   z.extend(ProviderEventBaseSchema, {
     kind: z.literal('backend-error'),

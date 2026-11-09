@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { isPluginError, type PluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginUiEphemeralSharedScope, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
+import { resolveTriageSourceDescriptorV1 } from './sourceSurface.js';
 import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from './postMutationReobservation.js';
-import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
+import { sameTriageEntryRefV1, type TriageSurfaceSelectionV1 } from '../state/surface.js';
 import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import type { CorpusQualifiedObservationV1 } from '../../corpus/fold/qualify.js';
@@ -15,18 +16,23 @@ import type { CorpusQualifiedObservationV1 } from '../../corpus/fold/qualify.js'
 export function useTriagePostMutationRow(
   windowRow: TriageListRowV1 | null,
   lanes: readonly TriageListLaneV1[],
-  /** An admitted explicit open may precede this mount's first observation. */
-  unobservedSelection?: TriageSurfaceSelectionV1 | null,
+  /** The shell's admitted selection remains read authority while facts are unavailable. */
+  selection?: TriageSurfaceSelectionV1 | null,
   publication?: TriageListWindowStoreV1 | null,
 ) {
   const hostApi = usePluginHostApi();
+  const { targetedContributions } = useSurfaceContext();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const selectedFromWindow = React.useMemo(
     () => windowRow === null ? null : readTriageSelectedObservationV1(windowRow),
     [windowRow],
   );
-  const entryRef = windowRow?.entryRef ?? unobservedSelection?.entryRef;
-  const sourceInstanceId = selectedFromWindow?.sourceInstanceId ?? unobservedSelection?.sourceInstanceId;
+  const entryRef = windowRow?.entryRef ?? selection?.entryRef;
+  const selectedSource = selectedFromWindow?.sourceInstanceId;
+  const selectedByShell = selection !== null && selection !== undefined
+    && entryRef !== undefined && sameTriageEntryRefV1(selection.entryRef, entryRef)
+    ? selection.sourceInstanceId : undefined;
+  const sourceInstanceId = selectedByShell ?? selectedSource;
   const ownerKey = entryRef === undefined || sourceInstanceId === undefined
     ? null
     : deriveTriageDetailMountInstanceKey(entryRef, sourceInstanceId);
@@ -63,8 +69,11 @@ export function useTriagePostMutationRow(
     setState(current => current.ownerKey === ownerKey && current.readFailed ? { ...current, readFailed: false } : current);
     let failure: PluginError | undefined;
     let exactRead: TriageExactEntryReadV1 | null = null;
+    const capabilities = (requested?.observation.snapshot.taskCapabilities
+      ?? resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)?.kinds.find(kind => kind.id === entryRef.kindId)?.taskCapabilities);
     const next = await reobserveTriagePostMutationRow(hostApi, candidate ?? { entryRef }, lanes, sourceInstanceId, {
       signal: controller.signal,
+      includeTaskFieldChoices: capabilities?.fieldChoices === true,
       // Mounts share their opening read; an explicit refresh or completed write
       // must observe after that action, even while another mount is still opening.
       ...(keepViewerFacts ? { sharedScope } : {}),
@@ -95,7 +104,7 @@ export function useTriagePostMutationRow(
           readFailed: next === null, failure });
     }
     if (reobservation.current === controller) reobservation.current = null;
-  }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, windowRow]);
+  }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, targetedContributions, windowRow]);
   const completePostMutation = React.useCallback(() => reobserveRow(row === null ? row
     : publication?.getRow(triageEntryRowKey(row.entryRef)) ?? row), [publication, reobserveRow, row]);
   const reobserveSelection = React.useEffectEvent(() => reobserveRow(windowRow, true));

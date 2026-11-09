@@ -138,6 +138,8 @@
   "plugins.triage.surface.actions.subject.other": "Everything else",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Deploys",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Environments",
+  "plugins.triage.surface.actions.subject.workflowRun": "Workflow Runs",
+  "plugins.triage.surface.actions.investigateRun": "Investigate this Run",
   "plugins.triage.surface.actions.workspace.referenceOnly": "No working copy",
   "plugins.triage.surface.actions.workspace.repository": "The project I pick",
   "plugins.triage.surface.actions.workspace.pullRequest": "A prepared review worktree",
@@ -966,5 +968,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Link them to Sessions, block them on a pull request, break them into sub-tasks.",
   "plugins.triage.tasks.firstRun.trackers.title": "Bring tasks from a tracker",
   "plugins.triage.tasks.firstRun.trackers.description": "They stay in their tracker. Happier reads and edits them there.",
-  "plugins.triage.tasks.firstRun.trust": "Trackers are read live on the machine you choose. Their tasks are never copied into your account."
+  "plugins.triage.tasks.firstRun.trust": "Trackers are read live on the machine you choose. Their tasks are never copied into your account.",
+  "plugins.triage.surface.sources.permanent": "Trying again won’t fix this. Details has what support needs.",
+  "plugins.triage.surface.sources.supportCode": "For support",
+  "plugins.triage.surface.failure.unreachableSuffix": "could not be reached"
 }

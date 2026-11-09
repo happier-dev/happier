@@ -1,6 +1,7 @@
 {
-  "machineLima.presentation.kind": "VM",
-  "machineLima.presentation.description": "Una VM Linux lleugera per a codi, scripts i servidors de desenvolupament.",
+  "machineLima.presentation.customSize": "Mida personalitzada",
+  "machineLima.presentation.kind": "màquina",
+  "machineLima.presentation.description": "Una màquina Linux lleugera per a codi, scripts i servidors de desenvolupament.",
   "machineLima.presentation.ready": "Instal·lat",
   "machineLima.presentation.unavailable": "No instal·lat",
   "machineLima.presentation.lima_2_required": "Cal Lima 2",

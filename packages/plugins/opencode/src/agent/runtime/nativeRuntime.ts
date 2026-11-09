@@ -10,6 +10,7 @@ import {
   type AgentSessionRuntimeContext,
   type AgentSessionRuntimeFactory,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
   resolveOpenCodeBackendMode,
@@ -41,7 +42,6 @@ const OPEN_CODE_ACP_RUNTIME_DEFINITION = {
   mcp: { policy: 'pass_through' },
   timeouts: {
     initMs: 60_000,
-    toolCallMs: 120_000,
     idleMs: 1_500,
     idleWithoutAssistantMessageMs: 10_000,
   },
@@ -85,6 +85,10 @@ function readOpenCodeSystemToolId(
 async function withOpenCodeConfigLaunchEnvironment<
   Request extends AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
 >(request: Request): Promise<Request> {
+  if (request.configuration?.workspaceWrites === 'deny') {
+    throw new PluginError({ code: 'role_policy_unenforceable',
+      message: 'OpenCode workspace-write denial requires the server runtime.' });
+  }
   const providerConfigPart = await readOpenCodeProviderConfigPart(request);
   const mcpRules = buildOpenCodeMcpPermissionRules(request.mcpToolPolicy,
     Object.keys(request.mcpServers ?? {}).map((key) => ({ originalName: key, projectedName: key })));
@@ -116,7 +120,7 @@ async function openOpenCodeAcpExecutionRun(
       executable: { kind: 'systemTool', id: readOpenCodeSystemToolId(request) },
       args: ['acp'],
       env: { NODE_ENV: 'production', DEBUG: '' },
-      timeouts: { initializeMs: 60_000, toolCallMs: 120_000, idleMs: 1_500 },
+      timeouts: { initializeMs: 60_000, idleMs: 1_500 },
     },
     definition: openCodeAcpDefinition(request),
   });
@@ -164,7 +168,6 @@ async function openOpenCodeAcpSession(
       },
       timeouts: {
         initializeMs: 60_000,
-        toolCallMs: 120_000,
         idleMs: 1_500,
       },
     },

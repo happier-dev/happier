@@ -284,6 +284,35 @@ describe('Companion PR glance controls', () => {
     expect(reads).toBe(1);
   });
 
+  it.each(['opened', 'refused', 'cancelled'] as const)('closes the composer quick-look only after Open succeeds: %s', async outcome => {
+    let complete!: () => void;
+    let refuse!: (reason: Error) => void;
+    const opening = new Promise<void>((resolve, reject) => { complete = resolve; refuse = reject; });
+    const opened: unknown[] = [];
+    const fixture = await mountGlance(() => { throw new Error('Open uses the host navigation boundary'); }, {
+      launchInput: { v: 1, role: 'region', composer: { kind: 'session', sessionId: SESSION_ID }, regionLocalId: COMPOSER_REGION_ID },
+      handlers: { openResource: ({ resource }: { resource: unknown }) => { opened.push(resource); return opening; } },
+    });
+    const status = (await fixture.getAllByRole('button')).find(button => button.name?.includes('PR #42'));
+    if (!status) throw new Error('Expected linked PR composer control');
+    await act(async () => { await fixture.press(status); });
+    await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Open' })); });
+    expect(opened).toEqual([{ kind: 'pullRequest', url }]);
+    expect(document.querySelector('[data-testid="pr-widget"]')).not.toBeNull();
+    await act(async () => {
+      if (outcome === 'opened') complete();
+      else refuse(new PluginError({ code: outcome === 'refused' ? 'forbidden' : 'cancelled', message: outcome, retryable: false }));
+      await Promise.resolve();
+    });
+    if (outcome === 'opened') {
+      expect(document.querySelector('[data-testid="pr-widget"]')).toBeNull();
+      await act(async () => { await fixture.press(status); });
+      expect(document.querySelector('[data-testid="pr-widget"]')).not.toBeNull();
+    } else {
+      expect(document.querySelector('[data-testid="pr-widget"]')).not.toBeNull();
+    }
+  });
+
   it('keeps an uncertain native operation visible after a failed explicit re-read and never replays it', async () => {
     const binding = createSessionPullRequestOperationGlanceBinding('dequeue');
     let reads = 0;

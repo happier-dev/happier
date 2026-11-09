@@ -3,6 +3,59 @@ import { describe, expect, it, vi } from 'vitest';
 import { recordClaudeRuntimeProviderAccountUsageSnapshot } from './accountUsage.js';
 
 describe('Claude runtime provider account usage recording', () => {
+  it('qualifies account evidence before background delivery without holding the runtime on the host acknowledgement', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let settled = false;
+    const observations: unknown[] = [];
+    const recording = recordClaudeRuntimeProviderAccountUsageSnapshot({
+      ctx: { agentRuntime: {
+        nativeHome: { async readFiles() { return { '.claude.json': new TextEncoder().encode(JSON.stringify({
+          oauthAccount: { accountUuid: 'qualified-user', organizationUuid: 'qualified-org' },
+        })), '.credentials.json': new TextEncoder().encode(JSON.stringify({ claudeAiOauth: {
+          accessToken: 'qualified-current-token', scopes: ['user:inference'],
+        } })) }; } },
+        accountUsage: {
+          async resolveSourceContext() { return { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' }; },
+          async recordSnapshot(input) { observations.push(input); await held; return { status: 'recorded' }; },
+        },
+      }, logger: { debug() {}, warn() {} } },
+      sessionId: 'qualified-usage', launchEnv: { CLAUDE_CONFIG_DIR: '/qualified/native/home' },
+      evidence: { rate_limits: { five_hour: { utilization: 100 } } },
+      policyDisposition: 'evidence_only',
+    }).then(() => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(observations).toHaveLength(1));
+      expect(observations[0]).toMatchObject({ policyDisposition: 'evidence_only',
+        snapshot: { accountSubject: { kind: 'providerSubject', id: 'qualified-user' } },
+        source: { serviceId: 'claude-subscription' },
+        credentialProof: { providerAccountId: 'qualified-user', credentialFingerprint: expect.stringMatching(/^sha256:/) },
+      });
+      await vi.waitFor(() => expect(settled).toBe(true));
+    } finally { release(); await recording; }
+  });
+
+  it('makes unavailable background account-usage delivery observable through the warning boundary', async () => {
+    const warn = vi.fn();
+    await recordClaudeRuntimeProviderAccountUsageSnapshot({
+      ctx: { agentRuntime: { accountUsage: { async recordSnapshot() { return { status: 'unavailable' }; } } },
+        logger: { debug() {}, warn } },
+      sessionId: 'unavailable-usage', evidence: { rate_limits: { five_hour: { utilization: 95 } } },
+    });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.any(String), { status: 'unavailable', reason: null }));
+  });
+
+  it.each(['authentication_failed', 'Unexpected provider failure'])('does not turn non-quota StopFailure %s into account usage evidence', async error => {
+    const recordSnapshot = vi.fn(async () => ({ status: 'recorded' as const }));
+    await recordClaudeRuntimeProviderAccountUsageSnapshot({
+      ctx: { agentRuntime: { accountUsage: { recordSnapshot } }, logger: { debug() {}, warn() {} } },
+      sessionId: 'non-quota-failure',
+      evidence: { hook_event_name: 'StopFailure', error },
+      policyDisposition: 'evidence_only',
+    });
+    expect(recordSnapshot).not.toHaveBeenCalled();
+  });
+
   it.each(['current', 'malformed', 'missing'])('keeps user-only native observations provisional with bounded %s local credential proof', async (credentialState) => {
     const observations: unknown[] = [];
     await recordClaudeRuntimeProviderAccountUsageSnapshot({
@@ -16,7 +69,7 @@ describe('Claude runtime provider account usage recording', () => {
           async resolveSourceContext() { return { serviceId: 'claude-subscription', profileId: 'work', bindingKind: 'profile' }; },
           async recordSnapshot(input) { observations.push(input); return { status: 'recorded' }; },
         },
-      }, logger: { debug() {} } },
+      }, logger: { debug() {}, warn() {} } },
       sessionId: 'local-session', launchEnv: { CLAUDE_CONFIG_DIR: '/selected/native/home' },
       evidence: { rate_limits: { five_hour: { utilization: 100 } } },
     });
@@ -71,7 +124,7 @@ describe('Claude runtime provider account usage recording', () => {
             recordSnapshot,
           },
         },
-        logger: { debug: vi.fn() },
+        logger: { debug: vi.fn(), warn: vi.fn() },
       },
       evidence: {
         type: 'rate_limit_event',

@@ -7,7 +7,6 @@ import { CuaLocalOptionsQueryV1Schema, CuaNativeImageRefSchema, type CuaLocalLau
 // cua-cli/src/lib.rs RuntimeCmd::Doctor / ImagesCmd::Ls, catalog.rs row(),
 // cua-vmm/src/auto.rs DoctorReport, and libs/images/sandbox-images.json.
 // No setup/start/download or cloud command is part of these reads.
-const vendorSource = 'https://raw.githubusercontent.com/trycua/cua/2bce4442c107fc34c45b374b29a35d09f630fd83';
 const arch = z.enum(['amd64', 'arm64']);
 const digest = z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u));
 const version = z.optional(z.nullable(z.string()));
@@ -111,17 +110,6 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
         return result.kind === 'success' ? projectImages(result.value) : unknown(result.reason);
     }
     return {
-        async read(signal?: AbortSignal) {
-            const [doctor, images] = await Promise.all([readDoctor(signal), readImages(signal)]);
-            return { doctor, images,
-                // Doctor/catalog do not report the installed Cua CLI version,
-                // free CPU/RAM/disk, capture qualification or billing amounts.
-                nativeVersion: unknown('not_reported'), headroom: unknown('not_reported'),
-                capture: unknown('not_reported'), prices: unknown('not_reported'),
-                license: { component: 'cua-spacesd', license: 'FSL-1.1-MIT',
-                    source: `${vendorSource}/libs/cua-spacesd/LICENSE`, qualification: 'unqualified' as const },
-            };
-        },
         async check(signal?: AbortSignal): Promise<MachineProvisionerCheckResultV1> {
             const doctor = await readDoctor(signal);
             if (doctor.kind === 'unknown') return { available: false, code: 'native_facts_unknown' };
@@ -144,9 +132,10 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
             function sizing(image: CuaNativeImageFacts, runtimeId: CuaLocalLaunchV1['runtimeId']) {
                 if (!size) return true;
                 const disk = diskFor(image), diskBytes = size.diskBytes ?? disk;
-                // Preserve the native sizing qualification used at admission.
+                // QEMU grow_to never shrinks (cua@2bce4442 qemu/img.rs).
+                // A Space can grow only from a known image minimum.
                 return diskBytes !== undefined && (localId === 'local-space' && runtimeId === 'qemu'
-                    ? diskBytes % 1024 ** 3 === 0 && diskBytes / 1024 ** 3 <= 4_294_967_295
+                    ? disk !== undefined && diskBytes >= disk && diskBytes % 1024 ** 3 === 0 && diskBytes / 1024 ** 3 <= 4_294_967_295
                     : diskBytes === disk);
             }
             return {
@@ -158,24 +147,31 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
                             ...(size.diskBytes === undefined ? [] : [{ path: 'size.diskBytes', value: size.diskBytes }])],
                         available: size.memoryBytes % 1024 ** 2 === 0,
                         nativeFacts: { size: { ...sizeIdentity, cpuCores: size.cpu, memoryBytes: size.memoryBytes,
-                            ...(size.diskBytes === undefined ? {} : { diskBytes: size.diskBytes }) } }, }] : [],
+                            ...(size.diskBytes === undefined ? {} : { diskBytes: size.diskBytes }) } },
+                    }] : [],
                     image: selectedImages.map(image => {
                         const diskBytes = diskFor(image);
-                        return { id: image.imageId, title: image.imageId,                            assignments: [{ path: 'imageId', value: image.imageId },
+                        return { id: image.imageId, title: image.imageId,
+                            guestPlatform: image.os === 'macos' ? 'darwin' as const : image.os,
+                            assignments: [{ path: 'imageId', value: image.imageId },
                                 ...(size && size.diskBytes === undefined && diskBytes !== undefined ? [{ path: 'size.diskBytes', value: diskBytes }] : [])],
                             available: image.spacesd && image.os !== 'windows' && image.architectures.includes(nativeArch),
                             nativeFacts: { image: { id: image.imageId, title: image.imageId },
                                 ...(sizeIdentity && size?.diskBytes === undefined && diskBytes !== undefined
-                                    ? { size: { ...sizeIdentity, diskBytes } } : {}) }, };
+                                    ? { size: { ...sizeIdentity, diskBytes } } : {}) },
+                        };
                     }),
                     location: runtimes.map(runtimeId => ({ id: runtimeId, title: runtimeId,
                         assignments: [{ path: 'runtimeId', value: runtimeId }],
                         // Native readiness cannot qualify a missing detached guest-daemon carrier.
                         available: runtimeId !== 'gvisor' && doctor.value.runtimes.some(value => value.id === runtimeId && value.ready),
-                        nativeFacts: { location: { id: runtimeId, title: runtimeId } }, })), },
+                        nativeFacts: { location: { id: runtimeId, title: runtimeId } },
+                    })),
+                },
                 constraints: runtimes.map(runtimeId => ({ when: { dimension: 'location' as const, optionIds: [runtimeId] },
                     requires: { dimension: 'image' as const, optionIds: selectedImages.filter(image => image.runtimeIds.includes(runtimeId)
-                        && sizing(image, runtimeId)).map(image => image.imageId) } })), };
+                        && sizing(image, runtimeId)).map(image => image.imageId) } })),
+            };
         },
     };
 }

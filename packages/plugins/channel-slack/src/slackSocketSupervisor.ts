@@ -1,14 +1,11 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { isPluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
-  assertConversationChannelsCoreCallerV1,
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   ConversationProviderConnectionReadResultV1Schema,
-  ConversationProviderConnectionStopInputV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
   ConversationTransportFactReportResultV1Schema,
   type ConversationProviderConnectionReconciliationSnapshotV1,
-  type ConversationProviderConnectionStopResultV1,
   type ConversationTransportFactReportInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { materializeExactSlackCredentials, readSlackConnectionConfiguration } from './slackActions.js';
@@ -26,9 +23,8 @@ type WorkerEntry = {
   controller: AbortController;
   worker: SlackSocketWorker | null;
   completion: Promise<void>;
-  stopIntent: 'explicit' | 'reconcile' | 'authorityUnavailable' | 'generationRetired' | null;
+  stopIntent: 'reconcile' | 'generationRetired' | null;
   replacement: Snapshot | null;
-  stopEpoch: number | null;
 };
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -46,6 +42,15 @@ function sameJson(left: unknown, right: unknown): boolean {
 
 function factKey(snapshot: Snapshot): string { return JSON.stringify([snapshot.connectionId, snapshot.authorityEpoch]); }
 function eligible(snapshot: Snapshot): boolean { return snapshot.enabled && snapshot.deletionState === 'none'; }
+function connectionFingerprint(snapshot: Snapshot): string {
+  const configuration = readSlackConnectionConfiguration(snapshot);
+  return JSON.stringify({ connectionId: snapshot.connectionId, providerConnectionKey: snapshot.providerConnectionKey,
+    providerConfigVersion: snapshot.providerConfigVersion, credentialRef: snapshot.credentialRef,
+    enabled: snapshot.enabled, deletionState: snapshot.deletionState,
+    configuration: 'kind' in configuration ? configuration
+      : [configuration.teamId, configuration.appId, configuration.botUserId, configuration.botId],
+  });
+}
 
 /** Process-local socket custody only. Core Actions remain the Account authority. */
 export function createSlackSocketSupervisor() {
@@ -84,7 +89,7 @@ export function createSlackSocketSupervisor() {
     wake();
   };
   const stopEntry = (entry: WorkerEntry, intent: NonNullable<WorkerEntry['stopIntent']>): void => {
-    if (entry.stopIntent === null || intent === 'explicit') entry.stopIntent = intent;
+    if (entry.stopIntent === null) entry.stopIntent = intent;
     entry.controller.abort();
     entry.worker?.stop();
   };
@@ -94,6 +99,10 @@ export function createSlackSocketSupervisor() {
     await Promise.allSettled(entries.map(entry => entry.completion));
   };
   const recordResult = (entry: WorkerEntry, result: SlackSocketWorkerResult): void => {
+    if (result.kind === 'stopped' && !result.unprovenContinuity && entry.stopIntent === null) {
+      // Routine Socket Mode refresh is ready for immediate reconciliation.
+      retryAt.set(entry.snapshot.connectionId, Date.now());
+    }
     if (result.kind === 'historyGap') addFact(entry.snapshot, result);
     if (result.kind === 'notReady') {
       if (result.transportFact) addFact(entry.snapshot, result.transportFact);
@@ -107,12 +116,10 @@ export function createSlackSocketSupervisor() {
     }
     if (result.kind === 'stopped' && result.unprovenContinuity) {
       if (entry.stopIntent === 'reconcile' && entry.replacement) addFact(entry.replacement, { kind: 'historyGap', reason: 'providerHistoryUnavailable' });
-      if (entry.stopIntent === 'authorityUnavailable' || entry.stopIntent === 'generationRetired') {
+      if (entry.stopIntent === 'generationRetired') {
         addFact(entry.snapshot, { kind: 'historyGap', reason: 'applicationAdmissionLost' });
       }
     }
-    if (entry.stopIntent === 'explicit') addFact({ ...entry.snapshot, authorityEpoch: entry.stopEpoch ?? entry.snapshot.authorityEpoch },
-      { kind: 'stopConfirmed', reason: 'explicitStop' });
   };
 
   const runWorkerAttempt = async (snapshot: Snapshot, context: PluginInvocationContext): Promise<void> => {
@@ -123,7 +130,7 @@ export function createSlackSocketSupervisor() {
       throw new Error('Slack socket worker attempts require the current background supervisor.');
     }
     const entry = workers.get(snapshot.connectionId);
-    if (!entry || !sameJson(entry.snapshot, snapshot) || entry.controller.signal.aborted || context.signal.aborted) return;
+    if (!entry || connectionFingerprint(entry.snapshot) !== connectionFingerprint(snapshot) || entry.controller.signal.aborted || context.signal.aborted) return;
     let result: SlackSocketWorkerResult = { kind: 'stopped' };
     try {
       const configuration = readSlackConnectionConfiguration(snapshot);
@@ -141,7 +148,7 @@ export function createSlackSocketSupervisor() {
       }
       if (context.signal.aborted || entry.controller.signal.aborted) return;
       entry.worker = startSlackSocketWorker({
-        connection: { connectionId: snapshot.connectionId, authorityEpoch: snapshot.authorityEpoch, identity }, api,
+        connection: { connectionId: snapshot.connectionId, get authorityEpoch() { return entry.snapshot.authorityEpoch; }, identity }, api,
         webSockets: context.services.http, signal: context.signal,
         async admitObservation(value, options) {
           try {
@@ -151,7 +158,7 @@ export function createSlackSocketSupervisor() {
         reportConnectionStatus() {
           if (workers.get(snapshot.connectionId) === entry && !context.signal.aborted && !entry.controller.signal.aborted) {
             retryAt.delete(snapshot.connectionId);
-            addFact(snapshot, { kind: 'providerReadiness', status: 'ready' });
+            addFact(entry.snapshot, { kind: 'providerReadiness', status: 'ready' });
           }
         },
       });
@@ -167,7 +174,6 @@ export function createSlackSocketSupervisor() {
     const key = factKey(snapshot);
     const facts = pendingFacts.get(key);
     if (!facts?.length) return true;
-    let historyGap = false;
     for (const fact of facts) {
       if (updateRequired || context.signal.aborted) return false;
       try {
@@ -175,13 +181,12 @@ export function createSlackSocketSupervisor() {
           pluginId: 'happier.channels', localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
         }, { connectionId: snapshot.connectionId, authorityEpoch: snapshot.authorityEpoch, fact }, { signal: context.signal }));
         if (result.kind === 'staleAuthority') { pendingFacts.delete(key); return false; }
-        if (fact.kind === 'historyGap') historyGap = true;
       } catch (error) { if (!stopOnCollectionUpdateRequired(error, context)) retryReconciliation(); return false; }
     }
     // Preserve any newer fact queued while publication was in flight.
     const remaining = (pendingFacts.get(key) ?? []).filter(fact => !facts.includes(fact));
     if (remaining.length) pendingFacts.set(key, remaining); else pendingFacts.delete(key);
-    return !historyGap;
+    return true;
   };
 
   const reconcile = async (context: BackgroundServiceContext): Promise<void> => {
@@ -194,7 +199,7 @@ export function createSlackSocketSupervisor() {
       }, {}, { signal: context.signal }));
     } catch (error) {
       if (stopOnCollectionUpdateRequired(error, context)) return;
-      await stopAll('authorityUnavailable'); retryReconciliation(); return;
+      retryReconciliation(); return;
     }
     const current = new Set<string>();
     const retainedFactKeys = new Set<string>();
@@ -212,26 +217,20 @@ export function createSlackSocketSupervisor() {
         if (stopOnCollectionUpdateRequired(error, context)) return;
         retryReconciliation();
         const entry = workers.get(discovery.connectionId);
-        if (entry) { retainedFactKeys.add(factKey(entry.snapshot)); stopEntry(entry, 'authorityUnavailable'); }
+        if (entry) retainedFactKeys.add(factKey(entry.snapshot));
         continue;
       }
       retainedFactKeys.add(factKey(snapshot));
       const entry = workers.get(snapshot.connectionId);
-      if (entry && !sameJson(entry.snapshot, snapshot)) {
+      if (entry && connectionFingerprint(entry.snapshot) !== connectionFingerprint(snapshot)) {
         entry.replacement = snapshot;
         stopEntry(entry, 'reconcile');
         // Only this connection waits for its predecessor. Other connections
         // keep reconciling while cancellation settles at the host boundary.
         continue;
       }
+      if (entry) entry.snapshot = snapshot;
       const factsReady = await publishFacts(snapshot, context);
-      if (snapshot.deletionState === 'pendingStopReconciliation') {
-        if (!workers.has(snapshot.connectionId)) {
-          addFact(snapshot, { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' });
-          await publishFacts(snapshot, context);
-        }
-        continue;
-      }
       if (!eligible(snapshot) || !factsReady) {
         const active = workers.get(snapshot.connectionId);
         if (active) stopEntry(active, 'reconcile');
@@ -240,7 +239,7 @@ export function createSlackSocketSupervisor() {
       if (workers.has(snapshot.connectionId) || (retryAt.get(snapshot.connectionId) ?? 0) > Date.now()) continue;
       retryAt.delete(snapshot.connectionId);
       const controller = new AbortController();
-      const next: WorkerEntry = { snapshot, controller, worker: null, completion: Promise.resolve(), stopIntent: null, replacement: null, stopEpoch: null };
+      const next: WorkerEntry = { snapshot, controller, worker: null, completion: Promise.resolve(), stopIntent: null, replacement: null };
       workers.set(snapshot.connectionId, next);
       next.completion = (async () => {
         try {
@@ -305,23 +304,6 @@ export function createSlackSocketSupervisor() {
     run,
     invalidateConnections(): void { wake(); },
     runWorkerAttempt,
-    async stop(input: unknown, context: PluginInvocationContext): Promise<ConversationProviderConnectionStopResultV1> {
-      assertConversationChannelsCoreCallerV1(context, { code: 'slack_channels_core_caller_required', message: 'Slack socket stop requires the Channels core.' });
-      const request = ConversationProviderConnectionStopInputV1Schema.parse(input);
-      const entry = workers.get(request.connectionId);
-      if (!entry) return { kind: 'notRunning' };
-      if (entry.snapshot.authorityEpoch !== request.authorityEpoch - 1
-        || entry.snapshot.providerConnectionKey !== request.providerConnectionKey
-        || entry.snapshot.providerConfigVersion !== request.providerConfigVersion
-        || !sameJson(entry.snapshot.providerConfig, request.providerConfig)
-        || !sameJson(entry.snapshot.credentialRef, request.credentialRef)) {
-        return { kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'The Slack worker does not match the frozen old connection.' };
-      }
-      entry.stopEpoch = request.authorityEpoch;
-      stopEntry(entry, 'explicit');
-      await entry.completion;
-      return { kind: 'stopped' };
-    },
     async dispose(): Promise<void> {
       disposed = true;
       abortRun?.abort();

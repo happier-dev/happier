@@ -1,5 +1,3 @@
-import type { JsonRpcApplicationRejectionDetails } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
   AgentSessionCompactRequest,
   AgentSessionCompactResult,
@@ -11,6 +9,8 @@ import type {
   AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { JsonRpcApplicationRejectionDetails } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { sanitizeCodexAppServerRuntimeAuthClassification } from './turns/failure.js';
 
 export type CodexAppServerRuntimeIssue = SessionRuntimeIssueV1;
@@ -85,12 +85,15 @@ export type CodexAppServerEvent =
       kind: 'turn-start';
       startedBy?: string;
     }>)
-  | (CodexAppServerTurnEventBase & Readonly<{ kind: 'turn-progress' }>)
+  | (CodexAppServerTurnEventBase & Readonly<{
+      kind: 'turn-progress';
+      retry?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-progress' }>['retry'];
+    }>)
   | (CodexAppServerTurnEventBase & Readonly<{ kind: 'turn-complete' }>)
   | (CodexAppServerTurnEventBase & Readonly<{
       kind: 'turn-failed';
-      providerError?: ProviderErrorV1;
       issue: CodexAppServerRuntimeIssue;
+      providerError?: ProviderErrorV1;
       runtimeAuthClassification?: ReturnType<typeof sanitizeCodexAppServerRuntimeAuthClassification>;
     }>)
   | (CodexAppServerTurnEventBase & Readonly<{
@@ -147,10 +150,6 @@ export type CodexAppServerEvent =
   | (CodexAppServerEventBase & Readonly<{
       kind: 'descriptor-update';
       descriptor: unknown;
-    }>)
-  | (CodexAppServerEventBase & Readonly<{
-      kind: 'backend-error';
-      error: Readonly<{ message: string; code?: string }>;
     }>);
 
 export type CodexAppServerEventInput = CodexAppServerEvent extends infer Event

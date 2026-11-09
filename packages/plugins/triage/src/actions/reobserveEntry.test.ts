@@ -84,6 +84,37 @@ describe('reobserveTriageEntry', () => {
     expect(TriageReobserveEntryResultV1Schema.safeParse(result)).toMatchObject({ success: true });
   });
 
+  it('asks the source for its field directory and hands it back only for the detail that requested it', async () => {
+    const taskFieldChoices = { assigneeIds: [{ id: 'ada', label: 'ada' }] };
+    const executeGet = vi.fn(async (_operation: unknown, _input: TriageGetInputV1) => ({ ...fixture.getResult, taskFieldChoices }));
+    const read = (includeTaskFieldChoices?: true) => reobserveTriageEntry({
+      entryRef: fixture.detailInput.observation.entryRef,
+      sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+      ...(includeTaskFieldChoices === undefined ? {} : { includeTaskFieldChoices }),
+    }, {
+      readConfiguredInstance: async () => fixture.configuredInstance,
+      readAdmittedSources: async () => [{
+        contributor: {
+          pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
+          contributionId: fixture.detailInput.observation.entryRef.source.localId,
+          immutableGenerationId: 'generation-1',
+        },
+        protocol: { id: 'happier.triage/sources', version: 1 },
+        descriptor: fixture.descriptor,
+        operations: { get: {} as never },
+        surfaces: {},
+      }],
+      executeGet,
+      nowMs: () => 1_760_000_800_000,
+    });
+    const asked = await read(true);
+    expect(executeGet.mock.calls[0]![1]).toMatchObject({ includeTaskFieldChoices: true });
+    expect(asked).toMatchObject({ kind: 'observed', taskFieldChoices });
+    const plain = await read();
+    expect(executeGet.mock.calls[1]![1]).not.toHaveProperty('includeTaskFieldChoices');
+    expect(plain).not.toHaveProperty('taskFieldChoices');
+  });
+
   it('uses the exact configured instance and locator, then qualifies the authoritative get once', async () => {
     const executeGet = vi.fn(async (_operation: unknown, _input: TriageGetInputV1) => fixture.getResult);
 

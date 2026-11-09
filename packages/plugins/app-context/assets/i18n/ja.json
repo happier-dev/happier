@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "注釈",
+  "plugins.appContext.annotation.note": "メモ",
+  "plugins.appContext.annotation.save": "メモを保存",
+  "plugins.appContext.annotation.saved": "メモを保存しました",
+  "plugins.appContext.annotation.refused": "今はこのメモを保存できません。内容はここに残っています。保留中のメッセージを編集中の場合は、先に編集を終えてください。",
+  "plugins.appContext.annotation.unavailable": "この注釈は利用できません。"
+}

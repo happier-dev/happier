@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Annotation",
+  "plugins.appContext.annotation.note": "Your note",
+  "plugins.appContext.annotation.save": "Save note",
+  "plugins.appContext.annotation.saved": "Note saved",
+  "plugins.appContext.annotation.refused": "This note can’t be saved right now — it’s kept here. If you’re editing a queued message, finish that first.",
+  "plugins.appContext.annotation.unavailable": "This annotation is unavailable."
+}

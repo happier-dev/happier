@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
@@ -113,11 +114,11 @@ function accountStorageFor(collection: unknown): PluginAccountStorageScope {
 }
 
 function resourceReadOptions(accountStorage: PluginAccountStorageScope) {
-  return {
+  return createTestResourceInvocationContext({
     signal: new AbortController().signal,
     context: { kind: 'global' as const },
     accountStorage,
-  };
+  });
 }
 
 function createWatchableCollection() {
@@ -263,14 +264,14 @@ describe('Channels bindings Resource', () => {
     ))).toBe(true);
   });
 
-  it('invalidates the current snapshot on a binding-row change and disposes its one Collection watch', () => {
+  it('invalidates the current snapshot on a binding-row change and disposes its one Collection watch', async () => {
     const state = createWatchableCollection();
     const invalidate = vi.fn();
-    const observation = BINDINGS_RESOURCE_RUNTIME.observe(invalidate, {
+    const observation = await BINDINGS_RESOURCE_RUNTIME.observe(invalidate, createTestResourceInvocationContext({
       signal: new AbortController().signal,
       context: { kind: 'global' },
       accountStorage: accountStorageFor(state),
-    });
+    }));
 
     state.emit();
     expect(invalidate).toHaveBeenCalledOnce();
@@ -280,7 +281,7 @@ describe('Channels bindings Resource', () => {
       order: 'asc',
     }, expect.any(Function));
 
-    observation.dispose();
+    await observation.dispose();
     state.emit();
     expect(invalidate).toHaveBeenCalledOnce();
     expect(state.dispose).toHaveBeenCalledOnce();

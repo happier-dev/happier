@@ -6,7 +6,7 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { claudeSubscriptionConnectedAccountRuntime as runtime } from './claudeSubscriptionRuntime.js';
+import { claudeSubscriptionConnectedAccountRuntime as runtime } from './claudeSubscriptionNativeRuntime.js';
 
 const { spawnSpy } = vi.hoisted(() => ({ spawnSpy: vi.fn() }));
 vi.mock('node:child_process', async (importOriginal) => ({

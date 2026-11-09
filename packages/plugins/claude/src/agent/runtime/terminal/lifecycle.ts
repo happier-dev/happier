@@ -7,7 +7,7 @@ export type ClaudeTerminalLifecycleObservation =
     | Readonly<{ type: 'sidechain_activity'; agentId: string; source: 'hook'; sidechainAgentId: string }>
     | Readonly<{ type: 'sidechain_terminal'; agentId: string; source: 'hook'; sidechainAgentId: string }>
     | Readonly<{ type: 'turn_failed'; agentId: string; turnId: string | null; reason: 'stop_failure_hook'; detail?: string; evidence?: unknown; source: 'hook'; sidechainAgentId?: string | null }>
-    | Readonly<{ type: 'turn_failed'; agentId: string; turnId: string | null; reason: 'transcript_api_error'; source: 'transcript' }>
+    | Readonly<{ type: 'turn_failed'; agentId: string; turnId: string | null; reason: 'transcript_api_error'; evidence?: unknown; source: 'transcript' }>
     | Readonly<{ type: 'turn_aborted'; agentId: string; turnId: string | null; reason: 'user_interrupt'; detail: string; source: 'transcript' }>
     | Readonly<{ type: 'process_exited'; agentId: string; exitCode: number | null; signal: string | null; nativeExited?: true }>;
 
@@ -50,6 +50,7 @@ export type ClaudeTerminalTranscriptEvent =
         agentId: string;
         kind: 'assistant_api_error';
         turnId?: string | null;
+        evidence?: unknown;
     }>
     | Readonly<{
         agentId: string;
@@ -183,6 +184,7 @@ export function mapClaudeTranscriptEventToTerminalLifecycleObservation(
             agentId: event.agentId,
             turnId,
             reason: 'transcript_api_error',
+            ...(event.evidence !== undefined ? { evidence: event.evidence } : {}),
             source: 'transcript',
         };
     }

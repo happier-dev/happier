@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer';
-import { machinePresentationLabel, machineCheckPresentation, LIMA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
+  observeMachineProvisionerNativeRead,
   defineMachineProvisionerSchemas,
   defineMachineProvisionerReconciliationSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -12,7 +13,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createLimaSdkExecutor } from './machine/nativeExecutor.js';
-import { createLimaProvider, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
+import { createLimaProvider, limaAcquisitionResource, LIMA_DEPENDENCY_ID, LIMA_PLUGIN_ID, LIMA_PROVISIONER_ID, LIMA_QEMU_DEPENDENCY_IDS } from './machine/provider.js';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './machine/schemas.js';
 
 export const LIMA_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: LimaLaunchSchema, resource: LimaResourceSchema });
@@ -43,6 +44,7 @@ async function provider(context: PluginInvocationContext) {
 
 export const LIMA_MACHINE_PROVISIONER = {
   title: 'Lima', icon: 'terminal', resourceKind: 'lima-vm', schemaVersion: 1,
+  enrollmentRole: 'server',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LimaLaunchSchema.jsonSchema, resourceSchema: LimaResourceSchema.jsonSchema, resourceIdPath: 'instance',
   platforms: ['darwin', 'linux'],
@@ -60,8 +62,19 @@ export const LIMA_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: processAccess, capability: 'process',
     reason: 'Operate the exact reviewed native Lima resource.',
@@ -83,7 +96,20 @@ export const LIMA_PLUGIN = definePlugin({
     id: 'qemu-img', title: 'QEMU disk image tool', executable: 'qemu-img',
     sources: [{ kind: 'system', executableNames: ['qemu-img'], versionArguments: ['--version'] }],
   } },
-  ui: { translations: LIMA_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   machineProvisioners: { [LIMA_PROVISIONER_ID]: LIMA_MACHINE_PROVISIONER },
   actions: {
     check: {
@@ -91,16 +117,22 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
-        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error) }); }
+        catch (error) {
+          const code = errorCode(error);
+          // The missing executable is a prerequisite, so the picker treats it like every other tool that isn't installed.
+          return machineCheckPresentation({ available: false, code, ...(code === 'lima_unavailable' ? { prerequisites: [{
+            requirement: { kind: 'managedDependency' as const, id: { pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID } },
+            status: 'unavailable' as const }] } : {}) });
+        }
       },
     },
     options: {
       ...actionDefaults, title: 'Read Lima launch choices', dangerLevel: 'safe',
       inputSchema: LimaOptionsInputSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
-        { path: 'instance', title: 'Instance name', widget: 'text', required: true },
         { path: 'store', title: 'Lima store', widget: 'text', required: true },
-        { path: 'image', title: 'Image location', widget: 'text', required: true },
+        { path: 'image', title: 'Image location', widget: 'text', required: true,
+          description: 'Enter a disk image URL or path when Lima does not report one in its default template.' },
         { path: 'arch', title: 'Architecture', widget: 'select', required: true, requireExplicitSelection: true,
           options: [{ value: 'x86_64', label: 'x86_64' }, { value: 'aarch64', label: 'aarch64' }] },
         { path: 'vmType', title: 'VM driver', widget: 'select', required: true, requireExplicitSelection: true,
@@ -116,9 +148,10 @@ export const LIMA_PLUGIN = definePlugin({
       confirmation: { title: 'Create this Lima guest?', body: 'This creates the reviewed VM in the selected Lima storage.' },
       inputSchema: LIMA_ROLE_SCHEMAS.acquireInput, resultSchema: LIMA_RECONCILIATION_SCHEMAS.result,
       async run(input, context) {
-        try { return await (await provider(context)).acquire(input.launch); }
+        try { return await (await provider(context)).acquire(input); }
         catch (error) { return { kind: 'unknown' as const,
-          recovery: { reference: `${input.launch.store}/${input.launch.instance}`, reason: errorCode(error) } }; }
+          recovery: { reference: input.managedId === undefined ? input.launch.store
+            : `${input.launch.store}/${limaAcquisitionResource(input.launch, input.managedId).instance}`, reason: errorCode(error) } }; }
       },
     },
     reconcile: {
@@ -127,7 +160,7 @@ export const LIMA_PLUGIN = definePlugin({
       async run(input, context) {
         const current = await provider(context);
         return 'nativeOperation' in input ? current.reconcile({ resource: input.nativeOperation })
-          : current.reconcile({ launch: input.correlation.launch });
+          : current.reconcile({ managedId: input.correlation.managedId, launch: input.correlation.launch });
       },
     },
     bootstrap: {
@@ -141,7 +174,7 @@ export const LIMA_PLUGIN = definePlugin({
       inputSchema: LIMA_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).inspect(input.resource); }
-        catch (error) { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: errorCode(error) }; }
+        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
       },
     },
     power: {

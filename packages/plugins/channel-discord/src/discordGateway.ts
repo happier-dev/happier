@@ -6,8 +6,6 @@ import type { ConversationTransportFactReportInputV1 } from '@happier-dev/channe
  * Resume are governed only by Discord Dispatch receipt.
  */
 
-export const DISCORD_IDENTIFY_LIMIT_PER_24_HOURS = 1_000;
-export const DISCORD_IDENTIFY_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const DISCORD_GATEWAY_HOST_SUFFIX = 'discord.gg';
 
 function isDiscordGatewayHostname(hostname: string): boolean {
@@ -42,7 +40,7 @@ export type DiscordGatewayEffect =
   | Readonly<{ kind: 'scheduleHeartbeat'; afterMs: number }>
   | Readonly<{
       kind: 'disconnect';
-      reason: 'heartbeatAckMissing' | 'invalidSession' | 'serverRequestedReconnect' | 'applicationAdmissionLost';
+      reason: 'heartbeatAckMissing' | 'invalidSession' | 'serverRequestedReconnect';
     }>
   | Extract<ConversationTransportFactReportInputV1['fact'], Readonly<{ kind: 'historyGap' }>>
   | (Readonly<{ kind: 'reconnect'; canResume: boolean }> & DiscordGatewayReconnectDelayBounds)
@@ -63,7 +61,6 @@ export type DiscordGatewaySession = Readonly<{
   onFrame(frame: unknown, nowMs: number): readonly DiscordGatewayEffect[];
   onHeartbeatTimer(): readonly DiscordGatewayEffect[];
   onClose(close: Readonly<{ code: number }>): readonly DiscordGatewayEffect[];
-  markAdmissionLost(): readonly DiscordGatewayEffect[];
   snapshot(): DiscordGatewaySnapshot;
 }>;
 
@@ -434,15 +431,6 @@ export function createDiscordGatewaySession(input: Readonly<{
             },
           ];
       }
-    },
-
-    markAdmissionLost() {
-      resume = null;
-      awaitingHeartbeatAck = false;
-      return [
-        { kind: 'historyGap', reason: 'applicationAdmissionLost' },
-        { kind: 'disconnect', reason: 'applicationAdmissionLost' },
-      ];
     },
 
     snapshot() {

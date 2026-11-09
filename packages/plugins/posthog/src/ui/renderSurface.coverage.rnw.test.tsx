@@ -560,10 +560,9 @@ describe('the mounted PostHog Activity panel', () => {
 
         // The count on its own reads as the whole of what PostHog recorded, because
         // there is no Load more beside it to suggest otherwise.
-        await expect(page.getByText('1 activity record(s) read.')).resolves.toBeDefined();
-        await expect(page.getByText(
-            'PostHog recorded more activity than this list could read, so it stops here.',
-        )).resolves.toBeDefined();
+        // Calm, not amber: a permanent limit of this list, said once in plain words.
+        await expect(page.getByText('PostHog keeps older events this list doesn’t reach.')).resolves.toBeDefined();
+        await expect(page.queryByText('Activity records read: 1.')).resolves.toBeUndefined();
     });
 
     it('claims PostHog recorded nothing only when the page was genuinely empty', async () => {
@@ -580,8 +579,7 @@ describe('the mounted PostHog Activity panel', () => {
         // Three rows existed. Saying PostHog recorded no changes is a claim about the
         // provider that this read is in no position to make.
         await expect(page.getByText('No readable activity')).resolves.toBeDefined();
-        await expect(page.getByText('3 record(s) on the pages read could not be understood.'))
-            .resolves.toBeDefined();
+        await expect(page.getByText('3 couldn’t be shown.')).resolves.toBeDefined();
     });
 });
 

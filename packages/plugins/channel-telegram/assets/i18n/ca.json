@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Compte del bot de Telegram",
   "channels.telegram.remediation.credential.description": "Tria el compte connectat existent del bot de Telegram; els testimonis del bot no s’introdueixen mai aquí.",
   "channels.telegram.automation.setup.title": "Tria un xat de Telegram per observar",
-  "channels.telegram.automation.setup.description": "Tria el bot de Telegram i el xat els missatges del qual han d’iniciar aquesta automatització.",
+  "channels.telegram.automation.setup.description": "Tria el bot de Telegram i el xat els missatges del qual han d’iniciar aquest flux de treball.",
   "channels.telegram.automation.setup.submit": "Usa aquest xat",
   "channels.telegram.automation.setup.credential": "Compte del bot de Telegram",
   "channels.telegram.automation.setup.chat": "Identificador del xat",

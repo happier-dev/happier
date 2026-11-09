@@ -137,13 +137,10 @@ export function buildCodexAppServerConfigOverrides(
         overrides.push(`skills.config=[${disables.join(',')}]`);
     }
 
-    const mcpStartupTimeoutMs = readCodexAppServerStartupRpcTimeoutMs(options.processEnv ?? {});
-    if (serverNames.length > 0) {
-        // Recent Codex versions otherwise give optional MCP servers only a short shared grace
-        // while building the first turn's tool catalog. Keep injected servers optional, but let their tools
-        // use the same bounded startup budget as the app-server connection itself.
-        overrides.push(`mcp_optional_startup_grace_ms=${mcpStartupTimeoutMs}`);
-    }
+    // Codex fully awaits a required server before the first turn and fails thread/start
+    // when it cannot initialize. Optional servers only get Codex's own short grace, so
+    // a slow or hung third-party server joins later instead of holding the first turn.
+    const happierMcpStartupTimeoutMs = readCodexAppServerStartupRpcTimeoutMs(options.processEnv ?? {});
     if (serverNames.some(name => !isFirstPartyHappierMcpBridgeServerName(name) && options.mcpToolPolicy?.[name])) {
         // Codex 0.162.1's tool-approval elicitation contains a human title but
         // no tool id or call id. Its requestUserInput path carries itemId and
@@ -170,7 +167,10 @@ export function buildCodexAppServerConfigOverrides(
             overrides.push(`mcp_servers.${injectedKey}.env=${serializeTomlInlineTable(config.env)}`);
         }
         overrides.push(`mcp_servers.${injectedKey}.enabled=true`);
-        overrides.push(`mcp_servers.${injectedKey}.startup_timeout_sec=${mcpStartupTimeoutMs / 1_000}`);
+        if (isFirstPartyHappierMcpBridgeServerName(serverName)) {
+            overrides.push(`mcp_servers.${injectedKey}.required=true`);
+            overrides.push(`mcp_servers.${injectedKey}.startup_timeout_sec=${happierMcpStartupTimeoutMs / 1_000}`);
+        }
         const policy = isFirstPartyHappierMcpBridgeServerName(serverName) ? undefined : options.mcpToolPolicy?.[serverName];
         const disabledTools = policy ? Object.entries(policy.tools)
             .filter(([, setting]) => setting === 'off' || setting === 'deny').map(([tool]) => tool) : [];

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 
 export const CLAUDE_ACCOUNT_USAGE_PROVIDER_ID = 'claude';
 
@@ -56,10 +56,7 @@ function stableSubject(
 }
 
 function hashProvisionalSubject(discriminator: string): string {
-    return createHash('sha256')
-        .update(`claude:${discriminator}`)
-        .digest('hex')
-        .slice(0, 24);
+    return computeSha256HexDigest(`claude:${discriminator}`).slice(0, 24);
 }
 
 export function resolveClaudeUsageSubjectRef(input: ResolveClaudeUsageSubjectRefInput): ClaudeUsageSubjectRef {

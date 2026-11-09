@@ -5,6 +5,7 @@ import type { OpenCodePreflightModel } from '../../preflight/models.js';
 export type OpenCodeModelCatalogSnapshot = Readonly<{
   observedAt: number;
   models: readonly OpenCodePreflightModel[] | null;
+  currentModelId?: string | null;
 }>;
 
 export type OpenCodeModeCatalogSnapshot = Readonly<{
@@ -42,14 +43,12 @@ export type OpenCodeRuntimeTurnOperations = Readonly<{
     meta?: OpenCodePromptSendMeta,
   ): Promise<Readonly<{
     providerUserMessageId: string | null;
-    effectiveModelId?: string | null;
   }>>;
   steerInFlightTurn(
     message: string,
     meta?: OpenCodePromptSendMeta,
   ): Promise<Readonly<{
     providerUserMessageId: string | null;
-    effectiveModelId?: string | null;
   }>>;
   waitForTurnCompletion(): Promise<void>;
   subscribeRuntimeEvents(handler: (message: OpenCodeRuntimeEvent) => void): () => void;

@@ -35,7 +35,11 @@ const selectSnapshot = (
  * Git card, the chip menu and the linked-entry detail use — and draws nothing of its own about readiness.
  * Several linked PRs pick one through a segmented control before anything about it is edited.
  */
-export function TriageSessionPullRequestWidget(props: Readonly<{ signal: AbortSignal; initialBindingId?: string }>): React.ReactElement {
+export function TriageSessionPullRequestWidget(props: Readonly<{
+  signal: AbortSignal;
+  initialBindingId?: string;
+  onResourceOpened?(): void;
+}>): React.ReactElement {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
   const { target } = useSurfaceContext();
@@ -136,8 +140,13 @@ export function TriageSessionPullRequestWidget(props: Readonly<{ signal: AbortSi
           void watch.unlink(selected);
         }}
         onContinueFixing={() => watch.continueFixing(selected)}
-        onOpenProvider={() => {
-          void host.openResource({ kind: 'pullRequest', url: selected.link.url });
+        onOpenProvider={async () => {
+          try {
+            await host.openResource({ kind: 'pullRequest', url: selected.link.url }, { signal: props.signal });
+          } catch {
+            return;
+          }
+          props.onResourceOpened?.();
         }}
         onReconnect={() => {
           void host.openConnectedAccounts();
@@ -157,7 +166,8 @@ export const renderSurface: RenderSurface = defineUiSurface((context) => {
   if (input !== null && typeof input === 'object' && !Array.isArray(input)
     && Reflect.get(input, 'role') === 'region') {
     return <TriageSessionPullRequestComposer launchInput={input}
-      renderDetails={bindingId => <TriageSessionPullRequestWidget signal={context.signal} initialBindingId={bindingId} />}
+      renderDetails={(bindingId, onResourceOpened) => <TriageSessionPullRequestWidget
+        signal={context.signal} initialBindingId={bindingId} onResourceOpened={onResourceOpened} />}
     />;
   }
   return <TriageSessionPullRequestWidget signal={context.signal} />;

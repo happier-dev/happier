@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Compte du bot Telegram",
   "channels.telegram.remediation.credential.description": "Choisis le compte connecté existant du bot Telegram ; les jetons du bot ne sont jamais saisis ici.",
   "channels.telegram.automation.setup.title": "Choisis une conversation Telegram à surveiller",
-  "channels.telegram.automation.setup.description": "Choisis le bot Telegram et la conversation dont les messages doivent démarrer cette automatisation.",
+  "channels.telegram.automation.setup.description": "Choisis le bot Telegram et la conversation dont les messages doivent démarrer ce workflow.",
   "channels.telegram.automation.setup.submit": "Utiliser cette conversation",
   "channels.telegram.automation.setup.credential": "Compte du bot Telegram",
   "channels.telegram.automation.setup.chat": "Identifiant de la conversation",

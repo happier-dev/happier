@@ -10,7 +10,7 @@ import { AgentExecutionRunEventSchema, createExecutionRunHostBackendFromConversa
 import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 import type { ConnectedAccountBindingSummary, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import { prepareOpenCodeQualifiedConnectedAccounts } from '../../auth/services/qualifiedPurposeLaunch.js';
 import { buildOpenCodeRequestAuthMarker } from '../../auth/services/requestAuth/source.js';
 
@@ -368,6 +368,7 @@ function observePromisePending(promise: Promise<unknown>): Readonly<{ isPending(
   };
 }
 
+
 describe('OpenCode catalog observation', () => {
   it.each([
     { providerId: 'example', modelId: 'image', model: { id: 'image', status: 'active', capabilities: { input: ['image'] } } },
@@ -381,7 +382,7 @@ describe('OpenCode catalog observation', () => {
     } finally { await operations.resetOrDisposeRuntime(); }
   });
 
-  it('publishes observed inventory separately from the effective model accepted for a prompt', async () => {
+  it('publishes observed inventory separately from native assistant model readback', async () => {
     const client = createClientFixture();
     client.providersList = async () => [{ id: 'example', models: { text: { id: 'text', name: 'Text', capabilities: { input: ['text'], tools: false } } } }];
     const operations = await createStartedRuntime({ client });
@@ -397,6 +398,13 @@ describe('OpenCode catalog observation', () => {
       expect(source?.read()).toMatchObject({ models: [{ id: 'example/text', name: 'Text' }], currentModelId: null });
       expect(source?.read().observedAt).toBeGreaterThan(0);
       await runtime.send({ inputIds: ['facts'], input: { text: 'hello' }, delivery: { kind: 'newTurn', turnId: 'facts-turn' } });
+      expect(source?.read().currentModelId).toBeNull();
+      const providerUserMessage = (await client.sessionMessages({ sessionId: 'ses-1' }))[0];
+      const parentID = (providerUserMessage as { info: { id: string } }).info.id;
+      await operations.handleProviderEvent({ type: 'message.updated', properties: { info: {
+        id: 'model-readback-answer', role: 'assistant', sessionID: 'ses-1', parentID,
+        providerID: 'example', modelID: 'text', time: { created: Date.now() },
+      } } });
       expect(source?.read()).toMatchObject({ currentModelId: 'example/text', models: [{ id: 'example/text', name: 'Text' }] });
     } finally { await runtime.dispose(); }
   });
@@ -5423,6 +5431,77 @@ describe('createOpenCodeServerRuntime', () => {
     expect(runtimeEvents.some((event) => event.kind === 'turn-complete')).toBe(false);
   });
 
+  it.each(['session', 'run'] as const)('projects correlated retry progress and one recovery for the %s scope', async (scope) => {
+    const { ctx, harness } = createContextFixture();
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, client, harness, ...(scope === 'run' ? { executionRunId: 'run-retry' } : {}) });
+    const native = scope === 'run'
+      ? createOpenCodeExecutionRunConversation({ operations: runtime, executionRunId: 'run-retry', disposeOperations: () => runtime.resetOrDisposeRuntime() })
+      : createNativeSessionRuntimeForTest(runtime);
+    const events: Array<AgentSessionRuntimeEvent | AgentExecutionRunConversationEventV1> = [];
+    native.watch(event => events.push(event));
+    runtime.beginTurnLifecycle('retry-turn');
+    const status = async (sessionID: string, value: unknown) => runtime.handleProviderEvent({
+      type: 'session.status', properties: { sessionID, status: value },
+    });
+    const retry = { type: 'retry', attempt: 3, message: 'Temporary upstream failure', next: Date.now() + 1000 };
+    await status('ses-other', retry);
+    await status('', retry);
+    expect(events.filter(event => event.kind === 'turn-progress' && event.retry)).toHaveLength(0);
+    await status('ses-1', retry);
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-progress', turnId: 'retry-turn', retry: { attempt: 3, reason: 'unknown' } }));
+    await status('ses-1', { type: 'busy' });
+    await status('ses-1', { type: 'busy' });
+    const progress = events.filter(event => event.kind === 'turn-progress');
+    expect(progress.slice(-2)).toEqual([
+      expect.objectContaining({ retry: { attempt: 3, reason: 'unknown' } }),
+      expect.not.objectContaining({ retry: expect.anything() }),
+    ]);
+    expect(progress.filter(event => !event.retry)).toHaveLength(scope === 'run' ? 2 : 1);
+    await status('ses-1', { ...retry, attempt: 0 });
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-progress', retry: { attempt: 2, reason: 'unknown' } }));
+    await runtime.handleProviderEvent({ type: 'message.part.delta', properties: {
+      sessionID: 'ses-1', messageID: 'retry-answer', partID: 'retry-answer-part', partType: 'text', delta: 'Recovered',
+    } });
+    await status('ses-1', { type: 'busy' });
+    expect(events.filter(event => event.kind === 'turn-progress' && !event.retry)).toHaveLength(scope === 'run' ? 3 : 2);
+    await runtime.cancelTurn();
+    const settledEventCount = events.length;
+    await status('ses-1', retry);
+    expect(events).toHaveLength(settledEventCount);
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-cancelled', turnId: 'retry-turn' }));
+    expect(events.some(event => event.kind === 'turn-failed' || event.kind === 'turn-complete')).toBe(false);
+    if (scope === 'session') expect(events.every(event => AgentSessionRuntimeEventSchema.safeParse(event).success)).toBe(true);
+    await native.dispose();
+  });
+
+  it('projects the admitted V2 retry notification through the existing adapter and current turn', async () => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    const runtime = await createStartedRuntime({ ctx, harness, client });
+    runtime.beginTurnLifecycle('v2-retry-turn');
+    const retry = (sessionID: string) => normalizeOpenCodeV2Event('session.retry.scheduled', { sessionID, at: Date.now() + 1000 });
+    client.emitProviderEvent(retry('ses-other'));
+    client.emitProviderEvent(retry('ses-1'), { provenance: 'untrusted-observation', connectionGeneration: 1 });
+    client.emitProviderEvent(retry('ses-1'));
+    client.emitProviderEvent(retry('ses-1'));
+    await flushMicrotasks();
+    expect(runtimeEvents.filter(event => event.kind === 'turn-progress')).toEqual([
+      expect.objectContaining({ turnId: 'v2-retry-turn', retry: { attempt: 1, reason: 'unknown' } }),
+      expect.objectContaining({ turnId: 'v2-retry-turn', retry: { attempt: 2, reason: 'unknown' } }),
+    ]);
+    await runtime.cancelTurn();
+    const settledEventCount = runtimeEvents.length;
+    client.emitProviderEvent(retry('ses-1'));
+    await flushMicrotasks();
+    expect(runtimeEvents).toHaveLength(settledEventCount);
+    runtime.beginTurnLifecycle('v2-next-turn');
+    client.emitProviderEvent(retry('ses-1'));
+    await flushMicrotasks();
+    expect(runtimeEvents.at(-1)).toMatchObject({ kind: 'turn-progress', turnId: 'v2-next-turn', retry: { attempt: 1, reason: 'unknown' } });
+    await runtime.resetOrDisposeRuntime();
+  });
+
   it.each(['session', 'run'] as const)('preserves native usage-limit retry evidence for the $0 runtime scope', async (scope) => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();
@@ -5484,6 +5563,7 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
     expect(client.sessionAbort).toHaveBeenCalledOnce();
     expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses-1' });
+    expect(nativeEvents.some(event => event.kind === 'turn-progress' && 'retry' in event)).toBe(false);
   });
 
   it.each(['session', 'run'] as const)('preserves exact-parent native provider HTTP failure evidence for the %s scope', async scope => {

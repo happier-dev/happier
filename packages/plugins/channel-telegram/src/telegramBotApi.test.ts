@@ -1,9 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createTelegramBotApi,
-  createTelegramPairingDeepLink,
   TELEGRAM_MAX_DOWNLOAD_FILE_BYTES,
 } from './telegramBotApi.js';
 
@@ -29,6 +28,44 @@ function jsonResponse(value: unknown, status = 200): Readonly<{
 }
 
 describe('Telegram Bot API adapter', () => {
+  it('enforces the native 128-character topic-name boundary before requesting HTTP', async () => {
+    const request = vi.fn(async () => jsonResponse({ ok: true, result: { message_thread_id: 17 } }));
+    const api = createTelegramBotApi({ token: 'fixture-token', http: { request } });
+    for (const name of ['', ' ', 'x'.repeat(129)]) {
+      await expect(api.createForumTopic({ chatId: '-100456', name })).resolves.toMatchObject({ kind: 'notSent', retry: 'never' });
+    }
+    expect(request).not.toHaveBeenCalled();
+    await expect(api.createForumTopic({ chatId: '-100456', name: 'x'.repeat(128) })).resolves.toMatchObject({ kind: 'created' });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('creates a forum topic through the Bot API and preserves its native thread id', async () => {
+    const controller = new AbortController();
+    const requests: RecordedRequest[] = [];
+    const api = createTelegramBotApi({ token: 'fixture-token', http: { async request(input, options) {
+      requests.push(input);
+      expect(options?.signal).toBe(controller.signal);
+      return jsonResponse({ ok: true, result: { message_thread_id: 17, name: 'Brief' } });
+    } } });
+    await expect(api.createForumTopic({ chatId: '-100456', name: 'Brief' }, { signal: controller.signal }))
+      .resolves.toEqual({ kind: 'created', messageThreadId: '17' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toMatch(/\/createForumTopic$/u);
+    expect(JSON.parse(new TextDecoder().decode(requests[0]?.body))).toEqual({ chat_id: '-100456', name: 'Brief' });
+  });
+
+  it.each([
+    { value: { ok: false, error_code: 403, description: 'Forbidden' }, expected: { kind: 'notSent', retry: 'never' } },
+    { value: { ok: false, error_code: 429, description: 'Wait', parameters: { retry_after: 9 } }, expected: { kind: 'notSent', retry: 'after', retryAfterMs: 9000 } },
+    { value: { ok: false, error_code: 500, description: 'Failed' }, expected: { kind: 'outcomeUnknown' } },
+    { value: { ok: true, result: {} }, expected: { kind: 'outcomeUnknown' } },
+  ])('classifies native topic creation without retrying the HTTP request ($expected.kind)', async ({ value, expected }) => {
+    const request = vi.fn(async () => jsonResponse(value));
+    const api = createTelegramBotApi({ token: 'fixture-token', http: { request } });
+    await expect(api.createForumTopic({ chatId: '-100456', name: 'Brief' })).resolves.toMatchObject(expected);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it.each(['getFile', 'download'])('propagates host retirement during %s instead of reporting a provider network failure', async phase => {
     const retired = new PluginError({ code: 'plugin_final_generation_retired', message: 'The provider generation is retired.' });
     const api = createTelegramBotApi({ token: 'secret-token', http: { async request(input) {
@@ -157,11 +194,17 @@ describe('Telegram Bot API adapter', () => {
     if (result.kind === 'updates') expect(result.updates[0]?.message?.attachments).toHaveLength(1);
   });
 
-  it('creates the official direct-message pairing deep link only for a valid normalized token', () => {
-    expect(createTelegramPairingDeepLink({ username: 'HappierBot', token: 'ABCD2345' })).toBe(
-      'https://t.me/HappierBot?start=ABCD2345',
-    );
-    expect(createTelegramPairingDeepLink({ username: 'HappierBot', token: 'not valid' })).toBeNull();
+  it('leaves native text-size admission to the core splitter and the provider response', async () => {
+    const text = 'x'.repeat(4_097);
+    const requests: RecordedRequest[] = [];
+    const api = createTelegramBotApi({ token: 'secret-token', http: { async request(input) {
+      requests.push(input);
+      return jsonResponse({ ok: false, error_code: 400, description: 'MESSAGE_TOO_LONG' });
+    } } });
+    await expect(api.sendMessage({ chatId: '456', text, suppressLinkPreview: true }))
+      .resolves.toMatchObject({ kind: 'notSent', retry: 'never', diagnostic: 'MESSAGE_TOO_LONG' });
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(new TextDecoder().decode(requests[0]?.body))).toMatchObject({ text });
   });
 
   it('reports a getUpdates 409 as the exclusive-poll conflict without claiming a retry hint Telegram did not send', async () => {
@@ -269,23 +312,35 @@ describe('Telegram Bot API adapter', () => {
     });
   });
 
-  it('bounds non-poll Bot API calls with a client-side HTTP deadline', async () => {
-    const requests: RecordedRequest[] = [];
-    const api = createTelegramBotApi({
-      token: 'secret-token',
-      http: {
-        async request(input) {
-          requests.push(input);
-          return jsonResponse({
-            ok: true,
-            result: { id: 123, is_bot: true, first_name: 'Happier Bot', username: 'HappierBot' },
-          });
+  it.each(['identity', 'longPoll'] as const)('lets the caller own cancellation of slow %s requests', async phase => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const api = createTelegramBotApi({
+        token: 'secret-token',
+        http: {
+          request(input, options) {
+            expect(options?.signal).toBe(controller.signal);
+            return new Promise((resolve, reject) => {
+              const responseTimer = setTimeout(() => resolve(jsonResponse({ ok: true, result: phase === 'identity'
+                ? { id: 123, is_bot: true, first_name: 'Happier Bot', username: 'HappierBot' }
+                : [] })), 60_001);
+              if (input.timeoutMs !== undefined) setTimeout(() => {
+                clearTimeout(responseTimer);
+                reject(new Error('HTTP deadline exceeded'));
+              }, input.timeoutMs);
+            });
+          },
         },
-      },
-    });
-
-    await api.getMe();
-    expect(requests[0]?.timeoutMs).toBe(15_000);
+      });
+      const result = phase === 'identity'
+        ? api.getMe({ signal: controller.signal })
+        : api.getUpdates({ offset: '42', limit: 1, timeoutSeconds: 50 }, { signal: controller.signal });
+      await vi.advanceTimersByTimeAsync(60_001);
+      await expect(result).resolves.toMatchObject(phase === 'identity' ? { id: '123' } : { kind: 'updates' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('passes the caller cancellation signal through long-poll transport I/O', async () => {
@@ -305,23 +360,26 @@ describe('Telegram Bot API adapter', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
-  it('propagates aborted transport I/O instead of misreporting it as a network result', async () => {
+  it('cancels pending transport I/O instead of misreporting it as a network result', async () => {
     const controller = new AbortController();
     const abort = new Error('poll retired');
     const api = createTelegramBotApi({
       token: 'secret-token',
       http: {
-        async request() {
-          controller.abort(abort);
-          throw abort;
+        request(_input, options) {
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+          });
         },
       },
     });
 
-    await expect(api.getUpdates(
+    const result = api.getUpdates(
       { offset: '42', limit: 50, timeoutSeconds: 30 },
       { signal: controller.signal },
-    )).rejects.toBe(abort);
+    );
+    controller.abort(abort);
+    await expect(result).rejects.toBe(abort);
   });
 
   it('uses the core-committed checkpoint as the next polling offset and returns opaque update evidence', async () => {
@@ -360,7 +418,7 @@ describe('Telegram Bot API adapter', () => {
       timeout: 30,
       allowed_updates: ['message', 'edited_message'],
     });
-    expect(requests[0]?.timeoutMs).toBe(40_000);
+    expect(requests[0]?.timeoutMs).toBeUndefined();
   });
 
   it('uses Telegram’s explicit negative-offset tail mechanism only for an initial no-history baseline', async () => {
@@ -525,7 +583,7 @@ describe('Telegram Bot API adapter', () => {
       reply_parameters: { message_id: 71 },
       message_thread_id: 41,
     });
-    expect(requests[1]?.timeoutMs).toBe(15_000);
+    expect(requests[1]?.timeoutMs).toBeUndefined();
   });
 
   it('maps bounded flood-control retry hints, keeps an undelayed 429 safely retryable, and treats a transport failure after dispatch as outcome unknown', async () => {

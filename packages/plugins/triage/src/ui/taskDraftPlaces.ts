@@ -4,6 +4,8 @@ import type { TriageEntryRepositoryRefV1 } from '@happier-dev/triage-protocol/v1
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import type { TriageListRowV1 } from '../projection/listWindow.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../internalTasks/identity.js';
+import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
+import { projectTriageUnreadableSourceHealth, readTriageLaneFailure } from '../projection/sourceHealth.js';
 
 export type TriageTaskDraftPlaceV1 = Readonly<{
   source: PluginContributionIdentity;
@@ -15,9 +17,16 @@ export type TriageTaskDraftPlaceSuggestionV1 = TriageTaskDraftPlaceV1 & Readonly
   scopeUnitId?: string;
 }>;
 
-/** The built-in Account task is the initial create target among admitted places. */
-export function defaultTriageTaskDraftPlaceV1(places: readonly TriageTaskDraftPlaceV1[]): TriageTaskDraftPlaceV1 | undefined {
-  return places.find(place => sameTriageSourceIdentity(place.source, INTERNAL_TASK_SOURCE_V1) && place.kindId === 'task');
+/** Recommend the built-in Account task only from positive read evidence already held by the window. */
+export function defaultTriageTaskDraftPlaceV1(
+  places: readonly TriageTaskDraftPlaceV1[], snapshot: TriageListWindowSnapshotV1 | undefined,
+): TriageTaskDraftPlaceV1 | undefined {
+  const place = places.find(place => sameTriageSourceIdentity(place.source, INTERNAL_TASK_SOURCE_V1) && place.kindId === 'task');
+  if (place === undefined || snapshot === undefined) return undefined;
+  const lane = snapshot.window?.lanes.find(candidate => candidate.sourceInstanceId === place.sourceInstanceId);
+  return lane !== undefined && lane.health.kind !== 'unavailable' && readTriageLaneFailure(lane) === null
+    && !projectTriageUnreadableSourceHealth(snapshot).some(unreadable => unreadable.sourceInstance.sourceInstanceId === place.sourceInstanceId)
+    ? place : undefined;
 }
 
 /** Choice-only suggestions from already admitted observations, without a source or provider read. */

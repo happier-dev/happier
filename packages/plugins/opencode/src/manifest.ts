@@ -49,8 +49,7 @@ const {
 export const OPENCODE_PLUGIN = definePlugin({
   id: 'happier.agent.opencode',
   version: '0.0.0',
-  displayName: 'OpenCode',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  displayName: 'OpenCode', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
       id: 'opencode-workspace',
@@ -97,13 +96,14 @@ export const OPENCODE_PLUGIN = definePlugin({
           install: {
             managed: {
               kind: 'managed_package',
-              packageName: 'opencode-ai',
+              packageName: '@opencode/cli',
               binaryName: 'opencode',
-              packageBinarySetup: { kind: 'opencode_platform_binary' },
+              allowBuild: true,
             },
+            npmPackageName: 'opencode-ai',
             manual: { kind: 'command' },
             recommendationOrder: 40,
-            guideUrl: 'https://opencode.ai/docs',
+            guideUrl: 'https://dev.opencode.ai/v2/docs/',
             docsUrl: 'https://opencode.ai',
             // https://opencode.ai/docs/cli/ (`opencode upgrade`); the official install script uses
             // INSTALL_DIR=$HOME/.opencode/bin.
@@ -171,6 +171,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             delivery: ['newTurn', 'steer', 'followUp'],
             cancel: true,
             configuration: true,
+            workspaceWrites: 'deny',
             catalog: { active: ['skills'] },
             workStateSources: [{ id: 'opencode-todos', itemKinds: ['todo'] }],
           },
@@ -188,7 +189,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             apiKeyTransports: [
               {
                 protocol: 'openai-responses',
-                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+                destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
               },
               {
                 protocol: 'openai-chat',

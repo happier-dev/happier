@@ -1559,10 +1559,12 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, `mounted-diagnostic-${route}`, {}, { directAccountData: true });
         await settleWindow('view', shell);
-        harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', retryable: true });
+        harness.state.listInvocationFailure = sourceInstanceId => new PluginError({
+            code: sourceInstanceId === INSTANCE_A ? 'unavailable' : 'server_unavailable', retryable: true,
+        });
         await settleWindow('manual', shell);
         await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
-        const diagnostic = `${LABEL_A} — unavailable · retryable=true`;
+        const diagnostic = 'For support: unavailable';
         expect(document.body.textContent).not.toContain(diagnostic);
         for (const expanded of [true, false]) {
             if (route === 'ui') {
@@ -1579,7 +1581,7 @@ describe('the mounted PRs & Issues surface', () => {
                 await act(async () => { expect(await shell.context.hostApi.executeAction('ui/mounted-v1', input)).toEqual({ status: 'applied' }); });
             }
             expect(document.body.textContent?.includes(diagnostic)).toBe(expanded);
-            expect(document.body.textContent).not.toContain(`${LABEL_B} — unavailable · retryable=true`);
+            expect(document.body.textContent).not.toContain('For support: server_unavailable');
         }
     });
 

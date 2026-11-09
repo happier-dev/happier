@@ -20,9 +20,9 @@ import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, SessionPullRequestWatchReadRes
     parseGithubConversationUrlV1 } from '@happier-dev/channels-protocol/v1';
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
-import { readTriageActionExecutionPlacementV1, resolveTriageActionCheckoutV1, resolveTriageActionPlacementV1 } from './actionLaunch.js';
+import { readTriageActionExecutionPlacementV1, readTriageActionLaunchDirectoryV1, resolveTriageActionCheckoutV1, resolveTriageActionPlacementV1 } from './actionLaunch.js';
 import { readTriageAgentExecutionTargetV1, readTriageInvestigationAgentV1 } from './agentTarget.js';
-import { requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { projectTriageActionPlacementCandidatesV1, projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { startEntrySession, resumeEntrySessionStart, type TriageEntrySessionStartResultV1, type TriageEntrySessionPendingPhaseV1 } from './entrySessionOrchestrator.js';
@@ -315,7 +315,8 @@ export async function runTriageConfiguredHandoffV1(
         // an unrelated project census just to deliver reference-only input.
         const placement = healthRead ? resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode,
             ...(healthRead.machine ? { profile: { placement: { fixed: healthRead.machine,
-                ...(health?.workspace ? { directory: health.workspace.rootPath } : {}) } } } : {}),
+                ...(health?.workspace ? { directory: health.workspace.rootPath }
+                    : health && action.workspaceMode === 'reference_only' ? { directoryIntent: { kind: 'managed' as const } } : {}) } } } : {}),
             projects: [], registryComplete: true }) : existing === undefined
             ? registry === undefined
                 ? await readTriageActionPlacementV1(host, action, references.profile?.preferences, repository, cancellation)
@@ -329,13 +330,11 @@ export async function runTriageConfiguredHandoffV1(
         });
         const checkout = resolveTriageActionCheckoutV1(action.workspaceMode, references.profile?.preferences);
         const profile = action.profileId === null ? {} : { profileId: action.profileId };
+        const launchDirectory = readTriageActionLaunchDirectoryV1(execution, checkout);
         const directSettlement: unknown = existing !== undefined || delivery === 'compose' || unresolvedChoice !== undefined ? undefined
-            : health && !health.workspace && action.workspaceMode === 'reference_only' && agent?.status === 'resolved'
-                ? { executionTarget: health.machine, agentTarget: agent.agentTarget, directory: { kind: 'managed' }, ...profile }
-                : execution?.directory !== undefined && agent?.status === 'resolved' && (checkout === 'none' || checkout === 'reuseWorkspace')
-                    ? { executionTarget: execution.executionTarget, agentTarget: agent.agentTarget,
-                        directory: { kind: 'path', path: execution.directory }, ...profile }
-                    : undefined;
+            : execution !== null && launchDirectory !== undefined && agent?.status === 'resolved'
+                ? { executionTarget: execution.executionTarget, agentTarget: agent.agentTarget, directory: launchDirectory, ...profile }
+                : undefined;
         // Compose is authoring, and so is a send whose start is not complete
         // (owner ruling "Agent actions: one shared flow", 2026-11-07): the
         // prefilled New Session composer owns every remaining choice.
@@ -343,10 +342,9 @@ export async function runTriageConfiguredHandoffV1(
             || (directSettlement === undefined && action.workspaceMode !== 'pull_request'))) {
             const composed = await requestTriageNewSessionAuthoringV1(host, {
                 entries: options.entries, attachments: attachment, promptText, profileId: action.profileId,
+                actionDefault: triageActionDefaultSeedV1(action),
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
                 checkoutIntent: checkout, placement: execution, candidates, signal: options.signal,
-                ...(health && !health.workspace && action.workspaceMode === 'reference_only'
-                    ? { directoryIntent: { kind: 'managed' as const } } : {}),
             });
             return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
                 : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })

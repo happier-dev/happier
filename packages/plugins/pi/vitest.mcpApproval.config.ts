@@ -1,11 +1,14 @@
 import { defineConfig } from 'vitest/config';
 import inMemoryConfig from '../../../apps/cli/vitest.inMemory.config';
 
-// Real Pi process + native Session interactions and the host permission owner.
+// Native source tests share the host's complete workspace source resolver.
 export default defineConfig({
   ...inMemoryConfig,
   test: {
     ...inMemoryConfig.test,
-    include: ['src/agent/tools/mcpToolPolicy.contract.test.ts'],
+    include: [
+      'src/agent/tools/mcpToolPolicy.contract.test.ts',
+      'src/agent/runtime/rpc/operations.test.ts',
+    ],
   },
 });

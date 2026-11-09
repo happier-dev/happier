@@ -23,5 +23,6 @@
   "machineCrabbox.presentation.description": "Máquinas de desarrollo de un coordinador o contenedor local.",
   "machineCrabbox.presentation.ready": "Listo",
   "machineCrabbox.presentation.unavailable": "Cuenta no disponible",
-  "machineCrabbox.presentation.provider_unavailable": "Crabbox no está disponible en este equipo"
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox no está disponible en este equipo",
+  "machineCrabbox.presentation.coordinatorDescription": "Servidores de un coordinador Crabbox que conectas."
 }

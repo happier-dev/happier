@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -52,6 +53,78 @@
         "id": "brand-icon",
         "kind": "asset",
         "path": "assets/brand.png"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
       }
     ],
     "roles": [],
@@ -63,9 +136,9 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -74,75 +147,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Uses your xAI API key"
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "ru",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Использует ваш API-ключ xAI"
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Używa Twojego klucza API xAI"
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Usa tu clave API de xAI"
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Utilise ta clé API xAI"
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Usa la tua chiave API xAI"
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Usa sua chave de API xAI"
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Fa servir la teva clau API d’xAI"
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "de",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "Nutzt deinen xAI-API-Schlüssel"
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "使用你的 xAI API 密钥"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "使用你的 xAI API 金鑰"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "settingsVoice.realtimeProviders.xai.description": "xAIのAPIキーを使用します"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -646,6 +695,10 @@
           "presentation": {
             "credential": {
               "catalog": "voices",
+              "checklist": [
+                "Open API keys in the xAI Console",
+                "Create a key, then paste it below."
+              ],
               "credentialPurpose": "voice.client-auth",
               "kind": "api_key",
               "promptBodyKey": "settingsVoice.realtimeProviders.xai.credential.promptBody",
@@ -859,9 +912,6 @@
     "workflows": []
   },
   "displayName": "xAI Grok Voice",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "hostAccess": {
     "optional": [],
     "required": []

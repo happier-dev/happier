@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -107,6 +108,35 @@
         "id": "openrouter",
         "kind": "aggregator",
         "name": "OpenRouter",
+        "requestCost": {
+          "endpointTemplateIds": [
+            "openrouter-openai-chat"
+          ]
+        },
+        "usageSources": [
+          {
+            "endpointTemplateId": "openrouter-openai-chat",
+            "id": "key-usage",
+            "parser": "openrouter-key-usage",
+            "path": "/api/v1/key"
+          },
+          {
+            "billingCredential": {
+              "destination": {
+                "format": "bearer",
+                "kind": "httpHeader",
+                "name": "authorization"
+              },
+              "keyUrl": "https://openrouter.ai/settings/management-keys",
+              "slotId": "managementKey",
+              "title": "Management key"
+            },
+            "endpointTemplateId": "openrouter-openai-chat",
+            "id": "account-credits",
+            "parser": "openrouter-account-credits",
+            "path": "/api/v1/credits"
+          }
+        ],
         "v": 1,
         "websiteUrl": "https://openrouter.ai"
       }
@@ -130,9 +160,9 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -149,8 +179,8 @@
   },
   "description": "Use OpenRouter models through one provider connection.",
   "displayName": "OpenRouter",
-  "engines": {
-    "happier": "^0.0.0"
+  "entrypoints": {
+    "daemon": "./.happier-plugin/daemon.js"
   },
   "hostAccess": {
     "optional": [],

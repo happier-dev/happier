@@ -6,7 +6,9 @@ import type {
   AgentExecutionRunRuntimeContextV1,
   AgentRuntimeFactoryContext,
   AgentSessionRuntimeContext,
+  AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginJsonStreamClient, PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
@@ -516,7 +518,7 @@ describe('activate', () => {
     await session.dispose();
   });
 
-  it('loads the host-resolved native tool manifest beside the request-auth extension', async () => {
+  it.each(['session', 'session_owned_run'] as const)('loads the owning Session native tool bridge for %s', async (opening) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-native-tools-'));
     try {
       const agentDir = join(root, 'agent');
@@ -555,7 +557,7 @@ describe('activate', () => {
         },
       } as unknown as AgentSessionRuntimeContext;
       const runtime = await createPiRuntime(context.factory);
-      const session = await runtime.sessions!.open({
+      const request = {
         kind: 'create',
         sessionId: 'pi-host-session-1',
         cwd: '/tmp/pi-workspace',
@@ -566,16 +568,32 @@ describe('activate', () => {
           instructions: 'Use the registered Happier tools.',
         },
         launchEnvironment: {
-          values: { PI_CODING_AGENT_DIR: agentDir },
+          values: { PI_CODING_AGENT_DIR: agentDir, HAPPIER_SESSION_MCP_CONTEXT_FILE: '/runtime/session/.happier/session-mcp.json' },
           unset: [],
         },
-      }, sessionContext);
+      } as const;
+      const session = opening === 'session'
+        ? await runtime.sessions!.open(request, sessionContext)
+        : await (async () => {
+          const opened = createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
+            request: {
+              kind: 'create', runId: 'pi-child-run', cwd: request.cwd,
+              profile: { pluginId: 'happier.execution-runs', localId: 'delegate' },
+              input: { text: 'Use the owning Session tools.' },
+            },
+            openConversation: async () => await runtime.sessions!.open(request, sessionContext),
+          });
+          const promptIndex = await waitForWrittenType(capture, 'prompt');
+          await ack(capture, promptIndex);
+          return await opened;
+        })();
 
       expect(resolveNativeBridge).toHaveBeenCalledWith({
         systemPrompt: 'Use the registered Happier tools.',
       }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
-      const spec = capture.specs[0] as Readonly<{ launch?: Readonly<{ args?: readonly string[] }> }>;
+      const spec = capture.specs[0] as Readonly<{ launch?: Readonly<{ args?: readonly string[]; env?: Readonly<Record<string, string>> }> }>;
       const args = spec.launch?.args ?? [];
+      expect(spec.launch?.env).toHaveProperty('HAPPIER_SESSION_MCP_CONTEXT_FILE', '/runtime/session/.happier/session-mcp.json');
       const extensionPaths = args.filter((_arg, index) => args[index - 1] === '--extension');
       const configIndex = args.indexOf('--happier-tools-config');
       expect(configIndex).toBeGreaterThanOrEqual(0);
@@ -583,12 +601,24 @@ describe('activate', () => {
       const configPath = args[configIndex + 1];
       expect(configPath).toBeTruthy();
       expect(JSON.parse(await readFile(configPath!, 'utf8'))).toMatchObject({
+        sessionId: 'pi-host-session-1',
         systemPrompt: 'Use the registered Happier tools.',
         tools: [{ name: 'action_spec_search' }],
+        launch: {
+          executablePath: '/managed/happier',
+          argsPrefix: ['tools', 'call', '--agent-bridge'],
+        },
       });
 
       await session.dispose();
-      await expect(readFile(configPath!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      if (opening === 'session_owned_run') {
+        // Run disposal settles host terminal truth before provider cleanup.
+        await vi.waitFor(async () => {
+          await expect(readFile(configPath!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        });
+      } else {
+        await expect(readFile(configPath!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

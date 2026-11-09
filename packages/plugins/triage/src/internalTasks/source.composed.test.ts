@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginServices } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TriageConfiguredSourceInstanceV1Schema, TriageGetResultV1Schema, TriageScanResultV1Schema, TriageTaskWriteResultV1Schema, TriageReadConfiguredSourceInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -58,6 +58,22 @@ async function withSource(run: (kit: Awaited<ReturnType<typeof createPluginTestk
 }
 
 describe('registered internal Happier task source', () => {
+  it.each(['notStarted', 'denied', 'cancelled', 'responseLost'] as const)('preserves the internal host write outcome for create, edit and transition: %s', async outcome => {
+    await withSource(async (kit, calls) => {
+      const expected = outcome === 'notStarted'
+        ? { kind: 'refused', reason: 'unavailable' }
+        : { kind: 'uncertain', failure: { class: 'unknown', code: outcome === 'responseLost' ? 'unavailable' : outcome } };
+      expect(await kit.invokeAction('internal/tasks/create-v1', { v: 1, instance, kindId: 'task', fields: { title: 'Create' } })).toEqual(expected);
+      expect(await kit.invokeAction('internal/tasks/edit-v1', { v: 1, instance, localRef, fields: { title: 'Edit' } })).toEqual(expected);
+      expect(await kit.invokeAction('internal/tasks/transition-v1', { v: 1, instance, localRef, transitionId: 'started' })).toEqual(expected);
+      expect(calls.map(call => call.id)).toEqual(['tasks.internal.create', 'tasks.internal.edit', 'tasks.internal.transition']);
+    }, undefined, () => {
+      const error = new PluginError({ code: outcome === 'denied' || outcome === 'cancelled' ? outcome : 'unavailable', retryable: false });
+      // Host transport boundary: mirror registration/actionHandlerInvocation.ts's exception and serialized data.
+      throw outcome === 'notStarted' ? Object.assign(error, { actionHandlerInvocation: 'notStarted',
+        data: { ...error.data, actionHandlerInvocation: 'notStarted' } }) : error;
+    });
+  });
   it('finds tasks shared by different owners through the existing Scope condition without per-row reads', async () => {
     const todos = [
       { ...predecessor, id: 'mine', state: 'unstarted', ownerDisplayName: 'Mara' },

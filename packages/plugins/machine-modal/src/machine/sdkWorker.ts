@@ -1,4 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createModalProvisionerRoles } from './roles.js';
 import type { ModalScopedRequest } from './scopedSdk.js';
 
@@ -16,7 +18,10 @@ const { ModalClient } = await import('modal');
 const client = new ModalClient({ tokenId: process.env.MODAL_TOKEN_ID, tokenSecret: process.env.MODAL_TOKEN_SECRET,
   environment: process.env.MODAL_ENVIRONMENT, logLevel: 'error' });
 try {
-  if (client.version() !== '0.11.0' || client.profile.serverUrl !== process.env.MODAL_SERVER_URL
+  if (client.version() !== '0.11.0') {
+    throw Object.assign(new Error('Modal SDK unsupported'), { code: 'modal_sdk_unsupported' });
+  }
+  if (client.profile.serverUrl !== process.env.MODAL_SERVER_URL
     || client.profile.tokenId !== process.env.MODAL_TOKEN_ID || client.profile.tokenSecret !== process.env.MODAL_TOKEN_SECRET
     || client.environmentName() !== (process.env.MODAL_ENVIRONMENT ?? '')) {
     throw Object.assign(new Error('Modal selected SDK profile mismatch'), { code: 'modal_profile_mismatch' });
@@ -28,7 +33,10 @@ try {
   // Native diagnostics can contain credentials or enrollment output.
   const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
     && /^(?:modal_[a-z_]+|invalid_request)$/.test(error.code) ? error.code : 'modal_native_unavailable';
-  port.postMessage({ ok: false, code });
+  const details = isPluginError(error) ? error.details : undefined;
+  const nativeCause = MachineProvisionerNativeCauseV1Schema.safeParse(
+    details !== null && typeof details === 'object' && 'nativeCause' in details ? details.nativeCause : undefined);
+  port.postMessage({ ok: false, code, ...(nativeCause.success ? { nativeCause: nativeCause.data } : {}) });
 } finally {
   client.close();
   port.close();

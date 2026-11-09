@@ -8,6 +8,10 @@ export const DEEPSEEK_PROVIDER_CONTRIBUTION = {
   kind: 'frontier',
   endpointTemplates: [
     {
+      id: 'deepseek-fim', protocol: 'openai-completions', baseUrl: 'https://api.deepseek.com/beta',
+      capabilities: { streaming: 'supported', toolRoundTrips: 'unsupported', statefulResponses: 'unsupported', reasoningControls: 'unsupported' },
+    },
+    {
       id: 'deepseek-anthropic',
       protocol: 'anthropic',
       baseUrl: 'https://api.deepseek.com/anthropic',
@@ -44,7 +48,7 @@ export const DEEPSEEK_PROVIDER_CONTRIBUTION = {
       },
       {
         id: 'deepseek-openai-bearer',
-        protocols: ['openai-chat'],
+        protocols: ['openai-chat', 'openai-completions'],
         uses: ['probe', 'runtime'],
         destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
       },
@@ -54,11 +58,18 @@ export const DEEPSEEK_PROVIDER_CONTRIBUTION = {
     source: 'static+probe',
     manualModelPolicy: 'allowed',
     staticModels: [
-      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', aliases: ['deepseek-chat', 'deepseek-reasoner'] },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', aliases: ['deepseek-chat', 'deepseek-reasoner'], contextWindowTokens: 1_000_000 },
+      // FIM's documented ceiling is a usable allowance, not the chat limit:
+      // https://api-docs.deepseek.com/guides/fim_completion/ (maximum 4K tokens).
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindowTokens: 1_000_000,
+        inlineCompletion: { operationId: 'native-fim', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 3, outputTokens: 4096, maxOutputTokens: 4096 } },
     ],
     probes: [{ endpointTemplateId: 'deepseek-openai-chat', path: '/v1/models', parser: 'openai-models' }],
   },
+  // Beta FIM is a distinct admitted endpoint; never rewrite an ordinary chat URL.
+  // Tokenizer evidence: deepseek-ai/DeepSeek-V4-Pro tokenizer.json (ByteLevel BPE).
+  inlineCompletion: [{ id: 'native-fim', mode: 'native-fim', endpointTemplateId: 'deepseek-fim', path: '/beta/completions', wireFormat: 'openai-text-completions' }],
+  usageSources: [{ id: 'balance', endpointTemplateId: 'deepseek-openai-chat', path: '/user/balance', parser: 'deepseek-balance' }],
   legacyProfileMigrations: [{
     sourceProfileId: 'deepseek',
     descriptorRevision: 2,

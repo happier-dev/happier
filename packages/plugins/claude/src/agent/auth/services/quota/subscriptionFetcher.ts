@@ -1,4 +1,6 @@
 import { normalizeClaudeOauthProfileEntitlement, readClaudeOauthCredentialOrganizationId } from '@happier-dev/protocol/providers/claude/oauth-profile';
+import { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CLAUDE_ACCOUNT_USAGE_PLAN_METADATA } from '../../../../connectedAccounts/planLabels.js';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     AgentAccountUsageMeter,
@@ -141,9 +143,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizePct(value: unknown): number | null {
+function readFiniteNumber(value: unknown): number | null {
+    if (typeof value !== 'number' && (typeof value !== 'string' || value.trim().length === 0)) return null;
     const numeric = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(numeric)) return null;
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizePct(value: unknown): number | null {
+    const numeric = readFiniteNumber(value);
+    if (numeric === null) return null;
     return Math.max(0, Math.min(100, numeric));
 }
 
@@ -181,8 +189,9 @@ export function resolveClaudeSubscriptionPlanLabelFromMetadata(metadata: Readonl
     subscriptionType?: unknown;
     rateLimitTier?: unknown;
 }> | null): string | null {
-    return normalizeNonEmptyString(metadata?.subscriptionType)
+    const plan = normalizeNonEmptyString(metadata?.subscriptionType)
         ?? normalizeNonEmptyString(metadata?.rateLimitTier);
+    return resolveConnectedAccountPlanLabel(plan, CLAUDE_ACCOUNT_USAGE_PLAN_METADATA);
 }
 
 function parseIsoDateMs(value: unknown): number | null {
@@ -422,9 +431,8 @@ function readFiniteNumberProperty(
     keys: readonly string[],
 ): number | null {
     for (const key of keys) {
-        const value = record[key];
-        const numeric = typeof value === 'number' ? value : Number(value);
-        if (Number.isFinite(numeric)) return numeric;
+        const numeric = readFiniteNumber(record[key]);
+        if (numeric !== null) return numeric;
     }
     return null;
 }
@@ -875,7 +883,8 @@ export function createClaudeSubscriptionHttpClient(params: Readonly<{
     async function get(url: string, input: Input, retryServerError = false): Promise<unknown> {
         input.signal.throwIfAborted();
         let response = await params.runtimeFetch({ url, method: 'GET', headers: headers(input.accessToken), signal: input.signal });
-        if (retryServerError && response.status >= 500 && response.status < 600) {
+        if (retryServerError && response.status >= 500 && response.status < 600
+            && (parseClaudeUsageLimitReset({ nowMs: input.now, headers: response.headers }).retryAfterMs ?? 0) <= 0) {
             response = await params.runtimeFetch({ url, method: 'GET', headers: headers(input.accessToken), signal: input.signal });
         }
         if (!response.ok) throw createClaudeSubscriptionQuotaFetchError({ status: response.status,

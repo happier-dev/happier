@@ -1,4 +1,4 @@
-import type { ClaudeSettingSourceV2 } from '@happier-dev/plugin-sdk/first-party/claude';
+import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeRemoteAdvancedOptions } from '../../protocol/remoteSettings.js';
 
@@ -91,6 +91,7 @@ export type PermissionResult =
 export interface CanCallToolCallback {
     (toolName: string, input: unknown, options: {
         requestId?: string;
+        agentId?: string;
         signal: AbortSignal;
     }): Promise<PermissionResult>;
 }
@@ -125,6 +126,8 @@ export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
     settingSources?: readonly ClaudeSettingSourceV2[];
     canCallTool?: CanCallToolCallback;
     getOAuthToken?: GetOAuthTokenCallback;
+    /** Native lifecycle observation on the owned child's stdio control channel. */
+    onSessionHook?: (input: Readonly<Record<string, unknown>>, options: Readonly<{ signal: AbortSignal }>) => Promise<void>;
     settingsPath?: string;
     /**
      * Inline JSON for the single `--settings` overlay (e.g. `'{"ultracode":true}'`).

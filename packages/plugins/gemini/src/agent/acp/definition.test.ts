@@ -5,11 +5,9 @@ import { GEMINI_ACP_RUNTIME_DEFINITION } from './definition.js';
 describe('GEMINI_ACP_RUNTIME_DEFINITION', () => {
   it('declares the provider-owned native ACP policy', () => {
     expect(GEMINI_ACP_RUNTIME_DEFINITION).toMatchObject({
-      modelConfigOptionId: 'model',
       timeouts: {
         initMs: 120_000,
         idleMs: 500,
-        toolCallMs: 120_000,
       },
       mcp: {
         policy: 'pass_through',

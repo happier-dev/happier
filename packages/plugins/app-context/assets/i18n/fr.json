@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Annotation",
+  "plugins.appContext.annotation.note": "Votre note",
+  "plugins.appContext.annotation.save": "Enregistrer la note",
+  "plugins.appContext.annotation.saved": "Note enregistrée",
+  "plugins.appContext.annotation.refused": "Cette note ne peut pas être enregistrée pour l’instant — elle est conservée ici. Si vous modifiez un message en attente, terminez d’abord.",
+  "plugins.appContext.annotation.unavailable": "Cette annotation est indisponible."
+}

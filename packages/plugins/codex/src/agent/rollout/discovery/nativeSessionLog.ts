@@ -24,7 +24,10 @@ async function findCodexNativeSessionLogPath(params: Readonly<{
     const found = await findCodexRolloutFileById({
       sessionsRoot,
       vendorResumeId: params.vendorResumeId,
+      includeCompressed: false,
     });
+    // Diagnostics and prefix-based handoff consume raw JSONL. Codex owns
+    // decompression; expose the log after native resume materializes it.
     if (found) return found;
   }
   return null;

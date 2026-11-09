@@ -17,6 +17,7 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { readInternalTaskList, projectInternalTaskScan, projectInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
 import { isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
+import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from '../internalTasks/failure.js';
 import { entryReferenceComponents } from '../corpus/identity/components.js';
 import {
     readActiveConfiguredSourceRowPage,
@@ -408,7 +409,7 @@ export async function assembleTriageListPass(
         const refs = window.rows.filter(row => row.content?.sourceInstanceId === taskLane.sourceInstanceId).map(row => row.entryRef);
         const keyOf = (ref: typeof refs[number]) => JSON.stringify(entryReferenceComponents(ref));
         const relation = taskList === null ? { kind: 'failed' as const,
-            failure: { class: 'transient' as const, code: 'accountDataUnavailable' } }
+            failure: INTERNAL_TASK_DATA_UNAVAILABLE_V1 }
             : projectInternalTaskSessionLinks({}, taskList);
         // A partial inventory says which retained entries could not be opened.
         // Publish those facts even though this scan cannot produce their rows.

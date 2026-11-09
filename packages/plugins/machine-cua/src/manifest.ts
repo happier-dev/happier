@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { machinePresentationLabel, machineCheckPresentation, configurationLabel, CUA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { machinePresentationLabel, machineCheckPresentation, configurationLabel } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
+import { observeMachineProvisionerNativeRead, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
     MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
     type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -86,7 +86,7 @@ function roles(id: CuaLocalProvisionerId) {
             inputSchema: schemas.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
             async run(input: Readonly<{ resource: CuaLocalResourceV1 }>, context: PluginInvocationContext) {
                 try { return await (await provider(id, context)).inspect(input.resource); }
-                catch { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: 'cua_native_unavailable' }; }
+                catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_unavailable' }); }
             } },
         power: { ...defaults, title: 'Change Cua local machine power', dangerLevel: 'writesLocal' as const,
             confirmation: { title: 'Change this Cua machine’s power?' },
@@ -132,7 +132,7 @@ const space = roles('local-space');
 const byoc = remoteRoles();
 function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinitionV1 {
     const prefix = id === 'local-space' ? 'space' : 'sandbox';
-    return { title: 'Cua', icon: 'desktop',
+    return { title: 'Cua', icon: 'desktop', enrollmentRole: 'sandbox',
         resourceKind: id === 'local-space' ? 'cua-local-space' : 'cua-local-sandbox', schemaVersion: 1,
         kindTitle: machinePresentationLabel(id === 'local-space' ? 'spaceKind' : 'kind'),
         description: machinePresentationLabel(id === 'local-space' ? 'spaceDescription' : 'description'),
@@ -149,9 +149,21 @@ export const CUA_PLUGIN = definePlugin({
     id: pluginId, version: '0.0.0', displayName: 'Cua Machines',
     // The provider's own mark beside its name in Machines: Cua's mark from github.com/trycua/cua img/logo_black.svg (MIT, Copyright (c) 2025 Cua AI, Inc.), monochrome.
     brand: { iconResourceId: 'brand-icon', monochrome: true },
-    resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
-    description: 'Exact Cua local and BYOC resources with private native bootstrap IO.',
-    engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+      "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+      "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+      "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+      "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+      "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+      "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+      "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+      "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+      "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+      "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+      "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+      "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+    },
+    description: 'Exact Cua local and BYOC resources with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
     hostAccess: { required: [{ id: processAccess, capability: 'process', reason: 'Operate only the reviewed native Cua resource.',
         scope: { executables: [{ kind: 'managedDependency', id: dependencyId }], envKeys: ['HOME'] } },
         { id: 'cloud-account', capability: 'connectedAccounts', reason: 'Use only the captured native cloud setup.',
@@ -163,7 +175,20 @@ export const CUA_PLUGIN = definePlugin({
     managedDependencies: { [dependencyId]: { id: dependencyId, title: 'Cua', executable: 'cua',
         description: 'User-installed native Cua CLI; native components retain their own license and runtime prerequisites.',
         sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'] }] } },
-    ui: { translations: CUA_UI_TRANSLATION_BUNDLES },
+    ui: { translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ] },
     machineProvisioners: { 'local-sandbox': provisioner('local-sandbox'), 'local-space': provisioner('local-space'),
         byoc: remoteProvisioner() },
     actions: {

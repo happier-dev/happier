@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildPiHappierToolsExtensionSource,
@@ -11,6 +12,59 @@ import {
 import { preparePiHappierToolsExtension } from './assets.js';
 
 describe('Pi Happier tools extension', () => {
+  it('inherits the admitted private context reference into the bridge child while preserving call JSON and cwd', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-inherited-context-'));
+    // Generated native ESM is outside Vitest's module graph; observe its real OS adapter.
+    const nativeChildProcess = createRequire(import.meta.url)('node:child_process') as typeof import('node:child_process');
+    const spawnBoundary = vi.spyOn(nativeChildProcess, 'spawn');
+    syncBuiltinESMExports();
+    const contextFile = join(root, '.happier', 'session-mcp.json');
+    vi.stubEnv('HAPPIER_SESSION_MCP_CONTEXT_FILE', contextFile);
+    vi.stubEnv('HAPPIER_SESSION_MCP_SOCKET', undefined);
+    vi.stubEnv('HAPPIER_SESSION_MCP_BEARER', undefined);
+    const prepared = await preparePiHappierToolsExtension({ config: {
+      v: 1, sessionId: 'owning-session', directory: root, systemPrompt: '',
+      tools: [{ name: 'session_transcript_get', title: 'Read transcript', description: 'Read the owning Session',
+        inputSchema: { type: 'object', properties: {} } }],
+      launch: {
+        executablePath: process.execPath,
+        // The external process boundary observes the actual generated extension's child env/argv.
+        argsPrefix: ['-e', `
+          const output = { contextFile: process.env.HAPPIER_SESSION_MCP_CONTEXT_FILE,
+            cwd: process.cwd(), args: process.argv.slice(1),
+            hasRawBinding: Boolean(process.env.HAPPIER_SESSION_MCP_SOCKET || process.env.HAPPIER_SESSION_MCP_BEARER) };
+          process.stdout.write(JSON.stringify({ ok: true, data: { output } }) + "\\n");
+        `, '--'],
+      },
+    } });
+    try {
+      const extension = await import(pathToFileURL(prepared.extensionPath).href);
+      const handlers = new Map<string, (event: unknown) => unknown>();
+      const tools: Array<Readonly<{ execute: (...args: unknown[]) => Promise<Readonly<{
+        content: readonly Readonly<{ text: string }>[];
+      }>> }>> = [];
+      extension.default({ registerFlag() {}, getFlag: () => prepared.configPath,
+        registerTool(tool: (typeof tools)[number]) { tools.push(tool); },
+        on(name: string, handler: (event: unknown) => unknown) { handlers.set(name, handler); },
+      });
+      await handlers.get('session_start')?.({});
+      const input = { sessionId: 'owning-session', limit: 12 };
+      const result = await tools[0]!.execute('native-call-1', input, undefined, undefined, { cwd: root });
+      expect(JSON.parse(result.content[0]!.text)).toEqual({ contextFile, cwd: root, hasRawBinding: false,
+        args: ['--tool', 'session_transcript_get', '--args-json', JSON.stringify(input),
+          '--tool-call-id', 'native-call-1', '--json'],
+      });
+      expect(JSON.parse(readFileSync(prepared.configPath, 'utf8')).launch.env).toBeUndefined();
+      expect(spawnBoundary.mock.calls[0]?.[2]?.windowsHide).toBe(true);
+    } finally {
+      await prepared.dispose();
+      spawnBoundary.mockRestore();
+      syncBuiltinESMExports();
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['0.81.0', '0.82.1'])('observes input before discovered user handlers through the real Pi %s loader', async (version) => {
     const pi = version === '0.81.0' ? await import('pi-coding-agent-0810') : await import('pi-coding-agent-0821');
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-input-loader-'));

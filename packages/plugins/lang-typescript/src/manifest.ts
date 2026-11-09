@@ -15,12 +15,16 @@ const languageSettings = {
 export const LANG_TYPESCRIPT_PLUGIN = definePlugin({
   id: 'happier.language.typescript', version: '0.0.0', displayName: 'TypeScript',
   description: 'TypeScript and JavaScript language intelligence on the workspace Machine.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   languageServers: {
     typescript: {
       title: 'TypeScript',
       languageIds: { typescript: 'typescript', tsx: 'typescriptreact', javascript: 'javascript', jsx: 'javascriptreact' },
       executable: { kind: 'managedDependency', id: 'typescript-native' }, args: ['--lsp', '--stdio'],
+      projectCheck: {
+        executable: { kind: 'managedDependency', id: 'typescript-native' },
+        args: ['--noEmit', '--pretty', 'false', '--incremental', 'false', '-p', 'tsconfig.json'],
+        projectFile: 'tsconfig.json', output: { kind: 'typescript' },
+      },
       initializationOptions: {
         userPreferences: { tsserver: { automaticTypeAcquisition: { enabled: false } } },
         disablePushDiagnostics: true,

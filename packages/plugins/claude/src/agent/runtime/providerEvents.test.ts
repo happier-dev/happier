@@ -7,6 +7,18 @@ import { readClaudeProviderEvent } from './providerEvents.js';
 const RAW_PROVIDER_ID = '  provider\nses/AB+cd==  ';
 
 describe('Claude provider event parsing', () => {
+  it('accepts ordinary progress and validates the optional native retry projection', () => {
+    const progress = { kind: 'turn-progress', sessionId: 'happy-session', turnId: 'turn-1', emittedAtMs: 1 };
+    expect(readClaudeProviderEvent(progress)).toEqual(progress);
+    expect(readClaudeProviderEvent({ ...progress, retry: { attempt: 2, reason: 'rate_limited' } }))
+      .toEqual({ ...progress, retry: { attempt: 2, reason: 'rate_limited' } });
+    for (const retry of [
+      { attempt: 0, reason: 'unknown' }, { attempt: 1.5, reason: 'unknown' },
+      { attempt: Number.MAX_SAFE_INTEGER + 1, reason: 'unknown' },
+      { attempt: 1, reason: 'unexpected' }, { attempt: 1, reason: 'unknown', message: 'native prose' },
+    ]) expect(readClaudeProviderEvent({ ...progress, retry })).toBeNull();
+  });
+
   it('publishes the provider session id Claude minted, byte for byte', () => {
     const event = readClaudeProviderEvent({
       kind: 'session-id-publish',
@@ -32,16 +44,7 @@ describe('Claude provider event parsing', () => {
     })).toBeNull();
   });
 
-  it('keeps the ended session id and the observed agent turn id exact', () => {
-    const ended = readClaudeProviderEvent({
-      kind: 'session-ended',
-      sessionId: 'happy-session',
-      emittedAtMs: 2,
-      agentSessionId: RAW_PROVIDER_ID,
-    });
-    expect(ended && 'agentSessionId' in ended ? ended.agentSessionId : null)
-      .toBe(RAW_PROVIDER_ID);
-
+  it('keeps the observed agent turn id exact', () => {
     const observed = readClaudeProviderEvent({
       kind: 'turn-agent-id-observed',
       sessionId: 'happy-session',

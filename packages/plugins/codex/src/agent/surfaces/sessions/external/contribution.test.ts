@@ -101,7 +101,7 @@ function createThreadListingExec(
     updatedAt: 1_768_000_100,
     cwd: '/repo/native',
   }],
-  nativeHistory?: { items: Record<string, unknown>[]; onLaunch?: (spec: unknown) => void; readFailure?: Error; onThreadRead?: (threadId: string, includeTurns: unknown) => void; threadReadFailure?: Error; threadReadResult?: unknown },
+  nativeHistory?: { items: Record<string, unknown>[]; onLaunch?: (spec: unknown) => void; onDispose?: () => Promise<void>; readFailure?: Error; onThreadRead?: (threadId: string, includeTurns: unknown) => void; threadReadFailure?: Error; threadReadResult?: unknown },
 ): ExecService {
   const never = new Promise<PluginProcessResult>(() => undefined);
   const client: PluginJsonRpcClient = {
@@ -150,7 +150,7 @@ function createThreadListingExec(
       dispose: async () => undefined,
     },
     wait: () => never,
-    dispose: async () => undefined,
+    dispose: async () => { await nativeHistory?.onDispose?.(); },
   };
   return {
     agentCli: { checkReadiness: async () => ({ launchable: [] }) },
@@ -222,6 +222,13 @@ describe('Codex public Agent External Sessions contribution', () => {
       await expect(contribution.hydrateCandidates!(request)).resolves.toMatchObject({ ok: true, value: {
         candidates: [{ title: 'Renamed native session' }, { title: 'Native 117' }],
       } });
+      threads[119]!.name = 'v'.repeat(10_001);
+      const longTitleResult = await contribution.hydrateCandidates!(request);
+      expect(longTitleResult.ok).toBe(true);
+      if (!longTitleResult.ok) throw new Error(longTitleResult.code);
+      const longTitleCandidate = longTitleResult.value.candidates[0]!;
+      expect(ExternalSessionCandidateV1Schema.safeParse(longTitleCandidate).success).toBe(true);
+      expect(longTitleCandidate.title).toBe(`${'v'.repeat(9_997)}...`);
       boundary.threadReadFailure = new Error('private native failure');
       await expect(contribution.hydrateCandidates!(request)).resolves.toEqual({ ok: true, value: { candidates } });
       boundary.threadReadFailure = undefined;
@@ -258,9 +265,15 @@ describe('Codex public Agent External Sessions contribution', () => {
   });
 
 
-  it('reports an absent native proxy without launching it and keeps complete rollouts readable', async () => {
+  it.each(['configured', 'extra'] as const)('reads complete native history with an absent native proxy in the %s home', async homeKind => {
     const home = await mkdtemp(join(tmpdir(), 'codex-proxy-unavailable-'));
-    const launches: unknown[] = [];
+    const launches: Array<{ args: readonly string[]; env: Record<string, string> }> = [];
+    const methods: string[] = [];
+    const entry = (id: string, text: string) => ({ turnId: 'turn', startedAtMs: 1, completedAtMs: 2,
+      item: { id, type: 'agentMessage', text } });
+    const history = { items: [entry('native-first', 'native history, not preview')], onLaunch: (spec: unknown) => {
+      launches.push((spec as { launch: { args: string[]; env: Record<string, string> } }).launch);
+    } };
     try {
       contentReadClock.nativeProxyAvailable = false;
       const sessions = join(home, 'sessions'); await mkdir(sessions);
@@ -269,19 +282,29 @@ describe('Codex public Agent External Sessions contribution', () => {
           jsonl({ type: 'session_meta', payload: { id, ...(paginated ? { history_mode: 'paginated' } : {}) } })
           + jsonl({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'readable quartz' }] } }));
       }
-      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
-      const request = { ...invocation({ exec: createThreadListingExec([], [], { items: [], onLaunch: spec => launches.push(spec) }) }),
-        source: { kind: 'codexHome', home: 'user' }, direction: 'older' as const, maxItems: 10 };
-      for (let tick = 0; tick < 2; tick++) {
-        for (const remoteSessionId of ['paginated', 'native-only']) {
-          expect(await contribution.pageTranscript({ ...request, remoteSessionId }))
-            .toMatchObject({ ok: false, code: 'agent_unavailable', retryable: true });
-        }
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: homeKind === 'extra' ? join(home, 'ambient-home') : home } });
+      const request = { ...invocation({ exec: createThreadListingExec(methods, [], history) }),
+        source: { kind: 'codexHome', home: 'user', homePath: home }, direction: 'older' as const, maxItems: 10 };
+      for (const remoteSessionId of ['paginated', 'native-only']) {
+        const page = await contribution.pageTranscript({ ...request, remoteSessionId });
+        expect(page.ok, JSON.stringify(page)).toBe(true);
+        if (!page.ok || !page.value.tailCursor) throw new Error(JSON.stringify(page));
+        expect(JSON.stringify(page.value.items)).toContain('native history, not preview');
+        expect(JSON.stringify(page.value.items)).not.toContain('readable quartz');
+        history.items.push(entry(`append-${remoteSessionId}`, `native append-${remoteSessionId}`));
+        const follow = await contribution.readAfterTranscript({ ...request, remoteSessionId, cursor: page.value.tailCursor });
+        expect(follow).toMatchObject({ ok: true, value: { outcome: 'advanced' } });
+        expect(JSON.stringify(follow)).toContain(`native append-${remoteSessionId}`);
       }
+      const nativeLaunches = launches.length;
       const complete = await contribution.pageTranscript({ ...request, remoteSessionId: 'complete' });
       expect(complete.ok).toBe(true);
       expect(JSON.stringify(complete)).toContain('readable quartz');
-      expect(launches).toEqual([]);
+      expect(nativeLaunches).toBeGreaterThan(0);
+      expect(launches).toHaveLength(nativeLaunches);
+      expect(launches.every(launch => launch.args.includes('app-server') && !launch.args.includes('proxy') && launch.env.CODEX_HOME === home)).toBe(true);
+      expect(methods).toContain('thread/items/list');
+      expect(methods.some(method => ['thread/start', 'thread/resume', 'turn/start', 'thread/unarchive'].includes(method))).toBe(false);
     } finally { contentReadClock.nativeProxyAvailable = true; await rm(home, { recursive: true, force: true }); }
   });
 
@@ -308,8 +331,7 @@ describe('Codex public Agent External Sessions contribution', () => {
       const entry = (index: number) => ({ turnId: `turn-${index}`, startedAtMs: index * 1000, completedAtMs: index * 1000 + 1,
         item: { id: `item-${index}`, type: index % 2 ? 'userMessage' : 'agentMessage',
           ...(index % 2 ? { content: [{ type: 'text', text: `message-${index}` }] } : { text: `message-${index}` }) } });
-      const launches: unknown[] = [];
-      const history = { items: [1, 2, 3, 4].map(entry), onLaunch: (spec: unknown) => launches.push(spec) };
+      const history = { items: [1, 2, 3, 4].map(entry) };
       const methods: string[] = [];
       const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
       const request = { ...invocation({ exec: createThreadListingExec(methods, [], history) }),
@@ -329,22 +351,11 @@ describe('Codex public Agent External Sessions contribution', () => {
       expect(JSON.stringify(items)).toContain('message-1');
       expect(methods).toContain('thread/items/list');
       expect(methods.some(method => ['thread/resume', 'turn/start', 'thread/unarchive'].includes(method))).toBe(false);
-      // Native history is a read of an already-running vendor server. Starting
-      // a fresh server can backfill/migrate its store and contend with live work.
-      expect(launches.map(spec => (spec as { launch: { args: string[] } }).launch.args))
-        .toEqual([['app-server', 'proxy'], ['app-server', 'proxy']]);
       history.items.push(entry(5));
       const appended = await contribution.readAfterTranscript({ ...request, cursor: tail! });
       expect(appended.ok, JSON.stringify(appended)).toBe(true);
       if (!appended.ok) throw new Error(appended.message);
       expect(appended.value).toMatchObject({ outcome: 'advanced', items: [expect.objectContaining({ raw: { role: 'user', content: { type: 'text', text: 'message-5' } } })] });
-      const beforeUnavailable = launches.length;
-      contentReadClock.nativeProxyAvailable = false;
-      expect(await contribution.pageTranscript({ ...request, cursor: tail! }))
-        .toMatchObject({ ok: false, code: 'agent_unavailable', retryable: true });
-      expect(await contribution.readAfterTranscript({ ...request, cursor: tail! }))
-        .toMatchObject({ ok: false, code: 'agent_unavailable', retryable: true });
-      expect(launches).toHaveLength(beforeUnavailable);
     } finally { contentReadClock.nativeProxyAvailable = true; await rm(home, { recursive: true, force: true }); }
   });
 
@@ -357,7 +368,10 @@ describe('Codex public Agent External Sessions contribution', () => {
         { id: 'view', type: 'imageView', path: '/repo/plot.png' },
         { id: 'sleep', type: 'sleep', durationMs: 30_000 },
       ].map(item => ({ turnId: 'turn-tools', startedAtMs: 1000, completedAtMs: 2000, item }));
-      const history = { items: tools };
+      const history: { items: Record<string, unknown>[] } = { items: tools };
+      // A real paginated thread retains compaction lifecycle items between tools.
+      history.items.splice(1, 0, { turnId: 'turn-tools', startedAtMs: 1000, completedAtMs: 2000,
+        item: { id: 'compaction', type: 'contextCompaction' } });
       const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
       const request = { ...invocation({ exec: createThreadListingExec([], [], history) }),
         source: { kind: 'codexHome', home: 'user' }, remoteSessionId: 'native-thread', maxItems: 1 };
@@ -996,6 +1010,54 @@ describe('Codex public Agent External Sessions contribution', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it.each(['native cleanup', 'caller deadline'] as const)(
+    'keeps native listing cleanup under the %s lifetime',
+    async (ending) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-list-cleanup-lifetime-'));
+      let releaseCleanup!: () => void;
+      const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+      let reportCleanupStarted!: () => void;
+      const cleanupStarted = new Promise<void>((resolve) => { reportCleanupStarted = resolve; });
+      let pendingRead: ReturnType<ReturnType<typeof createCodexExternalSessionsContribution>['listCandidates']> | undefined;
+      try {
+        const codexHome = join(root, 'codex-home');
+        await mkdir(codexHome, { recursive: true });
+        const boundary = { items: [], onDispose: async () => { reportCleanupStarted(); await cleanup; } };
+        const exec = createThreadListingExec([], undefined, boundary);
+        const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: codexHome } });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        let settled = false;
+        pendingRead = contribution.listCandidates({
+          source: { kind: 'codexHome', home: 'user' },
+          maxItems: 10,
+          searchTerm: '33333333',
+          searchMode: 'full',
+          ...invocation({ exec }),
+        });
+        void pendingRead.then(() => { settled = true; });
+        await cleanupStarted;
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(settled).toBe(false);
+
+        if (ending === 'caller deadline') {
+          await vi.advanceTimersByTimeAsync(30_000);
+          await expect(pendingRead).resolves.toMatchObject({ ok: false, code: 'timeout' });
+        } else {
+          releaseCleanup();
+          await expect(pendingRead).resolves.toMatchObject({
+            ok: true,
+            value: { candidates: [{ remoteSessionId: '33333333-3333-3333-3333-333333333333' }] },
+          });
+        }
+      } finally {
+        releaseCleanup();
+        vi.useRealTimers();
+        await pendingRead;
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     ['tail', 'a missing source'],

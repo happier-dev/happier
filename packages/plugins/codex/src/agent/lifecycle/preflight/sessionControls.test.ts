@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CODEX_PREFLIGHT_SESSION_CONTROLS } from './sessionControls.js';
+import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 
 function createPreflightContext(params: Readonly<{
   accountSettings?: Readonly<Record<string, JsonValue>> | null;
@@ -63,6 +64,27 @@ function createPreflightContext(params: Readonly<{
 }
 
 describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
+  it('reports runtime input capacity without probing native offered models and leaves ACP unknown', () => {
+    const contribution: AgentPreflightSessionControlsContributionV1 = CODEX_PREFLIGHT_SESSION_CONTROLS;
+    expect(contribution.resolveMaxInputUnicodeCharacters?.({ accountSettings: null })).toBe(1 << 20);
+    expect(contribution.resolveMaxInputUnicodeCharacters?.({ accountSettings: { codexBackendMode: 'acp' } })).toBeNull();
+    expect(contribution.resolveMaxInputUnicodeCharacters?.({
+      accountSettings: { codexBackendMode: 'acp' },
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+    })).toBe(1 << 20);
+    expect(contribution.resolveMaxInputUnicodeCharacters?.({
+      accountSettings: null,
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'acp' } },
+    })).toBeNull();
+  });
+  it('keeps runtime input capacity out of offered model facts', async () => {
+    const fixture = createPreflightContext({ request: async method => method === 'initialize' ? {}
+      : method === 'model/list' ? { data: [{ id: 'gpt-6-luna', model: 'gpt-6-luna', displayName: 'Luna' }] } : [] });
+    const models = await CODEX_PREFLIGHT_SESSION_CONTROLS.probeModels(fixture.context);
+    expect(models).toHaveLength(2);
+    for (const model of models!) expect(AgentProbeModelSchema.parse(model)).not.toHaveProperty('maxInputUnicodeCharacters');
+    expect(models![0]).toMatchObject({ id: 'default' });
+  });
   it('reads native skills before a first turn through the declared app-server scope', async () => {
     const fixture = createPreflightContext({
       request: async (method) => {
@@ -229,7 +251,8 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
     });
 
     await expect(CODEX_PREFLIGHT_SESSION_CONTROLS.probeModels(fixture.context))
-      .resolves.toEqual([expect.objectContaining({ id: 'gpt-5.5', name: 'GPT-5.5' })]);
+      .resolves.toEqual([expect.objectContaining({ id: 'default' }),
+        expect.objectContaining({ id: 'gpt-5.5', name: 'GPT-5.5' })]);
     expect(fixture.commands).toEqual([{
       toolId: 'codex-cli',
       args: ['app-server', '--listen', 'stdio://'],

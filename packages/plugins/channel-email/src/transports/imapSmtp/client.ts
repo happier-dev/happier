@@ -26,7 +26,7 @@ function smtpResponseCode(error: unknown): number | undefined {
   return undefined;
 }
 
-export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: ConnectionOptions) {
+export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: ConnectionOptions, onSentCopyFailure?: () => void) {
   const tlsOptions = account.tlsCaPem ? { ...tls, ca: account.tlsCaPem } : tls;
   async function withImap<T>(work: (client: ImapFlow) => Promise<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();
@@ -182,14 +182,16 @@ export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: Connecti
     },
     async submitRaw(mime: Uint8Array, envelope: Readonly<{ from: string; to: readonly string[] }>, messageId: string, signal?: AbortSignal): Promise<ConversationDeliveryResultV1> {
       let submissionStarted = false;
-      let confirmed = false;
+      let acceptedResult: ConversationDeliveryResultV1 | undefined;
       try {
         const info = await withSmtp((client) => new Promise<SMTPConnection.SentMessageInfo>((resolve, reject) => {
           submissionStarted = true;
           client.send({ from: envelope.from, to: [...envelope.to] }, Buffer.from(mime), (error, result) => error ? reject(error) : resolve(result));
         }), signal);
-        confirmed = info.accepted.length > 0;
-        if (!confirmed) return { kind: 'notDelivered', retry: 'never' };
+        if (info.accepted.length === 0) return { kind: 'notDelivered', retry: 'never' };
+        acceptedResult = info.rejected.length
+          ? { kind: 'partial', providerMessageIds: [messageId], failedChunk: 0 }
+          : { kind: 'delivered', providerMessageIds: [messageId] };
         // Observe the server's actual Sent copy for this delivery; no vendor-name rule.
         await withImap(async (client) => {
           const folder = await sentFolder(client);
@@ -198,11 +200,15 @@ export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: Connecti
             if (!appended) throw new Error('Sent append did not complete');
           }
         }, signal);
-        if (info.rejected.length) return { kind: 'partial', providerMessageIds: [messageId], failedChunk: 0 };
-        return { kind: 'delivered', providerMessageIds: [messageId] };
+        return acceptedResult;
       } catch (error) {
+        // SMTP acceptance remains authoritative when best-effort Sent work
+        // fails or is cancelled. A failed copy never authorizes another send.
+        if (acceptedResult !== undefined) {
+          onSentCopyFailure?.();
+          return acceptedResult;
+        }
         signal?.throwIfAborted();
-        if (confirmed) return { kind: 'outcomeUnknown', providerMessageIds: [messageId] };
         const code = smtpResponseCode(error);
         if (code !== undefined && code >= 400 && code < 600) return { kind: 'notDelivered', retry: code < 500 ? 'safe' : 'never' };
         return submissionStarted ? { kind: 'outcomeUnknown' }

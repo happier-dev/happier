@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConversationOutwardDeliveryResult } from './outwardDelivery.js';
 import {
-  acceptConversationSessionProjectionBaseline,
+  dismissConversationSessionProjectionNotice,
   createConversationSessionProjectionCollectionStore,
   createConversationSessionProjectionFrontierRow,
   readConversationSessionProjectionNoHistoryBaseline,
@@ -442,18 +442,9 @@ describe('Conversation Session mirror projection', () => {
 });
 
 describe('Conversation Session projection no-history baseline', () => {
-  it('walks only the public external-shareable projection to its stable tail without projecting existing items', async () => {
+  it('acquires the host-owned no-history cursor in one read without replaying existing items', async () => {
     const signal = new AbortController().signal;
     const execute = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        projection: 'externalShareableV1',
-        sessionId: 'session-new',
-        scannedThroughSeq: 100,
-        nextCursor: '100',
-        hasMore: true,
-        items: [],
-      })
       .mockResolvedValueOnce({
         ok: true,
         projection: 'externalShareableV1',
@@ -477,15 +468,10 @@ describe('Conversation Session projection no-history baseline', () => {
     expect(execute).toHaveBeenNthCalledWith(
       1,
       'session.transcript.get',
-      { sessionId: 'session-new', projection: 'externalShareableV1', cursor: null, limit: 100 },
+      { sessionId: 'session-new', projection: 'externalShareableV1', cursor: 'tail', limit: 100 },
       { signal },
     );
-    expect(execute).toHaveBeenNthCalledWith(
-      2,
-      'session.transcript.get',
-      { sessionId: 'session-new', projection: 'externalShareableV1', cursor: '100', limit: 100 },
-      { signal },
-    );
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('refuses to retarget from a non-advancing page rather than inventing a cursor', async () => {
@@ -505,22 +491,13 @@ describe('Conversation Session projection no-history baseline', () => {
     })).resolves.toEqual({ kind: 'retry', reason: 'publicationBarrier' });
   });
 
-  it('rejects a terminal page that regresses the public projection frontier', async () => {
+  it.each([-1, Number.MAX_SAFE_INTEGER + 1])('rejects an unsafe host projection frontier: %s', async seq => {
     const execute = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         projection: 'externalShareableV1',
         sessionId: 'session-new',
-        scannedThroughSeq: 100,
-        nextCursor: '100',
-        hasMore: true,
-        items: [],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        projection: 'externalShareableV1',
-        sessionId: 'session-new',
-        scannedThroughSeq: 90,
+        scannedThroughSeq: seq,
         nextCursor: '90',
         hasMore: false,
         items: [],
@@ -532,7 +509,7 @@ describe('Conversation Session projection no-history baseline', () => {
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'historyGap', reason: 'projectionMismatch' });
 
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the host Action failure code for a failed baseline without disclosing its message', async () => {
@@ -569,14 +546,66 @@ describe('Conversation Session projection no-history baseline', () => {
 });
 
 describe('Conversation Session projection retained frontier', () => {
-  it('accepts a persisted history gap with retired fields at the current transcript tail', async () => {
+  it.each(['retained', 'rejected'] as const)('automatically rejoins the current tail, retains the notice and delivers only future transcript items: %s', async source => {
+    const collection = new MemoryProjectionCollection();
+    collection.rows.set('binding-1', persistedProjectionBindingRow());
+    const notice = { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100 };
+    const row = createConversationSessionProjectionFrontierRow({
+      bindingId: 'binding-1', targetSessionId: 'session-1',
+      transcriptCursor: source === 'retained' ? notice : 'old-cursor', lastScannedSeq: 8, revision: 5, now: 100,
+    });
+    collection.rows.set(row.id, { rowId: row.id, revision: 3, value: row });
+    const signal = new AbortController().signal;
+    const store = createConversationSessionProjectionCollectionStore({ stateCollection: collection as never, signal });
+    const requestedCursors: unknown[] = [];
+    const execute = vi.fn(async (_action: unknown, request: { cursor?: string | null; limit: number }) => {
+      requestedCursors.push(request.cursor);
+      if (request.cursor === 'old-cursor') throw new PluginError({ code: 'invalid_cursor', message: 'Cursor expired.' });
+      return request.cursor === 'tail' ? {
+        ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+        scannedThroughSeq: 12, nextCursor: '12', hasMore: false,
+        items: [],
+      } : {
+        ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+        scannedThroughSeq: 13, nextCursor: '13', hasMore: false,
+        items: [{ kind: 'userText', sessionId: 'session-1', seq: 13,
+          itemId: 'future-item', localId: 'future-local', text: 'future only',
+          origin: { v: 1, producer: 'pluginSession', actor: 'collaborator' } }],
+      };
+    });
+    const deliveredItems: string[] = [];
+    const project = () => projectConversationSessionTranscriptPage({
+      actions: { execute } as unknown as ActionsService, store, bindingId: 'binding-1', signal, now: () => 100,
+      deliver: async ({ item }) => { deliveredItems.push(item.itemId); return delivered(); },
+    });
+    await expect(project()).resolves.toEqual({ kind: 'advanced', hasMore: false, deliveredItemCount: 0 });
+    expect(deliveredItems).toEqual([]);
+    await expect(project()).resolves.toEqual({ kind: 'advanced', hasMore: false, deliveredItemCount: 1 });
+    expect(deliveredItems).toEqual(['future-item']);
+    expect(requestedCursors).toEqual(source === 'retained' ? ['tail', '12'] : ['old-cursor', 'tail', '12']);
+    expect(collection.rows.get(row.id)?.value).toMatchObject({
+      payload: { transcriptCursor: { ...notice, cursor: '13' }, lastScannedSeq: 13 },
+    });
+    const recoveredFrontier = collection.rows.get(row.id);
+    if (recoveredFrontier === undefined) throw new Error('Expected recovered frontier');
+    await dismissConversationSessionProjectionNotice({
+      stateCollection: collection as never, bindingId: 'binding-1', expectedBindingRevision: 7,
+      expectedFrontierRevision: recoveredFrontier.revision, signal, now: 200,
+    });
+    expect(collection.rows.get(row.id)?.value).toMatchObject({
+      payload: { transcriptCursor: '13', lastScannedSeq: 13 },
+    });
+    expect(requestedCursors).toEqual(source === 'retained' ? ['tail', '12'] : ['old-cursor', 'tail', '12']);
+  });
+
+  it('dismisses a recovered notice without reading or moving the current transcript cursor', async () => {
     const collection = new MemoryProjectionCollection();
     collection.rows.set('binding-1', persistedProjectionBindingRow());
     const frontierRow = createConversationSessionProjectionFrontierRow({
       bindingId: 'binding-1',
       targetSessionId: 'session-1',
-      transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100, retiredCursor: 'old' },
-      lastScannedSeq: 8,
+      transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100, cursor: '12', retiredCursor: 'old' },
+      lastScannedSeq: 12,
       revision: 5,
       now: 100,
     });
@@ -585,18 +614,7 @@ describe('Conversation Session projection retained frontier', () => {
       revision: 3,
       value: frontierRow,
     });
-    const actionService = actions({
-      ok: true,
-      projection: 'externalShareableV1',
-      sessionId: 'session-1',
-      scannedThroughSeq: 12,
-      nextCursor: '12',
-      hasMore: false,
-      items: [],
-    });
-
-    await expect(acceptConversationSessionProjectionBaseline({
-      actions: actionService,
+    await expect(dismissConversationSessionProjectionNotice({
       stateCollection: collection as never,
       bindingId: 'binding-1',
       expectedBindingRevision: 7,

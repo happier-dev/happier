@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "監看 Discord 頻道",
-  "discord.automation.messageSource.setup.description": "選擇 Discord 機器人以及訊息應觸發此自動化的頻道。",
+  "discord.automation.messageSource.setup.description": "選擇 Discord 機器人以及訊息應觸發此工作流程的頻道。",
   "discord.automation.messageSource.setup.submit": "監看頻道",
   "discord.automation.messageSource.setup.credential": "Discord 機器人帳戶",
   "discord.automation.messageSource.setup.credential.description": "選擇現有的 Discord 機器人連線帳戶；此處從不輸入機器人權杖。",

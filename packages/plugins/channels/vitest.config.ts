@@ -17,6 +17,14 @@ const repoRoot = resolve(packageRoot, '../../..');
 
 const workspacePackages: readonly WorkspacePackageSpec[] = [
   {
+    packageName: '@happier-dev/cli-common',
+    packageSourceRoot: resolve(repoRoot, 'packages/cli-common/src'),
+  },
+  {
+    packageName: '@happier-dev/forge-ci',
+    packageSourceRoot: resolve(repoRoot, 'packages/forge-ci/src'),
+  },
+  {
     packageName: '@happier-dev/email-transports-protocol',
     packageSourceRoot: resolve(repoRoot, 'packages/email-transports-protocol/src'),
   },

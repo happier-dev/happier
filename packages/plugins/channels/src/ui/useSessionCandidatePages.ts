@@ -5,6 +5,7 @@ export type SessionCandidate = Readonly<{ id: string; label: string }>;
 type SessionCandidatePage = Readonly<{
   candidates: readonly SessionCandidate[];
   nextCursor?: string;
+  incomplete?: boolean;
 }>;
 
 function parseSessionCandidatePage(value: unknown): SessionCandidatePage | undefined {
@@ -30,14 +31,47 @@ function parseSessionCandidatePage(value: unknown): SessionCandidatePage | undef
   };
 }
 
-/** One cursor owner for Channels' existing-Session pickers. */
-export function useSessionCandidatePages(options: Readonly<{
+function parseDiscussionCandidatePage(value: unknown): SessionCandidatePage | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const page = value as Record<string, unknown>;
+  if (page.v !== 1 || typeof page.serverId !== 'string' || !Array.isArray(page.discussions)
+    || typeof page.incomplete !== 'boolean') return undefined;
+  if (page.nextCursor !== null && (typeof page.nextCursor !== 'string' || page.nextCursor.length === 0)) return undefined;
+  const seen = new Set<string>();
+  const candidates: SessionCandidate[] = [];
+  for (const value of page.discussions) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const discussion = value as Record<string, unknown>;
+    if (typeof discussion.id !== 'string' || discussion.id.length === 0 || seen.has(discussion.id)) continue;
+    const capabilities = discussion.capabilities;
+    if (typeof capabilities !== 'object' || capabilities === null || Array.isArray(capabilities)) continue;
+    // Consume the Discussion owner's permission and key facts; never infer
+    // posting authority from ownership, membership or a readable title.
+    if ((capabilities as Record<string, unknown>).postMessages !== true || discussion.keyReadiness !== true
+      || discussion.archivedAt !== null) continue;
+    seen.add(discussion.id);
+    candidates.push({ id: discussion.id, label: typeof discussion.title === 'string' && discussion.title.trim() !== ''
+      ? discussion.title : 'Discussion' });
+  }
+  return { candidates, incomplete: page.incomplete,
+    ...(typeof page.nextCursor === 'string' ? { nextCursor: page.nextCursor } : {}) };
+}
+
+type CandidatePageOptions = Readonly<{
   signal?: AbortSignal;
   isLocked?: () => boolean;
   onStarted?: () => void;
   onUnavailable?: () => void;
-}> = {}) {
-  const action = useExecutePluginAction('session.list');
+}>;
+
+/** One cursor and read lifecycle for Channels' paged Account target pickers. */
+function useTargetCandidatePages(
+  actionId: 'session.list' | 'discussion.list',
+  parsePage: (value: unknown) => SessionCandidatePage | undefined,
+  inputForCursor: (cursor?: string) => Readonly<Record<string, string | number>>,
+  options: CandidatePageOptions,
+) {
+  const action = useExecutePluginAction(actionId);
   const execute = action.execute;
   const optionsRef = React.useRef(options);
   optionsRef.current = options;
@@ -48,6 +82,7 @@ export function useSessionCandidatePages(options: Readonly<{
   const [nextCursor, setNextCursor] = React.useState<string | undefined>();
   const [loaded, setLoaded] = React.useState(false);
   const [unavailable, setUnavailable] = React.useState(false);
+  const [incomplete, setIncomplete] = React.useState(false);
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -62,13 +97,9 @@ export function useSessionCandidatePages(options: Readonly<{
     setUnavailable(false);
     current.onStarted?.();
     try {
-      const settled = await execute({
-        view: 'awareness',
-        limit: 100,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
+      const settled = await execute(inputForCursor(cursor));
       if (!mountedRef.current || current.signal?.aborted) return;
-      const page = settled.status === 'success' ? parseSessionCandidatePage(settled.result) : undefined;
+      const page = settled.status === 'success' ? parsePage(settled.result) : undefined;
       if (page === undefined) {
         setUnavailable(true);
         optionsRef.current.onUnavailable?.();
@@ -85,6 +116,7 @@ export function useSessionCandidatePages(options: Readonly<{
         return appended.length === 0 ? previous : [...previous, ...appended];
       });
       setNextCursor(page.nextCursor);
+      setIncomplete((previous) => (cursor === undefined ? page.incomplete === true : previous || page.incomplete === true));
     } catch {
       if (!mountedRef.current || current.signal?.aborted) return;
       setUnavailable(true);
@@ -93,7 +125,7 @@ export function useSessionCandidatePages(options: Readonly<{
       inFlightRef.current = false;
       if (mountedRef.current && !current.signal?.aborted) setLoaded(true);
     }
-  }, [execute]);
+  }, [execute, inputForCursor, parsePage]);
 
   const retry = React.useCallback(() => load(attemptedCursorRef.current), [load]);
   const reset = React.useCallback(() => {
@@ -101,6 +133,7 @@ export function useSessionCandidatePages(options: Readonly<{
     setNextCursor(undefined);
     setLoaded(false);
     setUnavailable(false);
+    setIncomplete(false);
     attemptedCursorRef.current = undefined;
   }, []);
 
@@ -109,10 +142,22 @@ export function useSessionCandidatePages(options: Readonly<{
     nextCursor,
     loaded,
     unavailable,
+    incomplete,
     loading: action.execution.status === 'pending',
     execution: action.execution,
     load,
     retry,
     reset,
   };
+}
+
+const sessionPageInput = (cursor?: string) => ({ view: 'awareness', limit: 100, ...(cursor === undefined ? {} : { cursor }) });
+const discussionPageInput = (cursor?: string) => ({ state: 'active', ...(cursor === undefined ? {} : { cursor }) });
+
+export function useSessionCandidatePages(options: CandidatePageOptions = {}) {
+  return useTargetCandidatePages('session.list', parseSessionCandidatePage, sessionPageInput, options);
+}
+
+export function useDiscussionCandidatePages(options: CandidatePageOptions = {}) {
+  return useTargetCandidatePages('discussion.list', parseDiscussionCandidatePage, discussionPageInput, options);
 }

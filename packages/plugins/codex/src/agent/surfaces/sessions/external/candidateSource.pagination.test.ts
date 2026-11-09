@@ -239,7 +239,9 @@ describe('Codex candidate conversation search', () => {
         maxSerializedBytes: 1024 * 1024, exec: {} as ExecService, ripgrep, signal: new AbortController().signal,
       };
       const deadlineAtMs = nowMs + 15000;
-      const first = await contribution.listCandidates({ ...request, deadlineAtMs });
+      // The caller supplies separate cooperative and hard deadlines. NI27 no
+      // longer predicts an earlier yield from a previous 3s filesystem step.
+      const first = await contribution.listCandidates({ ...request, deadlineAtMs, scanDeadlineAtMs: deadlineAtMs - 3000 });
       expect(first).toMatchObject({ ok: true });
       if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
       expect(nowMs).toBeLessThan(deadlineAtMs);
@@ -291,7 +293,7 @@ describe('Codex candidate conversation search', () => {
           source: { kind: 'codexHome', home: 'user', homePath: root },
           searchTarget: 'content', searchTerm: 'harbor', maxItems: 1,
           maxSerializedBytes: 1024 * 1024, exec: {} as ExecService,
-          signal: new AbortController().signal, deadlineAtMs, cursor,
+          signal: new AbortController().signal, deadlineAtMs, scanDeadlineAtMs: deadlineAtMs - 1000, cursor,
           ripgrep: { run: async ({ paths }) => ({ stdout: paths.join('\0') + '\0', stderr: '', exitCode: 0 }) },
         });
         if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
@@ -338,7 +340,7 @@ describe('Codex candidate conversation search', () => {
         searchTarget: 'content' as const, searchTerm: 'harbor', maxItems: 1,
         maxSerializedBytes: 1024 * 1024, exec: {} as ExecService, signal: new AbortController().signal,
         ripgrep: { run: async ({ paths }: { paths: readonly string[] }) => ({ stdout: paths.join('\0') + '\0', stderr: '', exitCode: 0 }) } };
-      const first = await contribution.listCandidates({ ...request, deadlineAtMs: nowMs + 5000 });
+      const first = await contribution.listCandidates({ ...request, deadlineAtMs: nowMs + 5000, scanDeadlineAtMs: nowMs + 3000 });
       if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
       expect(first.value).toMatchObject({ candidates: [], nextCursor: expect.any(String), contentCoverage: 'partial' });
       await rename(childPath, `${childPath}.old`);
@@ -437,7 +439,7 @@ describe('Codex candidate conversation search', () => {
         signal: new AbortController().signal,
       };
       const deadlineAtMs = nowMs + 15000;
-      const first = await contribution.listCandidates({ ...request, deadlineAtMs });
+      const first = await contribution.listCandidates({ ...request, deadlineAtMs, scanDeadlineAtMs: deadlineAtMs - 2500 });
       if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
       expect(first.value.candidates).toEqual([]);
       expect(first.value.contentCoverage).toBe('partial');
@@ -538,7 +540,7 @@ describe('Codex candidate conversation search', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  it('returns completed content hits before the host deadline and resumes every remaining rollout once', async () => {
+  it.each([false, true])('returns completed content hits and resumes remaining rollouts once (cheaper later rows=%s)', async (cheaperLaterRows) => {
     const root = await mkdtemp(join(tmpdir(), 'codex-content-deadline-'));
     try {
       const sessions = join(root, 'sessions', '2026', '07', '23');
@@ -562,28 +564,32 @@ describe('Codex candidate conversation search', () => {
         const result = await promisify(execFile)(process.execPath, [launcher, JSON.stringify([...args, '--', ...paths])], { signal });
         searchedPaths.push(...paths);
         // Clock is the injected boundary; ripgrep and the transcript codec are real.
-        nowMs += 8000;
+        nowMs += cheaperLaterRows && searchedPaths.length > 1 ? 1000 : 8000;
         return { ...result, exitCode: 0 };
       } };
       const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: root } });
       const found: string[] = [];
       let cursor: string | undefined;
-      for (let pageIndex = 0; pageIndex < ids.length; pageIndex += 1) {
+      for (let pageIndex = 0; pageIndex <= ids.length; pageIndex += 1) {
         const deadlineAtMs = nowMs + 15000;
         const page = await contribution.listCandidates({
           source: { kind: 'codexHome', home: 'user', homePath: root },
           searchTarget: 'content', searchTerm: 'deadline needle', maxItems: 10,
           maxSerializedBytes: 1024 * 1024, exec: {} as ExecService, ripgrep,
-          signal: new AbortController().signal, deadlineAtMs, cursor,
+          signal: new AbortController().signal, deadlineAtMs,
+          scanDeadlineAtMs: cheaperLaterRows ? deadlineAtMs : deadlineAtMs - 7000, cursor,
         });
         if (!page.ok) throw new Error(`${page.code}: ${page.message}`);
         expect(nowMs).toBeLessThan(deadlineAtMs);
-        expect(page.value.candidates).toHaveLength(1);
-        expect(page.value.candidates[0]?.match).toMatchObject({ messageIndex: 1000 });
+        // At the exact cooperative deadline the native phase commits its
+        // continuation; decoding that first hit resumes on the next page.
+        expect(page.value.candidates).toHaveLength(cheaperLaterRows ? ids.length : pageIndex === 0 ? 0 : 1);
+        for (const candidate of page.value.candidates) expect(candidate.match).toMatchObject({ messageIndex: 1000 });
         found.push(...page.value.candidates.map((candidate) => candidate.remoteSessionId));
-        expect(page.value.contentCoverage).toBe(pageIndex < ids.length - 1 ? 'partial' : 'complete');
+        expect(page.value.contentCoverage).toBe(!cheaperLaterRows && pageIndex < ids.length ? 'partial' : 'complete');
         cursor = page.value.nextCursor ?? undefined;
-        expect(Boolean(cursor)).toBe(pageIndex < ids.length - 1);
+        expect(Boolean(cursor)).toBe(!cheaperLaterRows && pageIndex < ids.length);
+        if (cheaperLaterRows) break;
       }
       expect(found).toEqual([...ids].reverse());
       expect(new Set(searchedPaths).size).toBe(ids.length);

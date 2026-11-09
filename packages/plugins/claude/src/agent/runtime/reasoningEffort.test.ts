@@ -5,11 +5,11 @@ import {
   resolveClaudeEffortLevelsForProviderModel,
   isClaudeUltracodeSupportedModelId,
   resolveClaudeDefaultEffortLevelForModelId,
-  resolveClaudeEffectiveEffortForModel,
+  resolveClaudeEffortForModel,
   resolveClaudeEffortLevelsForModelId,
 } from './reasoningEffort.js';
 
-describe('resolveClaudeEffectiveEffortForModel', () => {
+describe('resolveClaudeEffortForModel', () => {
   it('does not apply a non-select or inconsistent Provider effort declaration', () => {
     const model = { id: 'custom', name: 'Custom', capabilities: { reasoningControls: 'supported' as const },
       modelOptions: [{ id: 'reasoning_effort', name: 'Thinking', type: 'boolean', currentValue: 'high',
@@ -19,7 +19,7 @@ describe('resolveClaudeEffectiveEffortForModel', () => {
       modelOptions: [{ ...model.modelOptions[0]!, type: 'select', currentValue: 'low' }] })).toEqual([]);
   });
   it('preserves a valid native effort for live control and launch serialization', () => {
-    expect(resolveClaudeEffectiveEffortForModel({
+    expect(resolveClaudeEffortForModel({
       modelId: 'claude-sonnet-4-6',
       effort: 'max',
     })).toBe('max');
@@ -44,17 +44,17 @@ describe('resolveClaudeEffectiveEffortForModel', () => {
       }],
     };
 
-    expect(resolveClaudeEffectiveEffortForModel({
+    expect(resolveClaudeEffortForModel({
       modelId: providerModel.id,
       effort: 'high',
       providerModel,
     })).toBe('high');
-    expect(resolveClaudeEffectiveEffortForModel({
+    expect(resolveClaudeEffortForModel({
       modelId: providerModel.id,
       effort: 'max',
       providerModel,
     })).toBeNull();
-    expect(resolveClaudeEffectiveEffortForModel({
+    expect(resolveClaudeEffortForModel({
       modelId: providerModel.id,
       effort: 'xhigh',
       providerModel: {
@@ -74,20 +74,20 @@ describe('buildClaudeEffortCliArgs', () => {
       .toEqual(['--effort', 'max']);
   });
 
-  it('treats Fable 5 high as the default effort', () => {
-    expect(buildClaudeEffortCliArgs({ modelId: 'claude-fable-5', effort: 'high' })).toEqual([]);
+  it('forwards explicit Fable 5 high even though it is the catalog default', () => {
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-fable-5', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-fable-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
   it('treats Opus 5 high as the default effort', () => {
-    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
   it('projects all five Sonnet 5 effort levels with high as the default', () => {
     expect(resolveClaudeEffortLevelsForModelId('claude-sonnet-5'))
       .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
-    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'xhigh' }))
       .toEqual(['--effort', 'xhigh']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'max' }))
@@ -97,24 +97,30 @@ describe('buildClaudeEffortCliArgs', () => {
   it('projects all five Mythos 5 effort levels with high as the default', () => {
     expect(resolveClaudeEffortLevelsForModelId('claude-mythos-5'))
       .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
-    expect(buildClaudeEffortCliArgs({ modelId: 'claude-mythos-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-mythos-5', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-mythos-5', effort: 'xhigh' }))
       .toEqual(['--effort', 'xhigh']);
   });
 
   it('treats Opus 4.8 high as the default effort', () => {
-    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-8', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
   it('treats the generic opus alias as the current flagship Claude model for default effort resolution', () => {
-    expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'medium' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'medium' })).toEqual(['--effort', 'medium']);
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'high' })).toEqual(['--effort', 'high']);
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
   it('keeps Opus 4.7 behavior where high still requires an explicit override', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-4-7', effort: 'high' })).toEqual(['--effort', 'high']);
+  });
+
+  it('overrides saved resume effort with explicit Opus 5.5 medium while preserving an absent selection', () => {
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5-5', effort: 'medium' }))
+      .toEqual(['--effort', 'medium']);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5-5', effort: undefined })).toEqual([]);
   });
 
   it('uses exact Provider options without native-id inference or silent downgrade', () => {
@@ -139,7 +145,7 @@ describe('buildClaudeEffortCliArgs', () => {
       modelId: providerModel.id,
       effort: 'medium',
       providerModel,
-    })).toEqual([]);
+    })).toEqual(['--effort', 'medium']);
     expect(buildClaudeEffortCliArgs({
       modelId: providerModel.id,
       effort: 'high',

@@ -41,7 +41,7 @@ describe('internal task source batch projection', () => {
     expect(shared.snapshot.relations).not.toHaveProperty('children');
     expect(results[1]!.sessionLinks).toEqual({ kind: 'complete', links: [{ localRef: refs[1], sessionId: 'visible-session',
       linkedAtMs: 2, displayPath: 'Shared' }] });
-    expect(results[2]).toMatchObject({ observation: { kind: 'unresolved', failure: { code: 'accountDataUnavailable' } },
+    expect(results[2]).toMatchObject({ observation: { kind: 'unresolved', failure: { code: 'accountDataUnavailable', detail: expect.any(String) } },
       sessionLinks: { kind: 'partial', links: [], unavailableRefs: [refs[2]] } });
     expect(results[3]?.observation).toMatchObject({ kind: 'unresolved', failure: { class: 'permission', code: 'task_not_found' } });
   });

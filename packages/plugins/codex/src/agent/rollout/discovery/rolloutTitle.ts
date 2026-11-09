@@ -2,6 +2,7 @@ import { isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/sessions';
 import { isPluginError, isRecord } from '@happier-dev/plugin-sdk';
 import { readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
 import { readJsonlFileForwardLines } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { projectExternalSessionCandidateTitle } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 import {
   createCodexExternalSessionJsonlScannerFileSystem,
@@ -12,23 +13,8 @@ import { mapCodexRolloutEventToActions } from '../projection/actions.js';
 import { classifyCodexSessionThread, type CodexSessionThread } from './sessionThread.js';
 
 const CODEX_TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
-const CODEX_TITLE_SCAN_CHUNK_MAX_ITEMS = 64;
-const CODEX_TITLE_MAX_CHARS = 120;
+const CODEX_TITLE_SCAN_MAX_TRAVERSED_BYTES = 512 * 1024;
 
-/**
- * The largest single rollout record the reader will consider as a title.
- *
- * A session started through this harness opens with a preamble of very large
- * records — a `<recommended_plugins>` listing, a `# Session title` instruction
- * block, a world-state snapshot — measured at 49-89 KB each and ~395 KB in
- * total before the first genuine message. The reader rejects every one of them,
- * so charging their bytes to the budget spends it on records it was never going
- * to accept and stops the read short of the message it wants. A record this
- * large is a harness payload or a pasted dump, not a session title, so it is
- * traversed rather than considered: its bytes count against
- * `maxTraversedBytes` and never against `maxConsideredBytes`.
- */
-const CODEX_TITLE_MAX_RECORD_BYTES = 32 * 1024;
 const CODEX_TITLE_BOILERPLATE_PATTERNS = [
   '<environment_context>',
   '<instructions>',
@@ -37,66 +23,19 @@ const CODEX_TITLE_BOILERPLATE_PATTERNS = [
 ] as const;
 
 /**
- * How far into a rollout the single title reader may look. A session's title is
- * its first genuine message, so it is always near the head; the budget exists
- * only to bound the harness boilerplate a real rollout leads with.
- *
- * The two byte bounds are deliberately different quantities:
- * `maxConsideredBytes` is charged for the records the reader actually inspects
- * as a title, while `maxTraversedBytes` is the hard cost bound on the read and
- * covers everything in the way, including oversized records skipped
- * unconsidered. Charging one budget for both is what made a harness preamble
- * able to starve the read of the message it was looking for.
- */
-export type CodexRolloutTitleReadBudget = Readonly<{
-  maxConsideredBytes: number;
-  maxConsideredItems: number;
-  maxTraversedBytes: number;
-}>;
-
-/**
- * The selected-row budget: one bounded read for a candidate the caller already
- * decided to return.
- */
-export const CODEX_ROLLOUT_TITLE_FULL_BUDGET: CodexRolloutTitleReadBudget = {
-  maxConsideredBytes: 1024 * 1024,
-  maxConsideredItems: 512,
-  maxTraversedBytes: 4 * 1024 * 1024,
-};
-
-/**
- * The scan budget: one bounded head read. The bounded corpus scan performs this
- * for every row it returns, so its per-row cost has to stay a head read rather
- * than a walk toward the middle of a long transcript.
- *
- * Worst case for one row: 512 KB traversed, of which at most 128 KB across at
- * most 64 records is considered. A rollout whose first genuine message is past
- * that head — or whose head is a single record larger than the remaining
- * traversal budget — stays identifier-only rather than reading further.
- */
-export const CODEX_ROLLOUT_TITLE_HEAD_BUDGET: CodexRolloutTitleReadBudget = {
-  maxConsideredBytes: CODEX_TITLE_SCAN_CHUNK_MAX_BYTES,
-  maxConsideredItems: CODEX_TITLE_SCAN_CHUNK_MAX_ITEMS,
-  maxTraversedBytes: 512 * 1024,
-};
-
-/**
  * The single normalization rule for a Codex candidate title: collapse
- * whitespace, clamp length, and reject harness boilerplate rather than
+ * whitespace and reject harness boilerplate rather than
  * presenting it as a session title.
  */
 export function readCodexExternalSessionTitleCandidate(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = readSessionInputPromptUserTextV1(value).replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
-  const title = normalized.length <= CODEX_TITLE_MAX_CHARS
-    ? normalized
-    : normalized.slice(0, CODEX_TITLE_MAX_CHARS - 3).trimEnd() + '...';
-  const lowerTitle = title.toLowerCase();
+  const lowerTitle = normalized.toLowerCase();
   if (CODEX_TITLE_BOILERPLATE_PATTERNS.some((pattern) => lowerTitle.includes(pattern))) {
     return null;
   }
-  return title;
+  return projectExternalSessionCandidateTitle(normalized);
 }
 
 function readTitleFromCodexTitleToolInput(input: unknown): string | null {
@@ -111,28 +50,15 @@ export type CodexRolloutHead = Readonly<{
 }>;
 
 /**
- * The one Codex rollout title reader. Both the bounded corpus scan (which
- * carries the title on the row it emits) and the selected-candidate build use
- * it against the same earliest rollout file, so a row cannot change its title
- * by being served through a different route.
- */
-export async function readCodexSessionTitleFromRollout(
-  filePath: string,
-  bounds: CodexExternalSessionInvocationBounds,
-  budget: CodexRolloutTitleReadBudget = CODEX_ROLLOUT_TITLE_FULL_BUDGET,
-): Promise<string | null> {
-  return (await readCodexRolloutHead(filePath, bounds, budget)).title;
-}
-
-/**
- * The title read plus the thread classification of the rollout's first
- * record. The corpus scan performs this one head read per returned row, so
- * classifying there costs no additional file open.
+ * The single title and thread-classification reader for both corpus rows and
+ * selected candidates. Both use the earliest rollout file and the same head
+ * allowance; classification costs no additional file open. Every record in
+ * that head is eligible to supply an explicit title before the first genuine
+ * user message is used as a fallback.
  */
 export async function readCodexRolloutHead(
   filePath: string,
   bounds: CodexExternalSessionInvocationBounds & Readonly<{ includeTitles?: boolean }>,
-  budget: CodexRolloutTitleReadBudget = CODEX_ROLLOUT_TITLE_FULL_BUDGET,
 ): Promise<CodexRolloutHead> {
   let thread: CodexSessionThread | null = null;
   let cwd: string | undefined;
@@ -140,22 +66,17 @@ export async function readCodexRolloutHead(
   let fallbackUserText: string | null = null;
   let offsetBytes = 0;
   let traversedBytes = 0;
-  let consideredBytes = 0;
-  let consideredItems = 0;
-
-  while (
-    traversedBytes < budget.maxTraversedBytes
-    && consideredBytes < budget.maxConsideredBytes
-    && consideredItems < budget.maxConsideredItems
-  ) {
+  while (traversedBytes < CODEX_TITLE_SCAN_MAX_TRAVERSED_BYTES) {
     throwIfCodexExternalSessionInvocationStopped(bounds);
-    const remainingTraversalBytes = budget.maxTraversedBytes - traversedBytes;
+    const remainingTraversalBytes = CODEX_TITLE_SCAN_MAX_TRAVERSED_BYTES - traversedBytes;
     const pageMaxBytes = Math.min(CODEX_TITLE_SCAN_CHUNK_MAX_BYTES, remainingTraversalBytes);
     const page = await readJsonlFileForwardLines({
       filePath,
       offsetBytes,
       maxBytes: pageMaxBytes,
-      maxItems: bounds.includeTitles === false ? 1 : CODEX_TITLE_SCAN_CHUNK_MAX_ITEMS,
+      // A nonempty record consumes at least one byte. Let the byte page own
+      // this read; an independent row ceiling rereads its unconsumed suffix.
+      maxItems: bounds.includeTitles === false ? 1 : pageMaxBytes,
       // One native read per advisory page, through the shared scanner owner.
       chunkBytes: pageMaxBytes,
       // A single record may never cost more than what is left of the traversal
@@ -187,17 +108,6 @@ export async function readCodexRolloutHead(
         // Keep the same decoder and native head budget for large metadata rows.
         if (bounds.includeTitles === false) return { title: null, thread, ...(cwd ? { cwd } : {}) };
       }
-      if (
-        consideredBytes >= budget.maxConsideredBytes
-        || consideredItems >= budget.maxConsideredItems
-      ) {
-        break;
-      }
-      const recordBytes = line.endOffsetBytes - line.startOffsetBytes;
-      // Traversed, not considered: see CODEX_TITLE_MAX_RECORD_BYTES.
-      if (recordBytes > CODEX_TITLE_MAX_RECORD_BYTES) continue;
-      consideredBytes += recordBytes;
-      consideredItems += 1;
       for (const action of mapCodexRolloutEventToActions(line.value, { debug: false })) {
         if (action.type === 'tool-call' && isChangeTitleToolNameAlias(action.name)) {
           const title = readTitleFromCodexTitleToolInput(action.input);

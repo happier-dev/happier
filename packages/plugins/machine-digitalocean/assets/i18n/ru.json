@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "Облачный Droplet с выбранными размером, образом и регионом.",
+  "machineDigitalOcean.account.tokenHint": "Используйте персональный токен доступа DigitalOcean. Создайте его в панели управления: Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "машина",
+  "machineDigitalOcean.presentation.description": "Облачная машина с выбранными размером, образом и регионом.",
   "machineDigitalOcean.presentation.ready": "Аккаунт подключён",
   "machineDigitalOcean.presentation.unavailable": "Аккаунт недоступен",
   "machineDigitalOcean.network.ipv4": "Только IPv4",

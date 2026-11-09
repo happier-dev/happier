@@ -78,10 +78,10 @@ describe('Discord Gateway observation mapping', () => {
     expect(ConversationNormalizedIngressV1Schema.parse(ingress)).toEqual(ingress);
   });
 
-  it('keeps non-ingress Discord events out of the core observation action', () => {
+  it('keeps malformed supported message dispatches out of the core observation action', () => {
     const parsed = parseDiscordMessageDispatch({
-      event: 'MESSAGE_DELETE',
-      payload: message(),
+      event: 'MESSAGE_CREATE',
+      payload: message({ timestamp: 'invalid' }),
       channel: { kind: 'shared', channelId: 'channel-1' },
       context,
     });

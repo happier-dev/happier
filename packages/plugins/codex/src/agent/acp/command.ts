@@ -7,12 +7,12 @@ export type CodexAcpSpawnSpec = { command: string; args: string[] };
 export type ResolveCodexAcpSpawnOptions = Readonly<{
   permissionMode?: string;
   disableUserMcpServers?: boolean;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
   currentWorkingDirectory?: string;
 }>;
 
 export type ResolveCodexAcpSpawnDeps = Readonly<{
-  resolveExistingManagedBinPath?: (env: NodeJS.ProcessEnv) => string | null;
+  resolveExistingManagedBinPath?: (env: Readonly<Record<string, string | undefined>>) => string | null;
 }>;
 
 function appendConfigOverridesArgs(

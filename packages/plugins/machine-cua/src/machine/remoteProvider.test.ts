@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { byocCleanupTarget, decodeCreatedByocResource, inspectByocLedger, qualifyByocLaunch } from './byoc.js';
+import { decodeCreatedByocResource, qualifyByocLaunch } from './byoc.js';
 import { ByocLaunchV1Schema } from './remoteSchemas.js';
 import { ByocProvisionerSchemas } from './remoteProvisionerSchemas.js';
 
@@ -37,7 +37,6 @@ describe('Cua BYOC native qualification and exact identity', () => {
             { ...nativeRow, id: 'i-other', sandbox: 'aws:other' },
             { ...nativeRow, id: 'sg-shared', type: 'security_group', sandbox: '' },
         ])).toEqual({ kind: 'bound', resource });
-        expect(byocCleanupTarget(resource)).toBe('aws:owned');
         expect(ByocProvisionerSchemas.acquireResult.safeParse({ kind: 'bound', resource: {
             contributionRef: { pluginId: 'test.machine-cua', localId: 'byoc' }, schemaVersion: 1, value: resource,
         } }).success).toBe(true);
@@ -47,10 +46,7 @@ describe('Cua BYOC native qualification and exact identity', () => {
             contributionRef: { pluginId: 'test.machine-cua', localId: 'byoc' }, schemaVersion: 1, value: { unrelated: 'native' },
         } }).success).toBe(false);
     });
-    it('keeps cleanup unknown when only the registry vanished or the native ledger still contains attachments', () => {
-        expect(inspectByocLedger(resource, []).existence).toBe('unknown');
-        expect(inspectByocLedger(resource, [{ ...nativeRow, id: 'sg-owned', type: 'security_group' }])).toMatchObject({ existence: 'unknown' });
-        expect(inspectByocLedger(resource, [nativeRow])).toMatchObject({ existence: 'unknown', power: 'unknown', recordedPower: 'running' });
+    it('keeps pending native identity unknown', () => {
         expect(decodeCreatedByocResource(launch, 'aws:owned', [{ ...nativeRow, state: 'pending' }]).kind).toBe('unknown');
     });
 });

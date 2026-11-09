@@ -1,3 +1,5 @@
+import { isReplayClaudeAgentSdkMessage } from './remote/sdk/providerActivity.js';
+
 export type ClaudeEffectiveModelEvidence = Readonly<{
   modelId: string;
   displayName?: string | null;
@@ -32,6 +34,6 @@ export function readClaudeAssistantModelId(value: unknown): string | null {
 
 export function readClaudeMainChainAssistantModelId(value: unknown): string | null {
   const row = readRecord(value);
-  if (!row || row.isSidechain === true || readString(row.parent_tool_use_id)) return null;
+  if (!row || isReplayClaudeAgentSdkMessage(row) || row.isSidechain === true || readString(row.parent_tool_use_id)) return null;
   return readClaudeAssistantModelId(row);
 }

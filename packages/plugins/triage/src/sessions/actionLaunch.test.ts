@@ -6,6 +6,8 @@ import {
     resolveTriageActionPlacementV1,
 } from './actionLaunch.js';
 import type { TriageProjectCandidateV1 } from './launchPlacement.js';
+import { requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import type { TriageNewSessionSeedV1 } from '../ui/header/newSessionSeedCommand.js';
 
 const FORGE = {
     kind: 'github',
@@ -59,6 +61,40 @@ describe('the one precedence between an action requirement and a profile prefere
 });
 
 describe('where a pressed action runs', () => {
+    it.each(['repository', 'pull_request'] as const)('refuses %s checkout requirements against a fixed no-folder preference', workspaceMode => {
+        const profile = { placement: { fixed: { serverId: 'server-9', machineId: 'machine-9' },
+            directoryIntent: { kind: 'managed' as const } } };
+        expect(() => resolveTriageActionPlacementV1({ workspaceMode, profile, projects: [] }))
+            .toThrowError(expect.objectContaining({ code: 'invalid_parameters',
+                diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'workspaceMode' })]) }));
+    });
+
+    it('carries a fixed no-folder preference to the ordinary composer without a repository path', async () => {
+        const profile = { placement: {
+            fixed: { serverId: 'server-9', machineId: 'machine-9' },
+            directoryIntent: { kind: 'managed' as const },
+        } };
+        const placement = resolveTriageActionPlacementV1({
+            workspaceMode: 'reference_only', profile, forge: FORGE,
+            projects: [project({ projectId: 'only', rootPath: '/unselected/repo' })],
+        });
+        const seeds: TriageNewSessionSeedV1[] = [];
+        const result = await requestTriageNewSessionAuthoringV1({
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async seed => { seeds.push(seed); },
+            selectActionInput: async () => { throw new Error('No prepared checkout is required'); },
+        }, {
+            entries: [], promptText: 'Explain this item', profileId: 'profile-a',
+            checkoutIntent: 'none', placement: readTriageActionExecutionPlacementV1(placement), candidates: [],
+        });
+        expect(result.status).toBe('seeded');
+        expect(seeds).toEqual([{
+            prompt: 'Explain this item', profileId: 'profile-a', checkoutIntent: 'none',
+            placement: { kind: 'exactTarget', serverId: 'server-9', machineId: 'machine-9' },
+            directoryIntent: { kind: 'managed' },
+        }]);
+    });
+
     it('pins a stated placement over any number of matching checkouts', () => {
         const placement = resolveTriageActionPlacementV1({
             workspaceMode: 'repository',

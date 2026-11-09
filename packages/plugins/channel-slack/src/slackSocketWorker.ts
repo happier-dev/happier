@@ -69,6 +69,9 @@ export function startSlackSocketWorker(input: SlackSocketWorkerInput): SlackSock
         if (!isRecord(frame)) return { kind: 'historyGap', reason: 'providerHistoryUnavailable' };
         if (frame.type === 'disconnect') {
           if (frame.reason === 'warning') continue;
+          // Slack regularly rotates Socket Mode URLs. All preceding envelopes
+          // have settled and been ACKed before this frame is read.
+          if (frame.reason === 'refresh_requested') return { kind: 'stopped' };
           if (frame.reason === 'link_disabled') return { kind: 'notReady', failure: {
             kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'Enable Socket Mode in the Slack app settings.' },
             transportFact: { kind: 'historyGap', reason: 'applicationAdmissionLost' } };

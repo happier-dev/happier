@@ -20,6 +20,9 @@
           }
         },
         "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "deepsec-cli"
+          },
           "vendorResume": {
             "support": "unsupported"
           }
@@ -47,8 +50,70 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "claude-subscription",
+            "required": false,
+            "service": {
+              "localId": "claude-subscription",
+              "pluginId": "happier.agent.claude"
+            }
+          }
+        ],
         "id": "deepsec",
         "primary": "executionRuns",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-responses"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "AI_GATEWAY_API_KEY",
+              "VERCEL_OIDC_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_AUTH_TOKEN",
+              "ANTHROPIC_BASE_URL",
+              "ANTHROPIC_CUSTOM_HEADERS",
+              "CLAUDE_CODE_OAUTH_TOKEN",
+              "OPENAI_API_KEY",
+              "OPENAI_BASE_URL"
+            ],
+            "suppressConnectedServiceIds": [
+              "claude-subscription"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-responses"
+              }
+            ],
+            "supportsNoAuth": false
+          },
+          "materialization": "spawnEnv",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
         "runtime": {
           "kind": "custom"
         },
@@ -57,10 +122,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -178,6 +244,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -188,7 +255,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -205,9 +271,6 @@
   },
   "description": "Runs DeepSec as a review and security-review execution engine.",
   "displayName": "DeepSec review engine",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
@@ -245,7 +308,15 @@
         "reason": "Launch the user-installed DeepSec CLI for an admitted review run.",
         "scope": {
           "envKeys": [
-            "AI_GATEWAY_API_KEY"
+            "AI_GATEWAY_API_KEY",
+            "VERCEL_OIDC_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL"
           ],
           "executables": [
             {

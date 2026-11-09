@@ -2,6 +2,7 @@ import fs, { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 import { SessionCapabilityNoticeV1Schema } from '@happier-dev/protocol';
 import { buildPiHappierToolsExtensionSource } from './extensionSource.js';
@@ -56,6 +57,10 @@ describe('Pi extension user MCP', () => {
     mcpToolPolicy: AgentSessionOpenRequest['mcpToolPolicy'];
   }>[])('filters unavailable tools, keeps confirmation for Allow, and closes the real stdio server ($mcpToolPolicy)', async ({ enabledTools, mcpToolPolicy }) => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-user-mcp-'));
+    // Observe the real subprocess boundary used by the emitted native extension.
+    const nativeChildProcess = createRequire(import.meta.url)('node:child_process') as typeof import('node:child_process');
+    const spawnBoundary = vi.spyOn(nativeChildProcess, 'spawn');
+    syncBuiltinESMExports();
     const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
     const tools: Tool[] = [];
     try {
@@ -83,6 +88,7 @@ describe('Pi extension user MCP', () => {
       });
       for (const handler of handlers.get('session_start') ?? []) await handler({});
       expect(tools.map(tool => tool.name)).toEqual(['mcp__fixture__echo']);
+      expect(spawnBoundary.mock.calls[0]?.[2]?.windowsHide).toBe(true);
       expect(activeTools).toEqual(['read', 'mcp__fixture__echo']);
       const tool = tools[0]!;
       await expect(tool.execute('denied', { text: 'denied' }, undefined, undefined,
@@ -101,6 +107,8 @@ describe('Pi extension user MCP', () => {
         { cwd: root, ui: { confirm: async () => true } })).rejects.toThrow('fixture tool failed');
     } finally {
       for (const handler of handlers.get('session_shutdown') ?? []) await handler({});
+      spawnBoundary.mockRestore();
+      syncBuiltinESMExports();
       rmSync(root, { recursive: true, force: true });
     }
   });

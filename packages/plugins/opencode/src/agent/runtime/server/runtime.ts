@@ -18,8 +18,10 @@ export function createOpenCodeServerRuntime(params: Readonly<{
   client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
   dialect?: OpenCodeServerDialect;
+  providerModelId?: string;
   readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null | undefined;
   mcpRegistration: Promise<OpenCodeMcpRegistrationResult>;
   mcpProjection: OpenCodeSessionMcpProjection;

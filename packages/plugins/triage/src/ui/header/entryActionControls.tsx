@@ -569,7 +569,7 @@ export function TriageEntryActionControls(
       {/* Why the source's write cannot run, said quietly beside the disabled control's row, never a dead button. The
           readiness line that explains it elsewhere lives behind this row's ⋯ here, so only a native state line (a
           queue, auto-merge, which replaces the button) already says it. */}
-      {props.sourceWrite?.disabledReason == null || triageSourceWriteReplacedByNativeStateV1(props.sourceWrite) ? null : (
+      {props.sourceWrite?.disabledReason == null || props.sourceWrite.reading === true || triageSourceWriteReplacedByNativeStateV1(props.sourceWrite) ? null : (
         <Status tone="muted" label={props.sourceWrite.disabledReason} />
       )}
       {props.sourceWrite?.feedback == null ? null : props.sourceWrite.feedback}

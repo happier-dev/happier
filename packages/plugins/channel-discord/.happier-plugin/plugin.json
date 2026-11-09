@@ -1,4 +1,15 @@
 {
+  "activation": {
+    "configuration": {
+      "accountCollections": [
+        {
+          "collectionId": "channel-state",
+          "pluginId": "happier.channels"
+        }
+      ]
+    },
+    "events": []
+  },
   "brand": {
     "iconResourceId": "brand-icon"
   },
@@ -383,7 +394,7 @@
           }
         ],
         "dangerLevel": "safe",
-        "description": "Resolves a Discord channel to immutable source facts for an Automation Event.",
+        "description": "Resolves a Discord channel to immutable source facts for a Workflow Event.",
         "execution": {
           "target": "daemon"
         },
@@ -394,7 +405,7 @@
         "id": "automation/setup-channel-message-source-v1",
         "inputHints": {
           "description": {
-            "fallback": "Choose the Discord bot and the channel whose messages should start this Automation.",
+            "fallback": "Choose the Discord bot and the channel whose messages should start this Workflow.",
             "key": "discord.automation.messageSource.setup.description"
           },
           "fields": [
@@ -520,6 +531,20 @@
               "minLength": 1,
               "type": "string"
             },
+            "observationOnly": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "observationOnly",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
             "sourceConfig": {
               "additionalProperties": false,
               "properties": {
@@ -559,6 +584,13 @@
             "v": {
               "const": 1,
               "type": "integer"
+            },
+            "webhookDelivery": {
+              "enum": [
+                "automatic",
+                "required"
+              ],
+              "type": "string"
             }
           },
           "required": [
@@ -576,11 +608,11 @@
         "surfaces": [
           "plugin"
         ],
-        "title": "Watch a Discord channel for Automations"
+        "title": "Watch a Discord channel for Workflows"
       },
       {
         "dangerLevel": "writesRemote",
-        "description": "Admits one frozen Discord Automation Event obligation through the current source definitions.",
+        "description": "Admits one frozen Discord Workflow Event obligation through the current source definitions.",
         "execution": {
           "target": "daemon"
         },
@@ -711,7 +743,7 @@
         "surfaces": [
           "plugin"
         ],
-        "title": "Admit Discord Automation Event"
+        "title": "Admit Discord Workflow Event"
       },
       {
         "connectedAccountPurposeBindings": [
@@ -959,9 +991,6 @@
                     },
                     {
                       "const": "providerExclusive"
-                    },
-                    {
-                      "const": "destructive"
                     }
                   ]
                 },
@@ -981,11 +1010,6 @@
                   "minLength": 1,
                   "type": "string",
                   "x-happier-max-utf8-bytes": 512
-                },
-                "recommendedMaximumObservationAgeMs": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "type": "integer"
                 },
                 "recommendedTransport": {
                   "anyOf": [
@@ -1802,6 +1826,41 @@
                           "pullRequestState": {
                             "additionalProperties": false,
                             "properties": {
+                              "fixResolution": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "headRevision": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "incomplete": {
+                                    "anyOf": [
+                                      {
+                                        "const": true
+                                      },
+                                      {
+                                        "const": false
+                                      }
+                                    ]
+                                  },
+                                  "resolved": {
+                                    "anyOf": [
+                                      {
+                                        "const": true
+                                      },
+                                      {
+                                        "const": false
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "headRevision",
+                                  "resolved",
+                                  "incomplete"
+                                ],
+                                "type": "object"
+                              },
                               "observedAt": {
                                 "maximum": 9007199254740991,
                                 "minimum": 0,
@@ -2240,6 +2299,41 @@
                     "pullRequestState": {
                       "additionalProperties": false,
                       "properties": {
+                        "fixResolution": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "headRevision": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "incomplete": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            },
+                            "resolved": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "headRevision",
+                            "resolved",
+                            "incomplete"
+                          ],
+                          "type": "object"
+                        },
                         "observedAt": {
                           "maximum": 9007199254740991,
                           "minimum": 0,
@@ -2287,9 +2381,6 @@
                   "const": "providerDefault"
                 }
               ]
-            },
-            "mentionPolicy": {
-              "const": "suppress"
             },
             "newThread": {
               "additionalProperties": false,
@@ -2392,7 +2483,6 @@
             "endpoint",
             "content",
             "deliveryKey",
-            "mentionPolicy",
             "linkPreviewPolicy"
           ],
           "type": "object"
@@ -2660,6 +2750,41 @@
                         "pullRequestState": {
                           "additionalProperties": false,
                           "properties": {
+                            "fixResolution": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "headRevision": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "type": "object"
+                            },
                             "observedAt": {
                               "maximum": 9007199254740991,
                               "minimum": 0,
@@ -2734,110 +2859,18 @@
                     "x-happier-max-utf8-bytes": 512
                   },
                   "type": "array"
-                },
-                "retrySafe": {
-                  "const": false
                 }
               },
               "required": [
                 "kind",
                 "providerMessageIds",
-                "failedChunk",
-                "retrySafe"
+                "failedChunk"
               ],
               "type": "object"
             },
             {
               "additionalProperties": false,
               "properties": {
-                "code": {
-                  "anyOf": [
-                    {
-                      "const": "invalidConfiguration"
-                    },
-                    {
-                      "const": "invalidEndpoint"
-                    },
-                    {
-                      "const": "replyContextMissing"
-                    },
-                    {
-                      "const": "replyMessageMismatch"
-                    },
-                    {
-                      "const": "replyThreadMismatch"
-                    },
-                    {
-                      "const": "senderUntrusted"
-                    },
-                    {
-                      "const": "senderNotHuman"
-                    },
-                    {
-                      "const": "integrationSelf"
-                    },
-                    {
-                      "const": "recipientInvalid"
-                    },
-                    {
-                      "const": "credentialInvalid"
-                    },
-                    {
-                      "const": "permissionMissing"
-                    },
-                    {
-                      "const": "network"
-                    },
-                    {
-                      "const": "rateLimited"
-                    },
-                    {
-                      "const": "providerConflict"
-                    },
-                    {
-                      "const": "unsupported"
-                    },
-                    {
-                      "const": "submissionNotStarted"
-                    },
-                    {
-                      "const": "submissionOutcomeUnknown"
-                    },
-                    {
-                      "const": "noRecipientsAccepted"
-                    },
-                    {
-                      "const": "submissionRejected"
-                    },
-                    {
-                      "const": "submissionTemporarilyRejected"
-                    },
-                    {
-                      "const": "sentCopyUnconfirmed"
-                    },
-                    {
-                      "const": "reconciliationUnsupported"
-                    },
-                    {
-                      "const": "reconciliationNotFound"
-                    },
-                    {
-                      "const": "reconciliationMismatch"
-                    },
-                    {
-                      "const": "providerResultInvalid"
-                    },
-                    {
-                      "const": "providerInvocationFailed"
-                    },
-                    {
-                      "const": "providerInvocationUnavailable"
-                    },
-                    {
-                      "const": "contentUnrepresentable"
-                    }
-                  ]
-                },
                 "kind": {
                   "const": "notDelivered"
                 },
@@ -2892,94 +2925,6 @@
             {
               "additionalProperties": false,
               "properties": {
-                "code": {
-                  "anyOf": [
-                    {
-                      "const": "invalidConfiguration"
-                    },
-                    {
-                      "const": "invalidEndpoint"
-                    },
-                    {
-                      "const": "replyContextMissing"
-                    },
-                    {
-                      "const": "replyMessageMismatch"
-                    },
-                    {
-                      "const": "replyThreadMismatch"
-                    },
-                    {
-                      "const": "senderUntrusted"
-                    },
-                    {
-                      "const": "senderNotHuman"
-                    },
-                    {
-                      "const": "integrationSelf"
-                    },
-                    {
-                      "const": "recipientInvalid"
-                    },
-                    {
-                      "const": "credentialInvalid"
-                    },
-                    {
-                      "const": "permissionMissing"
-                    },
-                    {
-                      "const": "network"
-                    },
-                    {
-                      "const": "rateLimited"
-                    },
-                    {
-                      "const": "providerConflict"
-                    },
-                    {
-                      "const": "unsupported"
-                    },
-                    {
-                      "const": "submissionNotStarted"
-                    },
-                    {
-                      "const": "submissionOutcomeUnknown"
-                    },
-                    {
-                      "const": "noRecipientsAccepted"
-                    },
-                    {
-                      "const": "submissionRejected"
-                    },
-                    {
-                      "const": "submissionTemporarilyRejected"
-                    },
-                    {
-                      "const": "sentCopyUnconfirmed"
-                    },
-                    {
-                      "const": "reconciliationUnsupported"
-                    },
-                    {
-                      "const": "reconciliationNotFound"
-                    },
-                    {
-                      "const": "reconciliationMismatch"
-                    },
-                    {
-                      "const": "providerResultInvalid"
-                    },
-                    {
-                      "const": "providerInvocationFailed"
-                    },
-                    {
-                      "const": "providerInvocationUnavailable"
-                    },
-                    {
-                      "const": "contentUnrepresentable"
-                    }
-                  ]
-                },
                 "endpoint": {
                   "anyOf": [
                     {
@@ -3189,6 +3134,41 @@
                         "pullRequestState": {
                           "additionalProperties": false,
                           "properties": {
+                            "fixResolution": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "headRevision": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "type": "object"
+                            },
                             "observedAt": {
                               "maximum": 9007199254740991,
                               "minimum": 0,
@@ -3253,230 +3233,6 @@
           "plugin"
         ],
         "title": "Deliver Discord message"
-      },
-      {
-        "dangerLevel": "writesRemote",
-        "description": "Stops the selected Discord Gateway connection.",
-        "execution": {
-          "target": "daemon"
-        },
-        "hostAccess": [
-          "discord-gateway",
-          "discord-rest",
-          "discord-bot-credential"
-        ],
-        "id": "discord/halt-gateway",
-        "inputSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "additionalProperties": false,
-          "properties": {
-            "authorityEpoch": {
-              "maximum": 9007199254740991,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "connectionId": {
-              "maxLength": 96,
-              "minLength": 1,
-              "pattern": "^[\\x21-\\x7E]+$",
-              "type": "string"
-            },
-            "credentialRef": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "accountId": {
-                      "maxLength": 256,
-                      "minLength": 1,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
-                      "type": "string"
-                    },
-                    "service": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "localId": {
-                              "maxLength": 256,
-                              "minLength": 1,
-                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
-                              "type": "string"
-                            },
-                            "pluginId": {
-                              "maxLength": 256,
-                              "minLength": 3,
-                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "pluginId",
-                            "localId"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "localId": {
-                              "const": "mcp-sign-in"
-                            },
-                            "pluginId": {
-                              "const": "happier"
-                            }
-                          },
-                          "required": [
-                            "pluginId",
-                            "localId"
-                          ],
-                          "type": "object"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "service",
-                    "accountId"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "providerConfig": {
-              "x-happier-max-serialized-utf8-bytes": 49152
-            },
-            "providerConfigVersion": {
-              "const": 1
-            },
-            "providerConnectionKey": {
-              "minLength": 1,
-              "type": "string",
-              "x-happier-max-utf8-bytes": 512
-            },
-            "reason": {
-              "anyOf": [
-                {
-                  "const": "disable"
-                },
-                {
-                  "const": "delete"
-                },
-                {
-                  "const": "transfer"
-                }
-              ]
-            },
-            "v": {
-              "const": 1
-            }
-          },
-          "required": [
-            "v",
-            "connectionId",
-            "providerConnectionKey",
-            "providerConfigVersion",
-            "providerConfig",
-            "credentialRef",
-            "authorityEpoch",
-            "reason"
-          ],
-          "type": "object"
-        },
-        "resultSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "anyOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": {
-                  "anyOf": [
-                    {
-                      "const": "stopped"
-                    },
-                    {
-                      "const": "notRunning"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": {
-                  "const": "pending"
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "diagnostic": {
-                  "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 1024
-                },
-                "kind": {
-                  "const": "notReady"
-                },
-                "reason": {
-                  "anyOf": [
-                    {
-                      "const": "credentialInvalid"
-                    },
-                    {
-                      "const": "permissionMissing"
-                    },
-                    {
-                      "const": "network"
-                    },
-                    {
-                      "const": "rateLimited"
-                    },
-                    {
-                      "const": "providerConflict"
-                    },
-                    {
-                      "const": "unsupported"
-                    },
-                    {
-                      "const": "invalidConfiguration"
-                    }
-                  ]
-                },
-                "retryAfterMs": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "kind",
-                "reason"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "scopes": [
-          "global"
-        ],
-        "surfaces": [
-          "plugin"
-        ],
-        "title": "Stop Discord Gateway connection"
       },
       {
         "connectedAccountPurposeBindings": [
@@ -3713,10 +3469,11 @@
         "title": "Discord Gateway supervisor"
       }
     ],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -3727,6 +3484,7 @@
           "defaultModeId": "bot-token",
           "modes": [
             {
+              "credentialOrigin": "authentication",
               "directExport": {
                 "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
               },
@@ -3745,6 +3503,15 @@
               "id": "bot-token",
               "kind": "manual",
               "outcomeReconciliation": "none",
+              "setup": {
+                "checklist": [
+                  "Create or select an application in the Discord Developer Portal and open its Bot settings.",
+                  "Copy its bot token; if it is no longer visible, Reset Token creates a replacement and invalidates the old token.",
+                  "Paste the bot token here."
+                ],
+                "createKeyTitle": "Open Discord applications",
+                "url": "https://discord.com/developers/applications"
+              },
               "title": "Bot token"
             }
           ]
@@ -3937,6 +3704,78 @@
         "id": "brand-icon",
         "kind": "asset",
         "path": "assets/brand.png"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
       }
     ],
     "roles": [],
@@ -3948,6 +3787,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [
       {
@@ -3959,7 +3799,6 @@
         "operations": {
           "attachmentFetch": "discord/fetch-attachment",
           "automationEventAdmit": "discord/admit-automation-event",
-          "connectionStop": "discord/halt-gateway",
           "connectionTest": "discord/inspect-connection",
           "endpointResolve": "discord/choose-channel",
           "messageDeliver": "discord/post-message",
@@ -3975,7 +3814,6 @@
         }
       }
     ],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -3984,207 +3822,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "channels.discord.setup.credential": "Discord bot account",
-            "channels.discord.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
-            "channels.discord.setup.description": "Select the Connected Account for the Discord bot to verify.",
-            "channels.discord.setup.submit": "Verify bot",
-            "channels.discord.setup.title": "Set up Discord Channels",
-            "discord.automation.messageSource.setup.channel": "Channel ID",
-            "discord.automation.messageSource.setup.channel.description": "Enter the Discord channel ID the bot can already read.",
-            "discord.automation.messageSource.setup.credential": "Discord bot account",
-            "discord.automation.messageSource.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",
-            "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Automation.",
-            "discord.automation.messageSource.setup.submit": "Watch channel",
-            "discord.automation.messageSource.setup.title": "Watch a Discord channel"
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "de",
-          "messages": {
-            "channels.discord.setup.credential": "Discord-Bot-Account",
-            "channels.discord.setup.credential.description": "Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.",
-            "channels.discord.setup.description": "Wähle den Connected Account des Discord-Bots aus, der verifiziert werden soll.",
-            "channels.discord.setup.submit": "Bot verifizieren",
-            "channels.discord.setup.title": "Discord-Channels einrichten",
-            "discord.automation.messageSource.setup.channel": "Kanal-ID",
-            "discord.automation.messageSource.setup.channel.description": "Gib die ID des Discord-Kanals ein, den der Bot bereits lesen kann.",
-            "discord.automation.messageSource.setup.credential": "Discord-Bot-Account",
-            "discord.automation.messageSource.setup.credential.description": "Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.",
-            "discord.automation.messageSource.setup.description": "Wähle den Discord-Bot und den Kanal aus, dessen Nachrichten diese Automation starten sollen.",
-            "discord.automation.messageSource.setup.submit": "Kanal beobachten",
-            "discord.automation.messageSource.setup.title": "Discord-Kanal beobachten"
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "ru",
-          "messages": {
-            "channels.discord.setup.credential": "Учётная запись бота Discord",
-            "channels.discord.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",
-            "channels.discord.setup.description": "Выберите подключённую учётную запись бота Discord для проверки.",
-            "channels.discord.setup.submit": "Проверить бота",
-            "channels.discord.setup.title": "Настроить каналы Discord",
-            "discord.automation.messageSource.setup.channel": "Идентификатор канала",
-            "discord.automation.messageSource.setup.channel.description": "Укажите идентификатор канала Discord, который бот уже может читать.",
-            "discord.automation.messageSource.setup.credential": "Учётная запись бота Discord",
-            "discord.automation.messageSource.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",
-            "discord.automation.messageSource.setup.description": "Выберите бота Discord и канал, сообщения которого должны запускать эту автоматизацию.",
-            "discord.automation.messageSource.setup.submit": "Отслеживать канал",
-            "discord.automation.messageSource.setup.title": "Отслеживать канал Discord"
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "channels.discord.setup.credential": "Konto bota Discord",
-            "channels.discord.setup.credential.description": "Wybierz istniejące połączone konto bota Discord; tokenów bota nie wpisuje się tutaj.",
-            "channels.discord.setup.description": "Wybierz połączone konto bota Discord, aby je zweryfikować.",
-            "channels.discord.setup.submit": "Zweryfikuj bota",
-            "channels.discord.setup.title": "Skonfiguruj kanały Discord",
-            "discord.automation.messageSource.setup.channel": "Identyfikator kanału",
-            "discord.automation.messageSource.setup.channel.description": "Podaj identyfikator kanału Discord, który bot może już czytać.",
-            "discord.automation.messageSource.setup.credential": "Konto bota Discord",
-            "discord.automation.messageSource.setup.credential.description": "Wybierz istniejące połączone konto bota Discord; tokenów bota nie wpisuje się tutaj.",
-            "discord.automation.messageSource.setup.description": "Wybierz bota Discord i kanał, którego wiadomości mają uruchamiać tę automatyzację.",
-            "discord.automation.messageSource.setup.submit": "Obserwuj kanał",
-            "discord.automation.messageSource.setup.title": "Obserwuj kanał Discord"
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "channels.discord.setup.credential": "Cuenta del bot de Discord",
-            "channels.discord.setup.credential.description": "Elige la cuenta conectada existente del bot de Discord; los tokens del bot nunca se introducen aquí.",
-            "channels.discord.setup.description": "Selecciona la cuenta conectada del bot de Discord para verificarla.",
-            "channels.discord.setup.submit": "Verificar bot",
-            "channels.discord.setup.title": "Configurar canales de Discord",
-            "discord.automation.messageSource.setup.channel": "ID del canal",
-            "discord.automation.messageSource.setup.channel.description": "Introduce el ID del canal de Discord que el bot ya puede leer.",
-            "discord.automation.messageSource.setup.credential": "Cuenta del bot de Discord",
-            "discord.automation.messageSource.setup.credential.description": "Elige la cuenta conectada existente del bot de Discord; los tokens del bot nunca se introducen aquí.",
-            "discord.automation.messageSource.setup.description": "Elige el bot de Discord y el canal cuyos mensajes deben iniciar esta automatización.",
-            "discord.automation.messageSource.setup.submit": "Observar canal",
-            "discord.automation.messageSource.setup.title": "Observar un canal de Discord"
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "channels.discord.setup.credential": "Compte du bot Discord",
-            "channels.discord.setup.credential.description": "Choisis le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici.",
-            "channels.discord.setup.description": "Sélectionne le compte connecté du bot Discord à vérifier.",
-            "channels.discord.setup.submit": "Vérifier le bot",
-            "channels.discord.setup.title": "Configurer les canaux Discord",
-            "discord.automation.messageSource.setup.channel": "Identifiant du salon",
-            "discord.automation.messageSource.setup.channel.description": "Saisis l’identifiant du salon Discord que le bot peut déjà lire.",
-            "discord.automation.messageSource.setup.credential": "Compte du bot Discord",
-            "discord.automation.messageSource.setup.credential.description": "Choisis le compte connecté existant du bot Discord ; les jetons du bot ne sont jamais saisis ici.",
-            "discord.automation.messageSource.setup.description": "Choisis le bot Discord et le salon dont les messages doivent démarrer cette automatisation.",
-            "discord.automation.messageSource.setup.submit": "Surveiller le salon",
-            "discord.automation.messageSource.setup.title": "Surveiller un salon Discord"
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "channels.discord.setup.credential": "Account del bot Discord",
-            "channels.discord.setup.credential.description": "Scegli l’account connesso esistente del bot Discord; i token del bot non vengono mai inseriti qui.",
-            "channels.discord.setup.description": "Seleziona l’account connesso del bot Discord da verificare.",
-            "channels.discord.setup.submit": "Verifica bot",
-            "channels.discord.setup.title": "Configura i canali Discord",
-            "discord.automation.messageSource.setup.channel": "ID del canale",
-            "discord.automation.messageSource.setup.channel.description": "Inserisci l’ID del canale Discord che il bot può già leggere.",
-            "discord.automation.messageSource.setup.credential": "Account del bot Discord",
-            "discord.automation.messageSource.setup.credential.description": "Scegli l’account connesso esistente del bot Discord; i token del bot non si inseriscono mai qui.",
-            "discord.automation.messageSource.setup.description": "Scegli il bot Discord e il canale i cui messaggi devono avviare questa automazione.",
-            "discord.automation.messageSource.setup.submit": "Osserva canale",
-            "discord.automation.messageSource.setup.title": "Osserva un canale Discord"
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "channels.discord.setup.credential": "Conta do bot do Discord",
-            "channels.discord.setup.credential.description": "Escolha a conta conectada existente do bot do Discord; os tokens do bot nunca são inseridos aqui.",
-            "channels.discord.setup.description": "Selecione a conta conectada do bot do Discord para verificá-la.",
-            "channels.discord.setup.submit": "Verificar bot",
-            "channels.discord.setup.title": "Configurar canais do Discord",
-            "discord.automation.messageSource.setup.channel": "ID do canal",
-            "discord.automation.messageSource.setup.channel.description": "Introduza o ID do canal do Discord que o bot já consegue ler.",
-            "discord.automation.messageSource.setup.credential": "Conta do bot do Discord",
-            "discord.automation.messageSource.setup.credential.description": "Escolha a conta ligada existente do bot do Discord; os tokens do bot nunca são introduzidos aqui.",
-            "discord.automation.messageSource.setup.description": "Escolha o bot do Discord e o canal cujas mensagens devem iniciar esta automação.",
-            "discord.automation.messageSource.setup.submit": "Observar canal",
-            "discord.automation.messageSource.setup.title": "Observar um canal do Discord"
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "channels.discord.setup.credential": "Compte del bot de Discord",
-            "channels.discord.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els testimonis del bot no s’introdueixen mai aquí.",
-            "channels.discord.setup.description": "Selecciona el compte connectat del bot de Discord per verificar-lo.",
-            "channels.discord.setup.submit": "Verifica el bot",
-            "channels.discord.setup.title": "Configura els canals de Discord",
-            "discord.automation.messageSource.setup.channel": "ID del canal",
-            "discord.automation.messageSource.setup.channel.description": "Introdueix l’ID del canal de Discord que el bot ja pot llegir.",
-            "discord.automation.messageSource.setup.credential": "Compte del bot de Discord",
-            "discord.automation.messageSource.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els tokens del bot no s’introdueixen mai aquí.",
-            "discord.automation.messageSource.setup.description": "Tria el bot de Discord i el canal els missatges del qual han d’iniciar aquesta automatització.",
-            "discord.automation.messageSource.setup.submit": "Observa el canal",
-            "discord.automation.messageSource.setup.title": "Observa un canal de Discord"
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "channels.discord.setup.credential": "Discord 机器人账户",
-            "channels.discord.setup.credential.description": "选择现有的 Discord 机器人已连接账户；无需在此输入机器人令牌。",
-            "channels.discord.setup.description": "选择要验证的 Discord 机器人已连接账户。",
-            "channels.discord.setup.submit": "验证机器人",
-            "channels.discord.setup.title": "设置 Discord 频道",
-            "discord.automation.messageSource.setup.channel": "频道 ID",
-            "discord.automation.messageSource.setup.channel.description": "输入机器人已能读取的 Discord 频道 ID。",
-            "discord.automation.messageSource.setup.credential": "Discord 机器人账户",
-            "discord.automation.messageSource.setup.credential.description": "选择现有的 Discord 机器人连接账户；此处从不输入机器人令牌。",
-            "discord.automation.messageSource.setup.description": "选择 Discord 机器人以及消息应触发此自动化的频道。",
-            "discord.automation.messageSource.setup.submit": "监视频道",
-            "discord.automation.messageSource.setup.title": "监视 Discord 频道"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "channels.discord.setup.credential": "Discord 機器人帳戶",
-            "channels.discord.setup.credential.description": "選擇現有的 Discord 機器人已連線帳戶；無需在此輸入機器人權杖。",
-            "channels.discord.setup.description": "選擇要驗證的 Discord 機器人已連線帳戶。",
-            "channels.discord.setup.submit": "驗證機器人",
-            "channels.discord.setup.title": "設定 Discord 頻道",
-            "discord.automation.messageSource.setup.channel": "頻道 ID",
-            "discord.automation.messageSource.setup.channel.description": "輸入機器人已能讀取的 Discord 頻道 ID。",
-            "discord.automation.messageSource.setup.credential": "Discord 機器人帳戶",
-            "discord.automation.messageSource.setup.credential.description": "選擇現有的 Discord 機器人連線帳戶；此處從不輸入機器人權杖。",
-            "discord.automation.messageSource.setup.description": "選擇 Discord 機器人以及訊息應觸發此自動化的頻道。",
-            "discord.automation.messageSource.setup.submit": "監看頻道",
-            "discord.automation.messageSource.setup.title": "監看 Discord 頻道"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "channels.discord.setup.credential": "Discord Bot アカウント",
-            "channels.discord.setup.credential.description": "既存の Discord Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。",
-            "channels.discord.setup.description": "確認する Discord Bot の接続済みアカウントを選択してください。",
-            "channels.discord.setup.submit": "Bot を確認",
-            "channels.discord.setup.title": "Discord チャンネルを設定",
-            "discord.automation.messageSource.setup.channel": "チャンネル ID",
-            "discord.automation.messageSource.setup.channel.description": "ボットがすでに読み取れる Discord チャンネル ID を入力します。",
-            "discord.automation.messageSource.setup.credential": "Discord ボットアカウント",
-            "discord.automation.messageSource.setup.credential.description": "既存の Discord ボット接続アカウントを選択します。ボットトークンをここに入力することはありません。",
-            "discord.automation.messageSource.setup.description": "この自動化を開始するメッセージが届く Discord ボットとチャンネルを選択します。",
-            "discord.automation.messageSource.setup.submit": "チャンネルを監視",
-            "discord.automation.messageSource.setup.title": "Discord チャンネルを監視"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -4197,9 +3879,6 @@
   },
   "description": "Connects Discord conversations to Happier Channels.",
   "displayName": "Discord Channels",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

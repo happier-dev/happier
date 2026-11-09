@@ -14,8 +14,9 @@ import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle, PluginProtocolClientSpec } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentMcpToolPolicyContractInput, AgentMcpToolPolicyCallObservation,
   AgentMcpToolPolicyPermissionObservation } from '@happier-dev/plugin-sdk/testing';
-import { accountSettingsParse, projectMcpServerMaterializationV1, resolveSessionCapabilitiesV1,
-  TranscriptRawAgentEventV1Schema, type TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { projectMcpServerMaterializationV1, resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
+import { TranscriptRawAgentEventV1Schema, type TranscriptRawAgentEventV1 } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/catalogSchemasV1';

@@ -901,7 +901,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
     const hit = rowsByKeyRef.current.get(triageEntryRowKey(entryRef));
     let sourceInstanceId = hit?.row.sourceInstanceId ?? null;
-    if (hit === undefined || (sourceInstanceId === null && hit.row.pinned)) {
+    if (hit === undefined || sourceInstanceId === null) {
       const current = openAdmission.current;
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
@@ -1205,14 +1205,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [state, surface.selection]);
   // Explicit opens and restored locations share configured-source admission
   // and the same exact read when their entry is outside the list window.
-  const unobservedSelection = selectedWindowRow === null && surface.selection !== null
-    && (surface.selection.sectionId === null || surface.selection.sectionId === 'pinned'
-      || pinsByEntry.has(triageEntryRowKey(surface.selection.entryRef)))
-    ? surface.selection : null;
   const { row: selectedRow, completePostMutation, readFailed, failure: selectedReadFailure, exactRead } = useTriagePostMutationRow(
     selectedWindowRow,
     state.kind === 'window' ? state.window.lanes : [],
-    unobservedSelection,
+    surface.selection,
     window.readOwner,
   );
   // The page's one refresh (lab: "Updated · ⟳"): a press re-reads the list and, once, the open entry through its

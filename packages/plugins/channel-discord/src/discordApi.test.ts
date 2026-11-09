@@ -18,6 +18,83 @@ function response(value: unknown, status = 200) {
 }
 
 describe('Discord Gateway Bot snapshot', () => {
+  it('creates an explicitly public thread without a starter message and verifies its parent', async () => {
+    const requests: { url: string; body?: Uint8Array }[] = [];
+    const api = createDiscordBotApi({ token: 'fixture-token', http: { async request(input) {
+      requests.push(input);
+      return response({ id: 'thread-1', type: 11, parent_id: 'parent-1', name: 'Brief' }, 201);
+    } } });
+    await expect(api.createThread({ channelId: 'parent-1', name: 'Brief' }))
+      .resolves.toEqual({ kind: 'created', channelId: 'thread-1' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://discord.com/api/v10/channels/parent-1/threads');
+    expect(JSON.parse(new TextDecoder().decode(requests[0]?.body))).toEqual({ name: 'Brief', type: 11 });
+  });
+
+  it.each([
+    { status: 403, body: { code: 50013, message: 'Missing Permissions' }, expected: { kind: 'notSent', retry: 'never' } },
+    { status: 429, body: { retry_after: 9 }, expected: { kind: 'notSent', retry: 'after', retryAfterMs: 9000 } },
+    { status: 503, body: {}, expected: { kind: 'outcomeUnknown' } },
+    { status: 201, body: { id: 'thread-1', type: 12, parent_id: 'other' }, expected: { kind: 'outcomeUnknown' } },
+  ])('classifies native thread creation without retrying HTTP ($status)', async ({ status, body, expected }) => {
+    const request = vi.fn(async () => response(body, status));
+    const api = createDiscordBotApi({ token: 'fixture-token', http: { request } });
+    await expect(api.createThread({ channelId: 'parent-1', name: 'Brief' })).resolves.toMatchObject(expected);
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('accepts the native 100-code-point thread name boundary and rejects longer names before HTTP', async () => {
+    const request = vi.fn(async () => response({ id: 'thread-1', type: 11, parent_id: 'parent-1' }, 201));
+    const api = createDiscordBotApi({ token: 'fixture-token', http: { request } });
+    await expect(api.createThread({ channelId: 'parent-1', name: '🦉'.repeat(100) }))
+      .resolves.toEqual({ kind: 'created', channelId: 'thread-1' });
+    await expect(api.createThread({ channelId: 'parent-1', name: '🦉'.repeat(101) }))
+      .resolves.toMatchObject({ kind: 'notSent', retry: 'never' });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('accepts a slow REST response while the caller remains active', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const api = createDiscordBotApi({ token: 'bot-token', http: {
+        request(input, options) {
+          expect(options?.signal).toBe(controller.signal);
+          return new Promise((resolve, reject) => {
+            const responseTimer = setTimeout(() => resolve(response({
+              url: 'wss://gateway.discord.gg', shards: 1,
+              session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 0, max_concurrency: 1 },
+            })), 15_001);
+            if (input.timeoutMs !== undefined) setTimeout(() => {
+              clearTimeout(responseTimer);
+              reject(new Error('HTTP deadline exceeded'));
+            }, input.timeoutMs);
+          });
+        },
+      } });
+      const result = api.getGatewayBot({ signal: controller.signal });
+      await vi.advanceTimersByTimeAsync(15_001);
+      await expect(result).resolves.toMatchObject({ gatewayUrl: 'wss://gateway.discord.gg/?v=10&encoding=json' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels an outstanding REST request with its caller', async () => {
+    const controller = new AbortController();
+    const cancelled = new Error('connection retired');
+    const api = createDiscordBotApi({ token: 'bot-token', http: {
+      request(_input, options) {
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+        });
+      },
+    } });
+    const result = api.getGatewayBot({ signal: controller.signal });
+    controller.abort(cancelled);
+    await expect(result).rejects.toBe(cancelled);
+  });
+
   it('does not convert retired HTTP host generations into retryable Discord network failures', async () => {
     const error = new PluginError({ code: 'plugin_final_generation_retired', message: 'Retired HTTP host' });
     const api = createDiscordBotApi({ token: 'bot-token', http: { request: async () => { throw error; } } });

@@ -5,6 +5,7 @@ import type {
   ConversationTransportFactReportInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import type { HttpService, PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import type {
   DiscordApplicationMessageContentIntentPermission,
@@ -127,6 +128,7 @@ export type DiscordGatewayWorkerInput = Readonly<{
   signal: AbortSignal;
   clock?: DiscordGatewayWorkerClock;
   identifyConcurrency?: DiscordIdentifyConcurrency;
+  logger?: Pick<PluginInvocationContext['services']['logger'], 'info'>;
 }>;
 
 export type DiscordGatewayWorker = Readonly<{
@@ -394,6 +396,11 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
     const admitDispatch = async (effect: Extract<DiscordGatewayEffect, { kind: 'dispatch' }>): Promise<void> => {
       const event = effect.event;
       if (!isMessageDispatchEvent(event)) return;
+      input.logger?.info('[Discord Gateway] Message received', {
+        phase: 'messageReceived', connectionId: input.connection.connectionId, event,
+        contentEmpty: !isRecord(effect.payload) || typeof effect.payload.content !== 'string' || effect.payload.content.length === 0,
+        messageContentIntentActive: messageContentIntent.gatewayIntentActive,
+      });
       const channelId = extractionChannelId(effect.payload);
       if (!channelId) return;
       if (!await drainIncumbentAdmissionsBeforeProductAdmission()) return;
@@ -456,6 +463,10 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
             },
           });
           const observation = mapDiscordMessageToSocketIngress({ parsed });
+          input.logger?.info('[Discord Gateway] Message classified', {
+            phase: 'messageClassified', connectionId: input.connection.connectionId, event,
+            resultKind: parsed.kind, hasObservation: observation !== null,
+          });
           if (!observation) return;
           await input.admitObservation({
             connectionId: input.connection.connectionId,
@@ -563,7 +574,6 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                 if (isIdentify && identifyPermit === null && input.identifyConcurrency) {
                   identifyPermit = await input.identifyConcurrency.acquire({
                     applicationId: input.connection.applicationId,
-                    maxConcurrency: session.snapshot().sessionStartLimit.maxConcurrency,
                     signal,
                   });
                 }
@@ -582,6 +592,10 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                 if (isIdentify) {
                   messageContentIntent.gatewayIntentRequested = messageContentIntent.coreDemand;
                   messageContentIntent.gatewayIntentActive = false;
+                  input.logger?.info('[Discord Gateway] Identify sent', {
+                    phase: 'identifySent', connectionId: input.connection.connectionId,
+                    requiresFullSharedMessageContent: messageContentIntent.coreDemand,
+                  });
                 }
                 break;
               }
@@ -599,6 +613,12 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                   && messageContentIntent.gatewayIntentRequested
                 ) {
                   messageContentIntent.gatewayIntentActive = true;
+                }
+                if (effect.event === 'READY' || effect.event === 'RESUMED') {
+                  input.logger?.info('[Discord Gateway] Session ready', {
+                    phase: 'gatewayReady', connectionId: input.connection.connectionId, event: effect.event,
+                    messageContentIntentActive: messageContentIntent.gatewayIntentActive,
+                  });
                 }
                 // A readiness clear is valid only after the current Gateway
                 // session proves the demanded intent active. When core has no

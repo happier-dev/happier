@@ -57,6 +57,16 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   },
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
+    connectedServices: {
+      poolSettings: [{
+        id: 'claude-auto-continue',
+        kind: 'boolean',
+        policyKey: 'claudeCodeAutoContinueAtUsageLimit',
+        serviceLocalIds: ['claude-subscription', 'anthropic'],
+        titleKey: 'connectedServicesPool.claudeCodeAutoContinueAtUsageLimitTitle',
+        subtitleKey: 'connectedServicesPool.claudeCodeAutoContinueAtUsageLimitSubtitle',
+      }],
+    },
     payload: {
       sessionExtras: {
         values: ['agentSdk', 'unifiedTerminal'],

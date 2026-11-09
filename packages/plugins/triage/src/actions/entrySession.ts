@@ -9,14 +9,13 @@ import {
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
-import { SessionStatusActionResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
-import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
@@ -89,14 +88,11 @@ export function createTriageVerifyExistingReviewWorkspaceActionHandler(): Triage
  */
 
 export type TriageEntrySessionActionDepsV1 = Readonly<{
-    /** The `session-links` Collection. It is the only Collection these Actions touch. */
-    collections: Pick<CorpusCollectionsV1, 'sessionLinks'>;
     /** The host invoker for the two generic Session Actions this start consumes. */
     execute: TriageSessionActionInvokerV1;
-    linkSession?: import('../sessions/entrySessionOrchestrator.js').TriageEntrySessionDepsV1['linkSession'];
+    linkSession: import('../sessions/entrySessionOrchestrator.js').TriageEntrySessionDepsV1['linkSession'];
     /** The exact current selected source operation for a pull-request start. */
     prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1;
-    nowMs: () => number;
     signal?: AbortSignal;
 }>;
 
@@ -121,7 +117,7 @@ function destinationFrom(
             // The closed Action carrier already selected the allowed recipe
             // fields. Forward them whole so this adapter cannot drop a choice.
             ...destination.spawn,
-        } as Extract<TriageEntrySessionDestinationV1, Readonly<{ kind: 'new' }>>['spawn'],
+        },
         materialization: destination.materialization,
     };
 }
@@ -137,6 +133,11 @@ function projectStartResult(
     result: TriageEntrySessionStartResultV1,
     input: TriageStartEntrySessionInputV1,
 ): TriageStartEntrySessionResultV1 {
+    const deliveryResult = result.deliveryResult === undefined ? {} : {
+        deliveryResult: SessionMessageSendResultV1ProtocolSchema.parse(result.deliveryResult),
+    };
+    const sessionAddress = input.delivery?.returnResult === true && 'sessionId' in result && input.destination.kind === 'new'
+        ? { sessionAddress: { serverId: input.destination.spawn.executionTarget.serverId, sessionId: result.sessionId } } : {};
     switch (result.type) {
         case 'opened': {
             const review = reviewContinuationFor(input, result);
@@ -146,6 +147,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: result.type,
+                ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 // The Message-send owner's verdict on the structured delivery,
@@ -161,6 +163,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: result.type,
+                ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 delivery: result.delivery,
@@ -175,6 +178,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: 'linked',
+                ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 delivery: result.delivery,
@@ -190,6 +194,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: result.type,
+                ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 ...(result.delivery === undefined ? {} : { delivery: result.delivery }),
@@ -623,10 +628,8 @@ export async function startTriageEntrySession(
     deps: TriageEntrySessionActionDepsV1,
 ): Promise<TriageStartEntrySessionResultV1> {
     const orchestratorDeps = {
-        collections: deps.collections,
         execute: deps.execute,
-        ...(deps.linkSession === undefined ? {} : { linkSession: deps.linkSession }),
-        nowMs: deps.nowMs(),
+        linkSession: deps.linkSession,
         ...(deps.prepareReviewWorkspace === undefined
             ? {}
             : { prepareReviewWorkspace: deps.prepareReviewWorkspace }),
@@ -638,6 +641,8 @@ export async function startTriageEntrySession(
             ...(input.delivery.text === undefined ? {} : { text: input.delivery.text }),
             attachments: input.delivery.attachments,
             idempotencyKey: input.delivery.idempotencyKey,
+            ...(input.delivery.forgeEvidence === undefined ? {} : { forgeEvidence: input.delivery.forgeEvidence }),
+            ...(input.delivery.returnResult === undefined ? {} : { returnResult: input.delivery.returnResult }),
         };
 
     // A resume is not a second start path. It reaches the incumbent phase-retry
@@ -721,7 +726,6 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
         const collections = bindCorpusCollections(requireTriageAccountStorage(context));
         const relations = createTriageSourceSessionRelations(context, collections);
         return await startTriageEntrySession(input, {
-            collections,
             linkSession: async (link) => {
                 const result = await relations.write({ ...link,
                     sourceInstanceId: link.sourceInstanceId ?? (sameTriageEntryReference(link.entryRef, input.entryRef) ? input.sourceInstanceId : undefined),
@@ -739,7 +743,6 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
                 }
                 return result;
             },
-            nowMs: () => Date.now(),
             ...(prepareReviewWorkspace === undefined ? {} : { prepareReviewWorkspace }),
             ...(context.signal ? { signal: context.signal } : {}),
         });
@@ -751,8 +754,11 @@ export function createTriageUnlinkEntryFromSessionActionHandler(): TriageDataAct
     TriageUnlinkEntryFromSessionActionResultV1
 > {
     return async (input, context: TriageDataActionContext) => {
+        const sessionId = SessionIdSchema.parse(input.sessionId);
         const result = await createTriageSourceSessionRelations(context,
-            bindCorpusCollections(requireTriageAccountStorage(context))).write({ ...input, linked: false });
+            bindCorpusCollections(requireTriageAccountStorage(context))).write({ ...input,
+            sessionId, linked: false });
+        if (result.status === 'failed') throw result.failure;
         return { v: 1, status: result.status === 'linked' ? 'failed' : result.status };
     };
 }

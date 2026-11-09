@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Adnotacja",
+  "plugins.appContext.annotation.note": "Twoja notatka",
+  "plugins.appContext.annotation.save": "Zapisz notatkę",
+  "plugins.appContext.annotation.saved": "Notatka zapisana",
+  "plugins.appContext.annotation.refused": "Nie można teraz zapisać tej notatki — zostaje tutaj. Jeśli edytujesz oczekującą wiadomość, najpierw ją zakończ.",
+  "plugins.appContext.annotation.unavailable": "Ta adnotacja jest niedostępna."
+}

@@ -1,4 +1,6 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
+import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
+import { prepareTriageActionDefaultsV1 } from './actionDefaults.js';
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, type TriageSessionHandoffChoicesV1 } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
@@ -42,6 +44,7 @@ export type TriageActionsCatalogDepsV1 = Readonly<{
     catalog: TriageActionsDepsV1['catalog'];
     contributed?: TriageActionsDepsV1['contributed'];
     mintActionId: () => string;
+    actions?: Pick<ActionsService, 'execute'>;
     signal?: AbortSignal;
 }>;
 
@@ -104,7 +107,7 @@ export async function readTriageActionsForSurface(
     };
 }
 
-function commandFrom(input: TriageAdministerActionInputV1): TriageActionCommandV1 {
+function commandFrom(input: Exclude<TriageAdministerActionInputV1, { kind: 'saveDefaults' }>): TriageActionCommandV1 {
     const expectedRevision = input.expectedRevision;
     if (input.kind === 'reset') return { kind: 'reset', expectedRevision };
     if (input.kind === 'delete') {
@@ -145,12 +148,18 @@ export async function administerTriageAction(
     input: TriageAdministerActionInputV1,
     deps: TriageActionsCatalogDepsV1,
 ): Promise<TriageAdministerActionResultV1> {
+    let command: TriageActionCommandV1;
+    if (input.kind === 'saveDefaults') {
+        const prepared = await prepareTriageActionDefaultsV1(input, deps);
+        if (!('command' in prepared)) return { v: 1, ...prepared };
+        command = prepared.command;
+    } else command = commandFrom(input);
     const result = await mutateTriageAction({
         catalog: deps.catalog,
         ...(deps.contributed ? { contributed: deps.contributed } : {}),
         mintActionId: deps.mintActionId,
         ...(deps.signal ? { signal: deps.signal } : {}),
-    }, commandFrom(input));
+    }, command);
 
     if (result.status !== 'applied') {
         return result.status === 'rejected'
@@ -232,6 +241,7 @@ export function createTriageAdministerActionActionHandler(): TriageDataActionHan
         // Minted at the writer, never by a caller: a client-chosen id would let
         // two devices claim one action.
         mintActionId: () => mintTriageOpaqueIdV1(),
+        actions: context.services.actions,
         signal: context.signal,
     });
 }

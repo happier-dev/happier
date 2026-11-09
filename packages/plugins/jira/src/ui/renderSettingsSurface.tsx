@@ -3,7 +3,7 @@ import { Button, ErrorState, Item, ItemGroup, LoadingState, Select, useExecutePl
 import { createTriageSourceSettingsSurface, type TriageSourceSettingsDraftFieldsPropsV1 } from '@happier-dev/triage-sources/ui';
 import { TriageListScopeUnitsResultV1Schema, triageSourceBindingComponentsV1,
     type TriageScanContinuationV1, type TriageSourceScopeUnitV1 } from '@happier-dev/triage-protocol/v1';
-import { JIRA_PLUGIN_ID, JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from '../contracts.js';
+import { JIRA_PLUGIN_ID, JIRA_SOURCE_ID, JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from '../contracts.js';
 import { encodeJiraConfiguration, jiraConfiguredScopeUnits, jiraProjectIncluded, parseJiraConfiguration, selectJiraProjects,
     JiraConfigurationSchema, JiraIssueTypesResultSchema, type JiraConfiguration, type JiraIssueTypesResult } from '../source/configurationContract.js';
 
@@ -138,6 +138,7 @@ function DraftFields(props: TriageSourceSettingsDraftFieldsPropsV1): React.React
 }
 
 export const renderSurface = createTriageSourceSettingsSurface({
+    sourceLocalId: JIRA_SOURCE_ID,
     pluginId: JIRA_PLUGIN_ID, listInstancesLocalActionId: JIRA_ACTIONS.listInstances,
     connectedAccountServiceLocalId: JIRA_ACCOUNT_PURPOSE, sourceDisplayName: 'Jira',
     connectedAccountPurpose: JIRA_ACCOUNT_PURPOSE, configuredInstanceKeyStability: 'locatorDerived', DraftFields,

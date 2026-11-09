@@ -213,7 +213,7 @@ describe('Conversation Automation result delivery admission', () => {
     })).toEqual({ kind: 'blocked', code: 'invalidCustodyRequest' });
   });
 
-  it('creates real outward custody once and rejoins it after a lost accepted response', async () => {
+  it.each([false, true])('creates outward custody once with the original reply route (parent binding: %s)', async parentBound => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
     await state.put(currentConnectionFixture(), { expectedRevision: 'absent' });
@@ -221,9 +221,12 @@ describe('Conversation Automation result delivery admission', () => {
 
     const context = invocationContext({ state, deliveries });
 
+    const replyEndpoint = parentBound
+      ? { kind: 'thread', audience: 'direct', id: 'thread-1', parentId: 'chat-1' }
+      : input().opaqueContext.endpoint;
     const currentInput = {
       ...input(),
-      opaqueContext: { ...input().opaqueContext, bindingRevision: 1 },
+      opaqueContext: { ...input().opaqueContext, bindingRevision: 1, endpoint: replyEndpoint },
     };
     const first = await deliverConversationAutomationResultForInvocation(currentInput, context);
     const replay = await deliverConversationAutomationResultForInvocation(currentInput, context);
@@ -242,6 +245,7 @@ describe('Conversation Automation result delivery admission', () => {
           automationRunId: 'run-1',
           resultId: 'handoff-1',
         },
+        endpoint: replyEndpoint, replyContext: { replyToMessageId: 'message-1' },
         content: { text: 'The Automation completed.' },
         state: 'ready',
       },
@@ -336,7 +340,7 @@ describe('Conversation Automation result delivery admission', () => {
       now: () => 1_700_000_000_000,
     })).resolves.toEqual({ kind: 'settled' });
     const settledCustody = await deliveries.get(custodyAfterAcceptance!.rowId);
-    expect(settledCustody?.value).toMatchObject({ payload: { state: 'connectionDeleted' } });
+    expect(settledCustody?.value).toMatchObject({ payload: { state: 'notSent', reason: 'connectionDeleted' } });
     const connectionRow = await state.get('connection-1');
     if (connectionRow === null) throw new Error('Expected the live connection fixture.');
     await state.delete('connection-1', { expectedRevision: connectionRow.revision });
@@ -459,9 +463,6 @@ describe('Conversation Automation result delivery admission', () => {
       route: {
         connectionId: 'connection-1',
         bindingId: 'binding-1',
-        bindingRevision: 9,
-        connectionAuthorityEpoch: 4,
-        bindingAuthorityEpoch: 7,
         endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
         replyContext: { replyToMessageId: 'message-1' },
         linkPreviewPolicy: 'suppress',

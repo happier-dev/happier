@@ -830,6 +830,8 @@ describe('Codex External Session observation', () => {
       };
       const unhinted = await measure(false), hinted = await measure(true);
       lifetime.abort();
+      console.info('R268_CODEX_PAGING_PROFILE', JSON.stringify({ files: 2002, ticks: 5, baselineMemory, cold, unhinted, hinted,
+        afterRetirement: process.memoryUsage() }));
       expect(hinted.stats).toBeLessThan(unhinted.stats / 100);
     } finally { lifetime.abort(); await rm(fixture.codexHome, { recursive: true, force: true }); }
   }, 120_000);
@@ -947,6 +949,7 @@ describe('Codex External Session observation', () => {
           links: [{ linkKey: grouping.linkKey, linkedSource: identity }], signal: new AbortController().signal,
           observation: { lifetime: replacementLifetime.signal, changedFiles: [] } });
         const observedTranscript = await measureTranscriptRefresh();
+        console.info('R246_CODEX_TRANSCRIPT_REFRESH', JSON.stringify({ files: 2001, ticks: 5, unobservedTranscript, observedTranscript }));
         expect(observedTranscript.headOpens).toBeLessThan(unobservedTranscript.headOpens / 2);
       } finally { replacementLifetime.abort(); }
       const { listCodexSessionCandidates } = await import('./candidateSource.js');
@@ -1000,6 +1003,8 @@ describe('Codex External Session observation', () => {
         maxSerializedBytes: 512 * 1024, maxItems: 200, signal: lifetime.signal, exec: {} as ExecService,
       });
       const unrelatedOpens = fsBoundary.open.mock.calls.filter(([file]) => String(file).includes('-other-')).length;
+      console.info('R278_PUBLIC_PAGE', JSON.stringify({ files: 8402, elapsedMs: performance.now() - started,
+        unrelatedOpens, unrelatedReads, items: result.ok ? result.value.items.length : 0 }));
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error(result.message);
       expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(512 * 1024);

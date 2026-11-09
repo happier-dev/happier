@@ -1,7 +1,8 @@
 import { createSecureTempDirectorySync, linkDirectoryChildren } from '@happier-dev/plugin-sdk/fs';
+import { isRecord, PluginError } from '@happier-dev/plugin-sdk';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { resolveGeminiConfigPaths } from '../utils/configPaths.js';
+import { resolveGeminiConfigPaths, resolveGeminiNativePolicyPaths } from '../utils/configPaths.js';
 import type { AgentSessionConfigurationSnapshot, AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type EnvLike = Readonly<Record<string, string | undefined>>;
@@ -79,29 +80,29 @@ function stripJsonComments(input: string): string {
 }
 
 function readJsonObjectWithComments(path: string): { ok: boolean; value: JsonObject } {
-  if (!existsSync(path)) return { ok: true, value: {} };
-
   try {
     const raw = readFileSync(path, 'utf8');
     const parsed = JSON.parse(stripJsonComments(raw)) as unknown;
     return {
-      ok: true,
-      value: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : {},
+      ok: isRecord(parsed),
+      value: isRecord(parsed) ? parsed : {},
     };
   } catch (error) {
-    return { ok: false, value: {} };
+    return { ok: error instanceof Error && 'code' in error && error.code === 'ENOENT', value: {} };
   }
 }
 
 function copyKnownGeminiConfigFiles(params: {
   sourceEnv: EnvLike;
   targetEnv: EnvLike;
+  copyUserSettings?: boolean;
 }): void {
   const sourcePaths = resolveGeminiConfigPaths(params.sourceEnv);
   const targetPaths = resolveGeminiConfigPaths(params.targetEnv);
 
   for (const selectPath of GEMINI_ALLOWED_SOURCE_FILE_SELECTORS) {
     const sourcePath = selectPath(sourcePaths);
+    if (params.copyUserSettings === false && sourcePath === sourcePaths.userSettingsPath) continue;
     if (!existsSync(sourcePath)) continue;
     const targetPath = selectPath(targetPaths);
     ensureParentDir(targetPath);
@@ -127,11 +128,79 @@ function scrubCopiedGeminiSettingsMcpServers(targetEnv: EnvLike): void {
   writeFileSync(targetPaths.userSettingsPath, JSON.stringify(nextSettings, null, 2), 'utf8');
 }
 
+function readNativeProviderPolicy(result: ReturnType<typeof readJsonObjectWithComments>) {
+  const unavailable = () => new PluginError({ code: 'gemini_provider_auth_policy_unavailable', retryable: false,
+    message: 'Gemini Provider binding cannot read the native authentication policy safely.' });
+  if (!result.ok) throw unavailable();
+  const experimental = result.value.experimental;
+  const modelConfigs = result.value.modelConfigs;
+  if (experimental !== undefined && !isRecord(experimental)) throw unavailable();
+  // Do not mirror Gemini's experimental routing or native alias/override engine.
+  const dynamicModels = experimental?.dynamicModelConfiguration;
+  if ((dynamicModels !== undefined && dynamicModels !== false)
+    || (modelConfigs !== undefined && modelConfigs !== null
+      && (!isRecord(modelConfigs) || Object.keys(modelConfigs).length > 0))) {
+    throw new PluginError({ code: 'gemini_provider_model_policy_unsupported', retryable: false,
+      message: 'Gemini Provider binding cannot preserve a literal model with native model-routing configuration.' });
+  }
+  const security = result.value.security;
+  if (security === undefined) return {};
+  if (!isRecord(security)) throw unavailable();
+  const auth = security.auth;
+  if (auth === undefined) return {};
+  if (!isRecord(auth)) throw unavailable();
+  const selectedType = auth.selectedType;
+  const enforcedType = auth.enforcedType;
+  if ((selectedType !== undefined && typeof selectedType !== 'string')
+    || (enforcedType !== undefined && typeof enforcedType !== 'string')) throw unavailable();
+  return { ...(selectedType !== undefined ? { selectedType } : {}),
+    ...(enforcedType !== undefined ? { enforcedType } : {}) };
+}
+
+function prepareCopiedProviderAuthentication(params: {
+  sourceEnv: EnvLike;
+  targetEnv: EnvLike;
+  cwd: string;
+  type: 'gemini-api-key';
+  noTools: boolean;
+}) {
+  const paths = resolveGeminiNativePolicyPaths(params.sourceEnv);
+  const userPath = resolveGeminiConfigPaths(params.targetEnv).userSettingsPath;
+  const userSettings = readJsonObjectWithComments(resolveGeminiConfigPaths(params.sourceEnv).userSettingsPath);
+  const systemSettings = readJsonObjectWithComments(paths.systemSettingsPath);
+  const defaults = readNativeProviderPolicy(readJsonObjectWithComments(paths.systemDefaultsPath));
+  const user = { ...readNativeProviderPolicy(userSettings), selectedType: params.type };
+  const workspace = readNativeProviderPolicy(readJsonObjectWithComments(join(params.cwd, '.gemini', 'settings.json')));
+  const system = readNativeProviderPolicy(systemSettings);
+  // Native Gemini alone decides folder trust. Both possible native outcomes
+  // must preserve the binding; do not reproduce its trusted-folders policy.
+  for (const policy of [{ ...defaults, ...user, ...system }, { ...defaults, ...user, ...workspace, ...system }]) {
+    if (policy.selectedType !== params.type || (policy.enforcedType && policy.enforcedType !== params.type)) {
+      throw new PluginError({ code: 'gemini_provider_auth_policy_conflict', retryable: false,
+        message: 'Gemini Provider binding conflicts with a potentially active native authentication policy.' });
+    }
+  }
+  if (params.noTools) {
+    if (!systemSettings.ok || Object.keys(systemSettings.value).length > 0) {
+      throw new PluginError({ code: 'gemini_provider_native_policy_unsupported', retryable: false,
+        message: 'Gemini Provider binding cannot replace native System policy for a no-tools launch.' });
+    }
+  }
+  const security = isRecord(userSettings.value.security) ? userSettings.value.security : {};
+  const auth = isRecord(security.auth) ? security.auth : {};
+  ensureParentDir(userPath);
+  writeFileSync(userPath, JSON.stringify({ ...userSettings.value, security: { ...security,
+    auth: { ...auth, selectedType: params.type },
+  } }), 'utf8');
+  return paths;
+}
+
 /** Native sessions own this temporary home for exactly their composer lifetime. */
 export async function prepareGeminiNativeMcpShaping(
   sourceEnv: EnvLike = process.env,
   configuration?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>,
   skills?: AgentSessionSkillDelivery,
+  providerAuth?: Readonly<{ type: 'gemini-api-key'; cwd: string }>,
 ) {
   const tempDirectory = createSecureTempDirectorySync({ prefix: 'happier-gemini-mcp-home' });
   const cliHomeDir = tempDirectory.path;
@@ -142,9 +211,15 @@ export async function prepareGeminiNativeMcpShaping(
   };
   const noTools = configuration?.unlistedTools === 'deny' && configuration.allowedTools?.length === 0;
   const toolSettingsPath = join(cliHomeDir, 'no-tools-settings.json');
+  let providerDefaultsPath: string | undefined;
 
   try {
-    copyKnownGeminiConfigFiles({ sourceEnv, targetEnv: baseEnv });
+    copyKnownGeminiConfigFiles({ sourceEnv, targetEnv: baseEnv, copyUserSettings: !providerAuth });
+    if (providerAuth) {
+      const nativePaths = prepareCopiedProviderAuthentication({ sourceEnv, targetEnv: baseEnv,
+        ...providerAuth, noTools });
+      if (noTools) providerDefaultsPath = nativePaths.systemDefaultsPath;
+    }
     scrubCopiedGeminiSettingsMcpServers(baseEnv);
     if (noTools) {
       // Gemini's system settings override workspace/user settings. An empty
@@ -198,7 +273,8 @@ export async function prepareGeminiNativeMcpShaping(
 
   let cleaned = false;
   return {
-    env: { ...baseEnv, ...(noTools ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: toolSettingsPath } : {}) },
+    env: { ...baseEnv, ...(noTools ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: toolSettingsPath } : {}),
+      ...(providerDefaultsPath ? { GEMINI_CLI_SYSTEM_DEFAULTS_PATH: providerDefaultsPath } : {}) },
     async cleanup() {
       if (cleaned) return;
       cleaned = true;

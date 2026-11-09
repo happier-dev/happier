@@ -18,6 +18,7 @@ import type { TriageMountedConfiguredSourceV1 } from '../configuration/useTriage
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
+import type { TriageTaskFieldChoicesV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageCreateTaskFields, TriageEditTaskScope, TriageTaskRowStatusControl, useTriageTaskCommit } from './taskFields.js';
 import { TriageTaskStory } from './taskStory.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
@@ -25,6 +26,7 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuratio
 import { checkTriageTaskWrite } from './taskWrite.js';
 import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
 import { toTriageWireObservation } from '../../projection/listWindowWire.js';
+import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -129,13 +131,27 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
   const targetedContributions = { ...own, points: [{ ...own.points[0]!, protocols: [{ ...own.points[0]!.protocols[0]!,
     contributions: [...other.points[0]!.protocols[0]!.contributions, ...own.points[0]!.protocols[0]!.contributions] }] }] };
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
+  let setSourceSnapshot!: React.Dispatch<React.SetStateAction<TriageListWindowSnapshotV1>>;
+  const sourceSnapshot: TriageListWindowSnapshotV1 = {
+    configuredSources: [], freshness: 'fresh', pending: 'idle', passes: 1,
+    window: foldTriageListWindow({ observations: [], configuredSourcesStatus: 'complete',
+      activeSourceInstanceIds: [internal.instance.sourceInstanceId], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 1,
+      lanes: [{ source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: internal.instance.sourceInstanceId,
+        exhausted: false, health: { kind: 'unavailable' } }],
+    }),
+    unreadableSources: [{ sourceInstanceId: internal.instance.sourceInstanceId, message: 'Could not be reached just now.' }],
+  };
   await act(async () => {
     mounted.push(await createPluginUiTestkit({ identity: { instanceId: 'task-default', mountNonce: 'default' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: defineUiSurface(() => <TriageCreateTaskFields sources={[external, internal].map(configured => ({
+      surface: defineUiSurface(() => {
+        const [snapshot, setSnapshot] = React.useState(sourceSnapshot);
+        setSourceSnapshot = setSnapshot;
+        return <TriageCreateTaskFields sourceSnapshot={snapshot} sources={[external, internal].map(configured => ({
         configured, sourceInstanceId: configured.instance.sourceInstanceId, displayLabel: configured.locator!.displayLabel!,
       }))} sourcesLoaded sourcesUnavailableReason={null} draft={{ title: 'My task' }}
-        onApplied={async () => undefined} onClose={() => undefined} />),
+        onApplied={async () => undefined} onClose={() => undefined} />;
+      }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         physicalFocus: target => { target.focus(); return true; } }),
@@ -147,6 +163,14 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
     }));
   });
   const fixture = mounted.at(-1)!;
+  expect(document.querySelector('[data-testid="triage-task-draft-title"]')).toBeNull();
+  expect(saved).toEqual([]);
+  await act(async () => {
+    setSourceSnapshot({ ...sourceSnapshot, unreadableSources: [], window: { ...sourceSnapshot.window!,
+      lanes: [{ source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: internal.instance.sourceInstanceId,
+        exhausted: true, health: { kind: 'walkFinished' } }],
+    } });
+  });
   // Arriving at a task draft puts typing in its title, rather than the pane heading.
   expect(document.activeElement).toBe(document.querySelector('[data-testid="triage-task-draft-title"]'));
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
@@ -432,6 +456,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   nativeLabel?: string; accountData?: boolean; relationRows?: readonly ReturnType<typeof foldTriageListWindow>['rows'][number][];
   refuse?: boolean; viewerAccountId?: string; assigneeLabel?: string | null;
   labelOutcome?: 'refused' | 'uncertain';
+  taskFieldChoices?: TriageTaskFieldChoicesV1;
   rereadFails?: boolean;
   recoveryValues?: TriageTaskFieldsV1;
   snapshotCapabilities?: TriageTaskCapabilitiesV1;
@@ -469,7 +494,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
       surface: defineUiSurface(() => {
         const detail = useTriagePostMutationRow(row, lanes);
         return <TriageEditTaskScope row={detail.row ?? row} instance={source.configuredInstance} disabled={false}
-          taskFields={detail.exactRead?.taskFields} onApplied={async () => {
+          taskFields={detail.exactRead?.taskFields} taskFieldChoices={detail.exactRead?.taskFieldChoices} onApplied={async () => {
             rereads++;
             if (options.rereadFails) throw new Error('Refresh unavailable');
             await detail.completePostMutation();
@@ -492,7 +517,9 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
             if (options.readFailed) throw new Error('Source unavailable');
             const { entryRef: _entryRef, ...projected } = observation;
             return { kind: 'observed', entryRef, observation: toTriageWireObservation(projected),
-              taskFields: reads > 1 ? options.recoveryValues ?? initialValues : initialValues };
+              taskFields: reads > 1 ? options.recoveryValues ?? initialValues : initialValues,
+              ...((input as { includeTaskFieldChoices?: true }).includeTaskFieldChoices === true && options.taskFieldChoices !== undefined
+                ? { taskFieldChoices: options.taskFieldChoices } : {}) };
           }
           if (action === 'tasks.internal.labels.setColor' || action === 'tasks.internal.labels.clearColor') {
             colored.push({ action, input });
@@ -519,6 +546,22 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   return { fixture, saved, transitioned, colored, opened, notifications, sourceUrl: observation.outcome.locator.webUrl,
     rereads: () => rereads, reads: () => reads, entryRef };
 }
+
+it('picks assignees from the source directory once the source declares one, committing the chosen set', async () => {
+  const { fixture, saved } = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] },
+    snapshotCapabilities: { editFields: ['assigneeIds'], fieldChoices: true },
+    taskFieldChoices: { assigneeIds: [{ id: 'ada', label: 'ada' }, { id: 'grace', label: 'grace' }] } });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Assignees, ada' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemcheckbox', { name: 'grace' })); });
+  expect(saved.map(write => write.fields)).toEqual([{ assigneeIds: ['ada', 'grace'] }]);
+});
+
+it('keeps typed names and reads once when the source declares no directory', async () => {
+  const { fixture, reads } = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] } });
+  await fixture.getByRole('button', { name: 'Assignees, ada' });
+  expect(reads()).toBe(1);
+  await expect(fixture.queryByRole('menuitemcheckbox', { name: 'grace' })).resolves.toBeUndefined();
+});
 
 it('names the viewing Account in Assignees through the Account display owner and preserves native edit ids', async () => {
   const accountId = '5e3a0581-0000-4000-8000-000000000001';

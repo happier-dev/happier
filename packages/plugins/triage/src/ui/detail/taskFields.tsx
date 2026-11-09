@@ -7,12 +7,13 @@ import {
   useAccountActorName, usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiFocusTarget, useSurfaceContext,
   type ActionFormFieldHint, type PropertyNameTones,
 } from '@happier-dev/plugin-ui';
-import { TriageTaskFieldsV1Schema, TriageTaskTransitionFieldValuesV1Schema, triageTaskStatusCategoryV1,
+import { type TriageTaskFieldChoicesV1, TriageTaskFieldsV1Schema, TriageTaskTransitionFieldValuesV1Schema, triageTaskStatusCategoryV1,
   type TriageConfiguredSourceInstanceV1, type TriageEntryLocatorV1, type TriageEntryRefV1, type TriageEntryStateV1, type TriageSourceInstanceIdV1, type TriageTaskFieldV1,
   type TriageTaskWriteResultV1, type TriageTaskCapabilitiesV1, type TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1,
   TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, type TriageTaskDraftV1 } from '../../actions/tasksProtocol.js';
 import type { TriageListRowV1 } from '../../projection/listWindow.js';
+import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import type { TriageListTaskFactsV1 } from '../list/sections.js';
 import type { TriageMountedConfiguredSourceV1 } from '../configuration/useTriageConfiguredSources.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
@@ -241,6 +242,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   sources: readonly TriageMountedConfiguredSourceV1[];
   sourcesLoaded: boolean;
   sourcesUnavailableReason: string | null;
+  sourceSnapshot?: TriageListWindowSnapshotV1;
   draft?: TriageTaskDraftV1;
   /** Existing scoped handoff identity keeps uncertain creates held across pane remounts. */
   draftId?: string;
@@ -290,7 +292,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   }), [props.sources, context.targetedContributions, machineUnavailable]);
   const defaultPlace = where === undefined ? defaultTriageTaskDraftPlaceV1(choices.filter(choice => choice.supportsCreate).map(choice => ({
     source: choice.source.configured.instance.source, sourceInstanceId: choice.source.sourceInstanceId, kindId: choice.kind.id,
-  }))) : undefined;
+  })), props.sourceSnapshot) : undefined;
   const chosenValue = where === undefined && defaultPlace !== undefined
     ? JSON.stringify([defaultPlace.sourceInstanceId, defaultPlace.kindId]) : where;
   const chosen = choices.find((choice) => choice.value === chosenValue);
@@ -505,6 +507,8 @@ export function TriageEditTaskScope(props: Readonly<{
   row: TriageListRowV1; instance?: TriageConfiguredSourceInstanceV1; disabled: boolean; onApplied(): Promise<void>;
   /** Complete edit values supplied by the mounted exact-entry read owner. */
   taskFields?: TriageTaskFieldsV1;
+  /** What assignees and labels can be set to, from the same read, when the source declares a directory. */
+  taskFieldChoices?: TriageTaskFieldChoicesV1;
   /** Canonical detail relationship evidence, not a second relation lookup or store. */
   linkedSessionIds?: readonly string[];
   /** The rows the window already holds: what a parent or blocker can be chosen from, and how they are named. */
@@ -595,6 +599,7 @@ export function TriageEditTaskScope(props: Readonly<{
     propertyAssigneeLabels.set(assigneeIds[0]!, snapshot.assigneeLabel);
   }
   const properties = projectTriageTaskPropertiesV1({ fields: editable, values: propertyValues, self: props.row.entryRef, candidates, assigneeLabels: propertyAssigneeLabels, assigneeFace: renderTriageTaskAssigneeFace,
+    ...(props.taskFieldChoices === undefined ? {} : { fieldChoices: props.taskFieldChoices }),
     ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
     ...(labelTones === null ? {} : { labelTones }),
     commit: commitFields, text, locale: context.locale, busy: write.busy });

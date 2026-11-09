@@ -209,6 +209,7 @@ function readTranscriptObservation(
     return mapClaudeTranscriptEventToTerminalLifecycleObservation({
       agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
       kind,
+      evidence: nested,
       turnId: readString(payload.turnId) ?? readString(nested.turnId),
     });
   }

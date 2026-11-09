@@ -114,6 +114,23 @@ function pendingDecisionUntilAbort<T>(signal: AbortSignal | undefined): Promise<
 }
 
 describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
+  it('leaves the usage chooser to prompt injection and retires an inherited app question', async () => {
+    const requestDecision = vi.fn((_request: unknown, options?: { signal?: AbortSignal }) =>
+      pendingDecisionUntilAbort<Readonly<{ decision: 'approved' }>>(options?.signal));
+    const usageDialog = ["You've hit your session limit", 'What do you want to do?', '❯ 1. Stop and wait for limit to reset',
+      '  2. Switch to extra usage', '  3. Upgrade your plan'].join('\n');
+    const port = createFakeControlPort({ captures: [usageDialog] });
+    const handler = createClaudeUnifiedResumeChoiceStartupHandler({ ctx: createContext(requestDecision),
+      sessionId: 'session-1', port, settleMs: 0, wait: async () => undefined });
+    try {
+      await handler.handle(parseClaudeScreenState(SAFEGUARD_DIALOG));
+      expect(handler.hasPendingUserAction()).toBe(true);
+      await expect(handler.handle(parseClaudeScreenState(usageDialog))).resolves.toBe('unhandled');
+      expect(handler.hasPendingUserAction()).toBe(false);
+      expect(requestDecision).toHaveBeenCalledOnce();
+      expect(port.sentKeys).toEqual([]);
+    } finally { await handler.dispose(); }
+  });
   it('does not apply a settled answer that skipped native application acknowledgement', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

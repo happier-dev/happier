@@ -1,37 +1,115 @@
-import type { JsonValue, PluginClientApi } from '@happier-dev/plugin-sdk';
-import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { JsonValue, PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { triageEntryRowKey } from '../projection/listWindow.js';
-import { runTriageConfiguredActionV1, type TriageConfiguredActionRunRequestV1 } from '../sessions/configuredActionRun.js';
-import { readTriageEntrySessionFactsV1, readTriageRetainedEntrySessionFactsV1 } from '../sessions/readEntrySessionFacts.js';
+import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunRequestV1 } from '../sessions/configuredActionRun.js';
+import { readTriageEntrySessionFactsV1, readTriageRetainedEntrySessionFactsV1,
+    type TriageEntrySessionSourceFactsV1 } from '../sessions/readEntrySessionFacts.js';
+import { createTriageConfiguredActionHost } from './configuredActionHost.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import {
     TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,
     TriageRunConfiguredActionResultV1Schema,
-    type TriageRunConfiguredActionInputV1,
+    TriageRunConfiguredActionInputV1Schema,
+    type TriageLegacyRunConfiguredActionResultV1,
+    type TriageLegacyConfiguredStartRecoveryV1,
     type TriageRunConfiguredActionResultV1,
 } from './configuredActionRunProtocol.js';
 
-/** Client transport of the configured-run owner, with exact source-owned entry facts. */
-export function createTriageRunConfiguredActionHandler(): PluginClientActionHandler<
-    TriageRunConfiguredActionInputV1, TriageRunConfiguredActionResultV1
+async function readConfiguredSourceContext(context: PluginAccountActionContext): Promise<Readonly<{
+    targetedContributions: TriageEntrySessionSourceFactsV1 | null;
+}>> {
+    if (context.ui) return await context.ui.context({ signal: context.signal });
+    const observation = context.services.targetedContributions.observeForSelf(
+        TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated() {} },
+    );
+    try {
+        const snapshot = await observation.readCurrent({ signal: context.signal });
+        return { targetedContributions: { kind: 'admittedSources', sources: indexTriageAdmittedSourcesV1(snapshot.contributions) } };
+    } finally { observation.dispose(); }
+}
+
+/** Portable transport of the configured owner, with optional ordinary UI authoring. */
+export function createTriageRunConfiguredActionHandler(): PluginAccountActionHandler<
+    JsonValue, TriageRunConfiguredActionResultV1
 > {
-    return async (input, context) => {
-        const host = context.ui;
-        if (context.signal.aborted) return { v: 1, status: 'cancelled' };
+    return async (value, context) => {
+        const input = TriageRunConfiguredActionInputV1Schema.parse(value);
+        const host = createTriageConfiguredActionHost(context);
+        if (input.handoff.context.kind !== 'entries') {
+            const finish = (handoff: TriageSessionHandoffResultV1) => ({ v: 1 as const, handoff,
+                ...(input.resumeStart === undefined ? {} : { recovery: input.resumeStart }) });
+            if (context.signal.aborted) return finish({ kind: 'cancelled' });
+            if (input.drafts !== undefined || input.reviewChoices !== undefined || input.resumeReview !== undefined) {
+                return finish({ kind: 'unavailable', reason: 'scopeMismatch' });
+            }
+            const selected = [
+                ...(input.handoff.context.kind === 'entry' ? [input.handoff.context.entry] : []),
+                ...input.handoff.evidence.flatMap((evidence) => evidence.kind === 'entry' || evidence.kind === 'alertEntry' ? [evidence.entry] : []),
+            ].filter((entry, index, all) => all.findIndex((candidate) => triageEntryRowKey(candidate.entryRef) === triageEntryRowKey(entry.entryRef)
+                && candidate.sourceInstanceId === entry.sourceInstanceId) === index);
+            const entries: Array<TriageConfiguredActionRunRequestV1['entries'][number]> = [];
+            if (selected.length > 0) {
+                try {
+                    const sourceContext = await readConfiguredSourceContext(context);
+                    if (context.signal.aborted) return finish({ kind: 'cancelled' });
+                    if (sourceContext.targetedContributions === null) return finish({ kind: 'unavailable', reason: 'evidenceInvalid' });
+                    for (const entry of selected) {
+                        const facts = await readTriageEntrySessionFactsV1(host, entry, sourceContext.targetedContributions, context.signal);
+                        if (context.signal.aborted) return finish({ kind: 'cancelled' });
+                        if (facts === null) return finish({ kind: 'unavailable', reason: 'evidenceInvalid' });
+                        entries.push(facts);
+                    }
+                } catch (error) {
+                    if (context.signal.aborted) return finish({ kind: 'cancelled' });
+                    throw error;
+                }
+            }
+            // Only the canonical Action front door supplies these exact targets.
+            const resolved = context.sessionTargetsV1;
+            return TriageRunConfiguredActionResultV1Schema.parse(await runTriageConfiguredHandoffV1(host, input.handoff, {
+                entries, signal: context.signal, ...(resolved?.targets.length === 1 ? { session: resolved.targets[0] } : {}),
+                ...(input.resumeStart === undefined ? {} : { resumeStart: input.resumeStart }),
+            }));
+        }
+        const selectedEntries = input.handoff.context.entries;
+        const destination = input.handoff.context.destination;
+        const finish = (result: TriageLegacyRunConfiguredActionResultV1): TriageRunConfiguredActionResultV1 =>
+            TriageRunConfiguredActionResultV1Schema.parse({ ...result,
+                handoff: { kind: 'entryExecution', status: result.status },
+                ...(result.recovery === undefined ? {} : { recovery: { ...result.recovery, handoff: input.handoff } }),
+            });
+        if (context.signal.aborted) return finish({ v: 1, status: 'cancelled' });
+        if (input.handoff.sessionChoice.kind !== 'configured' || input.handoff.agentChoice.kind !== 'configured'
+            || input.handoff.delivery !== 'configured' || input.handoff.evidence.some(evidence =>
+                (evidence.kind !== 'entry' && evidence.kind !== 'alertEntry') || !selectedEntries.some(entry =>
+                    triageEntryRowKey(entry.entryRef) === triageEntryRowKey(evidence.entry.entryRef)
+                    && entry.sourceInstanceId === evidence.entry.sourceInstanceId))) {
+            return finish({ v: 1, status: 'unavailable', reason: 'scopeMismatch' });
+        }
+        if (input.resumeStart?.state.kind === 'handoff'
+            || input.resumeStart !== undefined && 'handoff' in input.resumeStart && input.resumeStart.handoff !== undefined
+                && JSON.stringify(input.resumeStart.handoff) !== JSON.stringify(input.handoff)) {
+            return finish({ v: 1, status: 'unavailable', reason: 'startContinuationMismatch' });
+        }
+        // The nested state discriminator above excludes non-entry custody.
+        const resumeStart = input.resumeStart as TriageLegacyConfiguredStartRecoveryV1 | undefined;
         const continuing = input.resumeStart !== undefined || input.resumeReview !== undefined;
-        const sourceContext = await host.context({ signal: context.signal }).catch((error: unknown) => {
+        const sourceContext = await readConfiguredSourceContext(context).catch((error: unknown) => {
             if (!continuing) throw error;
             return { targetedContributions: null };
         });
-        if (context.signal.aborted) return { v: 1, status: 'cancelled' };
+        if (context.signal.aborted) return finish({ v: 1, status: 'cancelled' });
         if (!continuing && sourceContext.targetedContributions === null) {
-            return { v: 1, status: 'unavailable', reason: 'sourceContextUnavailable' };
+            return finish({ v: 1, status: 'unavailable', reason: 'sourceContextUnavailable' });
         }
         const entries: Array<TriageConfiguredActionRunRequestV1['entries'][number]> = [];
         const unavailableKeys: string[] = [];
-        const retainedInputs = input.resumeStart?.state.kind === 'single' ? [input.resumeStart.state.input]
-            : input.resumeStart?.state.kind === 'bulk' ? input.resumeStart.state.units.map((unit) => unit.input) : [];
-        for (const selected of input.entries) {
+        const retainedInputs = resumeStart?.state.kind === 'single' ? [resumeStart.state.input]
+            : resumeStart?.state.kind === 'bulk' ? resumeStart.state.units.map((unit) => unit.input) : [];
+        for (const selected of selectedEntries) {
             if (context.signal.aborted) break;
             const key = triageEntryRowKey(selected.entryRef);
             const facts = continuing
@@ -40,10 +118,10 @@ export function createTriageRunConfiguredActionHandler(): PluginClientActionHand
             if (facts === null) { unavailableKeys.push(key); continue; }
             entries.push(facts);
         }
-        if (context.signal.aborted) return { v: 1, status: 'cancelled' };
-        if (!continuing && entries.length === 0) return { v: 1, status: 'unavailable', reason: 'noEntriesAvailable', unavailableKeys };
-        if (!continuing && input.destination === 'single' && unavailableKeys.length > 0) {
-            return { v: 1, status: 'unavailable', reason: 'singleEntryRequired', unavailableKeys };
+        if (context.signal.aborted) return finish({ v: 1, status: 'cancelled' });
+        if (!continuing && entries.length === 0) return finish({ v: 1, status: 'unavailable', reason: 'noEntriesAvailable', unavailableKeys });
+        if (!continuing && destination === 'single' && unavailableKeys.length > 0) {
+            return finish({ v: 1, status: 'unavailable', reason: 'singleEntryRequired', unavailableKeys });
         }
         const executionHost = {
             ...host,
@@ -55,21 +133,21 @@ export function createTriageRunConfiguredActionHandler(): PluginClientActionHand
             ),
         };
         const result = await runTriageConfiguredActionV1(executionHost, {
-            actionId: input.actionId, destination: input.destination, entries, unavailableKeys,
-            ...(continuing ? { selectedEntries: input.entries } : {}),
+            actionId: input.handoff.configuredActionId, destination, entries, unavailableKeys,
+            ...(continuing ? { selectedEntries } : {}),
             ...(input.reviewChoices === undefined ? {} : { reviewChoices: input.reviewChoices }),
             ...(input.resumeReview === undefined ? {} : { resumeReview: input.resumeReview }),
-            ...(input.resumeStart === undefined ? {} : { resumeStart: input.resumeStart }),
+            ...(resumeStart === undefined ? {} : { resumeStart }),
             ...(input.drafts === undefined ? {} : { settlements: entries.map((entry) => {
-                const draft = input.drafts?.[input.destination === 'oneSessionForAllEntries' ? 0
-                    : input.entries.findIndex((selected) => triageEntryRowKey(selected.entryRef) === entry.key)];
+                const draft = input.drafts?.[destination === 'oneSessionForAllEntries' ? 0
+                    : selectedEntries.findIndex((selected) => triageEntryRowKey(selected.entryRef) === entry.key)];
                 return draft;
             }) }),
         }, { signal: context.signal });
-        return TriageRunConfiguredActionResultV1Schema.parse(result);
+        return finish(result);
     };
 }
 
-export function activate(api: PluginClientApi): void {
+export function activate(api: PluginAccountApi): void {
     api.actions.register(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, createTriageRunConfiguredActionHandler());
 }

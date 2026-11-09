@@ -11,6 +11,7 @@ import {
     claudeSubscriptionQuotaFetcherDescriptor,
     createClaudeSubscriptionQuotaFetcher,
     parseClaudeSubscriptionUsageMeters,
+    resolveClaudeSubscriptionPlanLabelFromMetadata,
 } from './subscriptionFetcher.js';
 
 function buildClaudeOAuthRecord(now: number, overrides?: Readonly<{
@@ -52,6 +53,32 @@ function headersFromFetchCall(call: ReadonlyArray<unknown>): Record<string, unkn
 }
 
 describe('createClaudeSubscriptionQuotaFetcher', () => {
+    it.each([null, false, ' '] as const)('keeps an unreported allowance unknown instead of inventing zero usage (%j)', missing => {
+        const resetsAt = '2026-11-07T00:00:00Z';
+        const meters = parseClaudeSubscriptionUsageMeters({
+            five_hour: { utilization: 0, resets_at: resetsAt },
+            seven_day: { utilization: missing, used: missing, limit: 100, resets_at: resetsAt },
+            seven_day_sonnet: { utilization: null, used: 40, limit: 100, resets_at: resetsAt },
+        });
+        expect(meters.find(meter => meter.meterId === 'seven_day')).toMatchObject({
+            utilizationPct: null, used: null, limit: 100, status: 'unavailable', resetsAt: Date.parse(resetsAt),
+        });
+        expect(meters.find(meter => meter.meterId === 'five_hour')).toMatchObject({ utilizationPct: 0, status: 'ok' });
+        expect(meters.find(meter => meter.meterId === 'seven_day_sonnet')).toMatchObject({ utilizationPct: 40, status: 'ok' });
+    });
+
+    it.each([
+        ['pro', 'Claude Pro'], ['max', 'Claude Max'], ['team', 'Claude Team'],
+        ['enterprise', 'Claude Enterprise'], ['future_sku', 'future_sku'],
+    ])('publishes the display-ready subscription label for %s', (subscriptionType, label) => {
+        expect(resolveClaudeSubscriptionPlanLabelFromMetadata({ subscriptionType })).toBe(label);
+    });
+
+    it('names a native Max tier when no subscription type was supplied', () => {
+        expect(resolveClaudeSubscriptionPlanLabelFromMetadata({ rateLimitTier: 'max_20x' })).toBe('Claude Max 20x');
+        expect(resolveClaudeSubscriptionPlanLabelFromMetadata(null)).toBeNull();
+    });
+
     it('labels all-model and future provider windows through the canonical usage display owner', () => {
         const meters = parseClaudeSubscriptionUsageMeters({
             seven_day_all: { utilization: 20 },
@@ -175,11 +202,12 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
             recordKey: {
                 providerId: 'claude',
                 subjectKind: 'unknown',
-                quotaScope: 'account',
+                // The canonical snapshot owner leaves provisional subjects' quota scope unknown.
+                quotaScope: 'unknown',
             },
             accountSubject: { kind: 'provisionalLocalSubject' },
             source: 'providerHttp',
-            planLabel: 'max',
+            planLabel: 'Claude Max',
             meters: expect.arrayContaining([
                 expect.objectContaining({ meterId: 'five_hour' }),
                 expect.objectContaining({ meterId: 'seven_day' }),
@@ -526,7 +554,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
             signal: new AbortController().signal,
         });
 
-        expect(snapshot?.planLabel).toBe('team');
+        expect(snapshot?.planLabel).toBe('Claude Team');
     });
 
     it('owns Claude subscription usage URL env mapping in the plugin descriptor', async () => {

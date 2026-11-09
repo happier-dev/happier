@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { extractGitHubReleaseAsset } from '../../../cli-common/src/agents/extractGitHubReleaseAsset.js';
 import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '../../openai/src/manifest.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
 import { CODEX_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Codex plugin manifest', () => {
@@ -115,11 +116,15 @@ describe('Codex plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
       CODEX_AGENT_SETTINGS_CONTRIBUTION,
     ]);
-    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toEqual([{
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toMatchObject([{
       id: 'openai-codex',
       title: 'ChatGPT',
+      // 2b5d853ffbb2: this service owns the Codex account usage identity.
+      usageIdentity: { providerId: 'openai-codex' },
+      metadata: CODEX_ACCOUNT_USAGE_PLAN_METADATA,
       recoveryCredits: { supported: true },
       authentication: {
+        account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
         defaultModeId: 'oauth',
         modes: [{
           id: 'oauth',
@@ -181,6 +186,7 @@ describe('Codex plugin manifest', () => {
     }]);
     expect(result.manifest.contributes.agents[0]?.capabilities.sessions.startupInstructions).toEqual({
       versions: [1],
+      revisionChanges: 'resume',
     });
     expect(result.manifest.contributes.agents[0]?.catalog?.codingPromptBehavior).toBeUndefined();
     expect(result.manifest.contributes.agents[0]?.catalog?.resumeChecklist).toEqual({
@@ -190,6 +196,8 @@ describe('Codex plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.voiceProviders).toEqual([{
       id: 'realtime-codex',
       title: 'Codex Realtime Voice',
+      // The canonical Voice declaration has carried this description since 03cfeee1e8.
+      description: { key: 'settingsVoice.mode.codexRealtimeSubtitle', fallback: 'Speak directly with the active Codex agent session.' },
       mark: { kind: 'agent', agentId: 'codex' },
       kind: 'conversation',
       roles: [
@@ -210,14 +218,6 @@ describe('Codex plugin manifest', () => {
       settings: {
         schemaVersion: 2,
         fields: [],
-        privacyFacts: {
-          processor: 'Codex Live · OpenAI',
-          audioDestination: 'OpenAI',
-          retention: {
-            key: 'settingsVoice.pages.privacy.servicePolicy',
-            fallback: 'Follows your service account settings and terms.',
-          },
-        },
         privacyDisclosure: {
           key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
           fallback: 'Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.',

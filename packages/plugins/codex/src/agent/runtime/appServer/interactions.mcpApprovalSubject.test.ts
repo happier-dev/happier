@@ -37,6 +37,8 @@ import { createReducer, reducer } from '@happier-dev/session-core/reducer';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { createCodexAppServerToolEventProjector } from './projection/toolEvents.js';
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls/identity';
+import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../providerBinding/adapter.js';
+import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 
 // Isolate the OS-user startup lock, retaining the real client/socket/runtime.
 vi.mock('node:os', async importOriginal => {
@@ -252,6 +254,37 @@ describe('Codex MCP approval subjects through real session grants', () => {
       }, { models: publications.services.models,
         beforeTurnStartResponse: async () => { entered.resolve(); await release.promise; } });
     } finally { release.resolve(); publications.dispose(); }
+  });
+  it('publishes Provider model readback without requesting or replacing the native catalog', async () => {
+    const publications = createNativeAgentSessionPublications({ agentId: 'codex', session: null,
+      signal: new AbortController().signal, isCurrent: () => true, supportsInFlightSteer: true });
+    const connectionId = 'pc_gateway';
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
+    const model = { id: 'fixture-model', name: 'Gateway model' };
+    const materialized = await CODEX_PROVIDER_BINDING_ADAPTER_V1.materialize({ v: 1,
+      prepared: CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, connectionId, agentTargetKey, model }),
+      binding: { v: 1, agentTargetKey, selection: { connectionId, model }, contributionKey: 'gateway/provider',
+        endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+          protocol: 'openai-responses', publicHeaders: {} }, runtimeCredentialTransport: null, compatibilityFingerprint: 'fixture' },
+      credential: { kind: 'none' } });
+    const { launchMaterialization: materialization } = await composeProviderBindingMaterialization({
+      materialization: materialized, materializationBaseDir: '/tmp/provider-readback-unused' });
+    const observed: unknown[] = [];
+    const subscription = publications.modelsSource.subscribe(snapshot => observed.push(snapshot));
+    try {
+      await withCodexNativeAttachFixture(async ({ openConfiguredSession, requests, emitNotification }) => {
+        const session = await openConfiguredSession();
+        expect(publications.modelsSource.read()).toMatchObject({ models: null, currentModelId: model.id });
+        const atOpen = observed.length;
+        await session.send({ inputIds: ['provider-readback'], input: { text: 'Reply.' },
+          delivery: { kind: 'newTurn', turnId: 'provider-readback-turn' } });
+        expect(observed).toHaveLength(atOpen);
+        expect(requests.filter(request => request.method === 'model/list')).toHaveLength(0);
+        emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
+      }, { models: publications.services.models, providerBinding: { connectionId, model,
+        upstream: { protocol: 'openai-responses', normalizedUrl: 'https://gateway.example/v1', credential: 'none' },
+        materialization } });
+    } finally { subscription.dispose(); publications.dispose(); }
   });
   it.each(['in-flight', 'demanded', 'refresh-failed'] as const)(
     'waits for the real catalog owner after a revision change (%s) before publishing an MCP Ask',

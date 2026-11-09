@@ -67,7 +67,13 @@ describe('prospective native request account scope', () => {
             ...(accountScope ? { accountScope } : {}),
           } } });
           if (!accountScope) expect(usage?.kind === 'usage-observed' && usage.attribution?.source).not.toHaveProperty('accountScope');
-        } else expect(usage).not.toHaveProperty('attribution');
+        } else {
+          // docs/providers.md#validation-map; 2a330834023a: an explicit unknown
+          // native witness prevents the host from substituting launch proof.
+          expect(usage?.kind === 'usage-observed' && usage.attribution).toEqual({
+            v: 1, turnId: 'host-startup', source: { kind: 'native', connectedAccount: null },
+          });
+        }
         expect(fixture.requests.find(request => request.method === 'account/login/start')?.params)
           .toMatchObject({ type: 'chatgptAuthTokens', chatgptAccountId: 'provider-account-A' });
       } finally {
@@ -122,12 +128,18 @@ describe('prospective native request account scope', () => {
       }
       expect(observations[3]).toMatchObject({ scope: 'session_cumulative', tokens: { total: 1006 },
         context: { usedTokens: 3, totalProcessedTokens: 1006, windowTokens: 200_000 } });
-      expect(observations[3]).not.toHaveProperty('attribution');
+      // Cumulative and last-only snapshots carry the same unknown witness;
+      // neither certifies a request Account (docs/providers.md#validation-map).
+      expect(observations[3]?.attribution).toEqual({
+        v: 1, turnId: 'host-turn', source: { kind: 'native', connectedAccount: null },
+      });
       // A legacy last-only snapshot is still readable privately, but the native
       // contract does not establish it as an exact response completion.
       emitNotification('thread/tokenUsage/updated', { threadId: 'fresh-thread', turnId: 'provider-turn-1', tokenUsage: { last: usage } });
       await expect.poll(() => events.filter(event => event.kind === 'usage-observed').length).toBe(5);
-      expect(events.filter(event => event.kind === 'usage-observed').at(-1)).not.toHaveProperty('attribution');
+      expect(events.filter(event => event.kind === 'usage-observed').at(-1)?.attribution).toEqual({
+        v: 1, turnId: 'host-turn', source: { kind: 'native', connectedAccount: null },
+      });
       completeResponse('foreign-response', 'foreign-turn');
       const completed = waitForCodexAppServerRuntimeTurnCompletion(runtime);
       emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
@@ -182,7 +194,9 @@ describe('prospective native request account scope', () => {
       expect(refreshed).toMatchObject({ accessToken: 'synthetic-B', chatgptAccountId: 'account-B' });
       expect(refreshed).not.toHaveProperty('chatgptPlanType');
       planType = 'team';
-      expect(await usage('provider-turn-1')).not.toHaveProperty('attribution');
+      expect((await usage('provider-turn-1'))?.attribution).toEqual({
+        v: 1, turnId: 'host-first', source: { kind: 'native', connectedAccount: null },
+      });
       const completed = waitForCodexAppServerRuntimeTurnCompletion(runtime);
       emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
       await completed;
@@ -246,7 +260,9 @@ describe('prospective native request account scope', () => {
       emitNotification('rawResponse/completed', { threadId: 'fresh-thread', turnId: 'provider-turn-1',
         responseId: 'response-1', usage: { totalTokens: 3, inputTokens: 2, outputTokens: 1 } });
       await expect.poll(() => events.filter(event => event.kind === 'usage-observed').length).toBe(1);
-      expect(events.find(event => event.kind === 'usage-observed')).not.toHaveProperty('attribution');
+      expect(events.find(event => event.kind === 'usage-observed')?.attribution).toEqual({
+        v: 1, turnId: 'host-turn', source: { kind: 'native', connectedAccount: null },
+      });
     }, { connectedAccountService: service,
       runtimeAuthHost: { refreshRuntimeAuth: async () => ({ status: 'failed', reason: 'unused' }) },
       accountRead: async () => {

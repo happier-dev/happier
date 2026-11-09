@@ -10,7 +10,7 @@ import {
   type AgentSessionRuntimeEvent,
   AgentRuntimeJsonValueSchema,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isRecord } from '@happier-dev/plugin-sdk';
+import { isPluginError, isRecord } from '@happier-dev/plugin-sdk';
 
 export { geminiExternalSessionsContribution } from '../surfaces/sessions/external/contribution.js';
 
@@ -25,6 +25,7 @@ import {
 } from '../auth/resolution.js';
 import { prepareGeminiNativeMcpShaping } from '../mcp/shaping.js';
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
+import { readGeminiNativePathEnvironment } from '../utils/configPaths.js';
 
 const geminiRuntimeAuthAdapter = createGeminiConnectedServiceRuntimeAuthAdapter();
 
@@ -43,8 +44,10 @@ function buildGeminiLaunchEnvironment(
   values: Readonly<Record<string, string>>,
   unset: readonly string[],
 ): Readonly<Record<string, string | undefined>> {
-  const env: Record<string, string | undefined> = { ...values };
-  for (const key of unset) delete env[key];
+  const env: Record<string, string | undefined> = { ...values, ...readGeminiNativePathEnvironment(values, unset) };
+  for (const key of Object.keys(env)) {
+    if (unset.some(name => name.toUpperCase() === key.toUpperCase())) delete env[key];
+  }
   return env;
 }
 
@@ -91,14 +94,16 @@ async function openGeminiAcpRuntime<Runtime extends Readonly<{ dispose(): void |
   const auth = resolveGeminiAuthConfig(sourceEnv, resolveGeminiApiKeyFromEnv(sourceEnv));
   const authControlEnv = ignoredGeminiAcpAuthControlEnv(sourceEnv);
   const noTools = request.configuration?.unlistedTools === 'deny' && request.configuration.allowedTools?.length === 0;
+  const providerAuth = request.providerBinding ? { type: 'gemini-api-key' as const, cwd: request.cwd } : undefined;
+  const providerModel = request.providerBinding?.model;
   let shaping: Awaited<ReturnType<typeof prepareGeminiNativeMcpShaping>>;
   let skillsDelivered = request.skills ? true : undefined;
   try {
-    shaping = await prepareGeminiNativeMcpShaping(sourceEnv, request.configuration, request.skills);
+    shaping = await prepareGeminiNativeMcpShaping(sourceEnv, request.configuration, request.skills, providerAuth);
   } catch (error) {
-    if (!request.skills) throw error;
+    if (!request.skills || (isPluginError(error) && !error.retryable)) throw error;
     // Reuse the native-home owner without the optional skills after failed delivery.
-    shaping = await prepareGeminiNativeMcpShaping(sourceEnv, request.configuration);
+    shaping = await prepareGeminiNativeMcpShaping(sourceEnv, request.configuration, undefined, providerAuth);
     skillsDelivered = false;
   }
   try {
@@ -132,10 +137,19 @@ async function openGeminiAcpRuntime<Runtime extends Readonly<{ dispose(): void |
         timeouts: {
           initializeMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.initMs,
           idleMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.idleMs,
-          toolCallMs: GEMINI_ACP_RUNTIME_DEFINITION.timeouts.toolCallMs,
         },
       },
-      definition: { ...GEMINI_ACP_RUNTIME_DEFINITION, toolNameResolver: buildGeminiAcpToolNameResolver(request) },
+      definition: { ...GEMINI_ACP_RUNTIME_DEFINITION, toolNameResolver: buildGeminiAcpToolNameResolver(request),
+        ...(providerModel ? { models: {
+          projectModel: (_rawModel, normalizedModel) => normalizedModel,
+          projectModelState: ({ normalizedModelState }) => (
+            normalizedModelState.currentModelId === providerModel.id
+              && !normalizedModelState.availableModels.some(model => model.id === providerModel.id)
+              ? { ...normalizedModelState, availableModels: [...normalizedModelState.availableModels, providerModel] }
+              : normalizedModelState
+          ),
+        } } : {}),
+      },
     });
     let disposed = false;
     return {

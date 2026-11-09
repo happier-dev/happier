@@ -1,4 +1,5 @@
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
+import { readCodexAccessTokenExpiresAtMs } from '../../auth/services/openai/cloud/oauth.js';
 
 type CodexEnvironmentEnv = Readonly<Record<string, string | undefined>>;
 
@@ -79,24 +80,9 @@ function decodeJwtPayload(token: string | null | undefined): Record<string, unkn
   }
 }
 
-function readJwtExpMs(token: string | null): number | null {
-  if (typeof token !== 'string' || !token.trim()) return null;
-  const parts = token.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const payload = JSON.parse(
-      Buffer.from((parts[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'),
-    ) as Record<string, unknown>;
-    const exp = payload.exp;
-    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null;
-  } catch {
-    return null;
-  }
-}
-
 function hasUsableJwtLifetime(token: string | null): boolean {
   if (typeof token !== 'string' || !token.trim()) return false;
-  const expMs = readJwtExpMs(token);
+  const expMs = readCodexAccessTokenExpiresAtMs(token);
   return expMs === null || expMs > Date.now();
 }
 
@@ -157,6 +143,6 @@ export function readCodexNativeAuthCredentialsFromJson(parsed: unknown): CodexNa
   }
   return {
     idToken: idToken.trim(), accessToken: accessToken.trim(), refreshToken, accountId,
-    expiresAt: readJwtExpMs(accessToken),
+    expiresAt: readCodexAccessTokenExpiresAtMs(accessToken),
   };
 }

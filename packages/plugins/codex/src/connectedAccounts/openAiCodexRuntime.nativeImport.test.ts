@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
-import { openAiCodexConnectedAccountRuntime as runtime } from './openAiCodexRuntime.js';
+import { openAiCodexConnectedAccountRuntime as runtime } from './openAiCodexNativeRuntime.js';
 
 function jwt(payload: Record<string, unknown>) {
   return `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
@@ -44,13 +44,15 @@ describe('Codex Connected Account native import', () => {
     await writeFile(join(home, 'auth.json'), original);
     const values = new Map<string, string>();
     await expect(mode().complete({ fields: { source: 'native' } }, context(values))).resolves.toMatchObject({
-      status: 'connected', accountId: 'account-native', providerIdentity: { accountId: 'account-native', email: 'native@example.test' },
+      status: 'connected', expiresAt: 4_102_444_800_000, accountId: 'account-native', providerIdentity: { accountId: 'account-native', email: 'native@example.test' },
     });
     expect(values.get('accessToken')).toBe(accessToken);
     expect(values.get('refreshToken')).toBe('native-refresh');
     expect(values.get('idToken')).toBe(idToken);
     expect(values.get('providerAccountId')).toBe('account-native');
     expect(values.get('expiresAtMs')).toBe('4102444800000');
+    await expect(runtime.status({ credentials: context(values).attemptCredentials } as Parameters<typeof runtime.status>[0]))
+      .resolves.toMatchObject({ status: 'connected', expiresAt: 4_102_444_800_000 });
     expect(await readFile(join(home, 'auth.json'), 'utf8')).toBe(original);
   });
   it('rejects expired access and non-OAuth native records without storing credentials', async () => {

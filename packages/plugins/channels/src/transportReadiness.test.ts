@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { ConversationTransportFactReportInputV1Schema, ConversationTransportFactReportResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { reportConversationTransportFactForInvocation } from './management.js';
 import { CHANNEL_STATE_COLLECTION } from './collections.js';
@@ -7,7 +8,11 @@ import { MemoryCollection } from './testkit/memoryCollection.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
 
 describe('sender-scoped provider readiness at the Channels authority', () => {
-  it.each(['external@example.com', 'allowed@example.com'])('uses current binding eligibility for %s without disclosing the candidate', async principalId => {
+  it.each([
+    { principalId: 'external@example.com', fact: { kind: 'providerReadiness', status: 'attention', code: 'providerPermissionMissing', diagnostic: 'Required authentication markers are absent.' } },
+    { principalId: 'allowed@example.com', fact: { kind: 'providerReadiness', status: 'attention', code: 'providerPermissionMissing', diagnostic: 'Required authentication markers are absent.' } },
+    { principalId: 'allowed@example.com', fact: { kind: 'historyGap', reason: 'applicationAdmissionLost' } },
+  ] as const)('retains schema-valid $fact.kind evidence for $principalId without disclosing the candidate', async ({ principalId, fact }) => {
     const state = new MemoryCollection();
     const materializationRef = { pluginId: 'fixture.email', machineId: 'machine', materializationId: 'materialization' };
     const connection = createCurrentConversationConnectionFixture({ connectionId: 'readiness-connection', authority: {
@@ -36,15 +41,18 @@ describe('sender-scoped provider readiness at the Channels authority', () => {
         return state;
       } } } } } as unknown as PluginInvocationContext;
     const request = ConversationTransportFactReportInputV1Schema.parse({ connectionId: connection.id, authorityEpoch: 1,
-      senderEligibility: { endpoint, principalId }, fact: { kind: 'providerReadiness', status: 'attention',
-        code: 'providerPermissionMissing', diagnostic: 'Required authentication markers are absent.' } });
+      ...(fact.kind === 'providerReadiness' ? { senderEligibility: { endpoint, principalId } } : {}), fact });
     const result = ConversationTransportFactReportResultV1Schema.parse(await reportConversationTransportFactForInvocation(request, context));
     const retained = await state.get(connection.id);
     const eligible = principalId === 'allowed@example.com';
     expect(result.kind).toBe(eligible ? 'recorded' : 'notEligible');
     expect(retained?.revision).toBe(eligible ? 2 : 1);
-    expect(retained?.value.payload).toMatchObject({ providerReadiness: eligible
-      ? { code: 'providerPermissionMissing' } : null });
+    expect(retained?.value.payload).toMatchObject(fact.kind === 'historyGap'
+      ? { historyGap: { reason: 'applicationAdmissionLost', reportedAt: expect.any(Number) } }
+      : { providerReadiness: eligible ? { code: 'providerPermissionMissing' } : null });
+    // Real Account storage validates this closed schema before committing;
+    // the in-memory storage boundary must not hide a rejected history-gap write.
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema), retained?.value)).toBe(true);
     expect(JSON.stringify(retained)).not.toContain(principalId);
   });
 });

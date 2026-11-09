@@ -1,12 +1,19 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, expect, it, vi } from 'vitest';
 import type { AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createAgentLaunchObserver, runAgentSkillDeliveryContract, type AgentLaunchObserverBoundaries } from '@happier-dev/plugin-sdk/testing';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { createGeminiAgentRuntime } from './runtime/factory.js';
+
+// Observe actual native-policy reads at the filesystem boundary; shaping and
+// refusal production remain real so a second preparation is visible.
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 const home = mkdtempSync(join(tmpdir(), 'happier-gemini-skill-home-'));
 for (const root of ['.gemini/skills', '.agents/skills']) {
@@ -95,4 +102,31 @@ it('refuses unavailable skills while retaining Session startup and native skills
     await session.dispose();
   }
   expect(existsSync(privateHome)).toBe(false);
+});
+
+it.each(['session', 'run'] as const)('preserves a nonretryable native policy refusal without optional-skills fallback (%s)', async surface => {
+  const systemPath = join(home, `refused-${surface}.json`);
+  writeFileSync(systemPath, JSON.stringify({ security: { auth: { enforcedType: 'oauth-personal' } } }));
+  const request: AgentSessionOpenRequest = {
+    kind: 'create', sessionId: `refused-${surface}`, cwd: home,
+    providerBinding: { connectionId: 'pc_fixture', model: { id: 'custom', name: 'Custom' },
+      upstream: { protocol: 'gemini', normalizedUrl: 'https://provider.example.test', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'spawnEnv' } },
+    launchEnvironment: { values: { HOME: home, GEMINI_API_KEY: 'fixture-gemini-api-key',
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPath, GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(home, 'absent-defaults.json') }, unset: [] },
+    skills: { pluginRoot: home, skillsRoot: join(home, 'missing'),
+      items: [{ name: 'missing', skillId: 'fixture:missing', digest: 'sha256:missing', directory: join(home, 'missing') }], nativeDisables: [] },
+  };
+  boundaries.reset();
+  vi.mocked(readFileSync).mockClear();
+  const runtime = createGeminiAgentRuntime();
+  const pending = surface === 'session'
+    ? runtime.sessions.open(request, context() as unknown as AgentSessionRuntimeContext)
+    : runtime.sessions.executionRunContextV1!.open({
+      ...request, kind: 'create', runId: `refused-${surface}`,
+      profile: { pluginId: 'happier.agent.gemini', localId: 'gemini' }, input: { text: 'Review.' },
+    }, context() as unknown as AgentExecutionRunRuntimeContextV1);
+  await expect(pending).rejects.toMatchObject({ name: 'PluginError', code: 'gemini_provider_auth_policy_conflict', retryable: false });
+  expect(vi.mocked(readFileSync).mock.calls.filter(([path]) => path === systemPath)).toHaveLength(1);
+  expect(observer.observeLaunch().argv).toEqual([]);
 });

@@ -156,7 +156,7 @@ describe('resolveTriageListShellState', () => {
       reason: 'Could not be reached just now.', code: 'source_unavailable' }] };
     const notice = readTriageListFailureNotice(failure, (key, fallback) => key.endsWith('.transient') ? 'Try again later' : fallback ?? key);
     expect(notice.description).not.toContain('source_unavailable');
-    expect(notice).toMatchObject({ details: 'Personal tasks — source_unavailable' });
+    expect(notice).toMatchObject({ details: 'Personal tasks — For support: source_unavailable' });
     expect(failure.sources[0]!.code).toBe('source_unavailable');
   });
   it('does not describe a non-retryable invocation refusal as a transient outage', () => {
@@ -178,7 +178,7 @@ describe('resolveTriageListShellState', () => {
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Could not be reached just now.' },
     ] } as const;
     expect(readTriageListFailureLine(transient)).toEqual({
-      label: 'GitHub could not be read. Their entries may be missing or out of date. Could not be reached just now.', recovery: 'retry',
+      label: 'GitHub could not be reached. Their entries may be missing or out of date.', recovery: 'retry',
     });
     // Several causes: all named, reasons left to Manage sources, and the sentence that told the reader nothing is gone.
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
@@ -224,7 +224,7 @@ describe('resolveTriageListShellState', () => {
     if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a named source failure');
     const line = readTriageListFailureLine(state.failure);
     expect(line.label).not.toContain('D4E2:3DFCCB:10C1E2');
-    expect(line.label).toContain('Could not be reached just now.');
+    expect(line.label).toContain('could not be reached');
     // Details (Manage sources) still carries the provider's own words, request ID included.
     expect(readTriageListFailureNotice(state.failure).description).toContain('GitHub request ID: D4E2:3DFCCB:10C1E2');
   });

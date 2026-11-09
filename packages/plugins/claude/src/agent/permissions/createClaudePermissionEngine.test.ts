@@ -71,7 +71,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             answers: {
                 'Continue with cleanup?': ['Keep the files'],
-                'Which checks?': ['Unit tests', 'Typecheck'],
+                checks: ['types', 'unit'],
             },
         }));
         const ctx = createContextWithRequestDecision(requestDecision);
@@ -79,7 +79,9 @@ describe('createClaudePermissionEngine', () => {
 
         const questions = [
             { question: 'Continue with cleanup?' },
-            { question: 'Which checks?', multiSelect: true },
+            { id: 'checks', question: 'Which checks?', multiSelect: true, options: [
+                { id: 'unit', label: 'Unit tests, then integration' }, { id: 'types', label: 'Say \"typecheck\"' },
+            ] },
         ];
         const result = await engine.canCallTool('AskUserQuestion', {
             questions,
@@ -99,7 +101,7 @@ describe('createClaudePermissionEngine', () => {
                 questions,
                 answers: {
                     'Continue with cleanup?': 'Keep the files',
-                    'Which checks?': 'Unit tests, Typecheck',
+                    'Which checks?': 'Unit tests, then integration, Say \"typecheck\"',
                 },
             },
         });

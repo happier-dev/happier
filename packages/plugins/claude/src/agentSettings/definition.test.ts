@@ -10,6 +10,13 @@ import {
 } from './definition.js';
 
 describe('CLAUDE_AGENT_SETTINGS_CONTRIBUTION', () => {
+  it('keeps transcript retention unmanaged until the account explicitly chooses a policy', () => {
+    expect(CLAUDE_AGENT_SETTINGS_CONTRIBUTION.scope).toBe('account');
+    expect(CLAUDE_AGENT_SETTINGS_CONTRIBUTION.fields.find((field) => field.id === 'claudeSessionRetentionV1'))
+      .toMatchObject({ default: null });
+    expect(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS).toHaveProperty('claudeSessionRetentionV1', null);
+  });
+
   it('exposes Happier attribution as an account setting that defaults off', () => {
     expect(CLAUDE_AGENT_SETTINGS_CONTRIBUTION.fields.find((field) => field.id === 'claudeCodeIncludeInNativeHistory'))
       .toMatchObject({ default: false, schema: { type: 'boolean' }, presentation: { control: 'switch' } });

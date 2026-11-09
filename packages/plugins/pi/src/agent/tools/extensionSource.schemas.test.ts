@@ -107,9 +107,8 @@ describe('Pi parameter documents through installed provider serializers', () => 
     fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
       manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
         actions: schemas.map((inputSchema, i) => ({ id: `read${i}`, title: 'Read schema', scopes: ['global'],
-          surfaces: ['mcp'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema })),
-        tools: schemas.map((inputSchema, i) => ({ id: `tool${i}`, name: `authored${i}`, title: 'Authored schema',
-          action: `read${i}`, surfaces: ['mcp'], inputSchema })),
+          surfaces: ['mcp'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema,
+          tool: { name: `authored${i}`, title: 'Authored schema' } })),
       } }),
       files: { 'daemon.mjs': 'export function activate(api) { for (const id of ["read0", "read1"]) api.actions.register(id, async input => input); }' },
     }] });
@@ -136,6 +135,11 @@ describe('Pi parameter documents through installed provider serializers', () => 
     expect(loaded.tools.map(tool => tool.name).sort()).toEqual([
       'session_board_item_upsert', 'settings_get', 'inline_control', 'mcp__authored__authored0', 'mcp__authored__authored1',
     ].sort());
+    console.info('Pi native parameter presentation JSON characters', native.filter(tool =>
+      loaded.tools.some(registered => registered.name === tool.name)).map(tool => ({
+      name: tool.name, shared: JSON.stringify(tool.inputSchema).length,
+      pi: JSON.stringify(loaded.tools.find(registered => registered.name === tool.name)!.parameters).length,
+    })));
   });
 
   afterAll(async () => {
@@ -256,6 +260,11 @@ describe('Pi parameter documents through installed provider serializers', () => 
     const spec = getActionSpec('session.board.item.upsert');
     const inputSchema = JSON.parse(JSON.stringify(projectMcpToolInputJsonSchema(zodSchemaToJsonSchemaObject(spec.inputSchema))));
     const raw: Tool = { name: 'previous_board', description: '', parameters: inputSchema };
+    const [previous] = await anthropicParameters('pi-ai-0821', [raw]);
+    let previousCompiled = true;
+    try { new Ajv2020({ strict: false, validateFormats: false }).compile(previous!.input_schema); }
+    catch { previousCompiled = false; }
+    console.info('Pre-DIAG172 recursive Board serializer control', { previousCompiled });
     const extension = await loadExtension({ config: { v: 1, directory: root, systemPrompt: '',
       tools: [{ name: raw.name, title: 'Previous Board', description: '', inputSchema }],
       launch: { executablePath: process.execPath, argsPrefix: [] } },

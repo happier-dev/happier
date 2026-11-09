@@ -1,6 +1,7 @@
 {
-  "machineLima.presentation.kind": "VM",
-  "machineLima.presentation.description": "A light Linux VM for code, scripts and dev servers.",
+  "machineLima.presentation.customSize": "Custom size",
+  "machineLima.presentation.kind": "Machine",
+  "machineLima.presentation.description": "A lightweight Linux machine for code, scripts and dev servers.",
   "machineLima.presentation.ready": "Installed",
   "machineLima.presentation.unavailable": "Not installed",
   "machineLima.presentation.lima_2_required": "Lima 2 required",

@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "Un Droplet cloud avec la taille, l’image et la région choisies.",
+  "machineDigitalOcean.account.tokenHint": "Utilisez un jeton d’accès personnel DigitalOcean. Créez-le dans le panneau de contrôle, sous Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "machine",
+  "machineDigitalOcean.presentation.description": "Une machine cloud avec la taille, l’image et la région choisies.",
   "machineDigitalOcean.presentation.ready": "Compte connecté",
   "machineDigitalOcean.presentation.unavailable": "Compte indisponible",
   "machineDigitalOcean.network.ipv4": "IPv4 seulement",

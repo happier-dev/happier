@@ -16,8 +16,10 @@ import type {
   AgentSessionModelsSource,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import { InteractionTransientAuthorRequestV1Schema } from '@happier-dev/plugin-sdk/interactions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createAgentSessionTurnInvariant } from '@/agent/runtime/session/turn/agentSessionTurnInvariant';
 
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -2473,6 +2475,53 @@ describe('createPiRuntimeOperations', () => {
     });
   });
 
+  it('publishes only valid native response retries for the active host turn without settling it', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    await emit(capture, { type: 'auto_retry_start', attempt: 1 });
+    expect(events.filter(event => event.kind === 'turn-progress')).toEqual([]);
+
+    const prompt = sendPrompt(runtime, 'hello', {
+      delivery: { kind: 'newTurn', turnId: 'host-retry-turn' },
+    });
+    await waitForWrittenCount(capture, 1);
+    await ackLastCommand(capture);
+    await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    for (const attempt of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '2']) {
+      await emit(capture, { type: 'auto_retry_start', attempt });
+    }
+    await emit(capture, { type: 'summarization_retry_scheduled', attempt: 1 });
+    await emit(capture, { type: 'summarization_retry_attempt_start', source: 'compaction', reason: 'threshold' });
+    expect(events.filter(event => event.kind === 'turn-progress')).toEqual([]);
+
+    // Pi 0.82.1 increments _retryAttempt before emitting auto_retry_start.
+    await emit(capture, {
+      type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2000,
+      errorMessage: 'Provider failure detail must remain private',
+    });
+    await emit(capture, { type: 'auto_retry_start', attempt: 2 });
+    expect(parseEvents(events).filter(event => event.kind === 'turn-progress')).toEqual([
+      expect.objectContaining({ kind: 'turn-progress', turnId: 'host-retry-turn',
+        retry: { attempt: 1, reason: 'unknown' } }),
+      expect.objectContaining({ kind: 'turn-progress', turnId: 'host-retry-turn',
+        retry: { attempt: 2, reason: 'unknown' } }),
+    ]);
+    expect(events.some(event => event.kind === 'turn-complete' || event.kind === 'turn-failed')).toBe(false);
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'Recovered' },
+    });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+    expect(parseEvents(events)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'message-delta', turnId: 'host-retry-turn', text: 'Recovered' }),
+      expect.objectContaining({ kind: 'turn-complete', turnId: 'host-retry-turn' }),
+    ]));
+    await runtime.dispose();
+  });
+
   it('withholds a retrying Provider diagnostic and publishes only eventual success', async () => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);
@@ -3281,6 +3330,7 @@ describe('createPiRuntimeOperations', () => {
     await waitForWrittenCount(capture, 1);
     await ackLastCommand(capture);
     await expect(prompt).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_start', turnId: 'provider-exit-turn' });
     await emit(capture, {
       type: 'message_update',
       assistantMessageEvent: { type: 'text_delta', delta: 'partial' },
@@ -3301,6 +3351,7 @@ describe('createPiRuntimeOperations', () => {
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'turn-failed',
+        agentTurnId: 'provider-exit-turn',
         diagnostic: expect.objectContaining({
           message: expect.stringMatching(/exit code 17.*nested Pi child failure/u),
         }),
@@ -3374,15 +3425,6 @@ describe('createPiRuntimeOperations', () => {
         code: 'malformed_runtime_event',
       },
     });
-    if (malformedResult.data.kind !== 'runtime-ended') return;
-    const details = malformedResult.data.diagnostic?.details;
-    expect(isRecord(details)).toBe(true);
-    if (!isRecord(details) || !Array.isArray(details.issues)) return;
-    expect(details.issues.length).toBeGreaterThan(0);
-    expect(details.issues.every((issue) => (
-      isRecord(issue) && Object.keys(issue).length === 1 && typeof issue.message === 'string'
-    ))).toBe(true);
-    expect(JSON.stringify(malformedResult.data)).toContain('message-delta');
   });
 
   it('rejects child transcript user text runtime events without stable local ids', async () => {
@@ -3415,44 +3457,64 @@ describe('createPiRuntimeOperations', () => {
         code: 'malformed_runtime_event',
       },
     });
-    expect(JSON.stringify(malformedResult.data)).toContain('transcript-user-text');
   });
 
-  it('validates projected Pi runtime events before publishing them', async () => {
+  it.each(['projected', 'vendor', 'unknown-kind', 'oversized-native-id'] as const)('fails the active turn before ending after a malformed %s Pi event', async source => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);
     const events: AgentSessionRuntimeEvent[] = [];
-    runtime.watch((event) => events.push(event));
+    const invariant = createAgentSessionTurnInvariant({ sessionId: 'happier-session-1' });
+    const observations: string[] = [];
+    runtime.watch((event) => {
+      events.push(event);
+      observations.push(invariant.observe(event).status);
+    });
     const send = sendPrompt(runtime, 'hello');
     await waitForWrittenCount(capture, 1);
     await ackLastCommand(capture);
     await expect(send).resolves.toEqual({ status: 'admitted' });
+    await emit(capture, { type: 'agent_start', turnId: 'provider-malformed-turn' });
     events.length = 0;
 
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValueOnce(-1).mockReturnValue(1);
+    const nowSpy = source === 'projected' ? vi.spyOn(Date, 'now').mockReturnValue(-1) : null;
     try {
-      await emit(capture, {
+      await emit(capture, source === 'oversized-native-id' ? {
+        type: 'agent_start',
+        turnId: 'n'.repeat(AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.providerIdMaxCodeUnits + 1),
+      } : source !== 'projected' ? {
+        type: 'runtime_event',
+        event: {
+          kind: source === 'unknown-kind'
+            ? 'unknown-kind'
+            : 'message-delta',
+          turnId: 'pi-turn-1', text: 123,
+        },
+      } : {
         type: 'message_update',
         assistantMessageEvent: { type: 'text_delta', delta: 'invalid-time' },
         message: { role: 'assistant', content: [{ type: 'text', text: 'invalid-time' }] },
       });
     } finally {
-      nowSpy.mockRestore();
+      nowSpy?.mockRestore();
     }
 
-    expect(events).toHaveLength(1);
-    const malformedResult = AgentSessionRuntimeEventSchema.safeParse(events[0]);
+    expect(events.map(event => event.kind)).toEqual(['turn-failed', 'runtime-ended']);
+    expect(observations.every(status => status === 'accepted')).toBe(true);
+    expect(events[0]).toMatchObject({ kind: 'turn-failed', turnId: 'pi-turn-1',
+      diagnostic: { code: 'malformed_runtime_event' } });
+    await expect(runtime.cancel({ turnId: 'pi-turn-1', reason: 'user' })).resolves.toEqual({ status: 'notRunning' });
+    const malformedResult = AgentSessionRuntimeEventSchema.safeParse(events[1]);
     expect(malformedResult.success).toBe(true);
     if (!malformedResult.success) return;
     expect(malformedResult.data).toMatchObject({
       kind: 'runtime-ended',
       sessionId: 'happier-session-1',
-      emittedAtMs: 1,
+      emittedAtMs: source === 'projected' ? 0 : expect.any(Number),
       diagnostic: {
         code: 'malformed_runtime_event',
       },
     });
-    expect(JSON.stringify(malformedResult.data)).toContain('message-delta');
+    expect(malformedResult.data.kind === 'runtime-ended' && malformedResult.data.diagnostic?.details).toBeUndefined();
   });
 
   it('publishes a diagnostic for non-object vendor runtime event payloads', async () => {

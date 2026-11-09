@@ -5,7 +5,6 @@ import {
   CONVERSATION_NON_ADMISSION_REASONS,
   decideConversationCommandPolicy,
   isConversationSenderFeedbackEligible,
-  settleCompetingNewSessionCommand,
 } from './commandPolicy.js';
 
 describe('Channels command policy', () => {
@@ -37,7 +36,6 @@ describe('Channels command policy', () => {
 
   it('keeps the sender-feedback matrix closed to allowed attributable non-authorization failures', () => {
     for (const reason of [
-      'messageTooOld',
       'messageTooLarge',
       'unsupportedContent',
       'notAddressed',
@@ -68,13 +66,13 @@ describe('Channels command policy', () => {
       senderFeedback: 'eligibleRefusals',
       actorPrincipalId: null,
       actorAllowed: true,
-      reason: 'messageTooOld',
+      reason: 'messageTooLarge',
     })).toBe(false);
     expect(isConversationSenderFeedbackEligible({
       senderFeedback: 'off',
       actorPrincipalId: 'person-1',
       actorAllowed: true,
-      reason: 'messageTooOld',
+      reason: 'messageTooLarge',
     })).toBe(false);
     expect(CONVERSATION_NON_ADMISSION_REASONS).toContain('unsupportedEdit');
     expect(isConversationSenderFeedbackEligible({
@@ -280,21 +278,4 @@ describe('Channels command policy', () => {
     });
   });
 
-  it('terminally settles a losing /new occurrence without admitting its prompt', () => {
-    expect(settleCompetingNewSessionCommand({
-      ingressObligationId: 'ingress-2',
-      initialPrompt: 'must not be admitted',
-      createBusyResponse: true,
-    })).toEqual({
-      ingress: {
-        phase: 'terminal',
-        disposition: 'rotationBusy',
-      },
-      initialPromptDisposition: 'discarded',
-      controlResponse: {
-        controlId: 'ingress-2',
-        controlKind: 'newSession',
-      },
-    });
-  });
 });

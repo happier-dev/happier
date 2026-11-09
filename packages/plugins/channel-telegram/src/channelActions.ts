@@ -41,6 +41,7 @@ import {
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { sendTelegramText } from './telegramDelivery.js';
 import {
   QualifiedConnectedAccountRefSchema,
   type ConnectedAccountRef,
@@ -57,7 +58,9 @@ import {
 import {
   createTelegramBotApi,
   isTelegramUpdateOffset,
+  TELEGRAM_MAX_GET_UPDATES_LIMIT,
   TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS,
+  TELEGRAM_MAX_TOPIC_NAME_CODE_POINTS,
   type TelegramBotApi,
   type TelegramBotIdentity,
   type TelegramChat,
@@ -82,10 +85,12 @@ import {
 } from './constants.js';
 
 const TELEGRAM_CONNECTION_KEY_PREFIX = 'telegram-bot:';
-// Telegram documents getUpdates retention as no more than 24 hours. This only
-// records provider evidence in an opaque checkpoint; core owns the resulting
-// history-gap status, reset, and persisted checkpoint transition.
+// Telegram documents getUpdates retention as no more than 24 hours. An old
+// cursor triggers inspection; age alone is not evidence of lost updates.
 const TELEGRAM_UPDATE_RETENTION_MS = 24 * 60 * 60 * 1_000;
+// After a week without new updates, Telegram may randomize update_id.
+// https://core.telegram.org/bots/api#update
+const TELEGRAM_UPDATE_SEQUENCE_IDLE_MS = 7 * TELEGRAM_UPDATE_RETENTION_MS;
 
 type TelegramSetupInput = Readonly<{
   credentialRef: ConnectedAccountRef;
@@ -183,19 +188,14 @@ function readTelegramCheckpoint(
   if (value === null) return null;
   const parsed = storedTelegramCheckpointSchema.safeParse(value);
   if (!parsed.success || !isTelegramUpdateOffset(parsed.data.offset)) {
-    return historyGap('The persisted Telegram checkpoint cannot be safely continued; an authenticated baseline reset is required.');
+    return historyGap('The persisted Telegram offset is invalid.');
   }
   return parsed.data;
 }
 
-function checkpointHistoryGap(checkpoint: TelegramCheckpoint, nowMs: number): ConversationPollHistoryGapResultV1 | null {
-  if (
-    checkpoint.caughtUpAtMs > nowMs
-    || nowMs - checkpoint.caughtUpAtMs >= TELEGRAM_UPDATE_RETENTION_MS
-  ) {
-    return historyGap('Telegram can no longer prove continuity from the committed checkpoint; an authenticated baseline reset is required.');
-  }
-  return null;
+function checkpointNeedsQueueInspection(checkpoint: TelegramCheckpoint, nowMs: number): boolean {
+  return checkpoint.caughtUpAtMs > nowMs
+    || nowMs - checkpoint.caughtUpAtMs >= TELEGRAM_UPDATE_RETENTION_MS;
 }
 
 function parseConnectionKey(providerConnectionKey: string): string | null {
@@ -265,21 +265,38 @@ async function createExactTelegramBotApi(
   }
 }
 
-async function readyConnection(
+async function connectionApi(
   context: PluginInvocationContext,
   input: ConversationProviderConnectionInputV1,
-): Promise<ReadyTelegramConnection | ConversationProviderFailureV1> {
+): Promise<TelegramBotApi | ConversationProviderFailureV1> {
   const invalid = readConnectionConfig(input);
   if (invalid) return invalid;
-  const api = await createExactTelegramBotApi(context, input.credentialRef!);
-  if ('kind' in api) return api;
-  const identity = await api.getMe({ signal: context.signal });
-  context.signal.throwIfAborted();
+  return await createExactTelegramBotApi(context, input.credentialRef!);
+}
+
+async function readConnectionIdentity(
+  api: TelegramBotApi,
+  input: ConversationProviderConnectionInputV1,
+  signal: AbortSignal,
+): Promise<TelegramBotIdentity | ConversationProviderFailureV1> {
+  const identity = await api.getMe({ signal });
+  signal.throwIfAborted();
   if ('kind' in identity) return readFailure(identity);
   const configuredIdentity = parseConnectionKey(input.providerConnectionKey);
   if (configuredIdentity !== identity.id) {
     return invalidConfiguration('The selected Telegram bot no longer matches this Channel connection.');
   }
+  return identity;
+}
+
+async function readyConnection(
+  context: PluginInvocationContext,
+  input: ConversationProviderConnectionInputV1,
+): Promise<ReadyTelegramConnection | ConversationProviderFailureV1> {
+  const api = await connectionApi(context, input);
+  if ('kind' in api) return api;
+  const identity = await readConnectionIdentity(api, input, context.signal);
+  if ('kind' in identity) return identity;
   return { api, identity };
 }
 
@@ -438,14 +455,15 @@ export async function fetchTelegramAttachments(input: unknown, context: PluginIn
   assertTelegramChannelsCoreCaller(context);
   context.signal.throwIfAborted();
   const request = ConversationAttachmentFetchInputV1Schema.parse(input);
-  const ready = await readyConnection(context, request);
-  if ('kind' in ready) return ready;
-  const files = request.attachmentIds.map(id => readTelegramAttachmentId(id, ready.identity.id, request.messageId));
+  const api = await connectionApi(context, request);
+  if ('kind' in api) return api;
+  const botId = parseConnectionKey(request.providerConnectionKey)!;
+  const files = request.attachmentIds.map(id => readTelegramAttachmentId(id, botId, request.messageId));
   if (files.some(file => file === null)) return { kind: 'notReady', reason: 'unsupported', diagnostic: 'The Telegram attachment does not belong to this bot and message.' };
   const attachments: { attachmentId: string; base64: string }[] = [];
   for (const [index, file] of files.entries()) {
     if (file === null) throw new Error('Validated Telegram attachment is missing');
-    const result = await ready.api.downloadFile(file, { signal: context.signal });
+    const result = await api.downloadFile(file, { signal: context.signal });
     context.signal.throwIfAborted();
     if (result.kind !== 'downloaded') return ConversationAttachmentFetchResultV1Schema.parse(result);
     attachments.push({ attachmentId: request.attachmentIds[index]!, base64: encodeConversationAttachmentBytesV1(result.bytes) });
@@ -483,13 +501,21 @@ function telegramEndpointAddress(endpoint: ConversationResolvedEndpointV1): Tele
   return address !== null && endpoint.parentId === address.chatId ? address : null;
 }
 
-function chatSupportsTopics(chat: TelegramChat, identity: TelegramBotIdentity): boolean {
-  return (chat.type === 'supergroup' && chat.isForum)
-    || (chat.type === 'private' && identity.hasTopicsEnabled);
+async function chatSupportsTopics(
+  chat: TelegramChat,
+  api: TelegramBotApi,
+  input: ConversationProviderConnectionInputV1,
+  signal: AbortSignal,
+): Promise<boolean | ConversationProviderFailureV1> {
+  if (chat.type === 'supergroup') return chat.isForum;
+  if (chat.type !== 'private') return false;
+  // Private topics depend on a live bot capability, unlike forum topology
+  // returned by getChat or ordinary destinations' stored bot identity.
+  const identity = await readConnectionIdentity(api, input, signal);
+  return 'kind' in identity ? identity : identity.hasTopicsEnabled;
 }
 
-function endpointMatches(endpoint: ConversationResolvedEndpointV1, chat: Awaited<ReturnType<TelegramBotApi['getChat']>>, identity: TelegramBotIdentity): boolean {
-  if ('kind' in chat) return false;
+function endpointMatches(endpoint: ConversationResolvedEndpointV1, chat: TelegramChat, supportsTopics: boolean): boolean {
   const audience = chat.type === 'private'
     ? 'direct'
     : (chat.type === 'group' || chat.type === 'supergroup' ? 'shared' : null);
@@ -498,7 +524,7 @@ function endpointMatches(endpoint: ConversationResolvedEndpointV1, chat: Awaited
   return address?.chatId === chat.id
     && ((endpoint.kind === 'direct' && chat.type === 'private')
       || (endpoint.kind === 'shared' && (chat.type === 'group' || chat.type === 'supergroup'))
-      || (endpoint.kind === 'thread' && chatSupportsTopics(chat, identity)
+      || (endpoint.kind === 'thread' && supportsTopics
         && (chat.type !== 'supergroup' || address.messageThreadId !== '1')));
 }
 
@@ -516,14 +542,6 @@ function preSendFailureResult(result: ConversationProviderFailureV1): Conversati
   // No outbound side effect has started, so transient provider uncertainty is
   // safe to retry. A rate limit without an authoritative delay remains safe.
   return { kind: 'notDelivered', retry: 'safe' };
-}
-
-function retryResult(result: Extract<Awaited<ReturnType<TelegramBotApi['sendMessage']>>, { kind: 'notSent' }>): ConversationDeliveryResultV1 {
-  return {
-    kind: 'notDelivered',
-    retry: result.retry,
-    ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }),
-  };
 }
 
 /**
@@ -555,6 +573,7 @@ export const TELEGRAM_SETUP_GUIDANCE: NonNullable<ConversationProviderSetupResul
       externalUrl: 'https://core.telegram.org/bots/tutorial#obtain-your-bot-token',
       copyableValues: [{ label: 'BotFather command', value: '/newbot' }] },
     { title: 'Paste the bot token into a Telegram Bot Connected Account, then select it and test the connection' },
+    { title: 'Only for workflow-started conversations: in a forum group, make the bot an administrator with Manage Topics' },
   ],
 };
 
@@ -694,15 +713,17 @@ export async function resolveTelegramEndpoint(input: unknown, context: PluginInv
       diagnostic: 'Telegram cannot search chats by name. Enter a numeric chat ID, a public @username, or chatId:topicId for a topic.',
     };
   }
-  const ready = await readyConnection(context, request);
-  if ('kind' in ready) return ready;
-  const chat = await ready.api.getChat({
+  const api = await connectionApi(context, request);
+  if ('kind' in api) return api;
+  const chat = await api.getChat({
     chatId: threadAddress?.chatId ?? query,
   }, { signal: context.signal });
   context.signal.throwIfAborted();
   if ('kind' in chat) return readFailure(chat);
-  if (threadAddress !== null && !chatSupportsTopics(chat, ready.identity)) {
-    return { kind: 'resolved', candidates: [] };
+  if (threadAddress !== null) {
+    const supportsTopics = await chatSupportsTopics(chat, api, request, context.signal);
+    if (typeof supportsTopics !== 'boolean') return supportsTopics;
+    if (!supportsTopics) return { kind: 'resolved', candidates: [] };
   }
   const candidate = endpointFromChat({
     chatId: chat.id,
@@ -800,7 +821,7 @@ export async function setupTelegramChatEventSource(
   if (chat.type === 'channel') {
     throw new PluginError({
       code: 'telegram_automation_chat_type_unsupported',
-      message: 'Telegram channel posts are not supported as Automation message sources.',
+      message: 'Telegram channel posts are not supported as Workflow message sources.',
     });
   }
   return buildTelegramChatEventSourceSetupResult({
@@ -818,28 +839,44 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
   if (invalid) return finalizeTelegramPollResult(request, invalid, context);
   const checkpoint = readTelegramCheckpoint(request.checkpoint);
   if (checkpoint !== null && 'kind' in checkpoint) return finalizeTelegramPollResult(request, checkpoint, context);
-  if (checkpoint !== null) {
-    // Anchor retention before materializing credentials or making provider
-    // effects, so an already-expired checkpoint cannot enter a new poll.
-    const continuityFailure = checkpointHistoryGap(checkpoint, Date.now());
-    if (continuityFailure) return finalizeTelegramPollResult(request, continuityFailure, context);
-  }
+  const nowMs = Date.now();
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return finalizeTelegramPollResult(request, ready, context);
-  const poll = await ready.api.getUpdates({
-    offset: checkpoint?.offset ?? '-1',
+  // A successful empty read cannot prove the update sequence stayed the same.
+  // Once continuity is uncertain, offset zero inspects without acknowledging
+  // a lower randomized sequence. The saved offset still selects new updates.
+  const inspectQueue = checkpoint !== null && checkpointNeedsQueueInspection(checkpoint, nowMs);
+  const timeoutSeconds = Math.min(TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS, Math.ceil(request.waitMs / 1_000));
+  let poll = await ready.api.getUpdates({
+    offset: inspectQueue ? '0' : checkpoint?.offset ?? '-1',
     initialBaseline: checkpoint === null,
-    limit: request.limit,
-    timeoutSeconds: Math.min(TELEGRAM_MAX_LONG_POLL_TIMEOUT_SECONDS, Math.ceil(request.waitMs / 1_000)),
+    limit: inspectQueue ? TELEGRAM_MAX_GET_UPDATES_LIMIT : request.limit,
+    timeoutSeconds,
   }, { signal: context.signal });
   context.signal.throwIfAborted();
   if (poll.kind !== 'updates') return finalizeTelegramPollResult(request, readFailure(poll), context);
-  // An underfull page proves Telegram had no further update at this point. A
-  // full page proves only forward progress, so it must retain the prior proof
-  // until a later underfull page catches up.
-  const caughtUpAtMs = checkpoint === null || poll.updates.length < request.limit
-    ? Date.now()
-    : checkpoint.caughtUpAtMs;
+  if (inspectQueue && checkpoint !== null) {
+    if (nowMs - checkpoint.caughtUpAtMs >= TELEGRAM_UPDATE_SEQUENCE_IDLE_MS
+      && poll.updates.length > 0
+      && poll.updates.every(update => Number(update.updateId) < Number(checkpoint.offset) - 1)) {
+      return finalizeTelegramPollResult(request, historyGap(
+        'Telegram started a new update sequence.',
+      ), context);
+    }
+    const updates = poll.updates.filter(update => Number(update.updateId) >= Number(checkpoint.offset)).slice(0, request.limit);
+    if (updates.length === 0 && poll.updates.some(update => Number(update.updateId) === Number(checkpoint.offset) - 1)) {
+      // A legacy full page may still await acknowledgement. Its last committed
+      // update proves this is the saved sequence; acknowledge it to see beyond.
+      poll = await ready.api.getUpdates({ offset: checkpoint.offset, limit: request.limit, timeoutSeconds }, { signal: context.signal });
+      context.signal.throwIfAborted();
+      if (poll.kind !== 'updates') return finalizeTelegramPollResult(request, readFailure(poll), context);
+    } else {
+      const last = updates.at(-1);
+      poll = { kind: 'updates', updates, checkpointAfter: last === undefined ? checkpoint.offset : String(Number(last.updateId) + 1) };
+    }
+  }
+  // Preserve the existing idle anchor until a native update actually arrives.
+  const caughtUpAtMs = checkpoint !== null && poll.updates.length === 0 ? checkpoint.caughtUpAtMs : Date.now();
   const observations: ConversationIngressObservedEntryV1[] = [];
   if (checkpoint !== null) {
     for (const update of poll.updates) {
@@ -881,17 +918,16 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
 export async function deliverTelegramMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   assertTelegramChannelsCoreCaller(context);
   const request = ConversationDeliveryInputV1Schema.parse(input);
-  if (request.newThread !== undefined) return { kind: 'notReady', reason: 'unsupported' };
-  const ready = await readyConnection(context, request);
-  if ('kind' in ready) return preSendFailureResult(ready);
+  if (request.newThread !== undefined && (request.endpoint.kind !== 'shared' || request.endpoint.audience !== 'shared')) {
+    return { kind: 'notReady', reason: 'unsupported' };
+  }
+  const api = await connectionApi(context, request);
+  if ('kind' in api) return preSendFailureResult(api);
   const address = telegramEndpointAddress(request.endpoint);
   if (address === null) return { kind: 'notDelivered', retry: 'never' };
   const { chatId, messageThreadId } = address;
   const requestedThreadId = request.replyContext !== undefined && 'threadId' in request.replyContext
     ? request.replyContext.threadId
-    : undefined;
-  const replyToMessageId = request.replyContext !== undefined && 'replyToMessageId' in request.replyContext
-    ? request.replyContext.replyToMessageId
     : undefined;
   if (
     (messageThreadId === undefined && requestedThreadId !== undefined)
@@ -902,30 +938,37 @@ export async function deliverTelegramMessage(input: unknown, context: PluginInvo
   ) {
     return { kind: 'notDelivered', retry: 'never' };
   }
-  const chat = await ready.api.getChat({ chatId }, { signal: context.signal });
+  const chat = await api.getChat({ chatId }, { signal: context.signal });
   context.signal.throwIfAborted();
   if ('kind' in chat) return preSendFailureResult(readFailure(chat));
-  if (!endpointMatches(request.endpoint, chat, ready.identity)) return { kind: 'notDelivered', retry: 'never' };
+  const supportsTopics = request.endpoint.kind === 'thread'
+    ? await chatSupportsTopics(chat, api, request, context.signal) : false;
+  if (typeof supportsTopics !== 'boolean') return preSendFailureResult(supportsTopics);
+  if (!endpointMatches(request.endpoint, chat, supportsTopics)) return { kind: 'notDelivered', retry: 'never' };
   if (context.signal.aborted) return { kind: 'notDelivered', retry: 'safe' };
-  let result: Awaited<ReturnType<TelegramBotApi['sendMessage']>>;
-  try {
-    result = await ready.api.sendMessage({
-      chatId,
-      // Telegram creates @username entities server-side even without entities
-      // or parse_mode. Fullwidth @ stays readable without growing the native
-      // Unicode-code-point chunk selected by core.
-      text: request.content.text.replaceAll('@', '＠'),
-      suppressLinkPreview: request.linkPreviewPolicy === 'suppress',
-      ...((request.chunkIndex ?? 0) === 0 && replyToMessageId !== undefined
-        ? { replyToMessageId }
-        : {}),
-      ...(messageThreadId === undefined ? {} : { messageThreadId }),
-    }, { signal: context.signal });
-  } catch {
-    // Cancellation or transport loss after sending has no proof of absence.
-    return { kind: 'outcomeUnknown' };
+  if (request.newThread !== undefined) {
+    if (chat.type !== 'supergroup' || !chat.isForum || request.replyContext !== undefined) {
+      return { kind: 'notReady', reason: 'unsupported' };
+    }
+    // Only the native topic title is shortened; the complete text goes through
+    // the existing Channels splitter and native send owner.
+    const name = Array.from(request.newThread.subject.trim()).slice(0, TELEGRAM_MAX_TOPIC_NAME_CODE_POINTS).join('');
+    let created: Awaited<ReturnType<TelegramBotApi['createForumTopic']>>;
+    try {
+      created = await api.createForumTopic({ chatId, name }, { signal: context.signal });
+    } catch {
+      return { kind: 'outcomeUnknown' };
+    }
+    if (created.kind === 'outcomeUnknown') return created;
+    if (created.kind === 'notSent') return { kind: 'notDelivered', retry: created.retry,
+      ...(created.retryAfterMs === undefined ? {} : { retryAfterMs: created.retryAfterMs }) };
+    const endpoint: ConversationResolvedEndpointV1 = {
+      kind: 'thread', audience: 'shared', id: `${chatId}:${created.messageThreadId}`, parentId: chatId,
+    };
+    if (context.signal.aborted) return { kind: 'outcomeUnknown', endpoint };
+    const result = await sendTelegramText({ api, request, chatId,
+      messageThreadId: created.messageThreadId, signal: context.signal });
+    return result.kind === 'delivered' ? { ...result, endpoint } : { kind: 'outcomeUnknown', endpoint };
   }
-  if (result.kind === 'sent') return { kind: 'delivered', providerMessageIds: [result.messageId] };
-  if (result.kind === 'outcomeUnknown') return { kind: 'outcomeUnknown' };
-  return retryResult(result);
+  return await sendTelegramText({ api, request, chatId, messageThreadId, signal: context.signal });
 }

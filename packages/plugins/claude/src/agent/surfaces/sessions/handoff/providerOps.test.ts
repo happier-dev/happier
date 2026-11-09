@@ -21,6 +21,25 @@ function invocation() {
 }
 
 describe('claudeHandoffSurface', () => {
+    it('locates only the exact native transcript under the published runtime config home', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-report-candidate-'));
+        roots.push(root);
+        const configDir = join(root, 'claude');
+        const project = join(configDir, 'projects', 'workspace');
+        await mkdir(project, { recursive: true });
+        const path = join(project, 'exact-thread.jsonl');
+        await writeFile(path, 'synthetic selected conversation');
+        const surface: AgentRuntimeHandoffSurface = claudeHandoffSurface;
+        expect(await surface.resolveNativeTranscriptPathCandidate?.({
+            identity: { v: 1, vendorResumeId: 'exact-thread' },
+            runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { configDir } },
+        }, invocation())).toEqual({ path, containmentRoot: configDir });
+        expect(await surface.resolveNativeTranscriptPathCandidate?.({
+            identity: { v: 1, vendorResumeId: '../exact-thread' },
+            runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { configDir } },
+        }, invocation())).toBeNull();
+    });
+
     it('preserves unset native authentication for bundle import and existing target state', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-native-env-'));
         roots.push(root);

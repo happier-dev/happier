@@ -37,11 +37,9 @@ import {
 import { homeEntries as resolveHomeEntries } from '../../../rollout/discovery/homeEntries.js';
 import { CodexRolloutPreparation, parseCodexRolloutPreparationState } from '../../../rollout/discovery/preparation.js';
 import { readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
+import { readCodexRolloutHead } from '../../../rollout/discovery/rolloutTitle.js';
 import {
-  CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
-  readCodexRolloutHead,
-} from '../../../rollout/discovery/rolloutTitle.js';
-import {
+  CodexExternalSessionCandidateSourceChangedError,
   DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN,
   advanceCodexExternalSessionRolloutScanState,
   createInitialCodexExternalSessionIndexCursor,
@@ -49,7 +47,6 @@ import {
   decodeCodexExternalSessionCandidateCursor,
   encodeCodexExternalSessionCandidateCursor,
   encodeCodexExternalSessionIndexCursor,
-  resolveCodexExternalSessionAppServerListBudgetMs,
   type CodexExternalSessionIndexCursor,
   type CodexExternalSessionNativeCandidateCursorState,
   type CodexExternalSessionRolloutScanState,
@@ -64,14 +61,7 @@ import {
   type CodexExternalSessionInvocationBounds,
 } from './invocationBounds.js';
 
-export class CodexExternalSessionCandidateSourceChangedError extends Error {
-  readonly code = 'codex_candidate_source_changed';
-
-  constructor() {
-    super('Codex rollout candidate source changed; refresh the candidate list.');
-    this.name = 'CodexExternalSessionCandidateSourceChangedError';
-  }
-}
+export { CodexExternalSessionCandidateSourceChangedError } from './candidates.js';
 
 export class CodexExternalSessionNativeListingUnavailableError extends Error {
   constructor() {
@@ -94,17 +84,14 @@ type ThreadListResult = Readonly<{
   nextCursor?: string | null;
 }>;
 
-const CODEX_APP_SERVER_DISPOSE_BUDGET_MS = 1_000;
-
 async function disposeCodexAppServerClientBestEffort(
   client: DisposableCodexAppServerClient | null,
 ): Promise<void> {
   if (!client) return;
   try {
-    const result = await raceWithTimeout(client.dispose(), CODEX_APP_SERVER_DISPOSE_BUDGET_MS);
-    if (result.type === 'rejected') throw result.error;
+    await client.dispose();
   } catch {
-    // Candidate/status probes must fail closed instead of blocking on provider teardown.
+    // A teardown failure does not replace the candidate/status probe outcome.
   }
 }
 
@@ -310,10 +297,10 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
   if (!homeEntry) {
     return Object.freeze({ active: null, archived: null, incomplete: false });
   }
-  // Proxy reads share the caller's invocation deadline.
-  // Only callers without one use the standalone listing budget.
+  // Proxy reads share the caller's invocation deadline; standalone callers
+  // retain the native client's request lifecycle instead of a second cutoff.
   const budgetMs = params.deadlineAtMs === undefined
-    ? resolveCodexExternalSessionAppServerListBudgetMs(params.env)
+    ? null
     : params.deadlineAtMs - Date.now();
   let incomplete = homeEntries.length > 1;
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
@@ -363,7 +350,9 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
     }
   })();
 
-  const budgetedResult = await raceWithTimeout(listPromise, budgetMs);
+  const budgetedResult = budgetMs === null
+    ? { type: 'resolved' as const, value: await listPromise }
+    : await raceWithTimeout(listPromise, budgetMs);
   throwIfCodexExternalSessionInvocationStopped(params);
   const result = budgetedResult.type === 'resolved' ? budgetedResult.value : null;
   if (budgetedResult.type === 'timeout') {
@@ -411,7 +400,6 @@ async function buildRolloutCandidate(params: Readonly<{
     readCodexRolloutHead(
       params.group.earliestFilePath,
       params,
-      CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
     ),
   ]);
   throwIfCodexExternalSessionInvocationStopped(params);
@@ -768,7 +756,7 @@ async function scanBoundedRolloutCandidateChunk(params: Readonly<{
     ? await mapCodexExternalSessionWorkWithConcurrency(chunk.entries, resolveCodexRolloutSearchBuildConcurrency(params.env), async entry => {
       // Title-free inventory still obeys the same native thread admission as
       // Browse; the head owner stops immediately after classifying metadata.
-      const { thread, cwd } = await readCodexRolloutHead(entry.group.earliestFilePath, params, CODEX_ROLLOUT_TITLE_HEAD_BUDGET);
+      const { thread, cwd } = await readCodexRolloutHead(entry.group.earliestFilePath, params);
       return { ...entry, ...(thread ? { thread } : {}), ...(cwd ? { cwd } : {}) };
     }, params)
     : chunk.entries;
@@ -1221,14 +1209,9 @@ export async function listCodexSessionCandidates(input: Readonly<{
       candidates = [];
       const filesById = await resolveCodexExternalTranscriptFiles({ ...params, remoteSessionIds: page.rows.map((row) => row.remoteSessionId) });
       let processedRows = 0;
-      let longestRowMs = 0;
       for (const row of page.rows) {
-        // Reuse the host deadline and the cost observed in this invocation.
-        // Starting another indivisible transcript when it cannot fit would lose
-        // every completed hit to the host's timeout instead of yielding a page.
-        const startedAtMs = Date.now();
-        if (params.deadlineAtMs !== undefined && params.deadlineAtMs - startedAtMs <= longestRowMs) break;
         try {
+          contentSearchControl?.checkWork();
           throwIfCodexExternalSessionInvocationStopped(params);
           if (contentProgress && contentProgress.remoteSessionId !== row.remoteSessionId) throw new CodexExternalSessionCandidateSourceChangedError();
           const result = await searchCodexExternalTranscript({ ...params, remoteSessionId: row.remoteSessionId, query: searchTerm, ripgrep: params.ripgrep,
@@ -1243,7 +1226,6 @@ export async function listCodexSessionCandidates(input: Readonly<{
             for (const candidate of built) candidates.push(result.match ? { ...candidate, match: result.match } : candidate);
           }
           processedRows += 1;
-          longestRowMs = Math.max(longestRowMs, Date.now() - startedAtMs);
         } catch (error) {
           if (!(error instanceof ExternalSessionContentSearchYield)) throw error;
           if (error instanceof CodexContentSearchYield) contentProgress = error.progress;

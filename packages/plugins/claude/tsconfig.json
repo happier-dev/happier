@@ -3,7 +3,10 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "rootDir": "src",
     "outDir": "dist",
     "incremental": true,
@@ -13,7 +16,9 @@
     "sourceMap": true,
     "strict": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/*.ts",
@@ -27,6 +32,7 @@
     "src/**/*.spec.ts",
     "src/**/*.test.ts",
     "src/**/*.test-support.ts",
-    "src/**/*.testkit.ts"
+    "src/**/*.testkit.ts",
+    "src/**/*.test.tsx"
   ]
 }

@@ -10,14 +10,21 @@ export type OpenCodePermissionValue =
 
 export function resolveOpenCodePermissionConfig(
   permissionMode: string | null | undefined,
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'],
 ): Readonly<Record<string, OpenCodePermissionValue>> {
-  return resolveAcpToolPermissionPolicy(permissionMode);
+  const policy = resolveAcpToolPermissionPolicy(permissionMode);
+  if (workspaceWrites !== 'deny') return policy;
+  // Native `edit` covers file modifications. Deny shell and child Agents too:
+  // neither may become a second path to workspace writes (as in Claude).
+  return { ...policy, edit: 'deny', write: 'deny', patch: 'deny',
+    apply_patch: 'deny', multiedit: 'deny', bash: 'deny', task: 'deny' };
 }
 
 export function buildOpenCodeSessionPermissionRuleset(
   permissionMode: string | null | undefined,
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'],
 ): ReadonlyArray<Readonly<{ permission: string; pattern: string; action: OpenCodePermissionValue }>> {
-  return Object.entries(resolveOpenCodePermissionConfig(permissionMode)).map(([permission, action]) => ({
+  return Object.entries(resolveOpenCodePermissionConfig(permissionMode, workspaceWrites)).map(([permission, action]) => ({
     permission,
     pattern: '*',
     action,
@@ -31,8 +38,9 @@ export function buildOpenCodeSessionScopedPermissionRuleset(
     requiredHappierServerName: string | null;
   }>,
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'],
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'],
 ): ReadonlyArray<Readonly<{ permission: string; pattern: string; action: OpenCodePermissionValue }>> {
-  const baseRules = buildOpenCodeSessionPermissionRuleset(permissionMode);
+  const baseRules = buildOpenCodeSessionPermissionRuleset(permissionMode, workspaceWrites);
   const ownAction = resolveOpenCodePermissionConfig(permissionMode)['*'];
   return Object.freeze([
     ...baseRules,
@@ -76,8 +84,9 @@ export function buildOpenCodeMcpPermissionRules(
 
 export function buildOpenCodePermissionEnv(
   permissionMode: string | null | undefined,
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'],
 ): Readonly<Record<string, string>> {
   return {
-    OPENCODE_PERMISSION: JSON.stringify(resolveOpenCodePermissionConfig(permissionMode)),
+    OPENCODE_PERMISSION: JSON.stringify(resolveOpenCodePermissionConfig(permissionMode, workspaceWrites)),
   };
 }

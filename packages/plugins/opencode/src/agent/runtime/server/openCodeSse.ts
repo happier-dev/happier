@@ -100,6 +100,7 @@ export async function subscribeSseJson<T>(params: Readonly<{
   const done = (async () => {
     try {
       const response = await params.fetch(params.url, {
+        interactive: true,
         method: 'GET',
         headers: params.headers,
         signal: controller.signal,

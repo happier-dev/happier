@@ -7,6 +7,7 @@ import {
   assertNonEmptyString,
   buildSafeOauthProviderFailureMessage,
   extractOpenAiAccountIdFromIdToken,
+  resolveCodexTokenExpiresAtMs,
 } from './oauth.js';
 
 const DEFAULT_DEVICE_AUTHORIZATION_TTL_MS = 15 * 60_000;
@@ -90,9 +91,7 @@ async function exchangeDeviceApprovalForTokens(params: Readonly<{
     refresh_token: refreshToken,
     account_id: accountId,
     expires_in: expiresIn,
-    expires_at: expiresIn && Number.isFinite(expiresIn) && expiresIn > 0
-      ? params.now + Math.trunc(expiresIn) * 1000
-      : null,
+    expires_at: resolveCodexTokenExpiresAtMs({ accessToken, expiresIn, now: params.now }),
   };
 }
 

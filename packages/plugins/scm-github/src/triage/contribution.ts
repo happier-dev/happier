@@ -217,6 +217,7 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
         completedScan: true,
         createFields: ['title', 'body', 'assigneeIds', 'labelIds', 'scopeId'],
         editFields: ['title', 'body', 'assigneeIds', 'labelIds'],
+        fieldChoices: true,
         transitions: [
           { id: 'open', label: 'Open', state: { presentation: 'active', nativeLabel: 'Open' } },
           { id: 'completed', label: 'Completed', state: { presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Closed as completed' } },

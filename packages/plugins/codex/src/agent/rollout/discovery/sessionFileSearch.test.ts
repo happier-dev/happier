@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,6 +11,25 @@ import {
 } from './sessionFileSearch.js';
 
 describe('Codex rollout session file search', () => {
+  it('finds compressed-only rollouts and prefers an existing plain sibling in both catalog paths', async () => {
+    const sessionsRoot = await mkdtemp(join(tmpdir(), 'codex-compressed-discovery-'));
+    const vendorResumeId = '019e7cfd-2e3d-74f0-be76-b7459424f0a8';
+    const plain = join(sessionsRoot, `rollout-2026-11-06T00-00-00-${vendorResumeId}.jsonl`);
+    const input = { sessionsRoot, vendorResumeId };
+    try {
+      // Name-only discovery leaves decoding and validation to Codex.
+      await writeFile(`${plain}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+      expect(await findCodexRolloutFileById(input)).toBe(`${plain}.zst`);
+      expect(findCodexRolloutFileByIdSync(input)).toBe(`${plain}.zst`);
+      await writeFile(plain, '{}\n');
+      expect(await findCodexRolloutFileById(input)).toBe(plain);
+      expect(findCodexRolloutFileByIdSync(input)).toBe(plain);
+      expect(isMatchingCodexRolloutFileName(`${plain}.zst.tmp`, vendorResumeId)).toBe(false);
+    } finally {
+      await rm(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
   it('finds nested rollout files by provider session id without following symlinked directories', async () => {
     const root = join(tmpdir(), `happier-codex-session-file-search-${process.pid}-${Date.now()}`);
     const sessionsRoot = join(root, 'sessions');

@@ -1,6 +1,6 @@
 import type { ConnectedServiceQuotaRecoveryCreditV1, ConnectedServiceQuotaRecoveryCreditsV1,
   ConnectedServiceQuotaRecoveryCreditDetailsByIdV1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { createHash } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,9 +99,7 @@ export function parseClaudeQuotaResets(payload: unknown, now: number): Readonly<
 
 /** UUID form of the daemon's account-scoped operation identity; no server retry guarantee is assumed. */
 export function claudeResetRequestId(idempotencyKey: string): string {
-  const bytes = createHash('sha256').update(idempotencyKey).digest().subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x80;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const hex = computeSha256HexDigest(idempotencyKey).slice(0, 32);
+  const variant = ((Number.parseInt(hex.charAt(16), 16) & 0x03) | 0x08).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20)}`;
 }

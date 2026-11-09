@@ -145,7 +145,8 @@ function resolveBestSupportedClaudeEffort(
     return null;
 }
 
-export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
+// Explicit selections override native saved/resume settings, including catalog defaults.
+export function resolveClaudeEffortForModel(params: Readonly<{
     modelId: unknown;
     effort: unknown;
     providerModel?: ClaudeProviderModel;
@@ -166,19 +167,6 @@ export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
     const normalized = resolveBestSupportedClaudeEffort(effort, supportedLevels);
     if (!normalized) return null;
     return normalized;
-}
-
-export function resolveClaudeEffortForModel(params: Readonly<{
-    modelId: unknown;
-    effort: unknown;
-    providerModel?: ClaudeProviderModel;
-}>): ClaudeEffortLevel | null {
-    const effective = resolveClaudeEffectiveEffortForModel(params);
-    if (!effective) return null;
-    const defaultEffort = params.providerModel
-        ? normalizeClaudeEffortLevel(resolveProviderEffortOption(params.providerModel)?.currentValue)
-        : resolveClaudeDefaultEffortForKnownAliasOrModel(params.modelId);
-    return effective === defaultEffort ? null : effective;
 }
 
 /**

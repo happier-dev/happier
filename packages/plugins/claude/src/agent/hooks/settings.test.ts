@@ -7,6 +7,7 @@ import {
     buildClaudeHookPluginHooks,
     buildClaudeHookPluginManifest,
     buildClaudeHookSettingsOverlay,
+    buildClaudeSdkSessionHooks,
 } from './settings.js';
 
 const WINDOWS_SESSION_HOOK_NAMES = [
@@ -57,7 +58,7 @@ describe('Claude hook settings leaf', () => {
         expect(settings.permissions?.allow).toEqual(listHappierToolAutoApprovedNamesV1().map((name) => `mcp__happier__${name}`));
     });
 
-    it('builds the complete lifecycle hook manifest for a session plugin', () => {
+    it('delivers startup before SDK initialization and uses exactly one carrier for each lifecycle event', () => {
         const params = {
             port: 43123,
             nodeExecutable: '/bin/node',
@@ -65,6 +66,13 @@ describe('Claude hook settings leaf', () => {
             sessionHookSecretFile: '/tmp/happier-hooks/session.secret',
         } as Parameters<typeof buildClaudeHookPluginHooks>[0] & { sessionHookSecretFile: string };
         const hooksJson = buildClaudeHookPluginHooks(params);
+
+        const sdkHooks = buildClaudeHookPluginHooks({ ...params, transport: 'sdk' });
+        expect(Object.keys(sdkHooks.hooks)).toEqual(['SessionStart']);
+        const sdkCallbacks = buildClaudeSdkSessionHooks();
+        expect(sdkCallbacks.SessionStart).toBeUndefined();
+        expect(Object.keys({ ...sdkHooks.hooks, ...sdkCallbacks }).sort()).toEqual(Object.keys(hooksJson.hooks).sort());
+        expect(Object.keys(sdkCallbacks).filter(event => event in sdkHooks.hooks)).toEqual([]);
 
         for (const hookName of [
             'SessionStart',
@@ -84,8 +92,9 @@ describe('Claude hook settings leaf', () => {
         expect(hooksJson.hooks.PreToolUse).toBeUndefined();
     });
 
-    it('adds PermissionRequest and AskUserQuestion PreToolUse hooks when local permission bridge is enabled', () => {
+    it.each(['sdk', 'terminal'] as const)('retains PermissionRequest and AskUserQuestion enforcement on the %s permission carrier', transport => {
         const hooksJson = buildClaudeHookPluginHooks({
+            transport,
             port: 43124,
             nodeExecutable: '/bin/node',
             sessionForwarderScript: '/app/session_hook_forwarder.cjs',
@@ -103,6 +112,7 @@ describe('Claude hook settings leaf', () => {
             "'/bin/node' '/app/permission_hook_forwarder.cjs' '43124' 'PreToolUse' '--secret-file' '/tmp/happier-hooks/permission.secret'",
         );
         expect(JSON.stringify(hooksJson)).not.toContain('secret-123');
+        if (transport === 'sdk') expect(Object.keys(hooksJson.hooks)).toEqual(['SessionStart', 'PermissionRequest', 'PreToolUse']);
     });
 
     it.each([undefined, 'deny'] as const)('observes exact native tool calls alongside permission enforcement (%s)', (unlistedTools) => {

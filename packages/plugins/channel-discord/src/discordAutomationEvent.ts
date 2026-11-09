@@ -158,7 +158,7 @@ export const DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS = {
   },
   description: {
     key: 'discord.automation.messageSource.setup.description',
-    fallback: 'Choose the Discord bot and the channel whose messages should start this Automation.',
+    fallback: 'Choose the Discord bot and the channel whose messages should start this Workflow.',
   },
   submitLabel: {
     key: 'discord.automation.messageSource.setup.submit',
@@ -320,7 +320,7 @@ export async function setupDiscordAutomationMessageSource(
   if (!isRecord(input) || !isDiscordCredentialRef(input.credentialRef)) {
     throw new PluginError({
       code: 'discord_automation_source_credential_invalid',
-      message: 'A Discord Automation Event source requires a Discord bot Connected Account.',
+      message: 'A Discord Workflow Event source requires a Discord bot Connected Account.',
     });
   }
   const channelId = readSnowflake(input.channelId);

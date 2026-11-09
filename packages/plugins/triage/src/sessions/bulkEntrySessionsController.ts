@@ -6,7 +6,7 @@ import type { TriageConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionRe
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { resolvesTriageUnknownSessionStartV1 } from '../ui/header/sessionStartOutcome.js';
-import { canShareTriageNewSessionCheckoutV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { canShareTriageNewSessionCheckoutV1, triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1 } from './readEntrySessionFacts.js';
 import {
     readTriageActionExecutionPlacementV1,
@@ -457,6 +457,9 @@ function sameTriageBulkExecutionPlacementV1(
     right: TriageActionExecutionPlacementV1,
 ): boolean {
     return left.directory === right.directory
+        && left.directoryIntent?.kind === right.directoryIntent?.kind
+        && (left.directoryIntent?.kind !== 'path' || right.directoryIntent?.kind !== 'path'
+            || left.directoryIntent.path === right.directoryIntent.path)
         && left.executionTarget.serverId === right.executionTarget.serverId
         && left.executionTarget.machineId === right.executionTarget.machineId;
 }
@@ -798,6 +801,7 @@ export function createTriageBulkEntrySessionsController(
                         entries: plan.entries,
                         promptText,
                         profileId: action.profileId,
+                        actionDefault: triageActionDefaultSeedV1(action),
                         checkoutIntent,
                         placement,
                         candidates: registry.status === 'read' ? registry.projects.map(projectTriageSessionPlacementCandidateV1) : [],
@@ -1074,6 +1078,7 @@ async function seedNewSession(input: Readonly<{
     entries: readonly TriageBulkSelectedEntryV1[];
     promptText: string | null;
     profileId: string | null;
+    actionDefault: Parameters<typeof requestTriageNewSessionAuthoringV1>[1]['actionDefault'];
     checkoutIntent: ReturnType<typeof resolveTriageActionCheckoutV1>;
     /**
      * The selection's one honest placement answer. An exact answer carries its
@@ -1086,6 +1091,7 @@ async function seedNewSession(input: Readonly<{
 }>): ReturnType<typeof requestTriageNewSessionAuthoringV1> {
     return await requestTriageNewSessionAuthoringV1(input.host, {
         entries: input.entries, promptText: input.promptText, profileId: input.profileId,
+        actionDefault: input.actionDefault,
         checkoutIntent: input.checkoutIntent, candidates: input.candidates,
         placement: input.placement.kind === 'exact' ? input.placement.placement : null,
         signal: input.signal,

@@ -45,6 +45,67 @@ function injected(overrides: Partial<Extract<TerminalInputInjectionResult, { sta
 }
 
 describe('createClaudeUnifiedInputArbiter', () => {
+  it('delivers after repeated recoverable no-write failures without inventing a terminal failure', async () => {
+    vi.useFakeTimers();
+    const input = promptInput('recoverable-write', { localIds: ['recoverable-row'] });
+    let failuresRemaining = 4;
+    const injectedInputs: string[] = [];
+    const acceptedInputs: string[] = [];
+    const failures: string[] = [];
+    const arbiter = createClaudeUnifiedInputArbiter({
+      // The terminal transport is the system boundary; it recovers before writing any bytes.
+      injectPrompt: async (next) => {
+        if (failuresRemaining-- > 0) return {
+          status: 'failed', reason: 'write_failed', phase: 'before_write',
+          recoverable: true, duplicateRisk: 'none', observedAt: Date.now(),
+        };
+        injectedInputs.push(next.text);
+        return injected();
+      },
+      onPromptAccepted: (next) => { acceptedInputs.push(next.text); },
+      onInjectionFailure: (failure) => { failures.push(failure.result.reason); },
+    });
+    try {
+      arbiter.observeReadiness(readiness());
+      arbiter.enqueue(input);
+      await arbiter.drain();
+      await vi.runAllTimersAsync();
+      expect(injectedInputs).toEqual([input.text]);
+      expect(failures).toEqual([]);
+      expect(acceptedInputs).toEqual([]);
+      expect(arbiter.snapshot()).toMatchObject({ headInputState: 'awaiting_provider_acceptance' });
+      await expect(arbiter.confirmProviderAcceptance({ promptText: input.text, exactPromptText: true })).resolves.toBe(true);
+      expect(acceptedInputs).toEqual([input.text]);
+      expect(arbiter.snapshot().queuedCount).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { arbiter.dispose(); }
+  });
+
+  it('cancels no-write recovery on disposal and returns the undelivered input', async () => {
+    vi.useFakeTimers();
+    const input = promptInput('cancel-retry');
+    let writesAttempted = 0;
+    const returnedInputs: TerminalPromptInput[] = [];
+    const arbiter = createClaudeUnifiedInputArbiter({
+      injectPrompt: async () => {
+        writesAttempted += 1;
+        return {
+          status: 'failed', reason: 'write_failed', phase: 'before_write',
+          recoverable: true, duplicateRisk: 'none', observedAt: Date.now(),
+        };
+      },
+      onUndeliverableInputs: (inputs) => { returnedInputs.push(...inputs); },
+    });
+    arbiter.observeReadiness(readiness());
+    arbiter.enqueue(input);
+    await arbiter.drain();
+    arbiter.dispose();
+    await vi.runAllTimersAsync();
+    expect(writesAttempted).toBe(1);
+    expect(returnedInputs).toEqual([input]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(['accepted', 'retired'] as const)('settles a waiting terminal submission from canonical %s custody without Enter', async phase => {
     const input = promptInput('waiting', { localIds: ['waiting-row'] });
     let enterCount = 0;
@@ -514,19 +575,27 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(onUndeliverableInputs).not.toHaveBeenCalled();
   });
 
-  it('accepts provider confirmation when observed prompt text matches the queued prompt', async () => {
+  it.each([false, true])('accepts provider confirmation when observed prompt text matches the queued prompt (tabbed replay: %s)', async (tabbedReplay) => {
     const onPromptAccepted = vi.fn();
     const arbiter = createClaudeUnifiedInputArbiter({
       injectPrompt: vi.fn(async () => injected()),
       onPromptAccepted,
     });
 
-    arbiter.enqueue(promptInput('same'));
+    const input = promptInput('same');
+    if (tabbedReplay) {
+      input.text = `${'user:\n\tconst value = 1;\nassistant:\n\tOK\n'.repeat(2_100)}\nReply only ok`;
+      input.multiline = true;
+    }
+    arbiter.enqueue(input);
     arbiter.observeReadiness(readiness());
     await arbiter.drain();
 
     await expect(arbiter.confirmProviderAcceptance({
-      promptText: 'prompt same',
+      // Native Claude expands pasted tabs before emitting provider confirmation.
+      promptText: tabbedReplay
+        ? `<pasted_content id="839a">\n${input.text.replaceAll('\t', '    ')}\n</pasted_content id="839a">`
+        : input.text,
     })).resolves.toBe(true);
 
     expect(arbiter.snapshot()).toMatchObject({
@@ -581,26 +650,6 @@ describe('createClaudeUnifiedInputArbiter', () => {
       headInputState: 'awaiting_provider_acceptance',
     });
     expect(onPromptAccepted).not.toHaveBeenCalled();
-  });
-
-  it('keeps legacy provider confirmation without prompt text accepted', async () => {
-    const onPromptAccepted = vi.fn();
-    const arbiter = createClaudeUnifiedInputArbiter({
-      injectPrompt: vi.fn(async () => injected()),
-      onPromptAccepted,
-    });
-
-    arbiter.enqueue(promptInput('legacy'));
-    arbiter.observeReadiness(readiness());
-    await arbiter.drain();
-
-    await expect(arbiter.confirmProviderAcceptance()).resolves.toBe(true);
-
-    expect(arbiter.snapshot()).toMatchObject({
-      queuedCount: 0,
-      headInputState: 'submitted',
-    });
-    expect(onPromptAccepted).toHaveBeenCalledTimes(1);
   });
 
   it('terminalizes deterministic invalid prompt text without blocking later prompts', async () => {

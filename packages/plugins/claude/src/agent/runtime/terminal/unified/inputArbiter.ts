@@ -139,8 +139,6 @@ export type ClaudeUnifiedInputArbiterOptions = Readonly<{
    */
   onUndeliverableInputs?: (inputs: readonly TerminalPromptInput[]) => void;
   onPendingInputInterruptAndRunLocalIdChange?: (localId: string | null) => void;
-  injectionRetryLimit?: number;
-  injectionRetryBaseDelayMs?: number;
 }>;
 
 type PendingProviderAcceptance = Readonly<{
@@ -148,13 +146,7 @@ type PendingProviderAcceptance = Readonly<{
   acceptance: ClaudeUnifiedPromptAcceptance;
 }>;
 
-const DEFAULT_INJECTION_RETRY_LIMIT = 3;
 const DEFAULT_INJECTION_RETRY_BASE_DELAY_MS = 250;
-
-function nonNegativeInteger(value: number | undefined, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.max(0, Math.trunc(value));
-}
 
 function isDeferredReadiness(status: TerminalInputReadinessV1['status']): boolean {
   return status !== 'writable'
@@ -248,22 +240,12 @@ export function createClaudeUnifiedInputArbiter(
   options: ClaudeUnifiedInputArbiterOptions,
 ): ClaudeUnifiedInputArbiter {
   const queue: TerminalPromptInput[] = [];
-  const injectionRetryLimit = nonNegativeInteger(
-    options.injectionRetryLimit,
-    DEFAULT_INJECTION_RETRY_LIMIT,
-  );
-  const injectionRetryBaseDelayMs = nonNegativeInteger(
-    options.injectionRetryBaseDelayMs,
-    DEFAULT_INJECTION_RETRY_BASE_DELAY_MS,
-  );
-
   let disposed = false;
   let readiness: TerminalInputReadinessV1 | null = null;
   let headInputState: ClaudeUnifiedInputState | null = null;
   let lastDeferredReason: string | null = null;
   let lastFailureReason: string | null = null;
   let compactionActive = false;
-  let retryAttempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let drainInFlight: Promise<void> | null = null;
   let pendingProviderAcceptance: PendingProviderAcceptance | null = null;
@@ -380,18 +362,6 @@ export function createClaudeUnifiedInputArbiter(
     }
   }
 
-  function takeProviderAcceptanceObservedDuringInjection(
-    input: TerminalPromptInput,
-  ): PendingProviderAcceptance | null {
-    const acceptance = providerAcceptanceObservedDuringInjection?.input === input
-      ? providerAcceptanceObservedDuringInjection
-      : null;
-    if (acceptance) {
-      providerAcceptanceObservedDuringInjection = null;
-    }
-    return acceptance;
-  }
-
   function removeTerminalCustodyAcceptance(input: TerminalPromptInput): PendingProviderAcceptance | null {
     const index = terminalCustodyAcceptances.findIndex((pending) => pending.input === input);
     if (index < 0) return null;
@@ -426,7 +396,6 @@ export function createClaudeUnifiedInputArbiter(
     rejection?: ClaudeUnifiedPromptTerminalRejection,
   ): Promise<void> {
     queue.shift();
-    retryAttempt = 0;
     lastDeferredReason = null;
     headInputState = queue.length > 0 ? 'queued' : 'failed_terminal';
     if (!turnNeutralControlInputs.has(input)) {
@@ -583,6 +552,11 @@ export function createClaudeUnifiedInputArbiter(
         ...injecting,
         acceptance: withProviderTurnId(injecting.acceptance, evidence?.agentTurnId),
       };
+      // Native acceptance is authoritative even before the OS write returns.
+      // Publish it now so subsequent native terminal evidence follows turn-start;
+      // retaining the witness also lets the in-flight writer observe acceptance.
+      queue.shift();
+      await acceptPrompt(providerAcceptanceObservedDuringInjection);
       return true;
     }
     if (queue[0] !== pending.input) return false;
@@ -610,7 +584,6 @@ export function createClaudeUnifiedInputArbiter(
     terminalCustodyInputs.delete(pending.input);
     removeSubmittedSteerAcceptance(pending.input);
     removeTerminalCustodyAcceptance(pending.input);
-    retryAttempt = 0;
     lastDeferredReason = null;
     lastFailureReason = null;
     headInputState = 'submitted';
@@ -736,7 +709,6 @@ export function createClaudeUnifiedInputArbiter(
 
     queue.shift();
     clearRetryTimer();
-    retryAttempt = 0;
     lastDeferredReason = null;
     lastFailureReason = rejection.deliveryBlockedReason;
     headInputState = queue.length > 0 ? 'queued' : 'failed_terminal';
@@ -760,7 +732,6 @@ export function createClaudeUnifiedInputArbiter(
     if (retainedHeadDeliveryBlocker?.input === input) return false;
 
     clearRetryTimer();
-    retryAttempt = 0;
     retainedHeadDeliveryBlocker = { input, reason: rejection.deliveryBlockedReason };
     lastFailureReason = rejection.deliveryBlockedReason;
     headInputState = 'waiting_for_readiness';
@@ -897,16 +868,18 @@ export function createClaudeUnifiedInputArbiter(
         injectingProviderAcceptance = null;
       }
 
-      // Host retirement can arrive while the terminal write is in flight. Do not resurrect its custody.
-      if (!queue.includes(input)) continue;
+      // Native acceptance or host retirement can arrive while the terminal write is in flight.
+      // Neither leaves terminal custody to recreate from the write result.
+      if (!queue.includes(input)) {
+        clearInjectionAcceptanceForInput(input);
+        continue;
+      }
 
       if (result.status === 'injected') {
-        retryAttempt = 0;
         lastDeferredReason = null;
         lastFailureReason = null;
         if (turnNeutralControlInputs.has(input)) {
           queue.shift();
-          takeProviderAcceptanceObservedDuringInjection(input);
           headInputState = queue.length > 0 ? 'queued' : 'submitted';
           settleTurnNeutralControl(input);
           if (queue.length > 0) continue;
@@ -915,13 +888,6 @@ export function createClaudeUnifiedInputArbiter(
         pendingProviderAcceptance = injectionAcceptance;
         headInputState = 'awaiting_provider_acceptance';
         await options.onPromptInjected?.(input, acceptance, result);
-        const providerAcceptedDuringInjection = takeProviderAcceptanceObservedDuringInjection(input);
-        if (providerAcceptedDuringInjection) {
-          if (pendingProviderAcceptance?.input !== input || queue[0] !== input) return;
-          queue.shift();
-          await acceptPrompt(providerAcceptedDuringInjection);
-          return;
-        }
         if (acceptance.acceptedAs === 'in_flight_steer') {
           queue.shift();
           pendingProviderAcceptance = null;
@@ -932,20 +898,6 @@ export function createClaudeUnifiedInputArbiter(
         return;
       }
 
-      if (
-        !turnNeutralControlInputs.has(input)
-        && result.status === 'failed'
-        && result.phase === 'after_enter_unknown'
-      ) {
-        const providerAcceptedDuringInjection = takeProviderAcceptanceObservedDuringInjection(input);
-        if (providerAcceptedDuringInjection) {
-          if (queue[0] !== input) return;
-          queue.shift();
-          await acceptPrompt(providerAcceptedDuringInjection);
-          return;
-        }
-      }
-
       clearInjectionAcceptanceForInput(input);
       if (result.status === 'deferred') {
         lastDeferredReason = result.reason;
@@ -954,23 +906,20 @@ export function createClaudeUnifiedInputArbiter(
       }
 
       lastFailureReason = result.reason;
-      const action = classifyClaudeUnifiedInjectionFailure(result, {
-        retryAttempt,
-        retryLimit: injectionRetryLimit,
-        retryBaseDelayMs: injectionRetryBaseDelayMs,
-      });
+      const action = classifyClaudeUnifiedInjectionFailure(result);
 
       if (action.kind === 'retry') {
-        retryAttempt += 1;
         headInputState = 'failed_retryable';
-        scheduleRetry(action.retryAfterMs);
+        // Only the transport's recoverable, no-duplicate-risk failures reach this branch.
+        // Keep the input until it succeeds or its owner retires/disposes it; attempt count
+        // cannot turn a no-write failure into a terminal one.
+        scheduleRetry(DEFAULT_INJECTION_RETRY_BASE_DELAY_MS);
         return;
       }
       if (action.kind === 'await_provider_confirmation') {
         if (turnNeutralControlInputs.has(input)) {
           queue.shift();
           clearInjectionAcceptanceForInput(input);
-          retryAttempt = 0;
           headInputState = queue.length > 0 ? 'queued' : 'failed_ambiguous';
           settleTurnNeutralControl(input, turnNeutralControlFailure(result));
           if (queue.length > 0) continue;
@@ -983,7 +932,6 @@ export function createClaudeUnifiedInputArbiter(
       }
       if (action.kind === 'handoff_ambiguous_failure') {
         queue.shift();
-        retryAttempt = 0;
         lastDeferredReason = null;
         headInputState = queue.length > 0 ? 'queued' : null;
         if (!turnNeutralControlInputs.has(input)) {

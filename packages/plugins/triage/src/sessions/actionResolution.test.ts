@@ -6,6 +6,7 @@ import {
     TRIAGE_PROMPT_INVOCATIONS_LIST_ACTION_ID_V1,
     TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1,
     readTriageLaunchProfilesV1,
+    readTriageActionProfileV1,
     readTriagePromptInvocationsV1,
     resolveTriageActionInstructionV1,
     resolveTriageActionReferencesV1,
@@ -64,6 +65,15 @@ const PROFILES = {
 };
 
 describe('resolveTriageActionReferencesV1', () => {
+    it('retains managed directory intent from the Profile catalog boundary', async () => {
+        const placement = { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directoryIntent: { kind: 'managed' } };
+        const { host } = createHost({ [TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1]: {
+            items: [{ id: 'managed-profile', name: 'Managed', placement, checkout: 'reuse_workspace' }], coverage: 'complete',
+        } });
+        expect(await readTriageActionProfileV1(host, 'managed-profile')).toMatchObject({ status: 'read',
+            preferences: { placement, checkout: 'reuse_workspace' } });
+    });
+
     it('passes stored static arguments to the Prompt Library invocation owner', async () => {
         const { host, requests } = createHost({
             [TRIAGE_PROMPT_INVOCATION_RESOLVE_ACTION_ID_V1]: {
@@ -211,12 +221,12 @@ describe('the action instruction', () => {
             target: {
                 kind: 'agent',
                 promptInvocationId: null,
-                seededFallbackInstruction: 'Fix this entry.',
+                seededFallbackInstruction: 'Fix this.',
                 delivery: 'compose',
             },
         } satisfies Pick<TriageActionV1, 'target'>;
 
-        expect(resolveTriageActionInstructionV1(configured, null)).toBe('Fix this entry.');
+        expect(resolveTriageActionInstructionV1(configured, null)).toBe('Fix this.');
     });
 
     it('keeps the Prompt Library body byte-for-byte when one resolved', () => {

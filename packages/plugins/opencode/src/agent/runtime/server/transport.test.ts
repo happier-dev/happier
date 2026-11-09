@@ -47,6 +47,61 @@ function snapshot(): ManagedServiceSnapshot {
 }
 
 describe('createOpenCodeServerTransport', () => {
+  it('preserves a native response stream without wrapping it', async () => {
+    const original = response('native');
+    const transport = createOpenCodeServerTransport({
+      managedService: managedService(async () => original),
+    });
+    const result = await transport.fetch('/native');
+    expect(result.body).toBe(original.body);
+    expect(await result.text()).toBe('native');
+  });
+
+  it('reads the portable body interface without stringifying it', async () => {
+    const native = new Response('portable').body!;
+    const portable = { cancel: (reason?: unknown) => native.cancel(reason), getReader: () => native.getReader() };
+    const transport = createOpenCodeServerTransport({
+      managedService: managedService(async () => ({ ...response(), body: portable })),
+    });
+    expect(await (await transport.fetch('/portable')).text()).toBe('portable');
+    expect(native.locked).toBe(false);
+  });
+
+  it('cancels a portable reader with the original reason and releases its lock', async () => {
+    let cancelledWith: unknown;
+    const native = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array([42])); },
+      cancel(reason) { cancelledWith = reason; },
+    });
+    const transport = createOpenCodeServerTransport({
+      managedService: managedService(async () => ({
+        ...response(),
+        body: { cancel: (reason?: unknown) => native.cancel(reason), getReader: () => native.getReader() },
+      })),
+    });
+    const reader = (await transport.fetch('/portable')).body!.getReader();
+    expect(await reader.read()).toMatchObject({ done: false, value: new Uint8Array([42]) });
+    const reason = new Error('caller cancelled');
+    await reader.cancel(reason);
+    expect(cancelledWith).toBe(reason);
+    expect(native.locked).toBe(false);
+  });
+
+  it('preserves a portable reader failure and releases its lock', async () => {
+    const failure = new Error('stream failed');
+    const native = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.error(failure); },
+    });
+    const transport = createOpenCodeServerTransport({
+      managedService: managedService(async () => ({
+        ...response(),
+        body: { cancel: (reason?: unknown) => native.cancel(reason), getReader: () => native.getReader() },
+      })),
+    });
+    await expect((await transport.fetch('/portable')).text()).rejects.toBe(failure);
+    expect(native.locked).toBe(false);
+  });
+
   it('normalizes JSON and stream request bodies before delegating to the exact handle', async () => {
     const body = new Uint8Array([0, 1, 2, 255]);
     const request = vi.fn(async (_input: ManagedServiceRequest) => response(JSON.stringify({ ok: true })));

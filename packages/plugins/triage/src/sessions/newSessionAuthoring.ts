@@ -1,10 +1,17 @@
-import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1, PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { readTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageActionCheckoutResolutionV1, TriageActionExecutionPlacementV1 } from './actionLaunch.js';
 import type { TriageEntrySessionStartRequestV1 } from './entrySessionStartController.js';
 import { projectTriagePreparedWorkspaceSelectionInputV1 } from '../ui/header/newSessionDestination.js';
 import { projectTriageNewSessionFailureV1, requestTriageNewSessionSeed, type TriageNewSessionSeedHostV1, type TriageNewSessionSeedResultV1 } from '../ui/header/newSessionSeedCommand.js';
 import type { TriageEntryAttachmentDraftV1 } from '../composer/mutationPlan.js';
+
+export function triageActionDefaultSeedV1(action: TriageActionV1): NonNullable<PluginUiNewSessionSeedV1['actionDefault']> {
+    return { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: action.actionId,
+        label: action.label, launchMode: readTriageActionLaunchModeV1(action) };
+}
 
 type AuthoringEntry = Pick<TriageEntrySessionStartRequestV1, 'entryRef' | 'sourceInstance' | 'presentation' | 'lastKnownLocator' | 'reviewWorkspace'>;
 
@@ -18,6 +25,7 @@ export async function requestTriageNewSessionAuthoringV1(
     host: TriageNewSessionSeedHostV1 & Pick<PluginUiHostApi, 'selectActionInput'>,
     input: Readonly<{
         entries: readonly AuthoringEntry[];
+        actionDefault?: PluginUiNewSessionSeedV1['actionDefault'];
         attachments?: readonly TriageEntryAttachmentDraftV1[];
         promptText: string | null;
         profileId: string | null;
@@ -62,12 +70,15 @@ export async function requestTriageNewSessionAuthoringV1(
             preparation = { preparedReviewWorkspace: { operation: review.operation, result: selected } };
         }
         if (input.signal?.aborted || input.isCurrent?.() === false) return { status: 'cancelled' };
+        const directoryIntent = input.directoryIntent
+            ?? (input.checkoutIntent === 'preparedReviewWorkspace' ? undefined : placement?.directoryIntent);
         return await requestTriageNewSessionSeed(host, {
             ...(delivery.kind === 'compose' && delivery.text !== undefined ? { prompt: delivery.text } : {}),
+            ...(input.actionDefault === undefined ? {} : { actionDefault: input.actionDefault }),
             ...(input.profileId === null ? {} : { profileId: input.profileId }),
             ...(input.agentTarget === undefined ? {} : { agentTarget: input.agentTarget }),
             checkoutIntent: input.checkoutIntent,
-            ...(input.directoryIntent === undefined ? {} : { directoryIntent: input.directoryIntent }),
+            ...(directoryIntent === undefined ? {} : { directoryIntent }),
             ...(placement === null ? {} : { placement: {
                 kind: 'exactTarget',
                 serverId: placement.executionTarget.serverId,

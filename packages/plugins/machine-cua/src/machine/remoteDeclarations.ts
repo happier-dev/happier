@@ -1,6 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerNativeExecResultV1Schema,
+import { observeMachineProvisionerNativeRead, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerNativeExecResultV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema,
     MachineProvisionerPutFileResultV1Schema, type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ByocLaunchV1Schema, ByocResourceV1Schema, ByocNativeOperationV1Schema, ByocOptionsQueryV1Schema } from './remoteSchemas.js';
@@ -47,7 +47,7 @@ export function remoteRoles() {
             async run(input: unknown, context: PluginInvocationContext) { return MachineProvisionerBootstrapCarrierV1Schema.parse(await run('bootstrap', input, context)); } },
         inspect: { ...defaults, title: `Inspect exact Cua ${id} resource`, dangerLevel: 'safe' as const, inputSchema: schemas.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerObservationV1Schema.parse(await run('inspect', input, context)); }
-                catch { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: 'cua_native_resource_unknown' }; } } },
+                catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_resource_unknown' }); } } },
         power: { ...defaults, title: 'Change exact Cua BYOC power', dangerLevel: 'destructive' as const, confirmation: { title: 'Change this Cua resource’s power?' },
             inputSchema: schemas.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerPowerResultV1Schema.parse(await run('power', input, context)); }
@@ -67,7 +67,7 @@ export function remoteRoles() {
     };
 }
 export function remoteProvisioner(): MachineProvisionerAuthorDefinitionV1 {
-    return { title: 'Cua BYOC', icon: 'server', resourceKind: 'cua-byoc-resource', schemaVersion: 1,
+    return { title: 'Cua BYOC', icon: 'server', resourceKind: 'cua-byoc-resource', schemaVersion: 1, enrollmentRole: 'sandbox',
         kindTitle: machinePresentationLabel('byocKind'),
         description: machinePresentationLabel('byocDescription'),
         launchSchema: ByocLaunchV1Schema.jsonSchema,
@@ -97,6 +97,14 @@ const nativeMode = { id: 'native', kind: 'manual', title: 'Existing native setup
     fields: [], configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [{ id: 'nativeHome',
         title: 'Native Cua home directory', schema: { type: 'string', minLength: 1 }, required: true, secret: false }] } } as const;
 export const remoteAccounts = {
-    'cloud-native': { declaration: { title: CUA_ACCOUNT_NAMES.cloud, ui: { category: 'cloud-machines' as const }, authentication: { defaultModeId: 'native', modes: [nativeMode] } }, runtime: lazyAccount('cloud') },
-    'cua-account': { declaration: { title: CUA_ACCOUNT_NAMES.cua, ui: { category: 'cloud-machines' as const }, authentication: { defaultModeId: 'native', modes: [nativeMode] } }, runtime: lazyAccount('cua') },
+    'cloud-native': { declaration: { title: CUA_ACCOUNT_NAMES.cloud, ui: { category: 'cloud-machines' as const }, authentication: { defaultModeId: 'native', modes: [{ ...nativeMode,
+        setup: { url: 'https://cua.ai/docs/cua-sdk/guides/your-cloud', createKeyTitle: 'Read Cua cloud setup instructions',
+            checklist: ['On the Machine running Cua, configure your AWS, Google Cloud or Modal credentials and connect that provider with cua cloud connect.', 'Use cua cloud status to check the connection, then enter the absolute CUA_HOME directory used for that setup.'],
+            shapeHint: 'This selects existing cloud-provider setup in a native Cua home directory; no API key is pasted here.' },
+    }] } }, runtime: lazyAccount('cloud') },
+    'cua-account': { declaration: { title: CUA_ACCOUNT_NAMES.cua, ui: { category: 'cloud-machines' as const }, authentication: { defaultModeId: 'native', modes: [{ ...nativeMode,
+        setup: { url: 'https://cua.ai/docs/cua-cli/guides/authentication', createKeyTitle: 'Read Cua sign-in instructions',
+            checklist: ['On the Machine running Cua, sign in with cua auth login using CUA_CREDENTIAL_STORE=file and the CUA_HOME directory you want to connect.', 'Enter that absolute CUA_HOME directory here, matching the directory selected for the cloud account.'],
+            shapeHint: 'This selects an existing native Cua sign-in; no API key is pasted here.' },
+    }] } }, runtime: lazyAccount('cua') },
 };

@@ -6,7 +6,7 @@ const membership = { id: 'journal-access', kind: 'group' as const, name: group, 
 /** The native prerequisite verifies the reviewed group; a familiar name proves nothing. */
 export const JOURNAL_READER_RECIPE = {
   revision: '1', title: 'Read system logs',
-  description: 'The Happier daemon reads every system log. The agent receives no journal group membership. A supervised daemon restart is required when membership changes.',
+  description: 'Let Happier read this Machine’s system logs. Agents get no direct access. Restart Happier to turn it on.',
   inputSchema: { type: 'object', properties: {
     journalGroup: { type: 'string', pattern: '^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$(?![\\s\\S])' },
   }, required: ['journalGroup'], additionalProperties: false },

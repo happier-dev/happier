@@ -171,6 +171,32 @@ describe('managed External Sessions dialect', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it('reads attached dialect and candidates from the portable managed response body', async () => {
+    const { exec } = createExec(V2_EXECUTABLE);
+    const { read } = createManagedEndpointRead(v2Response);
+    // The host boundary promises the portable reader subset, not a DOM stream.
+    const portableRead: AgentExternalSessionsManagedEndpointRead = async (request) => {
+      const response = await read(request);
+      const body = response.body;
+      return {
+        ...response,
+        body: body === null ? null : {
+          cancel: (reason?: unknown) => body.cancel(reason),
+          getReader: () => body.getReader(),
+        },
+      };
+    };
+    const contribution = createOpenCodeExternalSessionsContribution({ env: {} });
+    const result = await contribution.listCandidates({
+      ...invocation(portableRead, exec),
+      source: MANAGED_SOURCE,
+      maxItems: 10,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.value.candidates.map(candidate => candidate.remoteSessionId))
+      .toEqual([V2_SESSION.id]);
+  });
+
   it('lists candidates over the V2 session route and envelope', async () => {
     const { exec } = createExec(V2_EXECUTABLE);
     const { read, requests } = createManagedEndpointRead(v2Response);

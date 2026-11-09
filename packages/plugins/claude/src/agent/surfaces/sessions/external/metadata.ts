@@ -31,6 +31,7 @@ export type ClaudeTitleIndexState = Readonly<{
     customTitle: string | null;
     aiTitle: string | null;
     fallbackTitle: string | null;
+    cwd: string | null;
 }>;
 
 export type ClaudeTitleAccumulator = Readonly<{
@@ -86,6 +87,11 @@ function readTitleCandidate(value: string): string | null {
     return normalized.length > 0 ? normalized.slice(0, 10_000) : null;
 }
 
+function readWorkingDirectory(value: unknown): string | null {
+    const cwd = isRecord(value) && typeof value.cwd === 'string' ? value.cwd.trim() : '';
+    return cwd || null;
+}
+
 function coerceTextContent(content: unknown): string | null {
     if (typeof content === 'string') {
         return readTitleCandidate(readSessionInputPromptUserTextV1(content));
@@ -116,6 +122,8 @@ function readClaudeTitleIndexState(value: unknown): ClaudeTitleIndexState | null
         || (value.customTitle !== null && typeof value.customTitle !== 'string')
         || (value.aiTitle !== null && typeof value.aiTitle !== 'string')
         || (value.fallbackTitle !== null && typeof value.fallbackTitle !== 'string')
+        // A title-only checkpoint has no cwd knowledge and must be re-derived.
+        || (value.cwd !== null && typeof value.cwd !== 'string')
     ) return null;
     // Older checkpoints treated a host prompt echo as the first user title.
     // Re-derive it from the same native file, including the unchanged-EOF path.
@@ -133,6 +141,7 @@ function readClaudeTitleIndexState(value: unknown): ClaudeTitleIndexState | null
         customTitle: value.customTitle,
         aiTitle: value.aiTitle,
         fallbackTitle: value.fallbackTitle,
+        cwd: value.cwd,
     });
 }
 
@@ -217,7 +226,7 @@ export function resolveClaudeTitle(accumulator: ClaudeTitleAccumulator): string 
 }
 
 /**
- * Claude owns title semantics; the host candidate index owns persistence. A
+ * Claude owns title and cwd semantics; the host candidate index owns persistence. A
  * matching state resumes at the verified byte boundary of the same transcript
  * inode, while a replacement, truncation, or same-size rewrite cold-scans. The
  * suffix path relies on Claude's observed append-only JSONL writer contract.
@@ -229,6 +238,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
     fileSystem?: JsonlScannerFileSystem;
 }>): Promise<Readonly<{
     title: string | null;
+    cwd: string | null;
     indexState: ClaudeTitleIndexState;
 }>> {
     let previousState = readClaudeTitleIndexState(params.previousState);
@@ -246,6 +256,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
         if (unchanged && previousState) {
             return Object.freeze({
                 title: resolveClaudeTitle(previousState),
+                cwd: previousState.cwd,
                 indexState: previousState,
             });
         }
@@ -255,6 +266,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
             && previousState.verifiedThroughBytes < before.sizeBytes;
         let offsetBytes = canResume && previousState ? previousState.verifiedThroughBytes : 0;
         let accumulator = readTitleAccumulatorFromState(canResume ? previousState : null);
+        let cwd = canResume && previousState ? previousState.cwd : null;
         let stoppedAtIncompleteTail = false;
         while (offsetBytes < before.sizeBytes) {
             const page = await readClaudeTitlePage(
@@ -273,6 +285,7 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
                     stoppedAtIncompleteTail = true;
                     break;
                 }
+                cwd ??= readWorkingDirectory(line.value);
                 accumulator = applyClaudeTitleRecord(
                     accumulator,
                     line.value,
@@ -307,9 +320,11 @@ export async function readClaudeJsonlSessionTitleWithIndex(params: Readonly<{
                 customTitle: accumulator.customTitle,
                 aiTitle: accumulator.aiTitle,
                 fallbackTitle: accumulator.fallbackTitle,
+                cwd,
             });
             return Object.freeze({
                 title: resolveClaudeTitle(indexState),
+                cwd: indexState.cwd,
                 indexState,
             });
         }
@@ -344,9 +359,7 @@ export async function readClaudeJsonlSessionWorkingDirectory(params: Readonly<{
         });
         if (!page) return null;
         for (const line of page.items) {
-            const cwd = isRecord(line.value) && typeof line.value.cwd === 'string'
-                ? line.value.cwd.trim()
-                : '';
+            const cwd = readWorkingDirectory(line.value);
             if (cwd) return cwd;
         }
         if (page.reachedEnd || page.nextOffsetBytes <= offsetBytes) return null;

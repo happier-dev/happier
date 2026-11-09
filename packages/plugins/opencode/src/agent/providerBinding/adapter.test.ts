@@ -63,6 +63,25 @@ function fileConfig(output: Awaited<ReturnType<typeof OPENCODE_PROVIDER_BINDING_
 }
 
 describe('OpenCode provider-binding adapter V1', () => {
+  it.each(['modelId', 'modelName', 'publicHeader', 'endpoint'] as const)(
+    'refuses native substitutions in Provider %s data before the native loader can expand them', async field => {
+      const input = materializeInput();
+      const interpolation = '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}';
+      const binding = {
+        ...input.binding,
+        selection: { ...input.binding.selection, model: {
+          id: field === 'modelId' ? interpolation : input.binding.selection.model.id,
+          name: field === 'modelName' ? '{file:private.txt}' : input.binding.selection.model.name,
+        } },
+        endpoint: { ...input.binding.endpoint,
+          normalizedUrl: field === 'endpoint' ? `https://gateway.example.test/${interpolation}` : input.binding.endpoint.normalizedUrl,
+          publicHeaders: field === 'publicHeader' ? { 'x-route': interpolation } : {},
+        },
+      };
+      await expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...input, binding })).rejects.toThrow(/substitution/u);
+    },
+  );
+
   it('materializes selected-model generation settings at the native consumed fields', async () => {
     const input = materializeInput();
     const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
@@ -104,7 +123,7 @@ describe('OpenCode provider-binding adapter V1', () => {
         apiKeyTransports: [
           {
             protocol: 'openai-responses',
-            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+            destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
           },
           {
             protocol: 'openai-chat',
@@ -317,12 +336,28 @@ describe('OpenCode provider-binding adapter V1', () => {
     });
   });
 
-  it('maps non-standard raw headers through an env reference and rejects public-header collisions', async () => {
+  it.each(['raw', 'bearer'] as const)('refuses a custom %s Responses auth header before the native driver adds unwanted Authorization', async format => {
+    const base = materializeInput();
+    const transport = { id: 'custom-header', protocols: ['openai-responses'], uses: ['runtime'],
+      destination: { kind: 'httpHeader', name: 'x-generic-auth', format } } as const;
+    const endpoint = { protocol: 'openai-responses', capabilities: {
+      streaming: 'supported', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown',
+    }, id: 'responses', baseUrl: base.binding.endpoint.normalizedUrl } as const;
+    const resolved = resolveProviderBindingCompatibilityWithFingerprintV1({ agentTargetKey: base.binding.agentTargetKey,
+      agent: PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!, adapterVersion: 1, endpoints: [endpoint],
+      model: base.binding.selection.model, credential: { kind: 'apiKey', slotId: 'apiKey', required: true, transports: [transport] } });
+    expect(resolved.result).toMatchObject({ status: 'incompatible', reasons: ['credential_transport_unavailable'] });
+    await expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({ ...base,
+      binding: { ...base.binding, endpoint: { ...base.binding.endpoint, protocol: 'openai-responses' }, runtimeCredentialTransport: transport },
+      credential: { kind: 'apiKey', transport, value: 'synthetic-key' } })).rejects.toThrow(/Responses.*Authorization/u);
+  });
+
+  it.each(['raw', 'bearer'] as const)('maps non-standard Chat %s headers through an env reference and rejects public-header collisions', async format => {
     const rawHeaderTransport = {
       id: 'runtime-x-api-key',
       protocols: ['openai-chat'],
       uses: ['runtime'],
-      destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+      destination: { kind: 'httpHeader', name: 'x-api-key', format },
     } as const;
     const base = materializeInput();
     const chatBinding = {
@@ -338,7 +373,7 @@ describe('OpenCode provider-binding adapter V1', () => {
     expect(fileConfig(output)).toMatchObject({
       provider: {
         [bindingKey]: {
-          options: { headers: { 'x-api-key': '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}' } },
+          options: { headers: { 'x-api-key': `${format === 'bearer' ? 'Bearer ' : ''}{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}` } },
         },
       },
     });

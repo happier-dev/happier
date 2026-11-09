@@ -203,6 +203,11 @@ describe('Claude unified direct lifecycle mapping (ported R-11 / HF-3)', () => {
       turnId: 'live-api-error-row',
       reason: 'transcript_api_error',
       source: 'transcript',
+      evidence: {
+        type: 'assistant',
+        uuid: 'live-api-error-row',
+        isApiErrorMessage: true,
+      },
     }]);
   });
 });

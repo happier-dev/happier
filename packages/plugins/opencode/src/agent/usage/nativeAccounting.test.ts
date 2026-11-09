@@ -86,7 +86,7 @@ it('retains V2 paid compaction and disjoint reasoning through the shared wire no
       : path === '/api/session' ? { data: [{ id: 'v2-session', time: { updated: 100 } }] }
       : path === '/api/session/v2-session' ? { data: { id: 'v2-session', time: { updated: 100 } } }
       : path === '/api/session/v2-session/message' ? { data: [{ id: 'v2-compaction', type: 'compaction', status: 'completed',
-        model: { providerID: 'p', modelID: 'm' }, time: { created: 200 }, cost: 0.2,
+        model: { providerID: 'p', id: 'm' }, time: { created: 200 }, cost: 0.2,
         tokens: { input: 10, output, reasoning: 2, cache: { read: 3, write: 4 } }, summary: 'PRIVATE' }] } : {};
     if (path.endsWith('/message')) messageReads.push(path);
     const response = new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });

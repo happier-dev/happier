@@ -10,6 +10,7 @@ import type {
 import {
   triageTaskStatusCategoryV1,
   type TriageEntryRefV1,
+  type TriageTaskFieldChoicesV1,
   type TriageTaskFieldV1,
   type TriageTaskFieldsV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -155,6 +156,8 @@ export type TriageTaskPropertyInputV1 = Readonly<{
   assigneeLabel?: string | null;
   /** The person owner's mark for one assignee's shown name, drawn before it (lab t1: the avatar, then "You"). */
   assigneeFace?: (name: string) => ReactNode;
+  /** The source's own directory for these fields: people and labels are picked from it rather than typed. */
+  fieldChoices?: TriageTaskFieldChoicesV1;
   /** The labels' colours, when the source keeps them (personal tasks): chosen in the Labels editor, drawn as each chip's dot. */
   labelTones?: Readonly<{ tones: PropertyNameTones }>;
   commit(fields: TriageTaskFieldsV1): unknown;
@@ -187,6 +190,8 @@ export function projectTriageTaskPropertiesV1(
         const name = input.assigneeLabels?.has(id) ? input.assigneeLabels.get(id) : id;
         return name == null ? [] : [name];
       }) : current;
+      const directory = input.fieldChoices?.[field];
+      const person = field === 'assigneeIds';
       items.push({
         id: field,
         label: label(field),
@@ -194,7 +199,17 @@ export function projectTriageTaskPropertiesV1(
         ...(field === 'assigneeIds' && shown.length === 1 && input.assigneeFace !== undefined
           ? { valueLeading: input.assigneeFace(shown[0]!) } : {}),
         ...busy,
-        editor: {
+        // A label's colour is kept on the name, so personal task labels stay typed names with their colours.
+        editor: directory !== undefined && !(field === 'labelIds' && input.labelTones !== undefined) ? {
+          kind: 'choices',
+          searchable: true,
+          value: current,
+          // A person or label the directory no longer lists can still be removed from this task.
+          choices: [...directory, ...current.filter(id => !directory.some(choice => choice.id === id)).map(id => ({ id, label: id }))]
+            .map(choice => ({ ...choice, ...(person ? { person: choice.label } : {}) })),
+          ...(field === 'labelIds' ? { chips: true } : {}),
+          onCommit: (next) => input.commit({ [field]: [...next] }),
+        } : {
           kind: 'list',
           value: current,
           onCommit: (next) => input.commit({ [field]: [...next] }),

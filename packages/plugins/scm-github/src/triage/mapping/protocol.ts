@@ -299,6 +299,7 @@ export function toTriageGetResult(
   if (observation.kind !== 'present' || projected.kind !== 'present') return projected;
   if (observation.localRef.kindId !== 'pull-request') return { ...projected,
     ...(observation.taskFields === undefined ? {} : { taskFields: observation.taskFields }),
+    ...(observation.taskFieldChoices === undefined ? {} : { taskFieldChoices: observation.taskFieldChoices }),
     ...(observation.detailData === undefined ? {} : { detailData: observation.detailData }) };
   const comparisonSource = buildGithubPullRequestComparisonSourceV1({
     instance,

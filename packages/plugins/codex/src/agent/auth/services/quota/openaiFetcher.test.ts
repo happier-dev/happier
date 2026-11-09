@@ -164,7 +164,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
       source: 'providerHttp',
       confidence: 'confirmed',
       state: 'loaded_data',
-      planLabel: 'pro',
+      planLabel: 'ChatGPT Pro (More)',
       accountLabel: 'user@example.com',
       meters: expect.arrayContaining([
         expect.objectContaining({ meterId: 'session', utilizationPct: 12 }),
@@ -241,7 +241,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     const fetcher = createOpenAiCodexQuotaFetcher();
     const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
 
-    expect(snapshot?.planLabel).toBe('pro');
+    expect(snapshot?.planLabel).toBe('ChatGPT Pro (More)');
     expect(snapshot?.accountSubject).toEqual({ kind: 'providerSubject', id: 'acct' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chatgpt.com/backend-api/wham/usage');
   });
@@ -410,7 +410,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     expect(snapshot).toMatchObject({
       providerId: 'openai-codex',
       recordKey: { providerId: 'openai-codex', accountSubjectId: 'acct' },
-      planLabel: 'pro',
+      planLabel: 'ChatGPT Pro (More)',
       meters: [
         expect.objectContaining({ meterId: 'session' }),
         expect.objectContaining({ meterId: 'weekly' }),
@@ -509,7 +509,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     });
 
     const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
-    expect(snapshot?.planLabel).toBe('pro');
+    expect(snapshot?.planLabel).toBe('ChatGPT Pro (More)');
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chatgpt.com/backend-api/wham/usage');
 
     const init: unknown = fetchMock.mock.calls[0]?.[1];

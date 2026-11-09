@@ -1,14 +1,11 @@
 import type { JsonValue, PluginCancellationOptions, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { ProtocolLaunchProfilePlacementPreferenceV1Schema, ProtocolLaunchProfileCheckoutPreferenceV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageSourceWorkflowSubjectV1, TriageSessionHandoffInputV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageReadActionsResultV1Schema } from '../actions/actionsCatalogProtocol.js';
 import { TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 import { planTriageOfferableActionsV1, planTriageOfferedActionsV1, type TriageActionV1 } from '../settings/actions.js';
 
-import type {
-    TriageActionProfilePreferencesV1,
-    TriageProfileCheckoutPreferenceV1,
-    TriageProfilePlacementPreferenceV1,
-} from './actionLaunch.js';
+import type { TriageActionProfilePreferencesV1 } from './actionLaunch.js';
 import { resolveTriageActionPlacementV1 } from './actionLaunch.js';
 import { readTriageProjectRegistryV1 } from './projectCandidates.js';
 import type { TriageForgeIdentityV1 } from './launchPlacement.js';
@@ -95,30 +92,6 @@ function readNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length === 0 ? null : trimmed;
-}
-
-function readPlacementPreference(value: unknown): TriageProfilePlacementPreferenceV1 | undefined {
-    if (value === 'automatic' || value === 'ask') return value;
-    if (!isRecord(value)) return undefined;
-    const fixed = value.fixed;
-    if (!isRecord(fixed)) return undefined;
-    const serverId = readNonEmptyString(fixed.serverId);
-    const machineId = readNonEmptyString(fixed.machineId);
-    // A pinned placement names a machine. Half of one is not a weaker pin, it
-    // is a target nothing can run on, and admitting it would send a press to a
-    // server with no machine.
-    if (serverId === null || machineId === null) return undefined;
-    const directory = readNonEmptyString(value.directory);
-    return {
-        fixed: { serverId, machineId },
-        ...(directory === null ? {} : { directory }),
-    };
-}
-
-function readCheckoutPreference(value: unknown): TriageProfileCheckoutPreferenceV1 | undefined {
-    return value === 'reuse_workspace' || value === 'create_worktree' || value === 'ask'
-        ? value
-        : undefined;
 }
 
 export type TriageActionProfileReadV1 =
@@ -239,15 +212,15 @@ export async function readTriageActionProfileV1(
             : { status: 'notVisible', profileId, reason: answer.coverage };
     }
 
-    const placement = readPlacementPreference(match.placement);
-    const checkout = readCheckoutPreference(match.checkout);
+    const placement = ProtocolLaunchProfilePlacementPreferenceV1Schema.safeParse(match.placement);
+    const checkout = ProtocolLaunchProfileCheckoutPreferenceV1Schema.safeParse(match.checkout);
     const preferredAgentTargetKey = readNonEmptyString(match.preferredAgentTargetKey);
     return {
         status: 'read',
         profileId,
         preferences: {
-            ...(placement === undefined ? {} : { placement }),
-            ...(checkout === undefined ? {} : { checkout }),
+            ...(placement.success ? { placement: placement.data } : {}),
+            ...(checkout.success ? { checkout: checkout.data } : {}),
         },
         ...(preferredAgentTargetKey === null ? {} : { preferredAgentTargetKey }),
     };

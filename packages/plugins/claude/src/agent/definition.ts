@@ -3,13 +3,16 @@ import type { AgentModelConfig } from '@happier-dev/plugin-sdk/agents';
 import { CLAUDE_AGENT_MODEL_CONFIG } from './models.js';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from './transcripts/internalEventTypes.js';
 import { claudeAuthStateSharingDescriptor } from './auth/services/stateSharing.js';
+import { CLAUDE_CONFIG_DIR_ENV_KEYS, CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY } from './environment.js';
 import { CLAUDE_NATIVE_PERMISSION_MODES } from './permissionModes.js';
 
 const { providerId: _providerId, ...stateSharing } = claudeAuthStateSharingDescriptor;
 export const AGENT_STATE_SHARING_DESCRIPTOR = {
   ...stateSharing,
   nativeHome: {
-    environmentKey: 'CLAUDE_CONFIG_DIR', defaultRelativePath: '.claude',
+    environmentKey: CLAUDE_CONFIG_DIR_ENV_KEYS[0], defaultRelativePath: '.claude',
+    fallbackEnvironmentKeys: CLAUDE_CONFIG_DIR_ENV_KEYS.slice(1),
+    sourceEnvironmentKey: CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY,
     materializedDirectoryName: 'claude-config',
   },
 } as const;

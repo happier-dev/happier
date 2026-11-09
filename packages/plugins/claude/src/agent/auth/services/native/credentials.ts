@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 
 import type {
     OauthCredentialRecord,
@@ -87,7 +87,7 @@ function canonicalizeJsonValue(value: unknown): unknown {
 
 export function computeClaudeCodeCredentialFingerprint(payload: unknown): string {
     const canonical = JSON.stringify(canonicalizeJsonValue(payload));
-    return `sha256:${createHash('sha256').update(canonical).digest('hex')}`;
+    return `sha256:${computeSha256HexDigest(canonical)}`;
 }
 
 export function computeClaudeCodeCredentialAccountProofFingerprint(payload: unknown): string | null {

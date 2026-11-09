@@ -116,19 +116,14 @@ describe('Discord delivery adapter', () => {
   it('returns archive recovery only for Discord’s exact archived-thread evidence', () => {
     const archived = { status: 403, body: { code: 50_083, message: 'Thread is archived' } };
 
-    expect(classifyDiscordDeliveryResponse({ ...archived, canManageThreads: false })).toEqual({
+    expect(classifyDiscordDeliveryResponse({ ...archived })).toEqual({
       kind: 'endpointArchived',
       recovery: 'ownerMustUnarchiveOrRebind',
-    });
-    expect(classifyDiscordDeliveryResponse({ ...archived, canManageThreads: true })).toEqual({
-      kind: 'endpointArchived',
-      recovery: 'unarchiveAndRetry',
     });
 
     expect(classifyDiscordDeliveryResponse({
       status: 403,
       body: { code: 50_013, message: 'Missing Permissions' },
-      canManageThreads: true,
     })).toEqual({
       kind: 'notSent',
       retry: 'never',
@@ -137,7 +132,6 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 403,
       body: { code: 42, message: 'Thread is archived' },
-      canManageThreads: true,
     })).toEqual({
       kind: 'notSent',
       retry: 'never',
@@ -146,7 +140,6 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 429,
       body: { code: 50_083, retry_after: 2.5, message: 'You are being rate limited.' },
-      canManageThreads: true,
     })).toEqual({
       kind: 'notSent',
       retry: 'after',
@@ -156,12 +149,10 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 0,
       body: { code: 50_083, message: 'Thread is archived' },
-      canManageThreads: true,
     })).toEqual({ kind: 'outcomeUnknown' });
     expect(classifyDiscordDeliveryResponse({
       status: 503,
       body: { code: 50_083, message: 'Thread is archived' },
-      canManageThreads: true,
     })).toEqual({ kind: 'outcomeUnknown' });
   });
 
@@ -169,12 +160,10 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 200,
       body: { id: 'message-1', channel_id: 'thread-1' },
-      canManageThreads: false,
     })).toEqual({ kind: 'sent', messageId: 'message-1', channelId: 'thread-1' });
     expect(classifyDiscordDeliveryResponse({
       status: 429,
       body: { retry_after: 2.5, message: 'You are being rate limited.' },
-      canManageThreads: false,
     })).toEqual({
       kind: 'notSent',
       retry: 'after',
@@ -184,7 +173,6 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 429,
       body: { retry_after: 86_401 },
-      canManageThreads: false,
     })).toEqual({
       kind: 'notSent',
       retry: 'after',
@@ -193,7 +181,6 @@ describe('Discord delivery adapter', () => {
     expect(classifyDiscordDeliveryResponse({
       status: 0,
       body: null,
-      canManageThreads: false,
     })).toEqual({ kind: 'outcomeUnknown' });
   });
 });

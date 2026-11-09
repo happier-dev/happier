@@ -1,7 +1,7 @@
 import { expect } from 'vitest';
 import { simpleParser } from 'mailparser';
 import { definePlugin, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import { activate as activateTelegram, PLUGIN_MANIFEST as telegramManifest } from '@happier-dev/plugins-channel-telegram';
 import { activate as activateDiscord, PLUGIN_MANIFEST as discordManifest } from '@happier-dev/plugins-channel-discord';
@@ -41,7 +41,7 @@ async function baselineReset(journey: ChannelsJourney) {
   if (!row) throw new Error('Missing gap connection');
   const revision = record(row.value.payload).configurationRevision;
   if (typeof revision !== 'number') throw new Error('Missing logical connection revision');
-  expect(await journey.invoke('stream/baseline-accept-v1', { connectionId, expectedRevision: revision })).toMatchObject({ kind: 'updated' });
+  expect(await journey.invoke('stream/notice-dismiss-v1', { connectionId, expectedRevision: revision })).toMatchObject({ kind: 'noticeDismissed' });
 }
 
 async function telegramAdapter(): Promise<ProviderConformanceAdapter> {
@@ -52,7 +52,7 @@ async function telegramAdapter(): Promise<ProviderConformanceAdapter> {
   const sent: ProviderConformanceNativeSend[] = [];
   let afterSend: (() => Promise<void>) | undefined;
   let updates: JsonValue[] = [];
-  const http: PluginServices['http'] = { openWebSocket: unusedSocket, async request(request) {
+  const http: PluginServices['http'] = createPluginHttpFixture({ openWebSocket: unusedSocket, async request(request) {
     let result: JsonValue;
     if (request.url.endsWith('/getMe')) result = { id: 123, is_bot: true, first_name: 'Happier', username: 'HappierBot',
       can_read_all_group_messages: true, has_topics_enabled: true };
@@ -72,7 +72,7 @@ async function telegramAdapter(): Promise<ProviderConformanceAdapter> {
       result = { message_id: 100 + sent.length };
     } else throw new Error(`Unexpected Telegram fixture request: ${new URL(request.url).pathname.split('/').at(-1)}`);
     return response({ ok: true, result }, request.url);
-  } };
+  } });
   const connectedAccounts = { async materialize() { return { kind: 'environment', env: { TELEGRAM_BOT_TOKEN: '123:fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
   const provider = await createPluginTestkit({ manifest: telegramManifest, module: { activate: activateTelegram }, services: { http, connectedAccounts },
     resolveCurrentPluginMaterializationRef: () => placement.materializationRef });
@@ -119,7 +119,7 @@ async function discordAdapter(): Promise<ProviderConformanceAdapter> {
   const credentialRef = { service: { pluginId, localId: 'discord-bot' }, accountId: 'fixture' };
   const sent: ProviderConformanceNativeSend[] = [];
   let afterSend: (() => Promise<void>) | undefined;
-  const http: PluginServices['http'] = { openWebSocket: unusedSocket, async request(request) {
+  const http: PluginServices['http'] = createPluginHttpFixture({ openWebSocket: unusedSocket, async request(request) {
     const path = new URL(request.url).pathname;
     if (path.endsWith('/users/@me')) return response({ id: 'bot-1', username: 'Happier', bot: true }, request.url);
     if (path.endsWith('/oauth2/applications/@me')) return response({ id: 'app-1', name: 'Happier' }, request.url);
@@ -134,7 +134,7 @@ async function discordAdapter(): Promise<ProviderConformanceAdapter> {
       return response({ id: `accepted-${sent.length}`, channel_id: 'thread-1' }, request.url);
     }
     throw new Error(`Unexpected Discord fixture request: ${path}`);
-  } };
+  } });
   const connectedAccounts = { async materialize() { return { kind: 'environment', env: { DISCORD_BOT_TOKEN: 'fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
   const provider = await createPluginTestkit({ manifest: discordManifest, module: { activate: activateDiscord }, services: { http, connectedAccounts },
     resolveCurrentPluginMaterializationRef: () => placement.materializationRef });
@@ -170,7 +170,7 @@ async function discordAdapter(): Promise<ProviderConformanceAdapter> {
         context: { botUserId: 'bot-1', applicationId: 'app-1', botRoleIds: [], messageContentIntentEnabled: true } });
       const normalized = mapDiscordMessageToSocketIngress({ parsed });
       if (!normalized) throw new Error('Expected native Discord observation');
-      await journey.ingest({ connectionId, entry: { observation: normalized, eventCandidate: null } });
+      await journey.ingest({ connectionId, authorityEpoch: 1, entry: { observation: normalized, eventCandidate: null } });
     },
     async gap(journey) {
       const fact = session.onFrame({ op: 9, d: false }, Date.now()).find(effect => effect.kind === 'historyGap');
@@ -191,6 +191,7 @@ async function emailAdapter(): Promise<ProviderConformanceAdapter> {
   let replyText = '';
   let refs: string[] = [];
   let generation = 1;
+  let activeJourney: ChannelsJourney;
   const ops = emailProtocol.operations;
   const transportDefinition = definePlugin({ id: 'example.conformance-mail', version: '0.0.0', actions: {
     list: { title: 'List mail', surfaces: ops.listSince.declaration.surfaces, dangerLevel: ops.listSince.declaration.dangerLevel, inputSchema: ops.listSince.declaration.input.schema.jsonSchema,
@@ -228,8 +229,14 @@ async function emailAdapter(): Promise<ProviderConformanceAdapter> {
   provider = await createPluginTestkit({ manifest: emailPlugin.manifest, targetedContributionContributors: [transport],
     resolveCurrentPluginMaterializationRef: () => placement.materializationRef,
     module: { activate(api) { return emailPlugin.activate({ ...api, actions: { ...api.actions,
-      register: (id, run) => api.actions.register(id, (input: Parameters<typeof run>[0], context) => run(input, { ...context,
-        services: { ...context.services, targetedContributions: channelsOperationOnlyTargetedContributionsFixture(provider, emailPlugin.contributionPoints.transports) } })),
+      register: (id, run) => api.actions.register(id, (input: Parameters<typeof run>[0], context) => {
+        // Host dispatch is substituted; the registered core reader and schemas stay real.
+        const executeCore = async (action: { pluginId: string; localId: string }, value: unknown) =>
+          activeJourney.executeProviderCoreAction(action, value, context);
+        return run(input, { ...context, services: { ...context.services,
+          actions: { ...context.services.actions, execute: executeCore as PluginServices['actions']['execute'] },
+          targetedContributions: channelsOperationOnlyTargetedContributionsFixture(provider, emailPlugin.contributionPoints.transports) } });
+      }),
     } }); } } });
   const config = { mailbox, transport: { pluginId: transportDefinition.manifest.id, contributionId: 'fixture' }, transportConfig: {},
     trustStrategy: { kind: 'authenticationResults', authservId: 'mx.example.com' }, quotedHistory: 'never', stripSignatures: false, bodyFormat: 'text' };
@@ -240,7 +247,7 @@ async function emailAdapter(): Promise<ProviderConformanceAdapter> {
   return { provider, connection: { ...base, payload }, origin: () => placement,
     endpoint: { kind: 'thread', audience: 'direct', id: '<root@example.com>', parentId: mailbox }, parent: { kind: 'direct', audience: 'direct', id: mailbox },
     allowedPrincipals: [human, 'bot@example.com', mailbox], sent, expectedAddress: { from: mailbox, to: [human] },
-    messageId: id => `<message-${id}@example.com>`, expectedText: text => `${text}\n\n> ${replyText}`, baseline: async journey => { await journey.poll(); },
+    messageId: id => `<message-${id}@example.com>`, expectedText: text => `${text}\n\n> ${replyText}`, baseline: async journey => { activeJourney = journey; await journey.poll(); },
     async receive(journey, message) {
       replyText = message.text;
       const id = `<message-${message.id}@example.com>`;

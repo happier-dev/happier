@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Tutto il resto",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Deploy",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Ambienti",
+  "plugins.triage.surface.actions.subject.workflowRun": "Esecuzioni dei flussi di lavoro",
+  "plugins.triage.surface.actions.investigateRun": "Analizza questa esecuzione",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Nessuna copia di lavoro",
   "plugins.triage.surface.actions.workspace.repository": "Il progetto che scelgo",
   "plugins.triage.surface.actions.workspace.pullRequest": "Un worktree di revisione preparato",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Collegale alle sessioni, bloccale su una pull request, dividile in sotto-attività.",
   "plugins.triage.tasks.firstRun.trackers.title": "Porta attività da un tracker",
   "plugins.triage.tasks.firstRun.trackers.description": "Restano nel loro tracker. Happier le legge e le modifica lì.",
-  "plugins.triage.tasks.firstRun.trust": "I tracker vengono letti in tempo reale sulla macchina che scegli. Le loro attività non vengono mai copiate nel tuo account."
+  "plugins.triage.tasks.firstRun.trust": "I tracker vengono letti in tempo reale sulla macchina che scegli. Le loro attività non vengono mai copiate nel tuo account.",
+  "plugins.triage.surface.sources.permanent": "Riprovare non risolverà il problema. In Dettagli c’è ciò che serve all’assistenza.",
+  "plugins.triage.surface.sources.supportCode": "Per l’assistenza",
+  "plugins.triage.surface.failure.unreachableSuffix": "non è raggiungibile"
 }

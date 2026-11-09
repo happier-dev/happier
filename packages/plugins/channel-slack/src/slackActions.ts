@@ -67,12 +67,13 @@ async function exactApi(context: PluginInvocationContext, credentialRef: Connect
   const credentials = await materializeExactSlackCredentials(context, credentialRef);
   return 'kind' in credentials ? credentials : createSlackApi({ credentials, http: context.services.http });
 }
-async function readyConnection(context: PluginInvocationContext, input: ConnectionInput) {
+async function readyConnection(context: PluginInvocationContext, input: ConnectionInput, verifyIdentity = false) {
   const config = readSlackConnectionConfiguration(input);
   if ('kind' in config) return config;
   if (!input.credentialRef) return invalidConfiguration();
   const api = await exactApi(context, input.credentialRef);
   if ('kind' in api) return api;
+  if (!verifyIdentity) return { api, identity: config };
   const identity = await api.getIdentity({ signal: context.signal });
   context.signal.throwIfAborted();
   if ('kind' in identity) return identity;
@@ -129,7 +130,7 @@ export async function testSlackConnection(input: unknown, context: PluginInvocat
   assertCore(context);
   const request = ConversationConnectionTestInputV1Schema.parse(input);
   if (request.selectedTransport !== 'socket') return { kind: 'notReady', reason: 'unsupported' };
-  const ready = await readyConnection(context, request);
+  const ready = await readyConnection(context, request, true);
   if ('kind' in ready) return ready;
   const failure = await verifySlackSocketIdentity({ api: ready.api, identity: ready.identity, webSockets: context.services.http, signal: context.signal });
   context.signal.throwIfAborted();

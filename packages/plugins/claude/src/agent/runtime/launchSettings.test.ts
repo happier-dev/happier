@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,116 @@ import {
 } from './launchSettings.js';
 
 describe('resolveClaudeNativeLaunchSettings', () => {
+  it('reads explicit settings files relative to the actual child working directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-relative-settings-'));
+    try {
+      await writeFile(join(root, 'relative-settings.json'), JSON.stringify({ theme: 'session-file' }));
+      const args = resolveClaudeLaunchSettingsOverlayArgs({
+        args: ['--settings', 'relative-settings.json'], cwd: root,
+        interactionKind: 'interactive_terminal', permissionMode: null, launchSettings: {},
+      });
+      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}').theme).toBe('session-file');
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('keeps an explicit settings file as a file when no launch overlay is required', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-settings-noop-'));
+    try {
+      const path = join(root, 'settings.json');
+      await writeFile(path, JSON.stringify({ env: { PRIVATE_FILE_VALUE: 'file-only' } }));
+      expect(resolveClaudeLaunchSettingsOverlayArgs({
+        args: ['--settings', path], interactionKind: 'noninteractive_sdk', permissionMode: null, launchSettings: {},
+      })).toEqual(['--settings', path]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('rejects malformed explicit user settings instead of silently replacing them', () => {
+    expect(() => resolveClaudeLaunchSettingsOverlayArgs({
+      args: ['--settings', '{broken'], interactionKind: 'interactive_terminal',
+      permissionMode: 'default', launchSettings: {},
+    })).toThrow('Unable to read Claude launch settings');
+  });
+
+  it.each([{ rawDays: 1, sameHome: false, expected: 365 }, { rawDays: 1000, sameHome: false, expected: 1000 }, { rawDays: 1, sameHome: true, expected: 1 }])('respects the actual raw retention choice $rawDays (same home=$sameHome)', async ({ rawDays, sameHome, expected }) => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-raw-retention-'));
+    const native = join(root, 'native'); const active = sameHome ? native : join(root, 'account');
+    try {
+      await mkdir(join(native, 'projects'), { recursive: true });
+      await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+      if (!sameHome) {
+        await mkdir(active);
+        await symlink(join(native, 'projects'), join(active, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
+        await writeFile(join(active, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+      }
+      const args = resolveClaudeLaunchSettingsOverlayArgs({ args: ['--settings', JSON.stringify({ cleanupPeriodDays: rawDays })],
+        interactionKind: 'noninteractive_sdk', permissionMode: 'default', launchSettings: {},
+        launchEnv: { CLAUDE_CONFIG_DIR: active, HAPPIER_CLAUDE_NATIVE_CONFIG_DIR: native } });
+      expect(JSON.parse(args[args.indexOf('--settings') + 1]).cleanupPeriodDays).toBe(expected);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    { nativeDays: 365, activeDays: undefined, shared: true, invalid: false, expected: 365 },
+    { nativeDays: 365, activeDays: 7, shared: true, invalid: false, expected: 365 },
+    { nativeDays: 7, activeDays: undefined, shared: true, invalid: false, expected: undefined },
+    { nativeDays: 7, activeDays: 1, shared: true, invalid: false, expected: 7 },
+    { nativeDays: 7, activeDays: 365, shared: true, invalid: false, expected: undefined },
+    { nativeDays: undefined, activeDays: 7, shared: true, invalid: false, expected: undefined },
+    { nativeDays: undefined, activeDays: undefined, shared: true, invalid: false, expected: undefined },
+    { nativeDays: 365, activeDays: 7, shared: false, invalid: false, expected: undefined },
+    { nativeDays: 365, activeDays: undefined, shared: true, invalid: true, expected: undefined },
+  ])('protects only an explicitly longer native period ($nativeDays/$activeDays shared=$shared invalid=$invalid)', async ({ nativeDays, activeDays, shared, invalid, expected }) => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-shared-retention-'));
+    const native = join(root, 'custom-native');
+    const active = join(root, 'connected');
+    try {
+      await mkdir(join(native, 'projects'), { recursive: true });
+      await mkdir(active);
+      if (shared) await symlink(join(native, 'projects'), join(active, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
+      else await mkdir(join(active, 'projects'));
+      if (nativeDays !== undefined) await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: nativeDays }));
+      if (invalid || activeDays !== undefined) await writeFile(join(active, 'settings.json'), invalid ? '{broken' : JSON.stringify({ cleanupPeriodDays: activeDays }));
+      for (const interactionKind of ['interactive_terminal', 'noninteractive_sdk'] as const) {
+        const userSettings = { env: { KEEP: 'yes' } };
+        const args = resolveClaudeLaunchSettingsOverlayArgs({
+          args: ['--settings', JSON.stringify(userSettings)], interactionKind,
+          permissionMode: 'default', launchSettings: {},
+          launchEnv: { CLAUDE_CONFIG_DIR: active, HAPPIER_CLAUDE_NATIVE_CONFIG_DIR: native },
+        });
+        expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+        const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+        expect(settings.cleanupPeriodDays).toBe(expected);
+        expect(settings.env).toEqual(userSettings.env);
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['interactive_terminal', 'noninteractive_sdk'] as const)(
+    'merges the pool waiting preference into one launch overlay for %s without changing native launches',
+    (interactionKind) => {
+      for (const serviceId of ['happier.agent.claude/claude-subscription', 'happier.agent.claude/anthropic']) {
+        for (const preference of [undefined, false, true]) {
+          const args = resolveClaudeLaunchSettingsOverlayArgs({
+            args: ['--settings', JSON.stringify({ env: { KEEP: 'yes' } })], interactionKind,
+            permissionMode: 'default', launchSettings: { ultracode: true },
+            launchEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+              kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'first', fallbackProfileId: 'first',
+              generation: 1, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+              policy: preference === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: preference },
+            }]) },
+          });
+          expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+          expect(JSON.parse(args[args.indexOf('--settings') + 1])).toMatchObject({
+            autoContinueAtUsageLimit: preference === true, ultracode: true, env: { KEEP: 'yes' },
+          });
+        }
+      }
+      const nativeArgs = resolveClaudeLaunchSettingsOverlayArgs({ args: [], interactionKind,
+        permissionMode: 'default', launchSettings: {}, launchEnv: {} });
+      const nativeSettings = nativeArgs.includes('--settings') ? JSON.parse(nativeArgs[nativeArgs.indexOf('--settings') + 1]) : {};
+      expect(nativeSettings).not.toHaveProperty('autoContinueAtUsageLimit');
+    },
+  );
   it.each(['inline', 'equals', 'file'] as const)('maps the resolved idle preference through one %s settings overlay', async (form) => {
     const directory = await mkdtemp(join(tmpdir(), 'claude-idle-settings-'));
     const settingsPath = join(directory, 'settings.json');

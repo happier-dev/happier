@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { getConversationAttachmentIdRepresentationsV1, readConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 import { simpleParser } from 'mailparser';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { EMAIL_CHANNEL_ACTION_IDS as ids } from './constants.js';
 import { ConversationAttachmentFetchResultV1Schema, ConversationPollResultV1Schema,
   MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
@@ -10,6 +11,36 @@ import { ConversationAttachmentFetchResultV1Schema, ConversationPollResultV1Sche
 import { createEmailTransportFixture as fixture, mailbox, incoming, config, connection, thread, delivery } from '../testkit/emailTransportFixture.js';
 
 describe('email core with an external contributed raw transport', () => {
+  it('shapes a retained-thread replay from current bindings without reverse host reads', async () => {
+    const f = await fixture();
+    try {
+      f.setMessages([['retained-message', Buffer.from([
+        'From: alice@example.com', `To: ${mailbox}`, 'Message-ID: <retained@example.com>', `References: ${thread.id}`,
+        'Authentication-Results: mx.example.com; dmarc=pass header.from=example.com',
+        'Content-Type: text/plain; charset=utf-8', '', 'NEW', 'On Monday, Alice wrote:', '> HISTORY',
+      ].join('\r\n'))]]);
+      const result = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, {
+        ...connection, checkpoint: { position: 0 }, limit: 10, waitMs: 0, bindings: [{ endpoint: thread }],
+      }));
+      if (result.kind !== 'batch') throw new Error('Expected a retained-thread Email batch.');
+      const entry = result.observations[0];
+      if (entry?.observation.kind !== 'fullText') throw new Error('Expected retained Email text.');
+      expect(entry.observation.observation.message.text).toContain('NEW');
+      expect(entry.observation.observation.message.text).not.toContain('HISTORY');
+      expect(entry.observation.observation.actor).toMatchObject({ kind: 'human', principalId: 'alice@example.com' });
+      expect(result.checkpointAfterBatch).toEqual({ position: 1 });
+      expect(f.connectionReadRequests).toHaveLength(0);
+    } finally { await f.dispose(); }
+  });
+
+  it('rethrows generation retirement during reply preparation without submitting', async () => {
+    const f = await fixture();
+    try {
+      f.setFetchFailure(new PluginError({ code: 'plugin_final_generation_retired', message: 'Retired fixture generation' }));
+      await expect(f.invoke(ids.messageDeliver, delivery)).rejects.toMatchObject({ code: 'plugin_final_generation_retired' });
+      expect(f.submissions).toHaveLength(0);
+    } finally { await f.dispose(); }
+  });
   it('keeps parser-rejected content terminal while advancing the successful batch', async () => {
     const f = await fixture();
     try {
@@ -69,13 +100,14 @@ describe('email core with an external contributed raw transport', () => {
       name: file.filename!, mediaType: file.contentType, byteLength: file.content.byteLength,
     }));
     expect(retained.map(file => file.attachmentId)).toEqual(['mime:3']);
-    const f = await fixture();
+    const retainedConfig = { ...config, mailbox: 'wilson@test.local', allowedDomains: ['test.local'],
+      trustStrategy: { kind: 'authenticationResults', authservId: 'mx.seed1.test.local' } };
+    const f = await fixture({ providerConfig: retainedConfig });
     try {
       f.setMessages([['retained-seed1', raw]]);
       const polled = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, {
         ...connection, providerConnectionKey: 'email:wilson@test.local',
-        providerConfig: { ...config, mailbox: 'wilson@test.local', allowedDomains: ['test.local'],
-          trustStrategy: { kind: 'authenticationResults', authservId: 'mx.seed1.test.local' } },
+        providerConfig: retainedConfig,
         checkpoint: null, limit: 10, waitMs: 0,
       }));
       if (polled.kind !== 'batch' || polled.observations[0]?.observation.kind !== 'fullText') throw new Error('Expected retained email');
@@ -99,8 +131,7 @@ describe('email core with an external contributed raw transport', () => {
       f.addMessage(messageId, raw);
       const fetched = ConversationAttachmentFetchResultV1Schema.parse(await f.invoke(ids.attachmentFetch, {
         ...connection, providerConnectionKey: 'email:wilson@test.local',
-        providerConfig: { ...config, mailbox: 'wilson@test.local', allowedDomains: ['test.local'],
-          trustStrategy: { kind: 'authenticationResults', authservId: 'mx.seed1.test.local' } },
+        providerConfig: retainedConfig,
         messageId, attachmentIds: message.attachments!.map(file => file.attachmentId),
       }));
       if (fetched.kind !== 'fetched') throw new Error('Expected both retained attachments');
@@ -108,22 +139,24 @@ describe('email core with an external contributed raw transport', () => {
     } finally { await f.dispose(); }
   });
 
-  it.each([false, true])('keeps immutable occurrence times across later polls (Date header: %s)', async withDate => {
-    const f = await fixture();
-    try {
-      const dated = Buffer.from([...(withDate ? ['Date: Mon, 12 Oct 2026 07:00:00 +0000'] : []), incoming.toString()].join('\r\n'));
-      f.setMessages([['opaque-incoming', dated]]);
-      const poll = { ...connection, checkpoint: { position: 0 }, limit: 10, waitMs: 0 };
-      f.setInvocationTime(1_792_100_000_000);
-      const first = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, poll));
-      f.setInvocationTime(1_792_100_100_000);
-      const replay = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, poll));
-      expect(replay).toEqual(first);
-      if (first.kind !== 'batch' || first.observations[0]?.observation.kind !== 'fullText') throw new Error('Expected a full email observation');
-      const expected = withDate ? Date.parse('2026-10-12T07:00:00Z') : f.receivedAtMs;
-      expect(first.observations[0].observation.observation).toMatchObject({ occurredAt: expected, message: { providerTimestamp: expected } });
-    } finally { await f.dispose(); }
-  });
+  it.each([null, 'Mon, 12 Oct 2020 07:00:00 +0000', 'Mon, 12 Oct 2032 07:00:00 +0000'])(
+    'uses immutable receipt time for admission while preserving authored Date (%s)', async authoredDate => {
+      const f = await fixture();
+      try {
+        const dated = Buffer.from([...(authoredDate === null ? [] : [`Date: ${authoredDate}`]), incoming.toString()].join('\r\n'));
+        f.setMessages([['opaque-incoming', dated]]);
+        const poll = { ...connection, checkpoint: { position: 0 }, limit: 10, waitMs: 0 };
+        f.setInvocationTime(1_792_100_000_000);
+        const first = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, poll));
+        f.setInvocationTime(1_792_100_100_000);
+        const replay = ConversationPollResultV1Schema.parse(await f.invoke(ids.observationsPoll, poll));
+        expect(replay).toEqual(first);
+        if (first.kind !== 'batch' || first.observations[0]?.observation.kind !== 'fullText') throw new Error('Expected a full email observation');
+        expect(first.observations[0].observation.observation).toMatchObject({ occurredAt: f.receivedAtMs,
+          message: { providerTimestamp: authoredDate === null ? f.receivedAtMs : Date.parse(authoredDate) } });
+      } finally { await f.dispose(); }
+    },
+  );
   it('authenticates the selected contributed mailbox during setup without inventing an outbound cap', async () => {
     const f = await fixture();
     try {
@@ -196,7 +229,7 @@ describe('email core with an external contributed raw transport', () => {
       const html = `<h1>${'a'.repeat(120_000)}</h1>`;
       const start = { ...connection, endpoint: { kind: 'direct', audience: 'direct', id: mailbox },
         content: { text: 'Brief', html }, deliveryKey: 'fixture-start',
-        newThread: { recipients: resolved.candidates.map(principal => principal.id), subject: 'Brief' }, linkPreviewPolicy: 'providerDefault' };
+        newThread: { recipients: resolved.candidates.map(principal => principal.id), subject: 'Brief' },  linkPreviewPolicy: 'providerDefault' };
       await expect(f.invoke(ids.messageDeliver, start)).resolves.toMatchObject({ kind: 'outcomeUnknown' });
       const [messageId, raw] = [...f.sent.entries()][0]!;
       expect((await simpleParser(Buffer.from(raw))).html).toBe(html);

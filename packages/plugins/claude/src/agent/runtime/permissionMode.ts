@@ -10,6 +10,15 @@ export type ClaudePermissionModeInput = Readonly<{
 
 type PermissionIntent = NonNullable<ReturnType<typeof parsePermissionIntentAlias>>;
 
+/** Preserve live SDK mode switching without making ordinary root launches fail. */
+export function shouldAllowClaudePermissionBypass(env: Readonly<Record<string, string | undefined>>): boolean {
+    // Claude checks capability enablement too. Honor only existing child sandbox assertions.
+    return process.platform === 'win32'
+        || process.getuid?.() !== 0
+        || env.IS_SANDBOX === '1'
+        || env.CLAUDE_CODE_BUBBLEWRAP === '1';
+}
+
 export function mapToClaudePermissionMode(mode: string | null | undefined): ClaudeProviderPermissionMode {
     const mapping: Readonly<Record<string, ClaudeProviderPermissionMode>> = CLAUDE_NATIVE_PERMISSION_MODES;
     return typeof mode === 'string' && Object.hasOwn(mapping, mode) ? mapping[mode] : 'default';

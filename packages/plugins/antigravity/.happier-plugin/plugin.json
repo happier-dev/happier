@@ -83,6 +83,9 @@
           "acpRegistryIds": [
             "antigravity-acp"
           ],
+          "agentCliSystemTool": {
+            "toolId": "antigravity-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -257,10 +260,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -268,6 +272,10 @@
     "connectedAccountDescriptors": [
       {
         "authentication": {
+          "account": {
+            "artifactId": "connected-account-authentication",
+            "exportName": "activate"
+          },
           "defaultModeId": "oauth-personal",
           "modes": [
             {
@@ -285,6 +293,7 @@
               "title": "Sign in with Google"
             },
             {
+              "credentialOrigin": "native_import",
               "fields": [
                 {
                   "default": "acp",
@@ -322,6 +331,14 @@
               "id": "native-import",
               "kind": "manual",
               "outcomeReconciliation": "none",
+              "setup": {
+                "checklist": [
+                  "Sign in to Antigravity on the computer you will import from.",
+                  "Choose the matching native login source and that computer in Happier."
+                ],
+                "createKeyTitle": "Read Antigravity sign-in instructions",
+                "url": "https://antigravity.google/docs/cli/install/"
+              },
               "title": "Import native login"
             }
           ]
@@ -440,6 +457,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -450,7 +468,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -466,9 +483,6 @@
     "workflows": []
   },
   "displayName": "Antigravity",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

@@ -1,6 +1,5 @@
 import { redactBugReportSensitiveText, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import { parseProviderResetAt } from '@happier-dev/plugin-sdk/connected-accounts';
-import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { classifyProviderLimitEvidence, parseProviderResetAt } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { AgentAcpExtensionContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const GROK_PROMPT_COMPLETE_METHODS = Object.freeze([

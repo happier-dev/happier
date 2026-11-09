@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { ConversationPairingCreateResultV1Schema, ConversationPairingResourceV1Schema, type ConversationBindingTargetV1 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -96,11 +97,11 @@ function accountStorageFor(collection: unknown): PluginAccountStorageScope {
 }
 
 function resourceOptions(accountStorage: PluginAccountStorageScope) {
-  return {
+  return createTestResourceInvocationContext({
     signal: new AbortController().signal,
     context: { kind: 'global' as const },
     accountStorage,
-  };
+  });
 }
 
 function addConnection(collection: MemoryAccountCollection, connectionId: string): void {
@@ -132,7 +133,7 @@ describe('Channels pairing Resource', () => {
     const pairing = createManager();
     const proofEndpoint = { kind: 'thread', audience: 'shared', id: 'topic-a', parentId: 'forum-a', label: 'Proof topic' } as const;
     const challenge = pairing.createChallenge({
-      connectionId: 'connection-a', expectedConnectionRevision: 1, pairingRequestId: 'shared-request',
+      connectionId: 'connection-a',  expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'shared-request',
       executionOrigin: getPluginMachineExecutionRouting(authority.transportOrigin), destinationLabel: 'Forum',
       endpoint: { kind: 'shared', audience: 'shared', id: 'forum-a', label: 'Forum' },
       proofEndpoint, target,
@@ -167,8 +168,8 @@ describe('Channels pairing Resource', () => {
     const pairing = createManager();
     const challengeA = pairing.createChallenge({
       connectionId: 'connection-a',
-      expectedConnectionRevision: 1,
-      pairingRequestId: 'pairing-request-a',
+
+      expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-a',
       executionOrigin: getPluginMachineExecutionRouting(authority.transportOrigin),
       destinationLabel: 'Account A bot',
       endpoint,
@@ -176,8 +177,8 @@ describe('Channels pairing Resource', () => {
     });
     pairing.createChallenge({
       connectionId: 'connection-b',
-      expectedConnectionRevision: 1,
-      pairingRequestId: 'pairing-request-b',
+
+      expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-b',
       executionOrigin: getPluginMachineExecutionRouting(authority.transportOrigin),
       destinationLabel: 'Account B bot',
       endpoint,
@@ -223,7 +224,7 @@ describe('Channels pairing Resource', () => {
     expect(projectionB).not.toContain('Ada');
   });
 
-  it('invalidates on the manager or current Account connection index and disposes both observations', () => {
+  it('invalidates on the manager or current Account connection index and disposes both observations', async () => {
     let connectionListener: (() => void) | undefined;
     const connectionDispose = vi.fn(() => { connectionListener = undefined; });
     const collection = {
@@ -236,11 +237,11 @@ describe('Channels pairing Resource', () => {
     const resource = createConversationPairingResourceRuntime(pairing);
     const invalidate = vi.fn();
 
-    const observation = resource.observe(invalidate, resourceOptions(accountStorageFor(collection)));
+    const observation = await resource.observe(invalidate, resourceOptions(accountStorageFor(collection)));
     pairing.createChallenge({
       connectionId: 'connection-a',
-      expectedConnectionRevision: 1,
-      pairingRequestId: 'pairing-request-a',
+
+      expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-a',
       executionOrigin: getPluginMachineExecutionRouting(authority.transportOrigin),
       destinationLabel: 'Account A bot',
       endpoint,
@@ -255,12 +256,12 @@ describe('Channels pairing Resource', () => {
       order: 'asc',
     }, expect.any(Function));
 
-    observation.dispose();
+    await observation.dispose();
     connectionListener?.();
     pairing.createChallenge({
       connectionId: 'connection-b',
-      expectedConnectionRevision: 1,
-      pairingRequestId: 'pairing-request-b',
+
+      expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-b',
       executionOrigin: getPluginMachineExecutionRouting(authority.transportOrigin),
       destinationLabel: 'Account B bot',
       endpoint,

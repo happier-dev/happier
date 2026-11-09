@@ -1,0 +1,25 @@
+  Three product questions for you
+
+  1. A preceding response contains numbered product questions.
+     Its first question wraps onto another line.
+  2. The next question also wraps across terminal rows.
+     This text belongs to the transcript, not the active chooser.
+  3. The final numbered question remains visible above the usage-limit panel.
+     Its continuation does not start with a number.
+
+✻ Waiting for 1 background agent to finish
+
+● Background agent failed: You've hit your weekly limit · resets
+Nov 8, 4pm (Europe/Amsterdam) (error type rate_limit, HTTP 429)
+  ⎿  You've hit your weekly limit · resets Nov 8, 4pm (Europe/Amsterdam)
+
+✻ Done · 9 shells still running
+Background task update waiting while this panel is open
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?
+
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at Nov 8, 4pm
+     3. Switch to usage credits
+
+   Enter to confirm · Esc to cancel

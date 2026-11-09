@@ -23,7 +23,7 @@ export function GithubEntryPropertyPicker(props: Readonly<{
     // A person no longer assignable to this repository can still be removed from this entry.
     return [...names, ...(current?.filter(member => !names.includes(member)) ?? [])]
       .map(member => ({ id: member, label: member,
-        ...(property === 'assignees' ? { subtitle: text('plugins.github.ui.parity.user', 'GitHub user') } : {}) }));
+        ...(property === 'assignees' ? { person: member, subtitle: text('plugins.github.ui.parity.user', 'GitHub user') } : {}) }));
   }, [current, directory, property, text]);
   if (current === undefined) return null;
   const label = property === 'assignees'
@@ -39,6 +39,7 @@ export function GithubEntryPropertyPicker(props: Readonly<{
       ...(choices === undefined || props.disabledReason !== null ? {} : { editor: {
         kind: 'choices' as const,
         searchable: true,
+        ...(property === 'labels' ? { chips: true } : {}),
         value: current,
         choices,
         onCommit: async (next: readonly string[]) => {

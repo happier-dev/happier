@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Account del bot Telegram",
   "channels.telegram.remediation.credential.description": "Scegli l’account connesso esistente del bot Telegram; i token del bot non vengono mai inseriti qui.",
   "channels.telegram.automation.setup.title": "Scegli una chat Telegram da osservare",
-  "channels.telegram.automation.setup.description": "Scegli il bot Telegram e la chat i cui messaggi devono avviare questa automazione.",
+  "channels.telegram.automation.setup.description": "Scegli il bot Telegram e la chat i cui messaggi devono avviare questo flusso di lavoro.",
   "channels.telegram.automation.setup.submit": "Usa questa chat",
   "channels.telegram.automation.setup.credential": "Account del bot Telegram",
   "channels.telegram.automation.setup.chat": "ID della chat",

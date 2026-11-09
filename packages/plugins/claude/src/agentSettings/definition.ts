@@ -1,4 +1,9 @@
 import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
+import {
+  CLAUDE_SESSION_RETENTION_SETTING_ID,
+  claudeSessionRetentionSettingJsonSchema,
+  type ClaudeSessionRetentionPolicyV1,
+} from '@happier-dev/protocol/agents/claude/session-retention';
 
 import {
   CLAUDE_SETTING_SOURCES_V2,
@@ -97,6 +102,17 @@ function option(
 }
 
 const CLAUDE_AGENT_SETTINGS_FIELDS = [
+  {
+    id: CLAUDE_SESSION_RETENTION_SETTING_ID,
+    title: fieldTitle(CLAUDE_SESSION_RETENTION_SETTING_ID, 'Local session retention'),
+    description: fieldDescription(
+      CLAUDE_SESSION_RETENTION_SETTING_ID,
+      'Set how long Claude keeps local session transcripts on your machines.',
+    ),
+    schema: claudeSessionRetentionSettingJsonSchema(),
+    default: null,
+    presentation: { control: 'json', hidden: true },
+  },
   {
     id: 'claudeDynamicModelProbeEnabled',
     title: fieldTitle('claudeDynamicModelProbeEnabled', 'Discover models dynamically'),
@@ -571,7 +587,7 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
   },
 } satisfies PluginSettingsContribution;
 
-type ClaudeSettingsDefaults = {
+type ClaudeSettingsDefaults = Record<typeof CLAUDE_SESSION_RETENTION_SETTING_ID, ClaudeSessionRetentionPolicyV1 | null> & {
   claudeDynamicModelProbeEnabled: boolean;
   claudeRemoteAgentSdkEnabled: boolean;
   claudeCodeExperimentalAgentTeamsEnabled: boolean;

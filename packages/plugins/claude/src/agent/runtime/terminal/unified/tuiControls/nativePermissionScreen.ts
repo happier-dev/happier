@@ -3,6 +3,8 @@ import { readClaudeNativeDialogScreenLines } from './nativeScreenCapture.js';
 export type ClaudeNativePermissionPresentation = Readonly<{
     kind: 'tool' | 'plan';
     context: string;
+    /** Native text below the command block, when its closing rule is visible. */
+    explanation?: string;
     options: readonly Readonly<{ label: string; focused: boolean }>[];
     amended: boolean;
     feedback?: Readonly<{ optionIndex: number; placeholder: string; text: string }>;
@@ -16,9 +18,14 @@ function lastLineIndex(lines: readonly string[], pattern: RegExp): number {
 }
 
 const PLAN_QUESTION = 'Claude has written up a plan and is ready to execute. Would you like to proceed?';
-const NATIVE_PERMISSION_HEADER = /^\s*(?:Bash command|Create file)\s*$/u;
+const READ_OUTSIDE_CHOICES = [
+    'Yes, and keep allowing any reads outside the working directories',
+    'No, and block reads outside the working directories from now on',
+    'No, and ask again next time',
+    'Yes, but ask again next time',
+];
 
-/** Native permission UI, characterized with Bash and Write on Claude Code 2.1.304. */
+/** Native permission UI, characterized with Bash/Write on Claude 2.1.304 and Read on 2.1.310. */
 export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePermissionPresentation | null {
     const lines = readClaudeNativeDialogScreenLines(text);
     const planFooter = lastLineIndex(lines, /^\s*ctrl\+g to edit in .+ ·(?: .*)?\s*$/u);
@@ -82,17 +89,29 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
         }
     }
     if (options.length < 2 || options.filter((option) => option.focused).length !== 1) return null;
-    if (options[options.length - 1]?.label !== 'No' || new Set(options.map((option) => option.label)).size !== options.length) return null;
+    if (new Set(options.map((option) => option.label)).size !== options.length) return null;
     const start = lastLineIndex(lines.slice(0, question), /^\s*[─━]{2,}\s*$/u);
     const context = lines.slice(start + 1, question + 1).map((line) => line.trimEnd()).join('\n').trim();
-    // Remembered/automatic scopes hide the unavailable amendment affordance while focused.
-    // The shorter footer needs the observed native tool header as additional provenance.
+    const commandEnd = lastLineIndex(lines.slice(start + 1, question), /^\s*╌{2,}\s*$/u);
+    const explanation = commandEnd >= 0
+        ? lines.slice(start + commandEnd + 2, question + 1).map((line) => line.trimEnd()).join('\n').trim()
+        : undefined;
+    const readOutside = lines[question]!.trim() === 'Allow this read outside the working directories?';
+    // Auto-mode read scopes are not ordered as Yes ... No. Recognize the native labels
+    // exactly: Tab can amend either approval row, which must remain terminal-owned.
+    if (readOutside) {
+        if (options.length !== READ_OUTSIDE_CHOICES.length
+            || options.some((option, index) => option.label !== READ_OUTSIDE_CHOICES[index])) return null;
+    } else if (options[options.length - 1]?.label !== 'No') return null;
+    // Scope focus hides the amendment hint, and a long preview can push the heading
+    // off-screen. Recognize the complete question/choices/footer independently of it.
     if (!lines[footer]!.includes('Tab to amend')
-        && (!context.split('\n').some((line) => NATIVE_PERMISSION_HEADER.test(line)) || !/^Yes\b/u.test(options[0]!.label))) return null;
+        && !/^Yes\b/u.test(options[0]!.label)) return null;
     return {
         kind: 'tool',
         context,
+        ...(explanation ? { explanation } : {}),
         options,
-        amended: options[0]?.label !== 'Yes',
+        amended: !readOutside && options[0]?.label !== 'Yes',
     };
 }

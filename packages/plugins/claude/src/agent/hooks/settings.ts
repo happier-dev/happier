@@ -53,6 +53,8 @@ export type ClaudeHookPluginManifest = Readonly<{
 }>;
 
 export type BuildClaudeHookPluginHooksParams = Readonly<{
+    /** SDK lifecycle hooks use stdio after startup; SessionStart precedes initialization. */
+    transport?: 'sdk' | 'terminal';
     port: number;
     platform?: NodeJS.Platform;
     nodeExecutable: string;
@@ -87,6 +89,14 @@ const CLAUDE_SESSION_HOOK_EVENTS: readonly ClaudeSessionHookEventName[] = [
     'SubagentStop',
 ];
 
+export const CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID = 'happier-session-hook';
+
+export function buildClaudeSdkSessionHooks(): Readonly<Record<string, readonly Readonly<{ hookCallbackIds: readonly string[] }>[]>> {
+    return Object.fromEntries(CLAUDE_SESSION_HOOK_EVENTS.filter(eventName => eventName !== 'SessionStart').map(eventName => [eventName, [{
+        hookCallbackIds: [CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID],
+    }]]));
+}
+
 export function buildClaudeHookSettingsOverlay(): ClaudeHookSettingsOverlay {
     return {
         permissions: {
@@ -112,7 +122,9 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
             : {}),
         env: process.env,
     });
-    for (const eventName of CLAUDE_SESSION_HOOK_EVENTS) {
+    // Claude emits startup before the initialize request can register SDK callbacks.
+    // Keep this fact on the authenticated command carrier, with no duplicate SDK owner.
+    for (const eventName of params.transport === 'sdk' ? ['SessionStart'] as const : CLAUDE_SESSION_HOOK_EVENTS) {
         hooks[eventName] = [buildCommandHook({
             command: buildForwarderCommand({
                 platform: params.platform,

@@ -1,7 +1,11 @@
 import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 import type { ClaudeSettingSourceV2 } from '@happier-dev/protocol/agents/claude/settings-policy';
 import type { AgentLaunchEnvironment, AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionOpenRequest, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS } from '@happier-dev/protocol/agents/claude/session-retention';
+import { readClaudeCleanupPeriodDays } from '../settings/sessionRetention.js';
+import { CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY, resolveClaudeConfigDir } from '../environment.js';
 import {
   isSessionPermissionShellToolName,
   matchSessionPermissionToolIdentifier,
@@ -15,6 +19,7 @@ import {
 } from '../../protocol/remoteSettings.js';
 import { buildClaudeHookSettingsOverlay } from '../hooks/settings.js';
 import { CLAUDE_PROVIDER_HELPER_ENV_KEYS } from '../providerBinding/adapter.js';
+import { readClaudePoolNativeWaitingPreferenceFromEnv } from '../auth/services/runtime/env.js';
 
 export type ClaudeHelperModelEnv = Readonly<Partial<Record<typeof CLAUDE_PROVIDER_HELPER_ENV_KEYS[number], string>>>;
 
@@ -96,11 +101,52 @@ export function resolveClaudeExternalSandboxEnv(
     : {};
 }
 
+function readHomeCleanupPeriodDays(home: string): Readonly<{ days: number | undefined }> | null {
+  try {
+    const settings: unknown = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8'));
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null;
+    const raw = (settings as Record<string, unknown>).cleanupPeriodDays;
+    const days = readClaudeCleanupPeriodDays(raw);
+    return raw !== undefined && days === undefined ? null : { days };
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { days: undefined } : null;
+  }
+}
+
+function resolveSharedNativeTranscriptRetention(
+  env: Readonly<Record<string, string | undefined>> | undefined,
+  proposedDays: number | undefined,
+): number | undefined {
+  const nativeHome = env?.[CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY]?.trim();
+  if (!nativeHome || !env) return undefined;
+  const activeHome = resolveClaudeConfigDir(env);
+  try {
+    if (realpathSync(activeHome) === realpathSync(nativeHome)) return undefined;
+    if (realpathSync(join(activeHome, 'projects')) !== realpathSync(join(nativeHome, 'projects'))) return undefined;
+  } catch {
+    // Without a proven shared store, the active home's retention remains authoritative.
+    return undefined;
+  }
+  try {
+    if (realpathSync(join(activeHome, 'settings.json')) === realpathSync(join(nativeHome, 'settings.json'))) return undefined;
+  } catch {
+    // Missing settings files still represent separate user settings sources.
+  }
+  const native = readHomeCleanupPeriodDays(nativeHome);
+  const active = readHomeCleanupPeriodDays(activeHome);
+  if (!native || !active) return undefined;
+  const nativeDays = native.days;
+  return nativeDays !== undefined && nativeDays > (proposedDays ?? active.days ?? CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS)
+    ? nativeDays : undefined;
+}
+
 export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   args: readonly string[];
+  cwd?: string;
   interactionKind: 'interactive_terminal' | 'noninteractive_sdk';
   permissionMode: string | null;
   launchSettings: Readonly<Record<string, unknown>>;
+  launchEnv?: Readonly<Record<string, string | undefined>>;
   idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
   helperModelEnv?: ClaudeHelperModelEnv;
   skillOverrides?: Readonly<Record<string, 'off'>>;
@@ -108,10 +154,9 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   workspaceWrites?: 'allow' | 'deny';
 }> & ClaudeNativeToolPolicy): readonly string[] {
   const args = resolveClaudeNativeToolPolicyArgs(input.args, input);
+  const poolNativeWaiting = readClaudePoolNativeWaitingPreferenceFromEnv(input.launchEnv);
   const mcpPolicies = Object.entries(input.mcpToolPolicy ?? {}).filter(([server]) => server !== 'happier');
-  if (input.interactionKind !== 'interactive_terminal' && input.workspaceWrites !== 'deny'
-    && input.helperModelEnv === undefined && input.unlistedTools !== 'deny'
-    && Object.keys(input.skillOverrides ?? {}).length === 0 && mcpPolicies.length === 0) return args;
+
 
   // Claude treats bypass selection and acknowledgement as distinct inputs. Happier's YOLO mode
   // is the user's explicit choice, so acknowledge it only in the trusted command-line settings
@@ -119,6 +164,7 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
   // protocols where Claude's ordinary permission/question handling remains authoritative.
   const launchSettings: Record<string, unknown> = {
     ...input.launchSettings,
+    ...(poolNativeWaiting === undefined ? {} : { autoContinueAtUsageLimit: poolNativeWaiting }),
     ...(input.interactionKind === 'interactive_terminal' && input.idleCompaction
       ? { idleCompaction: input.idleCompaction.enabled } : {}),
     ...(input.unlistedTools !== 'deny' && input.interactionKind === 'interactive_terminal' && input.permissionMode === 'bypassPermissions'
@@ -158,17 +204,30 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
       }
     } catch {
       try {
-        const fromFile = JSON.parse(readFileSync(existingSettingsValue, 'utf8')) as unknown;
-        if (fromFile && typeof fromFile === 'object' && !Array.isArray(fromFile)) {
-          baseSettings = fromFile as Record<string, unknown>;
+        const fromFile = JSON.parse(readFileSync(resolve(input.cwd ?? '.', existingSettingsValue), 'utf8')) as unknown;
+        if (!fromFile || typeof fromFile !== 'object' || Array.isArray(fromFile)) {
+          throw new Error('Invalid Claude settings document');
         }
+        baseSettings = fromFile as Record<string, unknown>;
       } catch {
-        // A broken prior settings source cannot carry the required per-launch acknowledgement.
+        throw new Error('Unable to read Claude launch settings');
       }
     }
   }
 
   const mergedSettings: Record<string, unknown> = { ...baseSettings, ...launchSettings };
+  const sharedNativeRetention = resolveSharedNativeTranscriptRetention(
+    input.launchEnv, readClaudeCleanupPeriodDays(mergedSettings.cleanupPeriodDays),
+  );
+  if (input.interactionKind !== 'interactive_terminal' && input.workspaceWrites !== 'deny'
+    && input.helperModelEnv === undefined && input.unlistedTools !== 'deny'
+    && Object.keys(input.skillOverrides ?? {}).length === 0 && mcpPolicies.length === 0
+    && poolNativeWaiting === undefined && sharedNativeRetention === undefined) {
+    if (existingSettingsValue === null) return args;
+    argsWithoutSettings.splice(firstSettingsIndex ?? argsWithoutSettings.length, 0, '--settings', existingSettingsValue);
+    return argsWithoutSettings;
+  }
+  if (sharedNativeRetention !== undefined) mergedSettings.cleanupPeriodDays = sharedNativeRetention;
   const readSkillOverrides = (value: unknown): Record<string, unknown> =>
     value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   if (baseSettings.skillOverrides !== undefined || launchSettings.skillOverrides !== undefined || Object.keys(input.skillOverrides ?? {}).length > 0) {

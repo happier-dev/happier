@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Anotació",
+  "plugins.appContext.annotation.note": "La teva nota",
+  "plugins.appContext.annotation.save": "Desa la nota",
+  "plugins.appContext.annotation.saved": "Nota desada",
+  "plugins.appContext.annotation.refused": "Ara no es pot desar aquesta nota; es conserva aquí. Si estàs editant un missatge pendent, acaba primer.",
+  "plugins.appContext.annotation.unavailable": "Aquesta anotació no està disponible."
+}

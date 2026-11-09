@@ -1,4 +1,3 @@
-import { readAgentStartupFailureDetails, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   type AgentExecutionRunConversationRuntimeV1,
   type AgentExecutionRunConversationSendOptionsV1,
@@ -15,9 +14,10 @@ import type {
   AgentSessionRealtimeConversation,
   AgentSessionRealtimeRuntime as ExperimentalAgentSessionRealtimeRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { JsonValue, PluginDiagnosticData, LoggerService } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type { LoggerService } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { AGENT_DEFINITION } from '../../definition.js';
+import { AGENT_DEFINITION, CODEX_NATIVE_SESSION_MEDIA_CAPABILITIES } from '../../definition.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
 import {
@@ -45,12 +45,14 @@ import {
 import {
   isCodexAppServerRejectedStartModelEntitlementError,
   readCodexAppServerStartRejection,
-  createCodexAppServerTurnFailure,
   readCodexAppServerFailureCause,
   readCodexAppServerFailureCode,
   readCodexAppServerRuntimeIssueSource,
   readCodexAppServerPrimaryFailure,
   readCodexAppServerStartupFailure,
+  readCodexAppServerToolRestrictionFailureCode,
+  createCodexAppServerTurnFailure,
+  isCodexAppServerPreTurnFailure,
   sanitizeCodexAppServerRuntimeAuthClassification,
 } from './turns/failure.js';
 import { parseCodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
@@ -66,6 +68,7 @@ import {
   createCodexSharedAppServer,
 } from './sharedServer.js';
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
+import { readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, listCodexAppServerMcpServerNames } from './config/overrides.js';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
@@ -232,6 +235,7 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
           disableUserMcpServers: clientRequest.disableUserMcpServers,
           toolRestrictionRequired: clientRequest.toolRestrictionRequired,
           toolRestrictionAllowedMcpServerKeys: clientRequest.toolRestrictionAllowedMcpServerKeys,
+          nativeHome: clientRequest.nativeHome,
           signal: params.context.signal,
           ...(params.appServerTransport === 'daemonProxy'
             ? { transport: { kind: 'daemonProxy' as const } }
@@ -334,6 +338,7 @@ export function createCodexNativeAppServerExecutionRunRuntimeHost(params: Readon
           disableUserMcpServers: clientRequest.disableUserMcpServers,
           toolRestrictionRequired: clientRequest.toolRestrictionRequired,
           toolRestrictionAllowedMcpServerKeys: clientRequest.toolRestrictionAllowedMcpServerKeys,
+          nativeHome: clientRequest.nativeHome,
           signal: params.context.signal,
         }),
     dispose: async () => {
@@ -374,12 +379,7 @@ function readBoundedRuntimeAuthDiagnosticDetails(
 function createSanitizedNativeStartupError(error: unknown, phase: 'client_start' | 'thread_open'): Error {
   const startupCause = readCodexAppServerPrimaryFailure(error);
   const failure = createCodexAppServerTurnFailure({ value: startupCause, phase });
-  const toolRestrictionCode = error instanceof PluginError && (
-    error.code === 'codex_tool_restriction_unsupported_runtime'
-    || error.code === 'codex_tool_restriction_unsupported_model'
-    || error.code === 'codex_tool_restriction_unsupported_auth'
-    || error.code === 'codex_tool_restriction_catalog_unavailable'
-  ) ? error.code : null;
+  const toolRestrictionCode = readCodexAppServerToolRestrictionFailureCode(failure);
   if (toolRestrictionCode) {
     // These are closed eligibility reasons authored by this adapter. Do not
     // carry native messages, config, process output or arbitrary error details.
@@ -487,6 +487,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         kind: 'turn-progress',
         turnId: event.turnId,
         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+        ...(event.retry ? { retry: event.retry } : {}),
       };
     case 'turn-agent-id-observed':
       return { kind: 'turn-agent-id-observed', turnId: event.turnId, agentTurnId: event.agentTurnId };
@@ -508,8 +509,8 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
           event.issue.code,
           event.issue.sanitizedPreview ?? event.issue.code,
           { v: 1, source: event.issue.source,
-            ...(event.issue.failureCause ? { failureCause: event.issue.failureCause } : {}),
             ...(event.providerError ? { providerError: event.providerError } : {}),
+            ...(event.issue.failureCause ? { failureCause: event.issue.failureCause } : {}),
             ...(event.runtimeAuthClassification ? { runtimeAuthClassification: toJsonValue(event.runtimeAuthClassification) } : {}) },
         ),
       };
@@ -613,13 +614,6 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
         retryable: false,
         ...(event.reason ? { diagnostic: diagnostic('codex_runtime_ended', event.reason) } : {}),
       };
-    case 'backend-error':
-      return {
-        kind: 'runtime-ended',
-        cause: 'protocolError',
-        retryable: false,
-        diagnostic: diagnostic(event.error.code ?? 'codex_backend_error', event.error.message),
-      };
     default:
       return null;
   }
@@ -656,6 +650,7 @@ export function createCodexNativeAppServerSessionRuntime(
     ) as AgentSessionRuntime,
     runtimeCapabilities: {
       sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
+      backend: { session: { media: CODEX_NATIVE_SESSION_MEDIA_CAPABILITIES } },
     },
   };
 }
@@ -826,6 +821,17 @@ function createCodexNativeAppServerConversationRuntime(
           );
           emit({ kind: 'input-rejected', inputIds: request.inputIds, retryable: false, diagnostic: failure });
           return { status: 'rejected', retryable: false, diagnostic: failure };
+        }
+        const preparationIssue = isCodexAppServerPreTurnFailure(error)
+          ? sanitizeSessionRuntimeIssueV1((error as Error & { runtimeIssueV1?: unknown }).runtimeIssueV1) : null;
+        if (request.delivery.kind === 'newTurn' && admissionFailure === null && onlyAttemptedLifecycle && preparationIssue) {
+          const failure = diagnostic(preparationIssue.code, preparationIssue.sanitizedPreview ?? preparationIssue.code,
+            { v: 1, source: preparationIssue.source,
+              ...(preparationIssue.failureCause ? { failureCause: preparationIssue.failureCause } : {}),
+              ...readBoundedRuntimeAuthDiagnosticDetails(error) });
+          const retryable = isCodexAppServerPreTurnFailure(error) && error.retryable;
+          emit({ kind: 'input-rejected', inputIds: request.inputIds, retryable, diagnostic: failure });
+          return { status: 'rejected', retryable, diagnostic: failure };
         }
         const failure = diagnostic(
           'codex_send_outcome_unknown',
@@ -1104,6 +1110,7 @@ export async function openCodexNativeAppServerSession(
     }),
     directory: request.cwd,
     happierSessionId: request.sessionId,
+    ...(context.session.executionRunId !== undefined ? { executionRunId: context.session.executionRunId } : {}),
     initialProviderSessionId: providerSessionId,
     appServerEndpoint: sharedAppServer?.endpoint,
     appServerTransport,

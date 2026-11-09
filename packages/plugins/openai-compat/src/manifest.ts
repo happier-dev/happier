@@ -23,9 +23,19 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: {
     daemon: './.happier-plugin/daemon.js',
     development: './src/index.ts',
@@ -33,90 +43,18 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   hostAccess: { required: [], optional: [] },
   ui: {
       translations: [
-        {
-          locale: 'en',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'Audio for transcription is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Reply text for speech synthesis is sent from the selected execution machine to the OpenAI-compatible endpoint you configure. The endpoint operator may retain received data according to its own terms.',
-          },
-        },
-        {
-          locale: 'ru',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'Аудио для распознавания речи отправляется с выбранной машины выполнения на настроенную вами OpenAI-совместимую конечную точку. Оператор конечной точки может хранить полученные данные в соответствии со своими условиями.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Текст ответа для синтеза речи отправляется с выбранной машины выполнения на настроенную вами OpenAI-совместимую конечную точку. Оператор конечной точки может хранить полученные данные в соответствии со своими условиями.',
-          },
-        },
-        {
-          locale: 'pl',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'Dźwięk do transkrypcji jest wysyłany z wybranej maszyny wykonawczej do skonfigurowanego punktu końcowego zgodnego z OpenAI. Operator punktu końcowego może przechowywać otrzymane dane zgodnie z własnymi warunkami.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Tekst odpowiedzi do syntezy mowy jest wysyłany z wybranej maszyny wykonawczej do skonfigurowanego punktu końcowego zgodnego z OpenAI. Operator punktu końcowego może przechowywać otrzymane dane zgodnie z własnymi warunkami.',
-          },
-        },
-        {
-          locale: 'es',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'El audio para la transcripción se envía desde la máquina de ejecución seleccionada al punto de conexión compatible con OpenAI que configures. Su operador puede conservar los datos recibidos según sus propias condiciones.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'El texto de la respuesta para la síntesis de voz se envía desde la máquina de ejecución seleccionada al punto de conexión compatible con OpenAI que configures. Su operador puede conservar los datos recibidos según sus propias condiciones.',
-          },
-        },
-        {
-          locale: 'fr',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'L’audio destiné à la transcription est envoyé depuis la machine d’exécution sélectionnée vers le point de terminaison compatible OpenAI que tu configures. Son opérateur peut conserver les données reçues selon ses propres conditions.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Le texte de la réponse destiné à la synthèse vocale est envoyé depuis la machine d’exécution sélectionnée vers le point de terminaison compatible OpenAI que tu configures. Son opérateur peut conserver les données reçues selon ses propres conditions.',
-          },
-        },
-        {
-          locale: 'it',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'L’audio per la trascrizione viene inviato dalla macchina di esecuzione selezionata all’endpoint compatibile con OpenAI configurato. Il gestore dell’endpoint può conservare i dati ricevuti secondo le proprie condizioni.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Il testo della risposta per la sintesi vocale viene inviato dalla macchina di esecuzione selezionata all’endpoint compatibile con OpenAI configurato. Il gestore dell’endpoint può conservare i dati ricevuti secondo le proprie condizioni.',
-          },
-        },
-        {
-          locale: 'pt',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'O áudio para transcrição é enviado da máquina de execução selecionada para o endpoint compatível com OpenAI que configurar. O operador do endpoint pode conservar os dados recebidos de acordo com os respetivos termos.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'O texto da resposta para síntese de voz é enviado da máquina de execução selecionada para o endpoint compatível com OpenAI que configurar. O operador do endpoint pode conservar os dados recebidos de acordo com os respetivos termos.',
-          },
-        },
-        {
-          locale: 'de',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'Audio für die Transkription wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Antworttext für die Sprachsynthese wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren.',
-          },
-        },
-        {
-          locale: 'ca',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'L’àudio per a la transcripció s’envia des de la màquina d’execució seleccionada al punt final compatible amb OpenAI que configuris. L’operador del punt final pot conservar les dades rebudes segons les seves condicions.',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'El text de la resposta per a la síntesi de veu s’envia des de la màquina d’execució seleccionada al punt final compatible amb OpenAI que configuris. L’operador del punt final pot conservar les dades rebudes segons les seves condicions.',
-          },
-        },
-        {
-          locale: 'zh-Hans',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': '用于转录的音频会从所选执行计算机发送到您配置的 OpenAI 兼容端点。端点运营商可能会根据其自身条款保留收到的数据。',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': '用于语音合成的回复文本会从所选执行计算机发送到您配置的 OpenAI 兼容端点。端点运营商可能会根据其自身条款保留收到的数据。',
-          },
-        },
-        {
-          locale: 'zh-Hant',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': '用於轉錄的音訊會從所選執行電腦傳送至您設定的 OpenAI 相容端點。端點營運商可能會依其自身條款保留收到的資料。',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': '用於語音合成的回覆文字會從所選執行電腦傳送至您設定的 OpenAI 相容端點。端點營運商可能會依其自身條款保留收到的資料。',
-          },
-        },
-        {
-          locale: 'ja',
-          messages: {
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': '文字起こし用の音声は、選択した実行マシンから設定済みの OpenAI 互換エンドポイントへ送信されます。エンドポイントの運営者は、独自の規約に従って受信データを保持する場合があります。',
-            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': '音声合成用の応答テキストは、選択した実行マシンから設定済みの OpenAI 互換エンドポイントへ送信されます。エンドポイントの運営者は、独自の規約に従って受信データを保持する場合があります。',
-          },
-        },
+        { locale: "en", resourceId: "i18n-en" },
+        { locale: "ru", resourceId: "i18n-ru" },
+        { locale: "pl", resourceId: "i18n-pl" },
+        { locale: "es", resourceId: "i18n-es" },
+        { locale: "fr", resourceId: "i18n-fr" },
+        { locale: "it", resourceId: "i18n-it" },
+        { locale: "pt", resourceId: "i18n-pt" },
+        { locale: "de", resourceId: "i18n-de" },
+        { locale: "ca", resourceId: "i18n-ca" },
+        { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+        { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+        { locale: "ja", resourceId: "i18n-ja" },
       ],
   },
   voiceProviders: {

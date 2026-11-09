@@ -31,11 +31,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
 
-const {
-  CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
-  readCodexSessionTitleFromRollout,
-  readCodexRolloutHead,
-} = await import('./rolloutTitle.js');
+const { readCodexRolloutHead } = await import('./rolloutTitle.js');
 
 function recordFileReads(): () => number {
   fileReads.bytes = 0;
@@ -69,10 +65,6 @@ function opaqueRecord(bytes: number): string {
   return `${JSON.stringify({ type: 'world_state', payload: { blob: 'w'.repeat(bytes) } })}\n`;
 }
 
-function padded(prefix: string, bytes: number): string {
-  return `${prefix} ${'x'.repeat(Math.max(0, bytes - prefix.length - 1))}`;
-}
-
 async function writeRollout(name: string, records: readonly string[]): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'happier-codex-rollout-title-'));
   const filePath = join(root, `${name}.jsonl`);
@@ -86,8 +78,8 @@ describe('Codex rollout title reader', () => {
     try {
       const filePath = join(root, 'rollout.jsonl');
       await writeFile(filePath, JSON.stringify({ type: 'session_meta', payload: { id: 'large-record', cwd: '/repo', thread_source: 'guardian_review' } }) + '\n'
-        + opaqueRecord(8192));
-      const head = await readCodexRolloutHead(filePath, {}, { maxConsideredBytes: 1024, maxConsideredItems: 64, maxTraversedBytes: 4096 });
+        + opaqueRecord(2 * 1024 * 1024));
+      const head = await readCodexRolloutHead(filePath, {});
       expect(head).toMatchObject({ title: null, cwd: '/repo' });
       expect(head.thread).toMatchObject({ kind: 'reviewer' });
     } finally {
@@ -100,7 +92,7 @@ describe('Codex rollout title reader', () => {
       JSON.stringify({ type: 'session_meta', payload: { id: 'native-prompt', cwd: '/repo/happier' } }) + '\n',
       messageRecord('user', `${buildHappierBaseSystemPromptV1()}\n\nStabilise CI on the release branch`),
     ]);
-    expect(await readCodexRolloutHead(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET)).toMatchObject({
+    expect(await readCodexRolloutHead(filePath, {})).toMatchObject({
       title: 'Stabilise CI on the release branch', cwd: '/repo/happier',
     });
   });
@@ -110,7 +102,7 @@ describe('Codex rollout title reader', () => {
       messageRecord('assistant', 'On it.'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBe('Fix the Codex candidate title reader');
   });
 
@@ -121,8 +113,26 @@ describe('Codex rollout title reader', () => {
       messageRecord('assistant', 'A later assistant fallback.'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBe('Explicit title from the session tool');
+  });
+
+  it.each([
+    ['a large opening message', [messageRecord('user', 'Opening prompt '.repeat(12 * 1024))]],
+    ['many opening messages', Array.from({ length: 2000 }, () => messageRecord('user', 'Opening prompt'))],
+  ] as const)('finds an explicit title inside the same head after %s', async (_name, openingRecords) => {
+    const filePath = await writeRollout('explicit-title-within-head', [
+      ...openingRecords,
+      titleToolRecord('Explicit title within the title head'),
+      opaqueRecord(2 * 1024 * 1024),
+    ]);
+
+    const stopRecording = recordFileReads();
+    const head = await readCodexRolloutHead(filePath, {});
+    const bytesRead = stopRecording();
+
+    expect(head.title).toBe('Explicit title within the title head');
+    expect(bytesRead).toBeLessThanOrEqual(512 * 1024);
   });
 
   it('keeps the earliest append-stable explicit title event', async () => {
@@ -132,7 +142,7 @@ describe('Codex rollout title reader', () => {
       titleToolRecord('Later mutable rename'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBe('First explicit title');
   });
 
@@ -141,7 +151,7 @@ describe('Codex rollout title reader', () => {
       messageRecord('assistant', 'Assistant-authored summary is mutable output.'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBeNull();
   });
 
@@ -151,23 +161,25 @@ describe('Codex rollout title reader', () => {
       messageRecord('user', '<environment_context>cwd=/tmp</environment_context>'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBeNull();
   });
 
-  it('finds the title past an oversized boilerplate preamble that outweighs the considered-byte budget', async () => {
+  it('finds the title past a large boilerplate preamble within the same head', async () => {
     // The shape a session started through this harness actually has: a handful
     // of very large records the reader rejects anyway, and the real title
     // sitting past the point where charging those records would have stopped it.
+    const hostPrompt = buildHappierBaseSystemPromptV1();
+    const repeatedHostPrompt = Array.from({ length: Math.ceil(90 * 1024 / Buffer.byteLength(hostPrompt)) }, () => hostPrompt).join('\n\n');
     const filePath = await writeRollout('oversized-preamble', [
-      messageRecord('user', padded('# Session title\n\nAt the start of the session, call the change_title tool.', 90 * 1024)),
+      messageRecord('user', repeatedHostPrompt),
       opaqueRecord(90 * 1024),
-      messageRecord('user', padded('<environment_context>', 90 * 1024)),
+      messageRecord('user', `<environment_context>${'x'.repeat(90 * 1024)}`),
       messageRecord('user', 'Fix the Codex candidate title reader'),
       messageRecord('assistant', 'On it.'),
     ]);
 
-    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+    expect((await readCodexRolloutHead(filePath, {})).title)
       .toBe('Fix the Codex candidate title reader');
   });
 
@@ -179,7 +191,7 @@ describe('Codex rollout title reader', () => {
     ]);
 
     const stopRecording = recordFileReads();
-    const title = await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET);
+    const { title } = await readCodexRolloutHead(filePath, {});
     const bytesRead = stopRecording();
 
     expect(title).toBeNull();

@@ -25,6 +25,7 @@ import {
   type OpenCodeExternalSessionSource,
 } from './client.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../systemTool.js';
+import { toNativeResponse } from '../../../runtime/server/transport.js';
 
 export const OPENCODE_EXTERNAL_SESSIONS_SERVICE_ID = 'opencode-external-sessions-server';
 
@@ -155,11 +156,7 @@ export async function resolveOpenCodeExternalSessionsDialect(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
       });
       if (!response.ok) return false;
-      const body = await new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      }).json().catch(() => null);
+      const body = await toNativeResponse(response).json().catch(() => null);
       return pathAndQuery === '/api/info'
         ? readsOpenCodeV2ServerInfo(body)
         : readsOpenCodeHealthyMarker(body);

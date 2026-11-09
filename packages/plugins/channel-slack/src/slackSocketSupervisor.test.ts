@@ -14,33 +14,44 @@ const snapshot = ConversationProviderConnectionReconciliationSnapshotV1Schema.pa
   providerConfig: { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' }, credentialRef,
   authorityEpoch: 7, enabled: true, deletionState: 'none', requiresFullSharedMessageContent: false });
 
-function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; disconnect?: boolean; failFacts?: boolean; retryAfterSeconds?: number }> = {}) {
+function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; disconnect?: 'refresh_requested' | 'unexpected'; failFacts?: boolean; retryAfterSeconds?: number }> = {}) {
   const supervisor = createSlackSocketSupervisor();
   const controller = new AbortController();
   const frames: unknown[] = [{ type: 'hello', connection_info: { app_id: 'A1' } }, {
     type: 'events_api', envelope_id: 'envelope-1', payload: { type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: 'Ev1',
       event: { type: 'message', channel: 'C1', user: 'U2', text: 'hello', ts: '1700000000.000001' } },
-  }, ...(input.disconnect ? [{ type: 'disconnect', reason: 'refresh_requested' }] : [])];
-  let close!: () => void;
-  const closed = new Promise<Readonly<{ kind: 'local'; wasClean: true }>>(resolve => { close = () => resolve({ kind: 'local', wasClean: true }); });
-  const socket: PluginWebSocketConnection = { url: 'wss://wss-primary.slack.com/link', protocol: '', closed,
-    async send() {},
-    async receive(options) {
-      options?.signal?.throwIfAborted();
-      const frame = frames.shift();
-      if (frame) return { kind: 'text', text: JSON.stringify(frame) };
-      const value = await closed;
-      return { kind: 'closed', close: value };
-    },
-    close,
-    dispose() { close(); },
+  }, ...(input.disconnect ? [{ type: 'disconnect', reason: input.disconnect }] : [])];
+  const openSocket = (initialFrames: readonly unknown[]): PluginWebSocketConnection => {
+    const queue = [...initialFrames];
+    let close!: () => void;
+    let closedOnce = false;
+    const closed = new Promise<Readonly<{ kind: 'local'; wasClean: true }>>(resolve => { close = () => {
+      if (closedOnce) return;
+      closedOnce = true;
+      socketsClosed += 1;
+      resolve({ kind: 'local', wasClean: true });
+    }; });
+    return { url: 'wss://wss-primary.slack.com/link', protocol: '', closed,
+      async send() {},
+      async receive(options) {
+        options?.signal?.throwIfAborted();
+        const frame = queue.shift();
+        if (frame) return { kind: 'text', text: JSON.stringify(frame) };
+        const value = await closed;
+        return { kind: 'closed', close: value };
+      },
+      close,
+      dispose() { close(); },
+    };
   };
   const admissions: unknown[] = [];
   const facts: ReturnType<typeof ConversationTransportFactReportInputV1Schema.parse>[] = [];
   let reads = 0;
   let lists = 0;
   let socketsOpened = 0;
-  let listed = !input.empty;
+  let socketsClosed = 0;
+  const listed = !input.empty;
+  let current = snapshot;
   const unavailable = { list: false, read: input.unreadable ?? false };
   let rateLimitedOnce = input.retryAfterSeconds !== undefined;
   let resyncCredentials = () => {};
@@ -62,18 +73,17 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
     if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
       lists += 1;
       if (unavailable.list) throw new Error('Account is unavailable');
-      return listed ? { [snapshot.connectionId]: snapshot } : {};
+      return listed ? { [current.connectionId]: current } : {};
     }
     if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead) {
       reads += 1;
-      return unavailable.read || !listed ? {} : { [snapshot.connectionId]: snapshot };
+      return unavailable.read || !listed ? {} : { [current.connectionId]: current };
     }
     if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.observationIngest) { admissions.push(ConversationProviderObservationIngestInputV1Schema.parse(value)); return; }
     if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
       const report = ConversationTransportFactReportInputV1Schema.parse(value);
       if (input.failFacts && report.fact.kind === 'historyGap') throw new Error('Account is unavailable');
       facts.push(report);
-      if (facts.at(-1)?.fact.kind === 'historyGap') listed = false; // The core owns whether history loss remains eligible.
       return { kind: 'recorded' };
     }
     throw new Error(`Unexpected Action ${action.localId}`);
@@ -84,7 +94,7 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
     actions: { execute },
     connectedAccounts: { async materialize() { return { kind: 'environment', env: { SLACK_BOT_TOKEN: 'xoxb-test', SLACK_APP_TOKEN: 'xapp-test' } }; },
       watch(_purpose: string, listener: () => void) { resyncCredentials = listener; return { dispose() {} }; } },
-    http: { async openWebSocket() { socketsOpened += 1; return socket; }, async request({ url }: Readonly<{ url: string }>) {
+    http: { async openWebSocket() { socketsOpened += 1; return openSocket(socketsOpened === 1 ? frames : [{ type: 'hello', connection_info: { app_id: 'A1' } }]); }, async request({ url }: Readonly<{ url: string }>) {
       if (rateLimitedOnce && url.includes('auth.test')) {
         rateLimitedOnce = false;
         return { status: 429, finalUrl: url, headers: { 'retry-after': String(input.retryAfterSeconds) },
@@ -101,16 +111,49 @@ function harness(input: Readonly<{ empty?: boolean; unreadable?: boolean; discon
   background = { plugin: { id: 'happier.channel.slack', version: '0.0.0' }, contribution: { id: SLACK_SOCKET_BACKGROUND_SERVICE_ID,
     qualifiedId: `happier.channel.slack/backgroundServices/${SLACK_SOCKET_BACKGROUND_SERVICE_ID}` },
     surface: 'background', invokedAtMs: 1700000000000, signal: controller.signal, services };
-  const stopContext: PluginInvocationContext = { ...background, surface: 'plugin', caller: { kind: 'plugin', pluginId: 'happier.channels',
-    occurrenceId: 'channels-generation-1', sourceCustody: { kind: 'managed', immutableGenerationId: 'channels-generation-1', installSource: 'npm' },
-    contribution: { id: 'connection-stop-v1', qualifiedId: 'happier.channels/actions/connection-stop-v1' },
-    materialization: { machineId: 'machine-1', materializationId: 'core-materialization', pluginId: 'happier.channels' } } };
-  return { supervisor, background, stopContext, admissions, facts, controller, unavailable,
+  return { supervisor, background, admissions, facts, controller, unavailable,
+    setSnapshot(value: typeof snapshot) { current = value; },
     resyncCredentials: () => resyncCredentials(),
-    get lists() { return lists; }, get reads() { return reads; }, get socketsOpened() { return socketsOpened; } };
+    get lists() { return lists; }, get reads() { return reads; }, get socketsOpened() { return socketsOpened; },
+    get socketsClosed() { return socketsClosed; } };
 }
 
 describe('Slack socket supervisor through real target worker Action', () => {
+  it('keeps the socket for generation-only changes and replaces it for a credential change', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const running = h.supervisor.run(h.background);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.socketsOpened).toBe(1);
+      h.setSnapshot({ ...snapshot, authorityEpoch: 8, requiresFullSharedMessageContent: true,
+        providerConfig: { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Updated display label' } });
+      h.supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.socketsOpened).toBe(1);
+      h.setSnapshot({ ...snapshot, authorityEpoch: 9, credentialRef: { ...credentialRef, accountId: 'replacement' } });
+      h.supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.socketsOpened).toBe(2);
+    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
+  });
+
+  it.each(['list', 'read'] as const)('keeps an active socket across a transient %s failure and recovery', async boundary => {
+    vi.useFakeTimers();
+    const h = harness();
+    const running = h.supervisor.run(h.background);
+    try {
+      await vi.waitFor(() => expect(h.admissions).toHaveLength(1));
+      h.unavailable[boundary] = true;
+      h.supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      h.unavailable[boundary] = false;
+      h.supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.socketsOpened).toBe(1);
+      expect(h.facts.filter(report => report.fact.kind === 'historyGap')).toEqual([]);
+    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
+  });
   it.each([CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList, CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead])(
     'settles a Collection update refusal from %s for this generation', async refusedAction => {
       vi.useFakeTimers();
@@ -210,17 +253,18 @@ describe('Slack socket supervisor through real target worker Action', () => {
     } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
   });
 
-  it('rereads authority, ingests, projects readiness and stops only the exact frozen old epoch', async () => {
+  it('rereads authority, ingests and stops naturally when the connection is disabled', async () => {
     const h = harness();
     const running = h.supervisor.run(h.background);
     try {
       await vi.waitFor(() => expect(h.admissions).toHaveLength(1));
       expect(h.reads).toBeGreaterThan(0);
       await vi.waitFor(() => expect(h.facts).toContainEqual({ connectionId: 'connection-1', authorityEpoch: 7, fact: { kind: 'providerReadiness', status: 'ready' } }));
-      const stopInput = { v: 1, connectionId: snapshot.connectionId, providerConnectionKey: snapshot.providerConnectionKey,
-        providerConfigVersion: 1, providerConfig: snapshot.providerConfig, credentialRef, authorityEpoch: 8, reason: 'disable' };
-      await expect(h.supervisor.stop({ ...stopInput, authorityEpoch: 9 }, h.stopContext)).resolves.toMatchObject({ kind: 'notReady' });
-      await expect(h.supervisor.stop(stopInput, h.stopContext)).resolves.toEqual({ kind: 'stopped' });
+      h.setSnapshot({ ...snapshot, authorityEpoch: 8, enabled: false });
+      h.supervisor.invalidateConnections();
+      await vi.waitFor(() => expect(h.socketsClosed).toBe(1));
+      expect(h.socketsOpened).toBe(1);
+      expect(h.facts.some(report => report.fact.kind === 'stopConfirmed')).toBe(false);
     } finally { h.controller.abort(); await h.supervisor.dispose(); await running; }
   });
 
@@ -234,19 +278,25 @@ describe('Slack socket supervisor through real target worker Action', () => {
     } finally { h.controller.abort(); await h.supervisor.dispose(); await running; }
   });
 
-  it('reports native refresh loss through core and honors its resulting eligibility on reconnect', async () => {
-    const h = harness({ disconnect: true });
+  it('reconnects a routine refresh without publishing history loss', async () => {
+    vi.useFakeTimers();
+    const h = harness({ disconnect: 'refresh_requested' });
     const running = h.supervisor.run(h.background);
     try {
-      await vi.waitFor(() => expect(h.facts).toContainEqual({ connectionId: 'connection-1', authorityEpoch: 7,
-        fact: { kind: 'historyGap', reason: 'providerHistoryUnavailable' } }));
-      expect(h.socketsOpened).toBe(1);
-    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.socketsOpened).toBe(2);
+      expect(h.facts.some(report => report.fact.kind === 'historyGap')).toBe(false);
+      expect(h.admissions).toHaveLength(1);
+      const before = h.lists;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.lists).toBe(before);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
   });
 
   it('retains a failed history-gap report and does not reconnect around unavailable core custody', async () => {
     vi.useFakeTimers();
-    const h = harness({ disconnect: true, failFacts: true });
+    const h = harness({ disconnect: 'unexpected', failFacts: true });
     const running = h.supervisor.run(h.background);
     try {
       await vi.waitFor(() => expect(h.admissions).toHaveLength(1));
@@ -261,6 +311,20 @@ describe('Slack socket supervisor through real target worker Action', () => {
       expect(h.reads).toBeGreaterThan(retriedReads);
       expect(h.socketsOpened).toBe(1);
       expect(h.facts.some(report => report.fact.kind === 'historyGap')).toBe(false);
+    } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
+  });
+
+  it('reports actual transport loss and reconnects while the notice remains recorded', async () => {
+    vi.useFakeTimers();
+    const h = harness({ disconnect: 'unexpected' });
+    const running = h.supervisor.run(h.background);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.facts).toContainEqual({ connectionId: 'connection-1', authorityEpoch: 7,
+        fact: { kind: 'historyGap', reason: 'providerHistoryUnavailable' } });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(h.socketsOpened).toBe(2);
+      expect(h.admissions).toHaveLength(1);
     } finally { h.controller.abort(); await h.supervisor.dispose(); await running; vi.useRealTimers(); }
   });
 });

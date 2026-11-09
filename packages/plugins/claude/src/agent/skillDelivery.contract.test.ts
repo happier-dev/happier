@@ -50,6 +50,9 @@ async function open(request: AgentSessionOpenRequest, terminal: boolean) {
                         subscribe(listener: (record: unknown) => void) { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
                         async write(record: unknown) {
                             if (!record || typeof record !== 'object') return;
+                            if ('type' in record && record.type === 'user') {
+                                queueMicrotask(() => emit({ ...record, isReplay: true, parent_tool_use_id: null }));
+                            }
                             if ('type' in record && record.type === 'control_request' && 'request_id' in record) {
                                 queueMicrotask(() => {
                                     emit({ type: 'control_response', response: { subtype: 'success', request_id: record.request_id, response: {} } });

@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "Ein Cloud-Droplet mit deiner Wahl von Größe, Image und Region.",
+  "machineDigitalOcean.account.tokenHint": "Verwende ein persönliches DigitalOcean-Zugriffstoken. Erstelle es im Control Panel unter Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "Rechner",
+  "machineDigitalOcean.presentation.description": "Ein Cloud-Rechner mit deiner Wahl von Größe, Image und Region.",
   "machineDigitalOcean.presentation.ready": "Konto verbunden",
   "machineDigitalOcean.presentation.unavailable": "Konto nicht verfügbar",
   "machineDigitalOcean.network.ipv4": "Nur IPv4",

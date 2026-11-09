@@ -55,7 +55,7 @@ async function withExternalTaskSource(
         withContext: (run: (context: PluginAccountActionContext) => Promise<void>) => Promise<void>;
     }>) => Promise<void>,
     options: Readonly<{ readOnly?: boolean; retired?: boolean; secondInstance?: boolean; initialTaskPage?: boolean; firstInstanceKeepsPaging?: boolean; scopeSelection?: boolean; completedScan?: boolean; completedScanSupport?: boolean; unboundedCompleted?: boolean; machineUnavailable?: boolean; accountSource?: boolean; findings?: boolean;
-        linkTransport?: 'failed' | 'lost' | 'malformed'; originLinkTransport?: 'failed' | 'lost'; accountEncryptionMode?: 'plain' | 'e2ee'; taskParent?: typeof entryRef; accountTasksAvailable?: boolean; accountTasksUnavailable?: boolean }> = {},
+        linkTransport?: 'failed' | 'lost' | 'malformed' | 'notStarted'; originLinkTransport?: 'failed' | 'lost'; sourceWriteTransport?: 'notStarted' | 'responseLost' | 'denied' | 'cancelled'; setupReadFailure?: boolean; sourceWriteGate?: () => Promise<void>; accountEncryptionMode?: 'plain' | 'e2ee'; taskParent?: typeof entryRef; accountTasksAvailable?: boolean; accountTasksUnavailable?: boolean }> = {},
 ) {
     const configured = options.accountSource ? TriageConfiguredSourceInstanceV1Schema.parse({
         ...fixture.configuredInstance, binding: { purpose: fixture.descriptor.purpose, source: 'accountData' },
@@ -236,8 +236,10 @@ async function withExternalTaskSource(
     // The host service is a genuine boundary. The SDK issues and dispatches its
     // original opaque handles from the real source declaration + registration;
     // this adapter adds only descriptor semantics, which the testkit omits.
-    const targetedContributions = { observeForSelf: () => ({
+    let sourceObservationDisposed = false;
+    const targetedContributions = { observeForSelf: () => { sourceObservationDisposed = false; return {
         readCurrent: async () => {
+            if (options.setupReadFailure) throw new PluginError({ code: 'plugin_action_current_intent_unavailable', retryable: false });
             const snapshot = aggregate.readTargetedContributionFixture(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1);
             return { ...snapshot, contributions: snapshot.contributions.map((entry) => {
                 const contributorManifest = [definition.manifest, PLUGIN_MANIFEST].find(
@@ -248,8 +250,8 @@ async function withExternalTaskSource(
                 );
                 return { ...entry, descriptor: TriageSourceDescriptorV1Schema.parse(declaration?.descriptor), surfaces: {} };
             }) };
-        }, dispose: () => {},
-    }) } as unknown as PluginServices['targetedContributions'];
+        }, dispose: () => { sourceObservationDisposed = true; },
+    }; } } as unknown as PluginServices['targetedContributions'];
     try {
         aggregate = await createPluginTestkit({
             manifest: PLUGIN_MANIFEST, module: {
@@ -260,14 +262,38 @@ async function withExternalTaskSource(
                             const run = contextRun;
                             contextRun = undefined;
                             if (run) await run({ ...context, services: { ...context.services, targetedContributions } });
+                            const deferredSourceWrite: PluginServices['actions']['executeAdmittedTargetedOperation'] = async (operation, sourceInput, executionOptions) => {
+                                await options.sourceWriteGate?.();
+                                if (sourceObservationDisposed) throw new PluginError({ code: 'plugin_action_generation_retired', retryable: false });
+                                return await context.services.actions.executeAdmittedTargetedOperation(operation, sourceInput, executionOptions);
+                            };
                             return handler(input, {
                             ...context, services: { ...context.services, targetedContributions,
+                                ...(options.sourceWriteGate === undefined ? {} : { actions: { ...context.services.actions,
+                                    executeAdmittedTargetedOperation: deferredSourceWrite,
+                                } }),
+                                ...(options.sourceWriteTransport === undefined ? {} : { actions: { ...context.services.actions,
+                                    // Genuine Action RPC boundary: the aggregate admission and opaque source handles remain real.
+                                    executeAdmittedTargetedOperation: async () => {
+                                        const error = new PluginError({ code: options.sourceWriteTransport === 'denied' || options.sourceWriteTransport === 'cancelled'
+                                            ? options.sourceWriteTransport : 'unavailable', retryable: false });
+                                        // Mirrors the host's registration/actionHandlerInvocation.ts transport error, including its wire data.
+                                        throw options.sourceWriteTransport === 'notStarted'
+                                            ? Object.assign(error, { actionHandlerInvocation: 'notStarted',
+                                                data: { ...error.data, actionHandlerInvocation: 'notStarted' } }) : error;
+                                    },
+                                } }),
                                 ...(id !== 'tasks/create-v1' || options.linkTransport === undefined && options.originLinkTransport === undefined ? {} : { actions: { ...context.services.actions,
                                 // Genuine Action RPC boundary: all creation, source admission and result handling stay real.
                                 execute: async () => {
                                     if (options.originLinkTransport !== undefined) {
                                         if (options.originLinkTransport === 'failed') throw new PluginError({ code: 'denied', message: 'Link refused at the Action boundary' });
                                         throw new Error('Origin link response lost');
+                                    }
+                                    if (options.linkTransport === 'notStarted') {
+                                        const error = new PluginError({ code: 'unavailable', retryable: false });
+                                        throw Object.assign(error, { actionHandlerInvocation: 'notStarted',
+                                            data: { ...error.data, actionHandlerInvocation: 'notStarted' } });
                                     }
                                     if (options.linkTransport === 'lost') throw new Error('Link response lost');
                                     return options.linkTransport === 'failed' ? { v: 1, status: 'failed' } : { unexpected: true };
@@ -306,6 +332,60 @@ async function withExternalTaskSource(
 }
 
 describe('Tasks through a separately authored source and registered aggregate Actions', () => {
+    it.each(['create', 'edit', 'transition'] as const)('keeps admitted source observation alive until a deferred %s write settles', async role => {
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            const pending = role === 'create' ? aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'A task' },
+            }, { surface: 'agent' }) : role === 'edit' ? aggregate.invokeAction('tasks/edit-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, fields: { title: 'A task' },
+            }, { surface: 'mcp' }) : aggregate.invokeAction('tasks/transition-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, transitionId: 'finish',
+            }, { surface: 'cli' });
+            await started;
+            release();
+            expect(await pending).toMatchObject({ kind: 'applied' });
+            expect(writes.map(write => write.role)).toEqual([role]);
+        }, { sourceWriteGate: async () => { entered(); await gate; } });
+    });
+
+    it('reports setup transport failure before create, edit or transition without implying a provider write', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            const expected = { kind: 'failed', failure: { class: 'unknown', code: 'plugin_action_current_intent_unavailable' } };
+            expect(await aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'A task' },
+            }, { surface: 'agent' })).toEqual(expected);
+            expect(await aggregate.invokeAction('tasks/edit-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, fields: { title: 'A task' },
+            }, { surface: 'mcp' })).toEqual(expected);
+            expect(await aggregate.invokeAction('tasks/transition-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, transitionId: 'finish',
+            }, { surface: 'cli' })).toEqual(expected);
+            expect(writes).toEqual([]);
+        }, { setupReadFailure: true });
+    });
+
+    it.each(['notStarted', 'responseLost', 'denied', 'cancelled'] as const)('preserves the source write transport outcome through registered create, edit and transition: %s', async sourceWriteTransport => {
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            const expected = sourceWriteTransport === 'notStarted'
+                ? { kind: 'refused', reason: 'unavailable' }
+                : { kind: 'uncertain', failure: { class: 'unknown', code: sourceWriteTransport === 'responseLost' ? 'unavailable' : sourceWriteTransport } };
+            expect(await aggregate.invokeAction('tasks/create-v1', {
+                v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'A task' },
+            }, { surface: 'agent' })).toEqual(expected);
+            expect(await aggregate.invokeAction('tasks/edit-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, fields: { title: 'A task' },
+            }, { surface: 'mcp' })).toEqual(expected);
+            expect(await aggregate.invokeAction('tasks/transition-v1', {
+                v: 1, entryRef, sourceInstanceId: instanceId, transitionId: 'finish',
+            }, { surface: 'cli' })).toEqual(expected);
+            expect(writes).toEqual([]);
+        }, { sourceWriteTransport });
+    });
+
     it('exposes external task work through the registered client and its named native transition Action', async () => {
         await withExternalTaskSource(async ({ aggregate, withContext, writes }) => {
             const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST,
@@ -730,14 +810,14 @@ describe('Tasks through a separately authored source and registered aggregate Ac
         });
     });
 
-    it.each(['failed', 'lost', 'malformed'] as const)('preserves confirmed creation when the optional link result is %s', async (linkTransport) => {
+    it.each(['failed', 'lost', 'malformed', 'notStarted'] as const)('preserves confirmed creation when the optional link result is %s', async (linkTransport) => {
         await withExternalTaskSource(async ({ aggregate, writes }) => {
             expect(await aggregate.invokeAction('tasks/create-v1', {
                 v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'Created regardless of linking' },
                 linkSession: 'task-session',
             }, { surface: 'agent' })).toMatchObject({ kind: 'createdAndLinkAttempted',
                 creation: { kind: 'applied', observation: { snapshot: { title: 'Created regardless of linking' } } },
-                sessionLink: linkTransport === 'failed' ? 'failed' : 'unknown' });
+                sessionLink: linkTransport === 'failed' || linkTransport === 'notStarted' ? 'failed' : 'unknown' });
             expect(writes.map(write => write.role)).toEqual(['create']);
         }, { linkTransport });
     });

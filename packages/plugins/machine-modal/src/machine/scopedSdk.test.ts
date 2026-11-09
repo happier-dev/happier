@@ -4,11 +4,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { MODAL_PLUGIN } from '../manifest.js';
 import { invokeScopedModalRole } from './scopedSdk.js';
 import { MODAL_ACCOUNT_PURPOSE, MODAL_ENV_KEYS } from './connectedAccount.js';
+import { installWorkspaceAdmissionProcessFixture } from '../../../../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
 const workerBoundary = vi.hoisted(() => ({ env: {} as Record<string, string>, terminated: false, entry: '',
+  reply: undefined as unknown,
   holdCompletion: false, latest: undefined as undefined | { emit(event: string, value: unknown): boolean } }));
 // Thread creation is the OS boundary; the real credential-scoping owner stays live.
 vi.mock('node:worker_threads', async () => {
@@ -16,7 +20,7 @@ vi.mock('node:worker_threads', async () => {
   return { Worker: class extends Emitter {
     constructor(entry: string, options: { env: Record<string, string> }) {
       super(); workerBoundary.entry = entry; workerBoundary.env = options.env; workerBoundary.latest = this;
-      if (!workerBoundary.holdCompletion) queueMicrotask(() => this.emit('message', { ok: true, value: { available: true } }));
+      if (!workerBoundary.holdCompletion) queueMicrotask(() => this.emit('message', workerBoundary.reply ?? { ok: true, value: { available: true } }));
     }
     postMessage() {}
     async terminate() { workerBoundary.terminated = true; return 0; }
@@ -36,6 +40,31 @@ function context(env: Record<string, string>, signal = new AbortController().sig
 
 describe('Modal scoped SDK construction', () => {
   const credentials = { MODAL_TOKEN_ID: 'dummy-id', MODAL_TOKEN_SECRET: 'dummy-secret', MODAL_SERVER_URL: 'http://127.0.0.1:1' };
+  it('preserves unsupported qualification through activated check and acquire without pending purchase custody', async () => {
+    const handlers = new Map<string, ActionHandler>();
+    await MODAL_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
+      handlers.set(id, handler); return { dispose() {} };
+    } }, connectedAccounts: { register() {} } } as unknown as PluginApi);
+    workerBoundary.reply = { ok: false, code: 'modal_sdk_unsupported' };
+    try {
+      const invocation = context(credentials).value;
+      expect(await handlers.get('check')!({}, invocation)).toMatchObject({ available: false, code: 'modal_sdk_unsupported' });
+      await expect(handlers.get('acquire')!({ managedId: 'managed-1', launch: {
+        appReference: 'selected', imageReference: 'ubuntu:24.04', resources: { cpu: 0.125, memoryMb: 512 }, timeoutMs: 300000,
+      } }, invocation)).rejects.toMatchObject({ name: 'PluginError', code: 'modal_sdk_unsupported' });
+    } finally { workerBoundary.reply = undefined; }
+  });
+  it.each([false, true])('admits only the closed native failure cause from the worker (malformed=%s)', async malformed => {
+    workerBoundary.reply = { ok: false, code: 'modal_lookup_unavailable', nativeCause: { grpcStatusCode: 7,
+      ...(malformed ? { message: 'private reflected input' } : {}) }, error: 'private native body' };
+    try {
+      const failure = await invokeScopedModalRole('exec', {}, context(credentials).value).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ name: 'PluginError', code: 'modal_lookup_unavailable',
+        details: malformed ? undefined : { nativeCause: { grpcStatusCode: 7 } } });
+      expect(JSON.stringify(failure)).not.toContain('private');
+      expect(workerBoundary.terminated).toBe(true);
+    } finally { workerBoundary.reply = undefined; }
+  });
   it('pins the selected account and gives the vendor a fresh explicit profile environment before import', async () => {
     const selected = { MODAL_TOKEN_ID: 'dummy-token-id', MODAL_TOKEN_SECRET: 'dummy-token-secret',
       MODAL_SERVER_URL: 'http://127.0.0.1:1', MODAL_ENVIRONMENT: 'selected-environment',
@@ -104,7 +133,9 @@ describe('Modal scoped SDK construction', () => {
   });
 });
 
-it('prepares the native worker once and reuses unchanged shared preparation', () => {
+// Reuse the workspace-preparation owner's integration budget: this exercises real
+// preparation/compiler processes (scripts/workspaces/ensureWorkspacePackagesBuilt.test.mjs).
+it('prepares the native worker once and reuses unchanged shared preparation', async ({ onTestFinished }) => {
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'happier-modal-unit-prepare-'));
@@ -114,8 +145,11 @@ it('prepares the native worker once and reuses unchanged shared preparation', ()
     writeFileSync(path, content);
   };
   try {
-    write(join(fixtureRoot, 'package.json'), JSON.stringify({ private: true,
-      workspaces: ['apps/*', 'packages/plugins/*'] }));
+    // The dummy compiler must use a fixture host's OS resource observations,
+    // keeping shared real-worker capacity separate from this preparation proof.
+    const native = await installWorkspaceAdmissionProcessFixture({ after: onTestFinished }, fixtureRoot);
+    write(join(fixtureRoot, 'package.json'), JSON.stringify({ private: true }));
+    write(join(fixtureRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/plugins/*"\n');
     for (const app of ['cli', 'ui', 'server']) {
       write(join(fixtureRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
     }
@@ -141,7 +175,7 @@ writeFileSync(join(output, 'machine/sdkWorker.js'), readFileSync('src/machine/sd
     }
     const prepare = () => {
       const result = spawnSync(manifest.scripts['test:unit:prepare'], { shell: true, cwd: packageRoot,
-        encoding: 'utf8', env: { ...process.env, FIXTURE_COMPILER_EVENTS: eventsPath,
+        encoding: 'utf8', env: { ...native.env, FIXTURE_COMPILER_EVENTS: eventsPath,
           HAPPIER_STACK_REPO_DIR: fixtureRoot, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: fixtureRoot } });
       expect(result.error).toBeUndefined();
       expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -157,4 +191,4 @@ writeFileSync(join(output, 'machine/sdkWorker.js'), readFileSync('src/machine/sd
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
-});
+}, 30_000);

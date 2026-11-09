@@ -1,7 +1,7 @@
 import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
 
 import { OPENCODE_SERVER_PASSWORD_ENV_KEY } from './endpoint.js';
-import { buildOpenCodePermissionEnv } from '../../permissions/policy.js';
+import { buildOpenCodePermissionEnv, resolveOpenCodePermissionConfig } from '../../permissions/policy.js';
 import {
   OPENCODE_PROVIDER_OWNED_ENV_KEYS,
 } from '../../providerBinding/adapter.js';
@@ -67,17 +67,21 @@ export function buildOpenCodeManagedLaunchEnvironment(
   permissionMode: string | null | undefined,
   configParts: readonly OpenCodeConfigPart[] = [],
   additionalEnv?: Readonly<Record<string, string>>,
+  workspaceWrites?: 'allow' | 'deny',
 ): Readonly<Record<string, string>> {
   const { OPENCODE_CONFIG_CONTENT: additionalContent, ...additionalValues } = additionalEnv ?? {};
+  const permissionEnv = buildOpenCodePermissionEnv(permissionMode, workspaceWrites);
   return buildOpenCodeConfigLaunchEnvironment({
     ...Object.fromEntries(OPENCODE_CHILD_LAUNCH_ENV_KEYS.flatMap((key) => (
       typeof env?.[key] === 'string' ? [[key, env[key]]] : []
     ))),
-    ...buildOpenCodePermissionEnv(permissionMode),
+    ...permissionEnv,
     ...additionalValues,
+    ...(workspaceWrites === 'deny' ? permissionEnv : {}),
   }, [
     ...configParts,
     ...(additionalContent === undefined ? [] : [readOpenCodeConfigPart(additionalContent)]),
+    ...(workspaceWrites === 'deny' ? [{ permission: resolveOpenCodePermissionConfig(permissionMode, workspaceWrites) }] : []),
   ]);
 }
 
@@ -99,6 +103,7 @@ export function buildOpenCodeManagedServerSpawnSpec(params: Readonly<{
   systemToolId: OpenCodeSystemToolId;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
+  workspaceWrites?: 'allow' | 'deny';
   configParts?: readonly OpenCodeConfigPart[];
   additionalEnv?: Readonly<Record<string, string>>;
   durableLog?: boolean;
@@ -123,6 +128,7 @@ export function buildOpenCodeManagedServerSpawnSpec(params: Readonly<{
           params.permissionMode,
           params.configParts,
           params.additionalEnv,
+          params.workspaceWrites,
         ),
       },
       endpoint: {

@@ -50,6 +50,18 @@ function stableOffsetId(prefix: string, offset: number, actionIndex: number): st
   return `${prefix}:${padded}:${idx}`;
 }
 
+/** Recognize only identities minted by this rollout projection, never paths supplied by a caller. */
+export function isCodexRolloutTranscriptItemFromFile(itemId: string | undefined, fileRelPath: string): boolean {
+  const prefix = `codex:${fileRelPath}`;
+  if (!itemId?.startsWith(`${prefix}:`)) return false;
+  const coordinates = /^(\d+):(\d+)$/.exec(itemId.slice(prefix.length + 1));
+  if (!coordinates) return false;
+  const offset = Number(coordinates[1]);
+  const index = Number(coordinates[2]);
+  return Number.isSafeInteger(offset) && Number.isSafeInteger(index)
+    && stableOffsetId(prefix, offset, index) === itemId;
+}
+
 export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
   fileRelPath: string;
   lineStartOffsetBytes: number;

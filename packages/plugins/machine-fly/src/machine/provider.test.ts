@@ -40,6 +40,45 @@ function http(replies: readonly Readonly<{ status?: number; body?: unknown }>[])
 }
 
 describe('Fly exact native resource adapter', () => {
+  it('keeps missing Machine custody until its owned volume and app are confirmed absent', async () => {
+    const owned = { ...resource, app: { ...resource.app, ownership: 'created' as const, id: 'app-owned' },
+      volume: { ...resource.volume, ownership: 'created' as const } };
+    for (const reply of [{ body: { id: owned.volume.id, state: 'created', attached_machine_id: null } }, { status: 503 }]) {
+      const h = http([{ status: 404 }, reply]);
+      expect(await h.adapter.inspect(owned)).toMatchObject({ kind: reply.status === 503 ? 'unavailable' : 'unknown' });
+      expect(h.calls.every(call => !call.init?.method || call.init.method === 'GET')).toBe(true);
+    }
+    const retainedApp = http([{ status: 404 }, { status: 404 }, { body: { id: 'app-owned', name: owned.app.name } }]);
+    expect(await retainedApp.adapter.inspect(owned)).toMatchObject({ kind: 'unknown' });
+    const gone = http([{ status: 404 }, { status: 404 }, { status: 404 }]);
+    expect(await gone.adapter.inspect(owned)).toEqual({ kind: 'absent' });
+  });
+  it.each(['unknown', 'insufficient_capacity', 'volume_placement_capacity', 'name_taken'])('retains the documented Fly status %s without native content', async status => {
+    // Machines OpenAPI ErrorResponse/main.statusCode, fetched 2026-10-25.
+    const { adapter } = http([{ body: platform }, { body: scopedApps },
+      { body: [{ id: resource.volume.id, state: 'created', region: 'ord', attached_machine_id: null }] },
+      { status: 422, body: { status, error: 'private reflected input', details: { token: 'private credential' } } }]);
+    const result = await adapter.acquire({ launch, requestId: 'managed-request', boot });
+    expect(result).toMatchObject({ kind: 'refused', nativeCause: { httpStatusClass: '4xx', code: status } });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+  it('keeps only HTTP class for undocumented Fly status text and preserves failed read causes', async () => {
+    const { adapter } = http([{ status: 503, body: { status: 'private credential', error: 'private reflected input' } }]);
+    expect(await adapter.acquire({ launch, requestId: 'managed-request', boot })).toEqual({ kind: 'rejected',
+      reason: 'provider-unavailable', nativeCause: { httpStatusClass: '5xx' } });
+    const { adapter: checking } = http([{ status: 403, body: { error: 'private credential' } }]);
+    expect(await checking.check({ organizationSlug: 'exact-org' })).toEqual({ available: false,
+      code: 'authorization', nativeCause: { httpStatusClass: '4xx' } });
+  });
+  it('retains a missing mutation target as a native acquisition cause without changing read absence', async () => {
+    const { adapter } = http([{ body: platform }, { body: scopedApps },
+      { body: [{ id: resource.volume.id, state: 'created', region: 'ord', attached_machine_id: null }] },
+      { status: 404, body: { status: 'unknown', error: 'private target' } }]);
+    expect(await adapter.acquire({ launch, requestId: 'managed-request', boot })).toMatchObject({ kind: 'refused',
+      nativeCause: { httpStatusClass: '4xx', code: 'unknown' } });
+    const missing = http([{ status: 404 }]);
+    expect(await missing.adapter.inspect(resource)).toEqual({ kind: 'absent' });
+  });
   it.each(['not base64', 'AA==\n', 'AAA', '===='])('rejects invalid base64 at the direct native-client ingress: %j', async bytesBase64 => {
     const { adapter, calls } = http([]);
     await expect(adapter.putFile(resource, { guestPath: '/tmp/private-payload', bytesBase64 })).rejects.toThrow();
@@ -87,7 +126,7 @@ describe('Fly exact native resource adapter', () => {
     expect(await adapter.destroyPending({ app: launch.app, volume: { id: resource.volume.id, ownership: 'created' },
       requestId: 'managed-request', phase: 'machine' })).toMatchObject({ complete: true, machine: 'absent', volume: 'absent', app: 'retained' });
     expect(calls.filter(call => call.init?.method === 'DELETE').map(call => call.url)).toEqual([
-      `https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}`,
+      `https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}?force=true`,
       `https://api.machines.dev/v1/apps/existing-app/volumes/${resource.volume.id}`,
     ]);
     expect(calls.some(call => call.init?.method === 'POST')).toBe(false);
@@ -119,13 +158,13 @@ describe('Fly exact native resource adapter', () => {
   });
   it('inspects a suspended Machine through direct API reads without waking or promising RAM continuity', async () => {
     const { adapter, calls } = http([{ body: machine() }, { body: { id: resource.volume.id, state: 'created', attached_machine_id: resource.machineId } }]);
-    expect(await adapter.inspect(resource)).toMatchObject({ kind: 'present', machineId: resource.machineId, instanceId: 'version-one', state: 'suspended', storage: 'retained', memory: 'not-guaranteed', rootfsAfterStop: 'reset', stoppedComputeBilling: 'not-billed' });
+    expect(await adapter.inspect(resource)).toMatchObject({ kind: 'present', machineId: resource.machineId, state: 'suspended', storage: 'retained' });
     expect(calls.map((call) => [new URL(call.url).hostname, call.init?.method])).toEqual([['api.machines.dev', 'GET'], ['api.machines.dev', 'GET']]);
   });
 
   it('starts the stable Machine after a discarded snapshot without interpreting an instance version as a new resource', async () => {
     const { adapter, calls } = http([{ body: {} }, { body: machine('started', 'version-two') }, { body: { id: resource.volume.id, state: 'created', attached_machine_id: resource.machineId } }]);
-    expect(await adapter.power(resource, 'start')).toMatchObject({ kind: 'present', machineId: resource.machineId, instanceId: 'version-two', memory: 'not-guaranteed', storage: 'retained' });
+    expect(await adapter.power(resource, 'start')).toMatchObject({ kind: 'present', machineId: resource.machineId, storage: 'retained' });
     expect(calls[0].url).toBe(`https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}/start`);
     expect(calls[0].init?.method).toBe('POST');
   });
@@ -137,9 +176,9 @@ describe('Fly exact native resource adapter', () => {
 
   it('does not decode authorization or native refusal as absence and redacts reflected vendor error bodies', async () => {
     const denied = http([{ status: 401, body: { error: 'vendor-token' } }]);
-    expect(await denied.adapter.inspect(resource)).toEqual({ kind: 'unavailable', reason: 'authorization', status: 401 });
+    expect(await denied.adapter.inspect(resource)).toEqual({ kind: 'unavailable', reason: 'authorization', status: 401, nativeCause: { httpStatusClass: '4xx' } });
     const suspend = http([{ status: 422, body: { error: 'vendor-token' } }]);
-    expect(await suspend.adapter.power(resource, 'suspend')).toEqual({ kind: 'refused', reason: 'native-refusal', status: 422 });
+    expect(await suspend.adapter.power(resource, 'suspend')).toEqual({ kind: 'refused', reason: 'native-refusal', status: 422, nativeCause: { httpStatusClass: '4xx' } });
   });
 
   it('retains native uncertainty after a dropped power reply without replaying the effect', async () => {
@@ -159,16 +198,9 @@ describe('Fly exact native resource adapter', () => {
     expect(await adapter.inspect(resource)).toMatchObject({ autonomousPower: true });
   });
 
-  it.each(['always', 'restart'] as const)('preserves selected rootfs persistence %s without assuming the default stop-reset consequence', async (persist) => {
-    const { adapter } = http([{ body: { ...machine('stopped'), config: { ...machine().config, rootfs: { persist } } } }, { body: { id: resource.volume.id, state: 'created', attached_machine_id: resource.machineId } }]);
-    // The pinned native schema proves these distinct modes. Their current stop
-    // semantics require qualification before publishing a continuity guarantee.
-    expect(await adapter.inspect(resource)).toMatchObject({ rootfsPersistence: persist, rootfsAfterStop: 'unknown' });
-  });
-
-  it('reports an explicitly ephemeral rootfs separately from the retained volume', async () => {
+  it('retains volume storage when the rootfs is explicitly ephemeral', async () => {
     const { adapter } = http([{ body: { ...machine('stopped'), config: { ...machine().config, rootfs: { persist: 'never' } } } }, { body: { id: resource.volume.id, state: 'created', attached_machine_id: resource.machineId } }]);
-    expect(await adapter.inspect(resource)).toMatchObject({ rootfsPersistence: 'never', rootfsAfterStop: 'reset', storage: 'retained' });
+    expect(await adapter.inspect(resource)).toMatchObject({ storage: 'retained' });
   });
 
   it('executes on the exact private API target with a protected stdin body and the containing operation timeout', async () => {
@@ -199,6 +231,16 @@ describe('Fly exact native resource adapter', () => {
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({ config: configured.config });
   });
 
+  it('does not update or reboot a Machine whose requested process and environment already match', async () => {
+    const command = ['/persistent/installed-happier', 'daemon', 'start-sync'];
+    const environment = { HOME: boot.homeDir, HAPPIER_HOME_DIR: boot.happyHomeDir };
+    const configured = { ...machine('started'), config: { ...machine().config,
+      env: { NATIVE_SETTING: 'keep', ...environment }, init: { exec: command, tty: true } } };
+    const { adapter, calls } = http([{ body: configured }, { body: configured }]);
+    expect(await adapter.configureProcess(resource, { command, environment })).toEqual({ kind: 'configured' });
+    expect(calls.map(call => call.init?.method)).toEqual(['GET']);
+  });
+
   it('does not report boot configured from an accepted update whose process differs, and never replays a lost update', async () => {
     const original = { ...machine('started'), config: { ...machine().config, env: { HOME: '/persistent', HAPPIER_HOME_DIR: boot.happyHomeDir } } };
     const request = { command: ['/persistent/installed-happier', 'daemon', 'start-sync'], environment: { HOME: '/persistent', HAPPIER_HOME_DIR: boot.happyHomeDir } };
@@ -207,6 +249,17 @@ describe('Fly exact native resource adapter', () => {
     const dropped = http([{ body: original }]);
     expect(await dropped.adapter.configureProcess(resource, request)).toMatchObject({ kind: 'unknown', reason: 'transport' });
     expect(dropped.calls.filter(call => call.init?.method === 'POST')).toHaveLength(1);
+  });
+
+  it.each(['stopped', 'environment-drift'])('retains the required Fly update for %s even when the command matches', async sample => {
+    const command = ['/persistent/installed-happier', 'daemon', 'start-sync'];
+    const environment = { HOME: boot.homeDir, HAPPIER_HOME_DIR: boot.happyHomeDir };
+    const configured = { ...machine('started'), config: { ...machine().config, env: environment, init: { exec: command } } };
+    const original = sample === 'stopped' ? { ...configured, state: 'stopped' }
+      : { ...configured, config: { ...configured.config, env: { ...environment, HAPPIER_HOME_DIR: '/old-home' } } };
+    const { adapter, calls } = http([{ body: original }, { body: configured }]);
+    expect(await adapter.configureProcess(resource, { command, environment })).toEqual({ kind: 'configured' });
+    expect(calls.map(call => call.init?.method)).toEqual(['GET', 'POST']);
   });
 
   it('keeps native execution ambiguous after a dropped reply and never replays enrollment', async () => {
@@ -236,7 +289,29 @@ describe('Fly exact native resource adapter', () => {
   it('destroys only the exact Machine and retains an existing app and attached volume', async () => {
     const { adapter, calls } = http([{ status: 200 }, { status: 404 }]);
     expect(await adapter.destroy(resource)).toMatchObject({ machine: 'absent', volume: 'retained', app: 'retained', complete: true });
-    expect(calls.map((call) => call.url)).toEqual([`https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}`, `https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}`]);
+    expect(calls.map((call) => call.url)).toEqual([`https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}?force=true`, `https://api.machines.dev/v1/apps/existing-app/machines/${resource.machineId}`]);
+  });
+
+  it('uses native force-stop deletion for a running Machine before confirming absence', async () => {
+    // Fly Machines REST v1 DELETE force=true stops a running Machine. The
+    // native API refuses the same delete without it; attachments stay separate.
+    let present = true;
+    const calls: Array<{ url: URL; method: string }> = [];
+    const request: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      if (url.pathname !== `/v1/apps/${resource.app.name}/machines/${resource.machineId}`) throw new Error('Unexpected native target');
+      if (method === 'DELETE') {
+        if (url.searchParams.get('force') !== 'true') return Response.json({ error: 'Machine is running' }, { status: 409 });
+        present = false;
+        return Response.json({ ok: true });
+      }
+      return present ? Response.json(machine('started')) : new Response(null, { status: 404 });
+    };
+    const adapter = createFlyNativeAdapter('vendor-token', request, { organizationSlug: 'exact-org' });
+    expect(await adapter.destroy(resource)).toMatchObject({ machine: 'absent', volume: 'retained', app: 'retained', complete: true });
+    expect(calls.map(({ method }) => method)).toEqual(['DELETE', 'GET']);
   });
 
   it('does not delete an owned volume now attached to an unrelated Machine', async () => {
@@ -405,7 +480,7 @@ describe('Fly exact native resource adapter', () => {
       { body: { total_apps: 1, apps: [{ id: 'native-app-id', name: 'existing-app', machine_count: 1, volume_count: 1 }] } },
       { body: [{ id: resource.volume.id, state: 'created', region: 'ord', size_gb: 1, attached_machine_id: null }] },
     ]);
-    expect(await adapter.options({ organizationSlug: 'exact-org', appName: 'existing-app' })).toMatchObject({ kind: 'available', regions: [{ code: 'ord' }], sizes: [{ name: 'shared-cpu-1x', priceMonth: 2.04, priceSecond: 0.000000786 }], apps: [{ name: 'existing-app' }], volumes: [{ id: resource.volume.id }], prices: [] });
+    expect(await adapter.options({ organizationSlug: 'exact-org', appName: 'existing-app' })).toMatchObject({ kind: 'available', regions: [{ code: 'ord' }], sizes: [{ name: 'shared-cpu-1x' }], apps: [{ name: 'existing-app' }], volumes: [{ id: resource.volume.id }], prices: [] });
     expect(calls.map(call => call.init?.method)).toEqual(['POST', 'GET', 'GET']);
     expect(calls[0].url).toBe('https://api.fly.io/graphql');
     expect(calls[1].url).toBe('https://api.machines.dev/v1/apps?org_slug=exact-org');
@@ -413,7 +488,7 @@ describe('Fly exact native resource adapter', () => {
 
   it('checks actual scoped authorization and refuses incomplete discovery rather than publishing an empty catalog', async () => {
     const denied = http([{ status: 403 }]);
-    expect(await denied.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'authorization' });
+    expect(await denied.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'authorization', nativeCause: { httpStatusClass: '4xx' } });
     const incomplete = http([{ body: { total_apps: 2, apps: [] } }]);
     expect(await incomplete.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'invalid-response' });
     const available = http([{ body: { total_apps: 0, apps: [] } }]);

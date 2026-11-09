@@ -577,3 +577,16 @@ describe('Claude native transcript semantic projection', () => {
     });
   });
 });
+
+
+describe('Claude provider organization evidence', () => {
+  it('classifies the native credential_org attachment without a UUID or visible transcript row', () => {
+    const row = {type: 'attachment', attachment: {type: 'credential_org', organizationUuid: 'org-issued'},
+      sessionId: 'native-current', timestamp: '2026-11-02T13:50:20.213Z', isSidechain: false};
+    expect(classifyClaudeNativeTranscriptRow(row)).toMatchObject({
+      visibility: 'hidden', credentialOrganization: {nativeSessionId: 'native-current',
+        providerOrganizationId: 'org-issued', observedAtMs: Date.parse(row.timestamp)},
+    });
+    expect(projectClaudeJsonlLineToDirectMessages({fileRelPath: 'native-current.jsonl', lineStartOffsetBytes: 0, lineValue: row})).toEqual([]);
+  });
+});

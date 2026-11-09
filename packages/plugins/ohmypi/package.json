@@ -30,7 +30,8 @@
   "files": [
     "dist",
     ".happier-plugin",
-    "package.json"
+    "package.json",
+    "assets"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",

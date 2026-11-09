@@ -133,7 +133,6 @@ describe('Codex provider-binding adapter V1', () => {
   it('uses reserved Codex ids only for exact audited built-in candidates', () => {
     for (const contributionKey of [
       'happier.provider.ollama/ollama',
-      'happier.provider.ollama/ollama',
     ]) {
       expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({
         reservedBindingCandidate: {
@@ -145,7 +144,6 @@ describe('Codex provider-binding adapter V1', () => {
       })).adapterBindingKey).toBe('ollama');
     }
     for (const contributionKey of [
-      'happier.provider.lmstudio/lmstudio',
       'happier.provider.lmstudio/lmstudio',
     ]) {
       expect(CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput({

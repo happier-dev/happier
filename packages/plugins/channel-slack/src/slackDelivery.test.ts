@@ -16,14 +16,18 @@ describe('Slack plain-text delivery', () => {
       .toMatchObject({ unfurl_links: true, unfurl_media: true });
   });
 
-  it('accepts the native Unicode limit with length-preserving mention suppression and rejects truncation', () => {
+  it('preserves the native Unicode budget while neutralizing mentions', () => {
     expect(createSlackMessagePayload({ channelId: 'C1', text: '😀'.repeat(40_000), linkPreviewPolicy: 'suppress' }).text)
       .toBe('😀'.repeat(40_000));
-    expect(() => createSlackMessagePayload({ channelId: 'C1', text: 'x'.repeat(40_001), linkPreviewPolicy: 'suppress' })).toThrow();
     const text = `${'<@U1>'.repeat(7_999)} &<>!`;
     expect(Array.from(text)).toHaveLength(40_000);
     const encoded = createSlackMessagePayload({ channelId: 'C1', text, linkPreviewPolicy: 'suppress' }).text;
     expect(Array.from(encoded)).toHaveLength(40_000);
     expect(encoded).not.toContain('<@');
+    // Core consumes the declared native ceiling; payload encoding must not
+    // introduce a second size admission or silently truncate valid text.
+    const aboveNative = 'x'.repeat(40_001);
+    expect(createSlackMessagePayload({ channelId: 'C1', text: aboveNative, linkPreviewPolicy: 'suppress' }).text)
+      .toBe(aboveNative);
   });
 });

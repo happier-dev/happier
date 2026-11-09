@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -54,8 +55,30 @@
               "path": "/api/tags"
             }
           ],
-          "source": "probe",
-          "sourceRegistryVersion": "ollama-tags/v1"
+          "source": "static+probe",
+          "sourceRegistryVersion": "ollama-tags/v1",
+          "staticModels": [
+            {
+              "contextWindowTokens": 32768,
+              "id": "qwen2.5-coder:1.5b-base",
+              "inlineCompletion": {
+                "operationId": "native-fim",
+                "promptOverheadTokens": 3,
+                "tokenAccounting": "utf8-bytes"
+              },
+              "name": "Qwen2.5 Coder 1.5B Base"
+            },
+            {
+              "contextWindowTokens": 8192,
+              "id": "hf.co/sweepai/sweep-next-edit-1.5B:latest",
+              "name": "Sweep Next Edit 1.5B",
+              "nextEdit": {
+                "operationId": "next-edit",
+                "promptOverheadTokens": 0,
+                "tokenAccounting": "utf8-bytes"
+              }
+            }
+          ]
         },
         "discovery": {
           "availabilityProbe": {
@@ -141,6 +164,23 @@
           }
         ],
         "id": "ollama",
+        "inlineCompletion": [
+          {
+            "endpointTemplateId": "ollama-native",
+            "id": "native-fim",
+            "mode": "native-fim",
+            "path": "/api/generate",
+            "wireFormat": "ollama-generate"
+          },
+          {
+            "codec": "rewrite-window-v1",
+            "endpointTemplateId": "ollama-native",
+            "id": "next-edit",
+            "mode": "next-edit-codec",
+            "path": "/api/generate",
+            "wireFormat": "ollama-generate"
+          }
+        ],
         "kind": "local",
         "managedRuntime": {
           "endpointTemplateIds": [
@@ -174,6 +214,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -184,7 +225,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],

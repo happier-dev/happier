@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "Un Droplet amb la mida, la imatge i la regió triades.",
+  "machineDigitalOcean.account.tokenHint": "Fes servir un testimoni d’accés personal de DigitalOcean. Crea’l al tauler de control, a Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "màquina",
+  "machineDigitalOcean.presentation.description": "Una màquina al núvol amb la mida, la imatge i la regió triades.",
   "machineDigitalOcean.presentation.ready": "Compte connectat",
   "machineDigitalOcean.presentation.unavailable": "Compte no disponible",
   "machineDigitalOcean.network.ipv4": "Només IPv4",

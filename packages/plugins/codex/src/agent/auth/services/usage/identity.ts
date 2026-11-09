@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 
 import type {
   OauthCredentialRecord,
@@ -54,10 +54,7 @@ function readLiveProviderAccountId(account: CodexActiveProviderAccount | null | 
 }
 
 function hashProvisionalSubject(discriminator: string): string {
-  return createHash('sha256')
-    .update(`${CODEX_ACCOUNT_USAGE_PROVIDER_ID}:${discriminator}`)
-    .digest('hex')
-    .slice(0, 24);
+  return computeSha256HexDigest(`${CODEX_ACCOUNT_USAGE_PROVIDER_ID}:${discriminator}`).slice(0, 24);
 }
 
 function readProvisionalDiscriminator(input: ResolveCodexUsageSubjectRefInput): string {

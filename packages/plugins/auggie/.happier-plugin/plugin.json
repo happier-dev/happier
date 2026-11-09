@@ -69,6 +69,9 @@
           "acpRegistryIds": [
             "auggie"
           ],
+          "agentCliSystemTool": {
+            "toolId": "auggie-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -159,10 +162,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -232,6 +236,7 @@
       }
     ],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -242,7 +247,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],

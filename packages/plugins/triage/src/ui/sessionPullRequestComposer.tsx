@@ -19,7 +19,7 @@ const selectSnapshot = (snapshot: TriageSessionPullRequestProjectionSnapshotV1) 
 
 function PullRequestStatus(props: Readonly<{
   binding: TriageSessionPullRequestBindingV1;
-  renderDetails(bindingId: string): React.ReactNode;
+  renderDetails(bindingId: string, onResourceOpened: () => void): React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [open, setOpen] = React.useState(false);
@@ -54,7 +54,7 @@ function PullRequestStatus(props: Readonly<{
       sheet={{ title: text('plugins.triage.prGlance.selectLabel', 'Pull request') }}
       testID={`pr-composer.${props.binding.bindingId}`}
     >
-      {open ? props.renderDetails(props.binding.bindingId) : null}
+      {open ? props.renderDetails(props.binding.bindingId, () => setOpen(false)) : null}
     </Popover>
   );
 }
@@ -62,7 +62,7 @@ function PullRequestStatus(props: Readonly<{
 /** A compact view of the same joined Resource and glance, never a second status/readiness owner. */
 export function TriageSessionPullRequestComposer(props: Readonly<{
   launchInput: unknown;
-  renderDetails(bindingId: string): React.ReactNode;
+  renderDetails(bindingId: string, onResourceOpened: () => void): React.ReactNode;
 }>): React.ReactElement | null {
   const { target } = useSurfaceContext();
   const input = React.useMemo(() => ComposerSurfaceInputV1Schema.safeParse(props.launchInput), [props.launchInput]);

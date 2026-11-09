@@ -14,6 +14,7 @@ import {
 import {
   readCurrentProviderContributionForPersistedSelection,
   readSelectedCurrentProviderContribution,
+  readSessionPullRequestProvider,
 } from './providerContributions.js';
 
 const selection = {
@@ -88,6 +89,17 @@ function context(input: Parameters<typeof targetedContributionsFixture>[0]) {
 }
 
 describe('Channels provider contribution resolution', () => {
+  it('selects PR support from the admitted contribution rather than its plugin brand', async () => {
+    const capable = { ...contribution(), descriptor: { v: 1, displayName: 'Forge', pullRequests: {
+      repositoryKind: 'github', deployment: 'https://github.com', urlTemplate: 'https://github.com/{repository}/pull/{number}',
+      repositoryConnectionKeyPrefix: 'github:repository:', publicationInstructions: 'Use the admitted native reply Action.',
+    } } } as const satisfies ChannelsProviderContributionV1;
+    const branded = { ...contribution(), contributor: { ...contribution().contributor, pluginId: 'happier.scm.forge.github' },
+      descriptor: { v: 1, displayName: 'GitHub' } } as const satisfies ChannelsProviderContributionV1;
+    const { selection: selected } = await readSessionPullRequestProvider(context({ occurrenceId: 'channels-a', contributions: [capable, branded] }));
+    expect(selected.contributor.pluginId).toBe(selection.contributor.pluginId);
+  });
+
   it('returns the exact currently admitted caller selection', async () => {
     const current = contribution();
 
@@ -109,7 +121,6 @@ describe('Channels provider contribution resolution', () => {
         packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'cli-version-b' },
       },
       contribution(),
-      'targetSourceChanged',
     ],
     [
       'contributor custody',
@@ -126,22 +137,17 @@ describe('Channels provider contribution resolution', () => {
           },
         }),
       }),
-      'selectedContributorMissing',
     ],
-  ] as const)('rejects a stale %s before an admitted provider handle can be used', async (
+  ] as const)('re-resolves the same selected contributor after %s replacement', async (
     _case,
     occurrenceId,
     sourceCustody,
     current,
-    reason,
   ) => {
     await expect(readSelectedCurrentProviderContribution({
       context: context({ occurrenceId, sourceCustody, contributions: [current] }),
       selection,
-    })).rejects.toMatchObject({
-      code: 'channels_provider_contribution_unavailable',
-      details: { reason },
-    } satisfies Partial<PluginError>);
+    })).resolves.toBe(current);
   });
 
   it('rejects ambiguous persisted contributor rows without treating them as a current caller selection', async () => {

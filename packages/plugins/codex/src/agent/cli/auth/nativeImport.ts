@@ -4,7 +4,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { parse as parseToml } from 'smol-toml';
 import { resolveConfiguredNativeHomePath } from '@happier-dev/plugin-sdk/fs';
-import { CODEX_NATIVE_HOME } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CODEX_NATIVE_HOME } from '@happier-dev/protocol/agents/codex/native-home-policy';
 import { readCodexNativeAuthCredentialsFromJson, type CodexNativeAuthCredentials } from './environment.js';
 
 export class CodexNativeImportError extends Error {

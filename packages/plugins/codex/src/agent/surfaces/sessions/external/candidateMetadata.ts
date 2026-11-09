@@ -1,4 +1,5 @@
 import { isRecord } from '@happier-dev/plugin-sdk';
+import { projectExternalSessionCandidateTitle } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { readSessionInputPromptUserTextV1, type AgentExternalSessionCandidate,
   type AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
@@ -14,9 +15,10 @@ import type { CodexExternalSessionSource } from './models.js';
 /** Native name precedence is shared by discovery and selected-page hydration. */
 export function readCodexNativeCandidateTitle(thread: unknown): string | undefined {
   if (!isRecord(thread)) return undefined;
-  if (typeof thread.name === 'string' && thread.name.trim()) return thread.name.trim();
+  if (typeof thread.name === 'string' && thread.name.trim()) return projectExternalSessionCandidateTitle(thread.name.trim());
   if (typeof thread.preview !== 'string' || !thread.preview.trim()) return undefined;
-  return readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim() || undefined;
+  const title = readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim();
+  return title ? projectExternalSessionCandidateTitle(title) : undefined;
 }
 
 function reportNativeMetadataFailure(error: unknown, stage: 'connect' | 'read' | 'dispose'): void {

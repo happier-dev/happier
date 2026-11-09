@@ -3,19 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDiscordIdentifyConcurrency } from './discordGatewayIdentifyConcurrency.js';
 
 describe('Discord Identify concurrency', () => {
-  it('holds the unsharded application bucket for Discord’s full five-second window even when Gateway Bot reports maxConcurrency 16', async () => {
+  it('holds the unsharded application bucket for Discord’s full five-second window', async () => {
     vi.useFakeTimers();
     try {
       const gate = createDiscordIdentifyConcurrency();
       const first = await gate.acquire({
         applicationId: 'application-1',
-        maxConcurrency: 16,
         signal: new AbortController().signal,
       });
       let secondGranted = false;
       const secondPromise = gate.acquire({
         applicationId: 'application-1',
-        maxConcurrency: 16,
         signal: new AbortController().signal,
       }).then((permit) => {
         secondGranted = true;
@@ -23,7 +21,6 @@ describe('Discord Identify concurrency', () => {
       });
       const otherApplication = await gate.acquire({
         applicationId: 'application-2',
-        maxConcurrency: 16,
         signal: new AbortController().signal,
       });
 
@@ -46,13 +43,11 @@ describe('Discord Identify concurrency', () => {
     const gate = createDiscordIdentifyConcurrency();
     const first = await gate.acquire({
       applicationId: 'application-1',
-      maxConcurrency: 1,
       signal: new AbortController().signal,
     });
     let secondGranted = false;
     const secondPromise = gate.acquire({
       applicationId: 'application-1',
-      maxConcurrency: 1,
       signal: new AbortController().signal,
     }).then((permit) => {
       secondGranted = true;

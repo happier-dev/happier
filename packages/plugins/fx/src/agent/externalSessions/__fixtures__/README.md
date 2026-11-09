@@ -15,6 +15,15 @@ vendor tag commit: `vercel-labs/fx@1a070af32cdfaf8cd0da6de3dc7f053302828b17`.
   summaries are not emitted as user/assistant messages.
 - `src/core/session/result_store.zig:640–660,698–750` and
   `session_child_store.zig:350–362`: result handles name files in `tool-results`.
+- Image fixtures characterized 2026-10-27 from the same pinned commit:
+  `session_event.zig:47–68` and `shared/types.zig:1393–1405` define user snapshots;
+  `session_codec.zig:2663–2682` writes the nonempty image-pack fixture
+  `fx-v0.0.14-tool-images.json`, and `result_store.zig:257–288` authenticates
+  its raw JSON bytes by the content-digest suffix in the image handle. The tiny
+  PNG is the vendor's `images/image_data.zig:559–564` validation vector.
+  `source_ref` and the original attachment `path` are opaque context, never
+  authority to read another path. The fixture pack's trailing newline is removed
+  by the test to match the vendor writer's exact array serialization.
 
 Only prose, identifiers, timestamps and paths were replaced. No vendor writer,
 migration, export, server, or Agent turn was run. The opt-in sessions-v2 backend

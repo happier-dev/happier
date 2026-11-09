@@ -23,6 +23,19 @@ describe('normalizeClaudeUnifiedPromptIdentityText', () => {
       .toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
   });
 
+  it('matches Claude native paste tab expansion without ignoring other indentation changes', () => {
+    // Claude Code 2.1.316's native editor expands every pasted tab to four spaces.
+    const injected = 'History:\n\tconst value = 1;\n\t\treturn value;\nReply only ok';
+    const recorded = `${PASTE_OPEN}\nHistory:\n    const value = 1;\n        return value;\nReply only ok\n${PASTE_CLOSE}`;
+
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded))
+      .toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded.replace('    const', '  const')))
+      .not.toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded.replace('value = 1', 'value = 2')))
+      .not.toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+  });
+
   it('keeps marker-looking prose that is not a standalone paste marker', () => {
     const prompt = `explain ${PASTE_OPEN} in the parser`;
 

@@ -101,6 +101,39 @@ describe('GitHub triage get', () => {
     expect(GithubIssueOpeningDetailV1Schema.safeParse({ ...opening, overview: { kind: 'overview', kindId: 'another-source' } }).success).toBe(false);
   });
 
+  it('offers the repository directory as choices on an exact issue read that asks, and only then', async () => {
+    const respond = (request: RecordedGithubRequest): StubHttpResponse | undefined => {
+      if (request.url.endsWith('/issues/7')) {
+        return { status: 200, body: { ...GITHUB_ISSUE_RESPONSE,
+          repository_url: `https://api.github.com/repos/${ROUTING_TOKEN}`,
+          html_url: `https://github.com/${ROUTING_TOKEN}/issues/7` } };
+      }
+      if (request.url.endsWith('/parent')) return { status: 404, body: {} };
+      if (request.url.endsWith('/sub_issues') || request.url.endsWith('/blocked_by')) return { status: 200, body: [] };
+      if (request.url.includes('/assignees?')) return { status: 200, body: [{ login: 'ada' }, { login: 'grace' }] };
+      if (request.url.includes('/labels?')) return { status: 200, body: [{ name: 'bug' }] };
+      return undefined;
+    };
+    const plain = await runGet({ localRef: ISSUE_REF, respond });
+    expect(plain.transport.requests.filter(request => request.url.includes('/assignees?') || request.url.includes('/labels?'))).toHaveLength(0);
+    expect(plain.observation).not.toHaveProperty('taskFieldChoices');
+
+    const transport = createStubGithubTransport({ respond });
+    const client = await createTestGithubApiClient(transport);
+    const { observation } = await runGithubTriageGet(
+      { localRef: ISSUE_REF, routingToken: ROUTING_TOKEN, includeTaskFieldChoices: true },
+      { client, now: fixedClock(1_000), signal: transport.context.signal },
+    );
+    expect(observation.kind).toBe('present');
+    if (observation.kind !== 'present') return;
+    const result = toTriageGetResult(observation, createTriageSourceV1Fixture().configuredInstance);
+    expect(result).toMatchObject({ taskFieldChoices: {
+      assigneeIds: [{ id: 'ada', label: 'ada' }, { id: 'grace', label: 'grace' }],
+      labelIds: [{ id: 'bug', label: 'bug' }],
+    } });
+    expect(toTriageObservation(observation)).not.toHaveProperty('taskFieldChoices');
+  });
+
   it('does not replace a malformed supplied routing token with another route', async () => {
     for (const routingToken of ['', 'https://api.github.com/repos/octo-org/example-app', 'octo-org', 'a/b/c']) {
       const { observation, transport } = await runGet({

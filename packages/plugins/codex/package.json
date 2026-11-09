@@ -6,6 +6,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/connected-account-authentication": {
+      "happier-source": "./src/connectedAccounts/account.ts",
+      "default": "./dist/connectedAccounts/account.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
@@ -449,7 +453,8 @@
   "files": [
     "dist",
     ".happier-plugin",
-    "package.json"
+    "package.json",
+    "assets"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",

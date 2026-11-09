@@ -85,7 +85,8 @@ export function createClaudeSessionSkillCatalog() {
         const prepared = command.prepareCommand({ accountSettings: null, environment: {}, pluginSettings: { account: values } });
         const args = resolveClaudeLaunchSettingsOverlayArgs({
           args: [...prepared.args, ...buildClaudePluginDirArgs({ skills: launch.skills })],
-          interactionKind: 'noninteractive_sdk', permissionMode: null, launchSettings: {},
+          interactionKind: 'noninteractive_sdk', permissionMode: null, launchSettings: {}, launchEnv: env,
+          cwd: launch.cwd,
           skillOverrides: Object.fromEntries((launch.skills?.nativeDisables ?? []).map(item => [item.name, 'off' as const])),
         });
         const result = await context.services.exec.run({ executable: resolved.executable,

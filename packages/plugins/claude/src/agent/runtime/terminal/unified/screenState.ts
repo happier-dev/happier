@@ -151,11 +151,12 @@ const SAFEGUARD_PAUSE_DIALOG_HEAD = /\bsession paused\b/i;
 const SAFEGUARD_PAUSE_DIALOG_BODY = /\bsafeguards flagged this message\b/i;
 const SAFEGUARD_PAUSE_SWITCH_OPTION = /\bswitch to\s+(.+?)\s*$/i;
 const SAFEGUARD_PAUSE_RETRY_OPTION = /\bedit prompt and retry(?:\s+with\s+(.+?))?\s*$/i;
-// The provider changes the paid alternatives across plans and releases. Recognize the stable
-// failure + chooser + wait semantics, then require the shared strict numbered-dialog parser below.
-// This stays tolerant of labels and option count without matching arbitrary numbered dialogs.
-const USAGE_LIMIT_DIALOG = /(?:\byou(?:['\u2019]ve| have)\s+(?:hit|reached)\s+your\s+(?:session|usage)\s+limit\b|\/rate-limit-options)[\s\S]{0,1200}\bwhat do you want to do\?[\s\S]{0,700}\bwait\b[^\n]{0,120}\blimit\b[^\n]{0,120}\breset(?:s)?\b/iu;
-const CROPPED_USAGE_LIMIT_DIALOG = /\bwhat do you want to do\?[\s\S]{0,400}(?:\u276f|>)\s*1\.\s*[^\n]{0,120}\bwait\b[^\n]{0,120}\blimit\b[^\n]{0,120}\breset(?:s)?\b/iu;
+// The failure heading can be cropped and paid alternatives vary. Read semantics from the
+// parsed choices so neither focus nor option index changes recognition. Claude 2.1.316's
+// usage-based chooser shortens the cancel choice to "Stop" alongside automatic continuation.
+const USAGE_LIMIT_DIALOG_HEADING = /\bwhat do you want to do\?/i;
+const USAGE_LIMIT_WAIT_OPTION = /\bwait\b[^\n]*\blimit\b[^\n]*\breset(?:s)?\b/i;
+const USAGE_LIMIT_AUTOMATIC_OPTION = /^wait here, then continue automatically(?: shortly| at .+| when the limit resets)$/i;
 // Live probe 2026-06-11 (Claude Code 2.1.173, tmux): `/effort <level>` on a conversation cached at a
 // different effort opens "Change effort level? … ❯ 1. Yes, switch to <level>  2. No, go back".
 // Escape / "No, go back" prints `Kept effort level as <current>` (incident cmq8y3nlx, L6).
@@ -587,7 +588,10 @@ function resolveSafeguardPauseDialogOptions(
 function resolveGenericNumberedDialog(
   text: string,
   minimumOptionCount = 2,
-): ClaudeUnifiedGenericNumberedDialog | null {
+): Readonly<{
+  dialog: ClaudeUnifiedGenericNumberedDialog;
+  presentation: ClaudeUnifiedDialogSelectionPresentation;
+}> | null {
   const lines = text.split('\n');
   const blocks: Array<Array<{ index: number; number: number; label: string; focused: boolean }>> = [];
   let current: Array<{ index: number; number: number; label: string; focused: boolean }> = [];
@@ -607,8 +611,11 @@ function resolveGenericNumberedDialog(
     });
   }
   if (current.length > 0) blocks.push(current);
-  if (blocks.length !== 1) return null;
-  const block = blocks[0];
+  // Ignore ordinary transcript lists, while keeping competing focused menus ambiguous.
+  // The selected block owns both the options and the cursor.
+  const focusedBlocks = blocks.filter((candidate) => candidate.some((option) => option.focused));
+  if (focusedBlocks.length !== 1) return null;
+  const block = focusedBlocks[0];
   if (!block || block.length < minimumOptionCount || block.length > 9) return null;
   if (block.filter((candidate) => candidate.focused).length !== 1) return null;
   if (block.some((candidate, index) => candidate.number !== index + 1)) return null;
@@ -628,9 +635,17 @@ function resolveGenericNumberedDialog(
   });
   if (signature.length > 1_024) return null;
   return {
-    context,
-    options: block.map((candidate) => ({ choice: String(candidate.number), label: candidate.label })),
-    signature,
+    dialog: {
+      context,
+      options: block.map((candidate) => ({ choice: String(candidate.number), label: candidate.label })),
+      signature,
+    },
+    presentation: {
+      kind: 'indexed',
+      options: block.map((candidate) => ({
+        label: candidate.label, shortcut: String(candidate.number), focused: candidate.focused,
+      })),
+    },
   };
 }
 
@@ -711,26 +726,9 @@ function resolveGenericSelectionDialog(
 
 function resolveDialogSelectionPresentation(
   text: string,
-  numbered: ClaudeUnifiedGenericNumberedDialog | null,
+  numbered: ReturnType<typeof resolveGenericNumberedDialog>,
 ): ClaudeUnifiedDialogSelectionPresentation | null {
-  if (numbered) {
-    const lines = text.split('\n');
-    return {
-      kind: 'indexed',
-      options: numbered.options.map((option) => {
-        const pattern = new RegExp(
-          `^[^\\S\\n]*(?:${SELECTION_FOCUS_GLYPH_SOURCE}[^\\S\\n]*)?${option.choice}\\.[^\\S\\n]+`,
-          'u',
-        );
-        const row = lines.find((line) => pattern.test(line));
-        return {
-          label: option.label,
-          shortcut: option.choice,
-          focused: row ? FOCUSED_SELECTION_LINE.test(row) : false,
-        };
-      }),
-    };
-  }
+  if (numbered) return numbered.presentation;
 
   const focused = resolveFocusedSelectionBlock(text);
   return focused ? { kind: 'focused', options: focused.options } : null;
@@ -753,15 +751,25 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   const text = normalizeClaudeCapturedScreen(rawText);
   const visibleTail = tailLines(text, 30);
   const securityNotesContinuation = resolveSecurityNotesContinuation(visibleTail);
-  const usageLimitSemanticMatch = (
-    USAGE_LIMIT_DIALOG.test(visibleTail)
-    || CROPPED_USAGE_LIMIT_DIALOG.test(visibleTail)
-  );
-  const usageLimitDialogCandidate = usageLimitSemanticMatch
-    ? resolveGenericNumberedDialog(visibleTail, 1)
+  const numberedDialogCandidate = resolveGenericNumberedDialog(visibleTail, 1);
+  const selectionCandidate = resolveDialogSelectionPresentation(visibleTail, numberedDialogCandidate);
+  const usageLimitSemanticMatch = USAGE_LIMIT_DIALOG_HEADING.test(visibleTail)
+    && selectionCandidate !== null
+    && (
+      selectionCandidate.options.some((option) => USAGE_LIMIT_WAIT_OPTION.test(option.label))
+      || (
+        selectionCandidate.options.some((option) => /^stop$/i.test(option.label))
+        && selectionCandidate.options.some((option) => USAGE_LIMIT_AUTOMATIC_OPTION.test(option.label))
+      )
+    );
+  const numberedDialog = numberedDialogCandidate
+    && (usageLimitSemanticMatch || numberedDialogCandidate.dialog.options.length >= 2)
+    ? numberedDialogCandidate
     : null;
-  const visibleNumberedDialog = usageLimitDialogCandidate ?? resolveGenericNumberedDialog(visibleTail);
-  const visibleDialogSelection = resolveDialogSelectionPresentation(visibleTail, visibleNumberedDialog);
+  const visibleNumberedDialog = numberedDialog?.dialog ?? null;
+  const visibleDialogSelection = numberedDialogCandidate && !numberedDialog
+    ? resolveDialogSelectionPresentation(visibleTail, null)
+    : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
   const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
   // A notice above the current composer belongs to transcript history, not the active footer.

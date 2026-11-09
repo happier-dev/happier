@@ -8,7 +8,6 @@ import {
   classifyConversationProviderMaterializationFailureV1,
   ConversationConnectionTestResultV1Schema,
   ConversationDeliveryInputV1Schema,
-  ConversationDeliveryResultV1Schema,
   ConversationEndpointResolveInputV1Schema,
   ConversationEndpointResolveResultV1Schema,
   ConversationProviderConnectionInputV1Schema,
@@ -27,10 +26,10 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProtocolStoredReadSchema, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
-import { createDiscordBotApi, type DiscordApiFailure, type DiscordBotApi, type DiscordBotIdentity } from './discordApi.js';
+import { createDiscordBotApi, type DiscordApiFailure, type DiscordBotApi } from './discordApi.js';
 import {
   createDiscordMessagePayload,
-  type DiscordDeliveryResult,
+  deliverDiscordText,
   type DiscordMessageCreatePayload,
 } from './discordDelivery.js';
 import {
@@ -38,7 +37,6 @@ import {
   type DiscordKnownChannel,
 } from './discordEndpointResolution.js';
 import {
-  buildDiscordInviteUrl,
   createDiscordSetupResult,
   DISCORD_REQUIRED_PERMISSIONS,
   verifyDiscordEndpointPermissions,
@@ -54,7 +52,10 @@ import {
 const DISCORD_CONNECTION_KEY_PREFIX = 'discord:application:';
 
 type DiscordSetupInput = Readonly<{ credentialRef: ConnectedAccountRef }>;
-type ReadyDiscordConnection = Readonly<{ api: DiscordBotApi; identity: DiscordBotIdentity }>;
+type ReadyDiscordConnection = Readonly<{
+  api: DiscordBotApi;
+  identity: DiscordConnectionConfiguration & Readonly<{ botLabel?: string }>;
+}>;
 export type DiscordConnectionConfiguration = Readonly<{
   applicationId: string;
   botUserId: string;
@@ -135,7 +136,7 @@ function readConnectionConfig(input: Readonly<{
   if (
     !nonEmptyString(config.applicationId)
     || !nonEmptyString(config.botUserId)
-    || (config.inviteUrl !== undefined && (!nonEmptyString(config.inviteUrl) || config.inviteUrl !== buildDiscordInviteUrl(config.applicationId)))
+    || (config.inviteUrl !== undefined && !nonEmptyString(config.inviteUrl))
     || input.providerConnectionKey !== `${DISCORD_CONNECTION_KEY_PREFIX}${config.applicationId}`
   ) {
     return invalidConfiguration('Discord Channel connection configuration is invalid.');
@@ -207,15 +208,16 @@ async function readyConnection(
     providerConfig: unknown;
     credentialRef: ConnectedAccountRef | null;
   }>,
+  verifyIdentity = false,
 ): Promise<ReadyDiscordConnection | ConversationProviderFailureV1> {
-  const invalid = readConnectionConfig(input);
-  if (invalid) return invalid;
+  const config = readDiscordConnectionConfiguration(input);
+  if ('kind' in config) return config;
   const api = await createExactDiscordBotApi(context, input.credentialRef!);
   if ('kind' in api) return api;
+  if (!verifyIdentity) return { api, identity: config };
   const identity = await api.getIdentity({ signal: context.signal });
   context.signal.throwIfAborted();
   if ('kind' in identity) return failureFromApi(identity);
-  const config = input.providerConfig as Readonly<{ applicationId: string; botUserId: string }>;
   if (
     parseConnectionKey(input.providerConnectionKey) !== identity.applicationId
     || config.applicationId !== identity.applicationId
@@ -315,23 +317,6 @@ async function verifyCurrentDiscordEndpointPermissions(input: Readonly<{
   };
 }
 
-function resolveDeliveryResult(result: DiscordDeliveryResult): ConversationDeliveryResultV1 {
-  switch (result.kind) {
-    case 'sent':
-      return { kind: 'delivered', providerMessageIds: [result.messageId] };
-    case 'endpointArchived':
-      return { kind: 'endpointArchived', recovery: result.recovery };
-    case 'notSent':
-      return {
-        kind: 'notDelivered',
-        retry: result.retry,
-        ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }),
-      };
-    case 'outcomeUnknown':
-      return { kind: 'outcomeUnknown' };
-  }
-}
-
 function preSendFailureResult(result: ConversationProviderFailureV1): ConversationDeliveryResultV1 {
   if (result.reason === 'rateLimited' && result.retryAfterMs !== undefined) {
     return { kind: 'notDelivered', retry: 'after', retryAfterMs: result.retryAfterMs };
@@ -402,7 +387,7 @@ export async function testDiscordConnection(input: unknown, context: PluginInvoc
       diagnostic: 'Discord Channels supports socket transport only.',
     });
   }
-  const ready = await readyConnection(context, connection);
+  const ready = await readyConnection(context, connection, true);
   if ('kind' in ready) return ready;
   const gateway = await ready.api.getGatewayBot({ signal: context.signal });
   context.signal.throwIfAborted();
@@ -450,7 +435,9 @@ export async function resolveDiscordEndpoint(input: unknown, context: PluginInvo
 export async function deliverDiscordMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
   assertDiscordChannelsCoreCaller(context);
   const request = ConversationDeliveryInputV1Schema.parse(input);
-  if (request.newThread !== undefined) return { kind: 'notReady', reason: 'unsupported' };
+  if (request.newThread !== undefined && (request.endpoint.kind !== 'shared' || request.endpoint.audience !== 'shared')) {
+    return { kind: 'notReady', reason: 'unsupported' };
+  }
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return preSendFailureResult(ready);
   const channelId = readDiscordChannelEndpointId(request.endpoint.id);
@@ -506,17 +493,7 @@ export async function deliverDiscordMessage(input: unknown, context: PluginInvoc
   ) {
     return { kind: 'notDelivered', retry: 'never' };
   }
-  let result: DiscordDeliveryResult;
-  try {
-    // Discord's normal archived-thread send may auto-unarchive. We never
-    // PATCH a thread speculatively; only exact archive refusal maps to the
-    // core-owned recovery outcome. No verified MANAGE_THREADS fact is held
-    // in this provider action, so it cannot offer that stronger recovery.
-    result = await ready.api.sendMessage({ channelId, payload, canManageThreads: false }, { signal: context.signal });
-  } catch {
-    return { kind: 'outcomeUnknown' };
-  }
-  return ConversationDeliveryResultV1Schema.parse(resolveDeliveryResult(result));
+  return await deliverDiscordText({ api: ready.api, request, channelId, payload, signal: context.signal });
 }
 
 /** Fetch live bytes only when the core attachment owner consumes an admitted descriptor. */

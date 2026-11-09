@@ -37,6 +37,23 @@ async function fixture() {
 }
 
 describe('Gemini v0.64 native conversation reader', () => {
+  it('yields within a patch replay before publishing a subsequently rewound hit', async () => {
+    const { reader, request, path, kit } = await fixture();
+    try {
+      await writeFile(path, jsonl([header,
+        ...Array.from({ length: 2000 }, (_, index) => user(`ordinary-${index}`, `ordinary ${index}`)),
+        user('abandoned', 'deadline needle abandoned'), { $rewindTo: 'abandoned' }, user('retained', 'deadline needle retained')]));
+      let clock = 0;
+      vi.spyOn(Date, 'now').mockImplementation(() => ++clock);
+      const first = await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'deadline needle', scanDeadlineAtMs: 20 });
+      expect(first).toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) } });
+      if (!first.ok || !first.value.nextCursor) throw new Error('Expected interrupted patch replay');
+      const next = await reader.listCandidates({ ...request, searchTarget: 'content', searchTerm: 'deadline needle', cursor: first.value.nextCursor });
+      expect(next).toMatchObject({ ok: true, value: { contentCoverage: 'complete', nextCursor: null, candidates: [
+        { match: { sourceItemId: 'retained', snippet: 'deadline needle retained', messageIndex: 2000 } },
+      ] } });
+    } finally { await kit.dispose(); }
+  });
   it('searches decoded full bodies and excludes tool inputs, with real registration and strict rows', async () => {
     const { reader, request, path, kit } = await fixture();
     try {
@@ -171,10 +188,10 @@ describe('Gemini v0.64 native conversation reader', () => {
     try {
       await writeFile(join(chats, 'session-second.jsonl'), jsonl([{ ...header, sessionId: 'second' }, user('u', 'sapphire second')]));
       const page = await reader.listCandidates({ ...request, maxItems: 1, searchTarget: 'content', searchTerm: 'sapphire', scanDeadlineAtMs: Date.now() - 1 });
-      expect(page).toMatchObject({ ok: true, value: { contentCoverage: 'partial', nextCursor: expect.any(String), candidates: [{ remoteSessionId: sessionId }] } });
+      expect(page).toMatchObject({ ok: true, value: { contentCoverage: 'partial', nextCursor: expect.any(String), candidates: [] } });
       if (!page.ok) return;
       expect(await reader.listCandidates({ ...request, cursor: page.value.nextCursor!, searchTarget: 'content', searchTerm: 'sapphire' }))
-        .toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: 'second' }], nextCursor: null } });
+        .toMatchObject({ ok: true, value: { candidates: [{ remoteSessionId: sessionId }, { remoteSessionId: 'second' }], contentCoverage: 'complete', nextCursor: null } });
       expect(await reader.listCandidates({ ...request, cursor: page.value.nextCursor!, searchTarget: 'content', searchTerm: 'different' }))
         .toMatchObject({ ok: false, code: 'invalid_request' });
       expect(await reader.listCandidates({ ...request, signal: AbortSignal.abort(), searchTarget: 'content', searchTerm: 'sapphire' }))

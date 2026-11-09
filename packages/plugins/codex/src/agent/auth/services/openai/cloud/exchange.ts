@@ -5,6 +5,7 @@ import {
   assertNonEmptyString,
   buildSafeOauthProviderFailureMessage,
   extractOpenAiAccountIdFromIdToken,
+  resolveCodexTokenExpiresAtMs,
 } from './oauth.js';
 import type { CodexAuthTokens } from './types.js';
 
@@ -62,9 +63,7 @@ export async function exchangeCodexAuthorizationCodeForAuthTokens(params: Readon
     refresh_token: refreshToken,
     account_id: extractOpenAiAccountIdFromIdToken(idToken),
     expires_in: expiresIn,
-    expires_at: expiresIn && Number.isFinite(expiresIn) && expiresIn > 0
-      ? params.now + Math.trunc(expiresIn) * 1000
-      : null,
+    expires_at: resolveCodexTokenExpiresAtMs({ accessToken, expiresIn, now: params.now }),
   };
 }
 

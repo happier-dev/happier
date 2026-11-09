@@ -184,6 +184,7 @@ export function createSessionHooksFixture(): Readonly<{
   serverDispose: ReturnType<typeof vi.fn>;
   service: {
       startServer: ReturnType<typeof vi.fn>;
+      observeSessionHook: ReturnType<typeof vi.fn>;
       resolveForwarderAssets: ReturnType<typeof vi.fn>;
       createPluginDir: ReturnType<typeof vi.fn>;
       disposePluginDir: ReturnType<typeof vi.fn>;
@@ -198,6 +199,7 @@ export function createSessionHooksFixture(): Readonly<{
     serverStop,
     serverDispose,
     service: {
+      observeSessionHook: vi.fn(async () => undefined),
       startServer: vi.fn(async () => ({
         port: 43123,
         sessionHookSecretFile: '/tmp/happier-claude-hook-session.secret',
@@ -237,6 +239,7 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
   processes: readonly ClaudeSdkExecFixtureProcess[];
   service: ClaudeSdkQueryContext;
   emit(record: unknown): Promise<void>;
+  emitSessionHook(providerSessionId: string, payload: Readonly<Record<string, unknown>>): Promise<void>;
   exitWith(result: Readonly<{
     exitCode: number | null;
     signal: string | null;
@@ -247,6 +250,7 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
 }> {
   const processes: ClaudeSdkExecFixtureProcess[] = [];
   const written: unknown[] = [];
+  let hookSequence = 0;
   type ExitResult = Readonly<{
     exitCode: number | null;
     signal: string | null;
@@ -298,6 +302,14 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
       async writeRecord(record) {
         written.push(record);
         processWritten.push(record);
+        if (record && typeof record === 'object' && Reflect.get(record, 'type') === 'control_request') {
+          const request: unknown = Reflect.get(record, 'request');
+          if (request && typeof request === 'object' && Reflect.get(request, 'subtype') === 'initialize') {
+            await Promise.all([...listeners].map(listener => listener({ type: 'control_response', response: {
+              subtype: 'success', request_id: Reflect.get(record, 'request_id'), response: {},
+            } })));
+          }
+        }
         if (options.acknowledgePrompts !== false && record && typeof record === 'object' && Reflect.get(record, 'type') === 'user') {
           // Native input acknowledgment; tests emit session identity separately through init.
           await Promise.all([...listeners].map(listener => listener({ ...record, isReplay: true, parent_tool_use_id: null })));
@@ -338,6 +350,19 @@ export function createSdkExecFixture(options: Readonly<{ providerExitOwnership?:
     } as unknown as ClaudeSdkQueryContext,
     async emit(record) {
       await Promise.all(processes.map((process) => process.emit(record)));
+    },
+    async emitSessionHook(providerSessionId, payload) {
+      const process = processes.at(-1);
+      if (!process) throw new Error('Claude SDK process was not started');
+      const requestId = `session-hook-${++hookSequence}`;
+      const { tool_use_id: toolUseId, ...input } = payload;
+      await process.emit({ type: 'control_request', request_id: requestId, request: {
+        subtype: 'hook_callback', callback_id: 'happier-session-hook', tool_use_id: toolUseId,
+        input: { ...input, session_id: providerSessionId },
+      } });
+      await vi.waitFor(() => expect(process.written).toContainEqual(expect.objectContaining({
+        type: 'control_response', response: expect.objectContaining({ subtype: 'success', request_id: requestId }),
+      })));
     },
     async exitWith(result) {
       await settlePendingExits(observedExit(result));

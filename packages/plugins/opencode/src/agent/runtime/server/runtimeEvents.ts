@@ -47,6 +47,7 @@ export type OpenCodeRuntimeEvent =
   | (EventBase & Readonly<{ kind: 'mode-catalog-observed' }>)
   | (EventBase & Readonly<{ kind: 'available-commands'; commands: Array<Readonly<{ name: string; description?: string }>> }>)
   | (TurnEventBase & Readonly<{ kind: 'turn-start'; startedBy?: 'host' | 'provider' }>)
+  | (TurnEventBase & Pick<Extract<AgentSessionRuntimeEvent, { kind: 'turn-progress' }>, 'kind' | 'retry'>)
   | (TurnEventBase & Readonly<{ kind: 'message-delta'; channel: 'assistant' | 'reasoning'; text: string; messageId?: string }>)
   | (TurnEventBase & Readonly<{ kind: 'turn-complete' }>)
   | (TurnEventBase & Readonly<{ kind: 'turn-cancelled'; reason?: string }>)

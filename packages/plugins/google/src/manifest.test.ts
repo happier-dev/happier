@@ -1,5 +1,6 @@
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 import {
@@ -98,21 +99,19 @@ describe('Google voice plugin manifest', () => {
     expect(GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION.settings.privacyDisclosure.key).toBe(sttKey);
     expect(GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION.settings.privacyDisclosure.key).toBe(ttsKey);
 
-    const missing = PLUGIN_MANIFEST.contributes.ui.translations.flatMap((translation) => {
-      const stt = translation.messages[sttKey];
-      const tts = translation.messages[ttsKey];
-      if (typeof stt !== 'string' || stt.trim().length === 0) return [`${translation.locale}: ${sttKey}`];
-      if (typeof tts !== 'string' || tts.trim().length === 0) return [`${translation.locale}: ${ttsKey}`];
+    const translations = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
+    const missing = Object.entries(translations).flatMap(([locale, messages]) => {
+      const stt = messages[sttKey];
+      const tts = messages[ttsKey];
+      if (typeof stt !== 'string' || stt.trim().length === 0) return [`${locale}: ${sttKey}`];
+      if (typeof tts !== 'string' || tts.trim().length === 0) return [`${locale}: ${ttsKey}`];
       // A re-merged combined disclosure would make the two roles indistinguishable.
-      return stt === tts ? [`${translation.locale}: shared combined disclosure`] : [];
+      return stt === tts ? [`${locale}: shared combined disclosure`] : [];
     });
     expect(missing).toEqual([]);
 
-    const english = PLUGIN_MANIFEST.contributes.ui.translations.find(
-      (translation) => translation.locale === 'en',
-    );
-    const stt = english?.messages[sttKey];
-    const tts = english?.messages[ttsKey];
+    const stt = translations.en[sttKey];
+    const tts = translations.en[ttsKey];
     // Transcription copy must not promise speech synthesis...
     expect(stt).toMatch(/Google Gemini/iu);
     expect(stt).toMatch(/transcription/iu);

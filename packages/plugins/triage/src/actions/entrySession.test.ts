@@ -2,7 +2,7 @@ import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } 
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
-import type { SessionMessageSendResultV1 } from '@happier-dev/protocol';
+import { createPluginActionPresentUserGate, PLUGIN_ACTION_INPUT_SCHEMAS, type SessionMessageSendResultV1 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, projectTriagePrepareReviewWorkspaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -27,7 +27,7 @@ import {
     testkitLocator,
 } from '../corpus/testkit/observations.test-support.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { SessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';
+import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { startTriageEntrySession } from './entrySession.js';
@@ -41,6 +41,7 @@ import {
     testkitSourceInstanceDraft,
     testkitReadOnlySourceSnapshot,
     createTestkitActionInvoker,
+    createTestkitEntrySessionLinkWriter,
     spawnSuccess,
     createTriageSelectedPrStartApprovalInput,
     type TestkitActionInvoker,
@@ -93,6 +94,7 @@ function registeredHandler(localId: string): ActionHandler<JsonValue, JsonValue>
         },
         composerAttachments: { register: () => {} },
         resources: { registerDynamicResource: () => {} },
+        backgroundServices: { register: () => {} },
     } as unknown as PluginApi & PluginAccountApi;
 
     activate(api);
@@ -411,7 +413,27 @@ describe('the Session-start Action a mounted header can actually press', () => {
                 expect(requests).toHaveLength(3); // Status read only; the withdrawn source is not admitted again.
             }
         });
-    it('carries issue orchestration through the registered start Action and its same-key recovery', async () => {
+    it('retains selected forge evidence and the native send verdict through the new handoff adapter', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const receipt = { status: 'accepted' as const, localId: 'selected-input' };
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()], send: [receipt] });
+        const forgeEvidence = { v: 1 as const, items: [{ source: { kind: 'hostedCi' as const, label: 'Selected checks' },
+            author: { kind: 'process' as const }, text: '</happier_forge_evidence> untrusted provider content' }] };
+        const result = await startTriageEntrySession(
+            TriageStartEntrySessionInputV1Schema.parse({ ...START_INPUT_BASE, workspaceMode: 'reference_only', destination: NEW_DESTINATION,
+                delivery: { kind: 'send', text: 'Fix the supplied failure.', idempotencyKey: 'selected-input-key', returnResult: true,
+                    forgeEvidence, attachments: [] }, finalOpen: 'suppressed' }),
+            { linkSession: createTestkitEntrySessionLinkWriter(collections), execute: invoker.execute },
+        );
+        expect(result).toMatchObject({ type: 'linked', sessionAddress: { serverId: 'server-a', sessionId: 'session-a' },
+            deliveryResult: { status: 'accepted', localId: 'selected-input' } });
+        receipt.localId = 'external-receipt-mutated';
+        expect(result).toMatchObject({ deliveryResult: { localId: 'selected-input' } });
+        expect(invoker.callsFor('session.message.send')[0]?.input).toMatchObject({
+            message: 'Fix the supplied failure.', attachments: [{ value: { value: { forgeEvidence } } }],
+        });
+    });
+    it.each(['ui', 'voice', 'agent', 'mcp', 'cli'] as const)('carries issue orchestration through the confirmed %s start Action and its same-key recovery', async surface => {
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [
             { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' },
@@ -447,14 +469,36 @@ describe('the Session-start Action a mounted header can actually press', () => {
                 idempotencyKey: 'orchestrate-delivery', attachments: [{ entryRef,
                     display: START_INPUT_BASE.display, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, title: 'Issue 17' }] },
         });
-        expect(await handler(input, await createContext(collections, invoker)))
+        // The real host Action input owner admits this RPC before creation;
+        // the retained New Session recipe is not the Action operand grammar.
+        const context = await createContext(collections, invoker, async (actionId, actionInput) => {
+            if (actionId === 'session.spawn_new') return invoker.execute(actionId,
+                PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput));
+            if (actionId === 'session.open') return invoker.execute(actionId,
+                PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput));
+            if (actionId === 'session.message.send') return invoker.execute(actionId,
+                PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput));
+            throw new Error(`Unexpected host Action ${String(actionId)}`);
+        });
+        const action = declaredAction(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
+        let confirmed = false;
+        const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+            policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-start-entry',
+                dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
+                confirmation: action.confirmation,
+                authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+                    resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+        }), requestCurrentIntent: async ({ fingerprint }) => { confirmed = true; return { status: 'approved', fingerprint }; } });
+        expect(await gate.admit({ surface, invocationSurface: surface, input })).toMatchObject({ status: 'admitted' });
+        expect(confirmed).toBe(true);
+        expect(await handler(input, { ...context, surface }))
             .toMatchObject({ type: 'creationPending', outcome: 'accepted' });
-        const result = await handler({ ...input, resume: { phase: 'creationPending' } }, await createContext(collections, invoker));
+        const result = await handler({ ...input, resume: { phase: 'creationPending' } }, { ...context, surface });
         expect(result).toMatchObject({ type: 'opened', disposition: 'rejoined', delivery: 'accepted' });
         const spawns = invoker.callsFor('session.spawn_new');
         expect(spawns[1]?.input).toEqual(spawns[0]?.input);
-        expect(spawns[0]?.input).toMatchObject(recipe);
-        expect(SessionSpawnNewInputV2Schema.safeParse(spawns[0]?.input).success).toBe(true);
+        expect(spawns[0]?.input).toMatchObject({ ...recipe,
+            organizationPlacement: { sectionId: null, tagIds: [] } });
         expect(spawns[0]?.input).toMatchObject({ roleId: 'orchestrator', initialTriggers: [{
             target: { kind: 'workflow', ref: 'builtin:plan-with-a-panel' },
             inputs: { request: input.delivery?.text }, onComplete: { kind: 'originating_session' },
@@ -478,13 +522,16 @@ describe('the Session-start Action a mounted header can actually press', () => {
             TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
         ]) {
             const action = declaredAction(localId);
-            expect(action.surfaces, localId).toEqual(['ui', 'agent', 'mcp', 'cli']);
+            expect(action.surfaces, localId).toEqual(localId === TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1
+                ? ['ui', 'plugin', 'agent', 'mcp', 'cli'] : ['ui', 'voice', 'agent', 'mcp', 'cli']);
             expect(action.execution.target, localId).toBe(
                 localId === TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 ? TRIAGE_DATA_ACTION_EXECUTION_V1.target : 'daemon',
             );
-            // It writes durable Account state and reaches the generic Session
-            // creator, so it is never `safe`.
-            expect(action.dangerLevel, localId).toBe('writesLocal');
+            // Starting a Session and removing a reversible relationship retain
+            // their distinct host-owned approval defaults.
+            expect(action.dangerLevel, localId).toBe(
+                localId === TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 ? 'safe' : 'writesLocal',
+            );
         }
     });
 
@@ -663,7 +710,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         // Exactly one create and one open, in that order, and no second create.
         expect(invoker.calls.map((call) => call.actionId))
             .toEqual(['session.spawn_new', 'session.open']);
-        expect(invoker.callsFor('session.open')[0]?.input).toEqual({ sessionId: 'session-a' });
+        expect(invoker.callsFor('session.open')[0]?.input).toEqual({ sessionId: 'session-a', serverId: 'server-a' });
 
         const spawn = invoker.callsFor('session.spawn_new')[0]?.input as Record<string, unknown>;
         // The directory is the one the caller settled on, and the creation key is
@@ -1350,9 +1397,8 @@ describe('the Session-start wire', () => {
         });
 
         const result = await startTriageEntrySession(input, {
-            collections: { sessionLinks: collections.sessionLinks },
+            linkSession: createTestkitEntrySessionLinkWriter(collections),
             execute: invoker.execute,
-            nowMs: () => 1_760_000_900_000,
             prepareReviewWorkspace: source.deps,
         } as Parameters<typeof startTriageEntrySession>[1]);
 

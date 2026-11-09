@@ -570,7 +570,8 @@ export async function getGithubTriageEntry(
     });
   }
 
-  const read = await runGithubTriageGet({ localRef, routingToken }, {
+  const read = await runGithubTriageGet({ localRef, routingToken,
+    ...(getInput.includeTaskFieldChoices === true ? { includeTaskFieldChoices: true as const } : {}) }, {
     client: opened.client,
     now: dependencies.now ?? (() => context.invokedAtMs),
     signal: context.signal,

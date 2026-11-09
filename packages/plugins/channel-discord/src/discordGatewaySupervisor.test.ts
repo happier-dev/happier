@@ -22,6 +22,7 @@ import {
   DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
+import { DISCORD_MESSAGE_CONTENT_INTENT } from './discordSetup.js';
 
 const credentialRef = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.discord', localId: 'discord-bot' }),
@@ -145,7 +146,16 @@ function supervisorBackgroundHarness(input: Readonly<{
               originSurface: 'background',
             },
             signal: options?.signal ?? background.signal,
-            services: background.services,
+            services: {
+              ...background.services,
+              logger: {
+                ...background.services.logger,
+                info(message, fields) {
+                  // The real host retires an Action's logger on cancellation.
+                  if (!(options?.signal ?? background.signal).aborted) background.services.logger.info(message, fields);
+                },
+              },
+            },
           } as PluginInvocationContext,
         );
         return undefined;
@@ -225,8 +235,10 @@ function response(value: unknown): Readonly<{
 
 function gatewaySocketUntilStopped(
   onIdentify: () => void,
-): PluginWebSocketConnection & Readonly<{ sent: ReturnType<typeof vi.fn> }> {
+  readySessionId?: string,
+): PluginWebSocketConnection & Readonly<{ sent: ReturnType<typeof vi.fn>; push(frame: unknown): void }> {
   let helloPending = true;
+  let readyPending = readySessionId !== undefined;
   let resolveBlockedReceive: ((value: Awaited<ReturnType<PluginWebSocketConnection['receive']>>) => void) | null = null;
   const sent = vi.fn(async (message: unknown) => {
     if (
@@ -253,11 +265,22 @@ function gatewaySocketUntilStopped(
     protocol: '',
     closed: Promise.resolve({ kind: 'generationRetired', wasClean: true }),
     sent,
+    push(frame) {
+      if (resolveBlockedReceive === null) throw new Error('Gateway fixture is not waiting for a frame.');
+      const receive = resolveBlockedReceive;
+      resolveBlockedReceive = null;
+      receive({ kind: 'text', text: JSON.stringify(frame) });
+    },
     send: sent,
     receive: vi.fn(async () => {
       if (helloPending) {
         helloPending = false;
         return { kind: 'text' as const, text: JSON.stringify({ op: 10, d: { heartbeat_interval: 60_000 } }) };
+      }
+      if (readyPending) {
+        readyPending = false;
+        return { kind: 'text' as const, text: JSON.stringify({ op: 0, s: 1, t: 'READY',
+          d: { session_id: readySessionId, resume_gateway_url: 'wss://gateway.discord.gg' } }) };
       }
       return await new Promise<Awaited<ReturnType<PluginWebSocketConnection['receive']>>>((resolve) => {
         resolveBlockedReceive = resolve;
@@ -408,6 +431,9 @@ describe('Discord Gateway supervisor', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(listedEpochs).toEqual([7]);
+      expect(vi.mocked(background.services.logger.info).mock.calls).toContainEqual([
+        expect.any(String), expect.objectContaining({ phase: 'reconciliation', connectionCount: 1 }),
+      ]);
       await vi.advanceTimersByTimeAsync(90_000);
       console.info('FIX-WAKE Discord measurement', {
         startupLists: 1,
@@ -589,7 +615,7 @@ describe('Discord Gateway supervisor', () => {
     }
   });
 
-  it('stops only the exact frozen old-generation worker and reports its explicit stop after pending-stop reconciliation', async () => {
+  it('stops the local worker naturally when the current connection is disabled', async () => {
     let current = snapshot({ requiresFullSharedMessageContent: true });
     const executeCore = async (action: Readonly<{ localId: string }>) => {
         if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
@@ -645,77 +671,278 @@ describe('Discord Gateway supervisor', () => {
       }),
     }));
 
-    await expect(supervisor.stop({
-      v: 1,
-      connectionId: 'connection-1',
-      providerConnectionKey: 'discord:application:application-1',
-      providerConfigVersion: 1,
-      providerConfig: {
-        applicationId: 'application-1',
-        botUserId: 'different-bot',
-        inviteUrl: 'https://discord.com/oauth2/authorize?client_id=application-1&scope=bot&permissions=274877975552',
-      },
-      credentialRef,
-      authorityEpoch: 8,
-      reason: 'delete',
-    }, channelsCoreContext())).resolves.toMatchObject({ kind: 'notReady', reason: 'invalidConfiguration' });
-    expect(worker.stop).not.toHaveBeenCalled();
-
-    await expect(supervisor.stop({
-      v: 1,
-      connectionId: 'connection-1',
-      providerConnectionKey: 'discord:application:application-1',
-      providerConfigVersion: 1,
-      providerConfig: {
-        botUserId: 'bot-1',
-        inviteUrl: 'https://discord.com/oauth2/authorize?client_id=application-1&scope=bot&permissions=274877975552',
-        applicationId: 'application-1',
-      },
-      credentialRef,
-      // Core has already committed the pending row at E+1. Its generic
-      // execution origin invokes this frozen request in the E worker's
-      // provider generation.
-      authorityEpoch: 8,
-      reason: 'delete',
-    }, channelsCoreContext())).resolves.toEqual({ kind: 'stopped' });
-    expect(worker.stop).toHaveBeenCalledTimes(1);
-
-    current = snapshot({ authorityEpoch: 8, enabled: false, deletionState: 'pendingStopReconciliation' });
+    current = snapshot({ authorityEpoch: 8, enabled: false });
     await supervisor.reconcile(background);
-    expect(actions.execute).toHaveBeenCalledWith(
-      {
-        pluginId: 'happier.channels',
-        localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
-      },
-      {
-        connectionId: 'connection-1',
-        authorityEpoch: 8,
-        fact: { kind: 'stopConfirmed', reason: 'explicitStop' },
-      },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(worker.stop).toHaveBeenCalledTimes(1);
+    await supervisor.reconcile(background);
+    expect(actions.execute.mock.calls.filter(([action]) => typeof action !== 'string'
+      && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport)).toEqual([]);
     await supervisor.dispose();
   });
 
-  it('returns notRunning only when the old provider generation has no local worker', async () => {
+  it('waits for actual Gateway teardown when the supervisor is disposed', async () => {
+    vi.useFakeTimers();
     const supervisor = createDiscordGatewaySupervisor();
-
-    await expect(supervisor.stop({
-      v: 1,
-      connectionId: 'connection-1',
-      providerConnectionKey: 'discord:application:application-1',
-      providerConfigVersion: 1,
-      providerConfig: {
-        applicationId: 'application-1',
-        botUserId: 'bot-1',
-        inviteUrl: 'https://discord.com/oauth2/authorize?client_id=application-1&scope=bot&permissions=274877975552',
+    let releaseDispose!: () => void;
+    const disposed = new Promise<void>(resolve => { releaseDispose = resolve; });
+    let identified = false;
+    const socket = {
+      ...gatewaySocketUntilStopped(() => { identified = true; }),
+      dispose: vi.fn(() => disposed),
+    };
+    const current = snapshot();
+    const { background } = supervisorBackgroundHarness({
+      supervisor,
+      connectedAccounts: {
+        materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
       },
-      credentialRef,
-      authorityEpoch: 8,
-      reason: 'delete',
-    }, channelsCoreContext())).resolves.toEqual({ kind: 'notRunning' });
+      http: {
+        request: vi.fn(async (request: Readonly<{ url: string }>) => response(request.url.endsWith('/oauth2/applications/@me')
+          ? { id: 'application-1', flags: 0, flags_new: '0' }
+          : request.url.endsWith('/gateway/bot')
+            ? { url: 'wss://gateway.discord.gg/', shards: 1,
+              session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 0, max_concurrency: 16 } }
+            : { id: 'bot-1', username: 'Happier Bot', bot: true })),
+        openWebSocket: vi.fn(async () => socket),
+      },
+      executeCore: async action => {
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) return { [current.connectionId]: current };
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) return { kind: 'recorded' };
+        throw new Error(`Unexpected core Action ${action.localId}`);
+      },
+    });
+    try {
+      await supervisor.reconcile(background);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(identified).toBe(true);
+      let settled = false;
+      const stopping = supervisor.dispose().then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(socket.dispose).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      releaseDispose();
+      await vi.advanceTimersByTimeAsync(0);
+      await stopping;
+      expect(settled).toBe(true);
+    } finally {
+      releaseDispose();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await supervisor.dispose();
+      vi.useRealTimers();
+    }
+  });
 
-    await supervisor.dispose();
+  it('re-identifies a READY Gateway when shared content demand changes without restarting unchanged demand', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const controller = new AbortController();
+    const supervisor = createDiscordGatewaySupervisor();
+    let current = snapshot();
+    const sockets = [false, true, false].map((_, index) => gatewaySocketUntilStopped(vi.fn(), `session-${index}`));
+    let openedSockets = 0;
+    const openWebSocket = vi.fn(async () => {
+      const socket = sockets[openedSockets++];
+      if (!socket) throw new Error('Unexpected extra Gateway session.');
+      return socket;
+    });
+    const reportedFacts: unknown[] = [];
+    const admissions: unknown[] = [];
+    const { background } = supervisorBackgroundHarness({
+      supervisor, signal: controller.signal,
+      connectedAccounts: {
+        materialize: async () => ({ kind: 'environment', env: { DISCORD_BOT_TOKEN: 'bot-token' } }),
+        watch: () => ({ dispose() {} }),
+      },
+      http: {
+        request: async ({ url }) => response(url.endsWith('/oauth2/applications/@me')
+          ? { id: 'application-1', flags: 1 << 18, flags_new: String(1 << 18) }
+          : url.endsWith('/users/@me') ? { id: 'bot-1', username: 'Happier Bot', bot: true }
+          : url.endsWith('/channels/channel-1') ? { id: 'channel-1', type: 1 }
+          : { url: 'wss://gateway.discord.gg/', shards: 1,
+            session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 86_400_000, max_concurrency: 1 } }),
+        openWebSocket,
+      },
+      executeCore: async (action, input) => {
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) return { [current.connectionId]: current };
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
+          reportedFacts.push(input);
+          return { kind: 'recorded' };
+        }
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.observationIngest) { admissions.push(input); return; }
+        throw new Error(`Unexpected core Action ${action.localId}`);
+      },
+      executeAutomation: async (action) => {
+        if (action === 'automation.event.sources.list') return { kind: 'page', revision: '1', definitions: [], nextCursor: null };
+        if (action === 'automation.event.source.status.report') return {};
+        throw new Error(`Unexpected Automation Action ${action}`);
+      },
+    });
+    const running = supervisor.run(background);
+    const identifiedIntents = (index: number): number => {
+      for (const [message] of sockets[index]!.sent.mock.calls) {
+        if (typeof message !== 'object' || message === null || !('text' in message) || typeof message.text !== 'string') continue;
+        const frame = JSON.parse(message.text);
+        if (frame.op === 2 && typeof frame.d?.intents === 'number') return frame.d.intents;
+      }
+      throw new Error('Expected a Gateway IDENTIFY frame.');
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openWebSocket).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(background.services.logger.info).mock.calls).toContainEqual([
+        '[Discord Gateway] Session ready', expect.objectContaining({ messageContentIntentActive: false }),
+      ]);
+      expect(identifiedIntents(0) & DISCORD_MESSAGE_CONTENT_INTENT).toBe(0);
+
+      current = snapshot({ authorityEpoch: 8, providerConfig: { applicationId: 'application-1', botUserId: 'bot-1',
+        inviteUrl: 'https://discord.com/oauth2/authorize?client_id=application-1&scope=bot' } });
+      supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(openWebSocket).toHaveBeenCalledTimes(1);
+      sockets[0]!.push({ op: 0, s: 2, t: 'MESSAGE_CREATE', d: { id: 'after-generation-change', channel_id: 'channel-1',
+        timestamp: '2024-01-01T00:01:00.000Z', type: 0, content: 'hello', author: { id: 'human-1', bot: false }, attachments: [], embeds: [] } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(admissions).toEqual([expect.objectContaining({ connectionId: 'connection-1', authorityEpoch: 8 })]);
+
+      current = snapshot({ authorityEpoch: 8, requiresFullSharedMessageContent: true });
+      supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(openWebSocket).toHaveBeenCalledTimes(2);
+      expect(identifiedIntents(1) & DISCORD_MESSAGE_CONTENT_INTENT).toBe(DISCORD_MESSAGE_CONTENT_INTENT);
+      expect(vi.mocked(background.services.logger.info).mock.calls).toContainEqual([
+        '[Discord Gateway] Session ready', expect.objectContaining({ messageContentIntentActive: true }),
+      ]);
+      // Diagnostic coverage, not evidence of a product-behavior RED: this
+      // demand transition already succeeds before the diagnostic change.
+      const records = vi.mocked(background.services.logger.info).mock.calls.map(([, fields]) => fields);
+      expect(records).toEqual(expect.arrayContaining([
+        expect.objectContaining({ phase: 'workerComparison', fingerprintMatches: false,
+          oldRequiresFullSharedMessageContent: false, requiresFullSharedMessageContent: true }),
+        expect.objectContaining({ phase: 'workerDecision', decision: 'stop-and-replace',
+          oldRequiresFullSharedMessageContent: false, requiresFullSharedMessageContent: true }),
+        expect.objectContaining({ phase: 'workerStopRequested', intent: 'reconcile', settleOutcome: 'stillPending' }),
+        expect.objectContaining({ phase: 'workerSettled', resultKind: 'stopped', settleOutcome: 'settled' }),
+        expect.objectContaining({ phase: 'workerAttemptSettled', settleOutcome: 'settled', intent: 'reconcile' }),
+        expect.objectContaining({ phase: 'workerDecision', decision: 'start', requiresFullSharedMessageContent: true }),
+        expect.objectContaining({ phase: 'workerStart', requiresFullSharedMessageContent: true }),
+      ]));
+      const replacementDecision = records.findIndex(record => record?.phase === 'workerDecision' && record.decision === 'stop-and-replace');
+      const replacementStart = records.findIndex(record => record?.phase === 'workerStart' && record.requiresFullSharedMessageContent === true);
+      expect(replacementDecision).toBeLessThan(replacementStart);
+      for (let index = 0; index < 3; index += 1) {
+        supervisor.invalidateConnections();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(openWebSocket).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(background.services.logger.info).mock.calls).toContainEqual([
+        expect.any(String), expect.objectContaining({ phase: 'workerDecision', decision: 'keep', fingerprintMatches: true,
+          oldRequiresFullSharedMessageContent: true, requiresFullSharedMessageContent: true }),
+      ]);
+
+      current = snapshot({ authorityEpoch: 8 });
+      supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(openWebSocket).toHaveBeenCalledTimes(3);
+      expect(identifiedIntents(2) & DISCORD_MESSAGE_CONTENT_INTENT).toBe(0);
+      expect(reportedFacts).toContainEqual(expect.objectContaining({ fact: { kind: 'providerReadiness', status: 'ready' } }));
+    } finally {
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await running;
+      await supervisor.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['list', 'read', 'fact'] as const)('keeps the real Gateway socket alive across a transient authority %s failure', async failure => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const controller = new AbortController();
+    const supervisor = createDiscordGatewaySupervisor();
+    const current = snapshot();
+    let failRead = failure === 'fact';
+    const sockets = [gatewaySocketUntilStopped(vi.fn(), 'before-loss'), gatewaySocketUntilStopped(vi.fn(), 'after-repair')];
+    const openWebSocket = vi.fn(async () => sockets[openWebSocket.mock.calls.length - 1]!);
+    const reportedFacts: unknown[] = [];
+    let failedFactReports = 0;
+    let acceptedFactReports = 0;
+    const { background } = supervisorBackgroundHarness({
+      supervisor, signal: controller.signal,
+      connectedAccounts: {
+        materialize: async () => ({ kind: 'environment', env: { DISCORD_BOT_TOKEN: 'bot-token' } }),
+        watch: () => ({ dispose() {} }),
+      },
+      http: {
+        request: async ({ url }) => response(url.endsWith('/oauth2/applications/@me')
+          ? { id: 'application-1', flags: 1 << 18, flags_new: String(1 << 18) }
+          : url.endsWith('/users/@me') ? { id: 'bot-1', username: 'Happier Bot', bot: true }
+          : { url: 'wss://gateway.discord.gg/', shards: 1,
+            session_start_limit: { total: 1_000, remaining: 1_000, reset_after: 86_400_000, max_concurrency: 1 } }),
+        openWebSocket,
+      },
+      readConnection: async () => {
+        if (failRead && failure === 'read') throw new PluginError({ code: 'channels_reconciliation_snapshot_changed', message: 'Account cursor moved.', retryable: true });
+        return current;
+      },
+      executeCore: async (action, input) => {
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
+          if (failRead && failure === 'list') throw new PluginError({ code: 'channels_reconciliation_snapshot_changed', message: 'Account cursor moved.', retryable: true });
+          return { [current.connectionId]: current };
+        }
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
+          if (failure === 'fact' && failRead) {
+            failedFactReports += 1;
+            throw new PluginError({ code: 'network_error', message: 'Account transport unavailable.', retryable: true });
+          }
+          acceptedFactReports += 1;
+          if (typeof input === 'object' && input !== null && 'fact' in input
+            && typeof input.fact === 'object' && input.fact !== null && 'kind' in input.fact && input.fact.kind === 'historyGap') {
+            reportedFacts.push(input);
+            throw new PluginError({ code: 'plugin_collection_value_invalid', message: 'Closed Collection schema rejected the write.' });
+          }
+          return { kind: 'recorded' };
+        }
+        throw new Error(`Unexpected core Action ${action.localId}`);
+      },
+      executeAutomation: async action => {
+        if (action === 'automation.event.sources.list') return { kind: 'page', revision: '1', definitions: [], nextCursor: null };
+        if (action === 'automation.event.source.status.report') return {};
+        throw new Error(`Unexpected Automation Action ${action}`);
+      },
+    });
+    const running = supervisor.run(background);
+    const records = () => vi.mocked(background.services.logger.info).mock.calls.map(([, fields]) => fields);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(openWebSocket).toHaveBeenCalledTimes(1);
+      expect(records()).toContainEqual(expect.objectContaining({ phase: 'gatewayReady', messageContentIntentActive: false }));
+      failRead = true;
+      supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(records()).not.toContainEqual(expect.objectContaining({ phase: 'workerStopRequested' }));
+      failRead = false;
+      supervisor.invalidateConnections();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reportedFacts).toHaveLength(0);
+      expect(openWebSocket).toHaveBeenCalledTimes(1);
+      expect(records().filter(record => record?.phase === 'workerStart')).toHaveLength(1);
+      expect(records()).toContainEqual(expect.objectContaining(failure === 'read'
+        ? { phase: 'workerDecision', decision: 'skip', reason: 'authorityReadFailed', errorCode: 'channels_reconciliation_snapshot_changed' }
+        : failure === 'fact'
+          ? { phase: 'workerDecision', decision: 'skip', reason: 'transportFactReportFailed', errorCode: 'network_error' }
+          : { phase: 'reconciliationFailed', errorCode: 'channels_reconciliation_snapshot_changed' }));
+      if (failure === 'fact') {
+        expect(failedFactReports).toBeGreaterThan(0);
+        expect(acceptedFactReports).toBeGreaterThan(0);
+      }
+    } finally {
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(5_000);
+      await running;
+      await supervisor.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('projects a role-proof admission loss before a changed strict demand can create a fresh Identify worker', async () => {
@@ -807,176 +1034,6 @@ describe('Discord Gateway supervisor', () => {
     expect(second.worker.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('reports unproven continuity against the successor authority before a fingerprint replacement starts', async () => {
-    let current = snapshot({ authorityEpoch: 7, requiresFullSharedMessageContent: false });
-    let connectionHasHistoryGap = false;
-    const lifecycle: string[] = [];
-    const automationReports: unknown[] = [];
-    let resolveFirst!: (result: DiscordGatewayWorkerResult) => void;
-    const firstWorker = {
-      result: new Promise<DiscordGatewayWorkerResult>((resolve) => { resolveFirst = resolve; }),
-      stop: vi.fn(() => resolveFirst({ kind: 'stopped', unprovenContinuity: true })),
-    };
-    let resolveSecond!: (result: DiscordGatewayWorkerResult) => void;
-    const secondWorker = {
-      result: new Promise<DiscordGatewayWorkerResult>((resolve) => { resolveSecond = resolve; }),
-      stop: vi.fn(() => resolveSecond({ kind: 'stopped' })),
-    };
-    const workerFactory = vi.fn((input: Readonly<{
-      reportConnectionStatus?: (status: 'ready' | 'reconnecting') => void | Promise<void>;
-    }>) => {
-      lifecycle.push('worker');
-      if (workerFactory.mock.calls.length === 1) return firstWorker;
-      return {
-        ...secondWorker,
-        result: (async () => {
-          await input.reportConnectionStatus?.('ready');
-          return await secondWorker.result;
-        })(),
-      };
-    });
-    const supervisor = createDiscordGatewaySupervisor({ workerFactory });
-    const { actions, background } = supervisorBackgroundHarness({
-      supervisor,
-      connectedAccounts: {
-        materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
-      },
-      http: {
-        request: vi.fn(async (request: Readonly<{ url: string }>) => response(
-          request.url.endsWith('/oauth2/applications/@me')
-            ? { id: 'application-1', flags: 1 << 18, flags_new: String(1 << 18) }
-            : { id: 'bot-1', username: 'Happier Bot', bot: true },
-        )),
-        openWebSocket: vi.fn(),
-      },
-      executeCore: async (action, actionInput) => {
-        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-          return connectionHasHistoryGap ? {} : { [current.connectionId]: current };
-        }
-        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
-          lifecycle.push(`fact:${JSON.stringify(actionInput)}`);
-          connectionHasHistoryGap = true;
-          return { kind: 'recorded' };
-        }
-        throw new Error(`Unexpected core Action ${action.localId}`);
-      },
-      executeAutomation: async (action, input) => {
-        if (action === 'automation.event.sources.list') {
-          return {
-            kind: 'page',
-            revision: '24',
-            definitions: [{
-              automationId: '11111111-1111-4111-8111-111111111111',
-              triggerId: 'discord-current',
-              triggerRevision: 4,
-              eventRef: {
-                pluginId: 'happier.channel.discord',
-                localId: 'automation/channel-message-observed-v1',
-              },
-              sourceInstanceId: 'discord:application:application-1:channel:123',
-              sourceSelectorId: '22222222-2222-4222-8222-222222222222',
-              sourceContractVersion: 1,
-              sourceConfig: { v: 1 },
-              observationTransport: {
-                kind: 'socket',
-                watcherMaterializationRef: {
-                  pluginId: 'happier.channel.discord',
-                  machineId: 'machine-1',
-                  materializationId: 'materialization-1',
-                },
-              },
-              filter: null,
-              maximumObservationAgeMs: null,
-            }],
-            nextCursor: null,
-          };
-        }
-        if (action === 'automation.event.source.status.report') {
-          automationReports.push(input);
-          return {};
-        }
-        throw new Error(`Unexpected Automation Action ${action}`);
-      },
-    });
-    const workerAttemptCount = (): number => actions.execute.mock.calls.filter(
-      ([action]) => typeof action !== 'string'
-        && action.pluginId === 'happier.channel.discord'
-        && action.localId === DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
-    ).length;
-
-    await supervisor.reconcile(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
-
-    current = snapshot({ authorityEpoch: 8, requiresFullSharedMessageContent: true });
-    await supervisor.reconcile(background);
-    expect(firstWorker.stop).toHaveBeenCalledTimes(1);
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-
-    await supervisor.reconcile(background);
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-    expect(workerAttemptCount()).toBe(1);
-
-    expect(lifecycle).toEqual([
-      'worker',
-      `fact:${JSON.stringify({
-        connectionId: 'connection-1',
-        authorityEpoch: 8,
-        fact: { kind: 'historyGap', reason: 'providerHistoryUnavailable' },
-      })}`,
-    ]);
-    expect(automationReports).toEqual([
-      expect.objectContaining({
-        kind: 'catalogReconciliation',
-        scope: { kind: 'socket' },
-        observedRevision: '24',
-      }),
-      expect.objectContaining({
-        kind: 'source',
-        triggerId: 'discord-current',
-        state: 'attention',
-        code: 'historyGap',
-      }),
-    ]);
-
-    // Channels excludes the gapped connection until the user accepts a new
-    // baseline. The stale reconciliation snapshot that reported the gap must
-    // not start a successor, and clearing that existing fact is the only
-    // recovery signal needed to resume ordinary worker readiness.
-    await supervisor.reconcile(background);
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-    expect(workerAttemptCount()).toBe(1);
-    connectionHasHistoryGap = false;
-    await supervisor.reconcile(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
-    expect(workerFactory).toHaveBeenCalledTimes(2);
-    expect(workerAttemptCount()).toBe(2);
-    expect(lifecycle).toEqual([
-      'worker',
-      `fact:${JSON.stringify({
-        connectionId: 'connection-1',
-        authorityEpoch: 8,
-        fact: { kind: 'historyGap', reason: 'providerHistoryUnavailable' },
-      })}`,
-      'worker',
-    ]);
-    expect(automationReports).toEqual([
-      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'socket' } }),
-      expect.objectContaining({
-        kind: 'source',
-        triggerId: 'discord-current',
-        state: 'attention',
-        code: 'historyGap',
-      }),
-      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'socket' } }),
-      expect.objectContaining({
-        kind: 'source',
-        triggerId: 'discord-current',
-        state: 'observing',
-        code: 'none',
-      }),
-    ]);
-    await supervisor.dispose();
-  });
 
   it('projects Gateway backoff and recovery through exact current socket sources', async () => {
     const current = snapshot();
@@ -1490,10 +1547,9 @@ describe('Discord Gateway supervisor', () => {
     await supervisor.dispose();
   });
 
-  it('reports the continuity gap of a resumable worker stopped by an unavailable reconciliation authority before recovery', async () => {
+  it('keeps a healthy Gateway worker across an unavailable reconciliation list and recovery', async () => {
     const current = snapshot();
     let listAvailable = true;
-    let connectionHasHistoryGap = false;
     const reportedFacts: unknown[] = [];
     const events: string[] = [];
     const workerResults: DiscordGatewayWorkerResult[] = [];
@@ -1511,12 +1567,11 @@ describe('Discord Gateway supervisor', () => {
     const executeCore = async (action: Readonly<{ localId: string }>, actionInput: unknown) => {
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
         if (!listAvailable) throw new Error('Channels connections list is unavailable.');
-        return connectionHasHistoryGap ? {} : { [current.connectionId]: current };
+        return { [current.connectionId]: current };
       }
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
         events.push('fact');
         reportedFacts.push(actionInput);
-        connectionHasHistoryGap = true;
         return { kind: 'recorded' };
       }
       throw new Error(`Unexpected core Action ${action.localId}`);
@@ -1540,42 +1595,22 @@ describe('Discord Gateway supervisor', () => {
     await supervisor.reconcile(background);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
 
-    // The reconciliation authority becomes unavailable while the worker still
-    // holds Discord resume coordinates from a live session. The stop cannot
-    // prove continuity, so the provider must queue the same history-gap fact
-    // it already owns and publish it through the existing transport-fact
-    // owner once the authority is reachable again — before any replacement
-    // worker resumes product admission.
+    // A read outage is not evidence that the retained authority was revoked.
     listAvailable = false;
-    workerResults.push({ kind: 'stopped', unprovenContinuity: true });
     await supervisor.reconcile(background);
     await supervisor.reconcile(background);
 
     listAvailable = true;
     await supervisor.reconcile(background);
     expect(workerFactory).toHaveBeenCalledTimes(1);
-
-    // Channels owns the retained gap and excludes it from reconciliation until
-    // an explicit baseline repair clears that canonical admission block.
-    connectionHasHistoryGap = false;
-    await supervisor.reconcile(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
-
-    expect(reportedFacts).toEqual([
-      {
-        connectionId: 'connection-1',
-        authorityEpoch: 7,
-        fact: { kind: 'historyGap', reason: 'applicationAdmissionLost' },
-      },
-    ]);
-    expect(events).toEqual(['worker', 'fact', 'worker']);
+    expect(reportedFacts).toEqual([]);
+    expect(events).toEqual(['worker']);
     await supervisor.dispose();
   });
 
-  it('reports the continuity gap of a resumable worker whose authoritative connection read fails before recovery', async () => {
+  it('keeps a healthy Gateway worker across an unavailable authoritative connection read and recovery', async () => {
     const current = snapshot();
     let readAvailable = true;
-    let connectionHasHistoryGap = false;
     const reportedFacts: unknown[] = [];
     const workerResults: DiscordGatewayWorkerResult[] = [];
     const workerStops: Array<() => void> = [];
@@ -1588,11 +1623,10 @@ describe('Discord Gateway supervisor', () => {
     const supervisor = createDiscordGatewaySupervisor({ workerFactory });
     const executeCore = async (action: Readonly<{ localId: string }>, actionInput: unknown) => {
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-        return connectionHasHistoryGap ? {} : { [current.connectionId]: current };
+        return { [current.connectionId]: current };
       }
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
         reportedFacts.push(actionInput);
-        connectionHasHistoryGap = true;
         return { kind: 'recorded' };
       }
       throw new Error(`Unexpected core Action ${action.localId}`);
@@ -1621,28 +1655,16 @@ describe('Discord Gateway supervisor', () => {
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
 
     readAvailable = false;
-    workerResults.push({ kind: 'stopped', unprovenContinuity: true });
     await supervisor.reconcile(background);
 
     readAvailable = true;
     await supervisor.reconcile(background);
     expect(workerFactory).toHaveBeenCalledTimes(1);
-
-    connectionHasHistoryGap = false;
-    await supervisor.reconcile(background);
-    await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
-
-    expect(reportedFacts).toEqual([
-      {
-        connectionId: 'connection-1',
-        authorityEpoch: 7,
-        fact: { kind: 'historyGap', reason: 'applicationAdmissionLost' },
-      },
-    ]);
+    expect(reportedFacts).toEqual([]);
     await supervisor.dispose();
   });
 
-  it('does not report a continuity gap when an explicit stop stops a resumable worker', async () => {
+  it('does not publish retired stop proofs when a disabled resumable worker settles', async () => {
     let current = snapshot({ requiresFullSharedMessageContent: true });
     const reportedFacts: unknown[] = [];
     let resolveWorker!: (result: DiscordGatewayWorkerResult) => void;
@@ -1681,36 +1703,16 @@ describe('Discord Gateway supervisor', () => {
     await supervisor.reconcile(background);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
 
-    // A deliberate stop is core-owned transfer custody with its own
-    // stopConfirmed fact. The worker's continuity disclosure must not become
-    // a second, competing gap claim on that path.
-    await expect(supervisor.stop({
-      v: 1,
-      connectionId: 'connection-1',
-      providerConnectionKey: 'discord:application:application-1',
-      providerConfigVersion: 1,
-      providerConfig: current.providerConfig,
-      credentialRef,
-      authorityEpoch: 8,
-      reason: 'delete',
-    }, channelsCoreContext())).resolves.toEqual({ kind: 'stopped' });
-
-    current = snapshot({ authorityEpoch: 8, enabled: false, deletionState: 'pendingStopReconciliation' });
+    current = snapshot({ authorityEpoch: 8, enabled: false });
     await supervisor.reconcile(background);
-
-    expect(reportedFacts).toEqual([
-      {
-        connectionId: 'connection-1',
-        authorityEpoch: 8,
-        fact: { kind: 'stopConfirmed', reason: 'explicitStop' },
-      },
-    ]);
+    await vi.waitFor(() => expect(worker.stop).toHaveBeenCalledOnce());
+    await supervisor.reconcile(background);
+    expect(reportedFacts).toEqual([]);
     await supervisor.dispose();
   });
 
-  it('reports the continuity gap of a resumable worker whose runner generation retired before the replacement runner admits', async () => {
+it('reports the continuity gap of a resumable worker whose runner generation retired before the replacement runner admits', async () => {
     const current = snapshot();
-    let connectionHasHistoryGap = false;
     const reportedFacts: unknown[] = [];
     const events: string[] = [];
     const workerResults: DiscordGatewayWorkerResult[] = [];
@@ -1727,12 +1729,11 @@ describe('Discord Gateway supervisor', () => {
     const supervisor = createDiscordGatewaySupervisor({ workerFactory });
     const executeCore = async (action: Readonly<{ localId: string }>, actionInput: unknown) => {
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-        return connectionHasHistoryGap ? {} : { [current.connectionId]: current };
+        return { [current.connectionId]: current };
       }
       if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
         events.push('fact');
         reportedFacts.push(actionInput);
-        connectionHasHistoryGap = true;
         return { kind: 'recorded' };
       }
       throw new Error(`Unexpected core Action ${action.localId}`);
@@ -1782,10 +1783,6 @@ describe('Discord Gateway supervisor', () => {
     });
     const replacementRun = supervisor.run(replacementBackground);
     await vi.waitFor(() => expect(reportedFacts).toHaveLength(1));
-    expect(workerFactory).toHaveBeenCalledTimes(1);
-
-    connectionHasHistoryGap = false;
-    await supervisor.reconcile(replacementBackground);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
 
     expect(reportedFacts).toEqual([
@@ -1870,7 +1867,7 @@ describe('Discord Gateway supervisor', () => {
     await supervisor.dispose();
   });
 
-  it('forgets terminal fingerprints after their connection revision leaves reconciliation', async () => {
+  it('forgets terminal fingerprints after their credential selection leaves reconciliation', async () => {
     let currentSnapshot = snapshot();
     const workerFactory = vi.fn(() => ({
       result: Promise.resolve({ kind: 'terminal', reason: 'invalidApiVersion' } as const),
@@ -1911,11 +1908,11 @@ describe('Discord Gateway supervisor', () => {
     await supervisor.reconcile(background);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(1));
 
-    currentSnapshot = snapshot({ authorityEpoch: 8 });
+    currentSnapshot = snapshot({ authorityEpoch: 8, credentialRef: { ...credentialRef, accountId: 'bot:replacement' } });
     await supervisor.reconcile(background);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(2));
 
-    currentSnapshot = snapshot({ authorityEpoch: 7 });
+    currentSnapshot = snapshot({ authorityEpoch: 9 });
     await supervisor.reconcile(background);
     await vi.waitFor(() => expect(workerFactory).toHaveBeenCalledTimes(3));
 

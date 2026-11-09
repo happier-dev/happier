@@ -6,6 +6,9 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
+    TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1,
+    TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1,
+    TriageSaveActionDefaultsInputV1Schema,
     TriageReadSessionHandoffChoicesInputV1Schema,
     TriageSessionHandoffChoicesV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -95,7 +98,8 @@ export type TriageReadActionsActionResultV1 = ReturnType<typeof TriageReadAction
 const TriageActionDraftV1WireSchema = TRIAGE_ACTION_DRAFT_MEMBERS_V1;
 
 /**
- * Explicit create, update, delete and reorder, and nothing else.
+ * Explicit catalog operations, plus a composer snapshot written through the
+ * existing Prompt Library and Profile owners.
  *
  * Rename, disable and reconfigure are all one `update`: they are the same
  * write of the same five answers, and giving each its own command would be
@@ -104,11 +108,12 @@ const TriageActionDraftV1WireSchema = TRIAGE_ACTION_DRAFT_MEMBERS_V1;
  * dropped through it — because a shorter list would delete actions under the
  * guise of reordering.
  *
- * Every arm carries `expectedRevision`: the catalogue the caller was looking at
- * when it formed the intent. A write against a catalogue that has moved is the
- * same settled `conflict` a losing race produces, and the caller re-reads.
+ * Editor operations carry the catalogue revision the caller read. Save default
+ * reads the current record at invocation and updates only the composer-authored
+ * fields; its final catalog write uses that revision through the same CAS owner.
  */
 export const TriageAdministerActionInputV1Schema = defineProtocolUnion([
+    TriageSaveActionDefaultsInputV1Schema,
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('reset'),
@@ -165,7 +170,7 @@ export const TriageAdministerActionResultV1Schema = defineProtocolObject({
         defineProtocolLiteral('appliesTo'),
         defineProtocolLiteral('duplicateSubject'),
         defineProtocolLiteral('profileId'),
-        defineProtocolLiteral('workspaceMode'),
+        defineProtocolLiteral(TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1),
         defineProtocolLiteral('target'),
         defineProtocolLiteral('promptInvocationId'),
         defineProtocolLiteral('promptArgsText'),
@@ -188,5 +193,5 @@ export type TriageAdministerActionResultV1 =
 
 /** The authoritative configured-action read. */
 export const TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 = TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.localId;
-/** The one explicit create/update/delete/reorder write. */
-export const TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 = 'actions/administer-v1';
+/** The incumbent catalog writer also consumes Save default snapshots. */
+export const TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 = TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1.localId;

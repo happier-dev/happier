@@ -5,7 +5,7 @@ import { ConversationProvidersContributionProtocolV1 as providers, CONVERSATION_
 import { EmailTransportsContributionPointV1 } from './transports.js';
 import { EMAIL_CHANNEL_PLUGIN_ID, EMAIL_CHANNEL_ACTION_IDS as ids } from './constants.js';
 import { setupEmailChannels, testEmailConnection, resolveEmailEndpoint, resolveEmailPrincipal, pollEmailObservations, deliverEmailMessage, reconcileEmailDelivery, fetchEmailAttachment, EMAIL_SETUP_INPUT_SCHEMA } from './channelActions.js';
-import { EMAIL_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 import { EMAIL_SETUP_INPUT_HINTS } from './ui/setupHints.js';
 import { IMAP_SMTP_CONNECTED_ACCOUNT_ID, IMAP_SMTP_CREDENTIAL_PURPOSE,
   imapSmtpActions, imapSmtpConnectedAccountDescriptor, imapSmtpTransportContribution } from './transports/imapSmtp/index.js';
@@ -22,8 +22,7 @@ function providerAction(
 
 export const emailPlugin = definePlugin({
   id: EMAIL_CHANNEL_PLUGIN_ID, version: '0.0.0', displayName: 'Email Channels',
-  description: 'Connects authenticated mailbox conversations to Happier Channels.',
-  runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  description: 'Connects authenticated mailbox conversations to Happier Channels.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
     { id: IMAP_SMTP_CREDENTIAL_PURPOSE, capability: 'connectedAccounts',
       reason: 'Authenticate the selected mailbox for IMAP and SMTP operations.',
@@ -32,8 +31,34 @@ export const emailPlugin = definePlugin({
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://login.microsoftonline.com' }], methods: ['POST'] } },
   ], optional: [] },
   brand: { iconResourceId: 'email-brand' },
-  resources: { 'email-brand': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
-  ui: { translations: EMAIL_UI_TRANSLATION_BUNDLES },
+  resources: { 'email-brand': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   contributionPoints: { transports: EmailTransportsContributionPointV1 },
   connectedAccountDescriptors: { [IMAP_SMTP_CONNECTED_ACCOUNT_ID]: imapSmtpConnectedAccountDescriptor },
   actions: {

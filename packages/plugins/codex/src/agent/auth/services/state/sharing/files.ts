@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { canonicalAbsolutePathsEqual, readConnectedAccountNativeHomeState, resolveConfiguredNativeHomePath } from '@happier-dev/plugin-sdk/fs';
-import { CODEX_NATIVE_HOME } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CODEX_NATIVE_HOME } from '@happier-dev/protocol/agents/codex/native-home-policy';
 
 export function resolveCodexConfiguredSqliteHome(params: Readonly<{
   codexSqliteHome: string | null | undefined;

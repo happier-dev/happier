@@ -1,7 +1,7 @@
-import { expect } from 'vitest';
+import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { JsonValue, PluginServices } from '@happier-dev/plugin-sdk';
 import type { PluginWebSocketConnection, PluginWebSocketMessage } from '@happier-dev/plugin-sdk/http';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ConversationOutboundTextLimitV1Schema } from '@happier-dev/channels-protocol/v1';
 
 import { activate, PLUGIN_MANIFEST } from '../../channel-slack/src/index.js';
@@ -17,6 +17,14 @@ const connectionId = 'conformance-connection';
 const observedAtSeconds = Math.floor(Date.now() / 1000);
 const rootTs = `${observedAtSeconds}.000001`;
 const messageTs = (id: number) => `${observedAtSeconds}.${String(id).padStart(6, '0')}`;
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  // Native fixture IDs retain their provider timestamps across redelivery.
+  // Keep the clock boundary at that arrival time so suite duration cannot age them out.
+  vi.setSystemTime(observedAtSeconds * 1_000);
+});
+afterEach(() => { vi.useRealTimers(); });
 const parent = { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' } as const;
 const endpoint = { kind: 'thread', audience: 'shared', id: `${parent.id}:thread:${rootTs}`, parentId: parent.id } as const;
 const identity = { teamId: 'T1', appId: 'A1', botUserId: 'UBOT', botId: 'B1', label: 'Happier' };
@@ -69,7 +77,7 @@ async function slackAdapter(): Promise<ProviderConformanceAdapter> {
   let topic: string | undefined;
   const sockets = new Set<PluginWebSocketConnection>();
   const hello = { type: 'hello', connection_info: { app_id: identity.appId } };
-  const http: PluginServices['http'] = {
+  const http: PluginServices['http'] = createPluginHttpFixture({
     async openWebSocket() {
       const boundary = socketBoundary([hello]);
       sockets.add(boundary.socket);
@@ -98,7 +106,7 @@ async function slackAdapter(): Promise<ProviderConformanceAdapter> {
       }
       throw new Error(`Unexpected native Slack request ${method}`);
     },
-  };
+  });
   const connectedAccounts = { async materialize() {
     return { kind: 'environment', env: { SLACK_BOT_TOKEN: credentials.botToken, SLACK_APP_TOKEN: credentials.appToken } };
   } } as unknown as PluginServices['connectedAccounts'];
@@ -151,11 +159,14 @@ async function slackAdapter(): Promise<ProviderConformanceAdapter> {
         } finally { worker.stop(); await worker.result; worker = undefined; }
       },
       async gap(journey) {
-        const boundary = socketBoundary([hello, { type: 'disconnect', reason: 'refresh_requested' }]);
+        const boundary = socketBoundary([hello]);
         sockets.add(boundary.socket);
         worker = startSlackSocketWorker({ connection: { connectionId, authorityEpoch: 1, identity }, api,
           webSockets: { openWebSocket: async () => boundary.socket }, signal: new AbortController().signal,
           admitObservation: async input => { await journey.ingest(input); } });
+        // Lose the transport after its buffered HELLO, without a graceful
+        // refresh request or explicit worker stop.
+        boundary.socket.close();
         const result = await worker.result;
         worker = undefined;
         expect(result).toEqual({ kind: 'historyGap', reason: 'providerHistoryUnavailable' });
@@ -165,7 +176,7 @@ async function slackAdapter(): Promise<ProviderConformanceAdapter> {
       async recover(journey) {
         const current = await journey.state.get(connectionId);
         const revision = record(current?.value.payload).configurationRevision;
-        expect(await journey.invoke('stream/baseline-accept-v1', { connectionId, expectedRevision: revision! })).toMatchObject({ kind: 'updated' });
+        expect(await journey.invoke('stream/notice-dismiss-v1', { connectionId, expectedRevision: revision! })).toMatchObject({ kind: 'noticeDismissed' });
       },
       async dispose() {
         worker?.stop(); await worker?.result;

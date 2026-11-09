@@ -89,18 +89,18 @@ describe('buildCodexAppServerConfigOverrides', () => {
         });
 
         expect(overrides).toEqual([
-            'mcp_optional_startup_grace_ms=60000',
             'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
             'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
             'mcp_servers.happier.env={HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE="/tmp/bridge-config.json"}',
             'mcp_servers.happier.enabled=true',
+            'mcp_servers.happier.required=true',
             'mcp_servers.happier.startup_timeout_sec=60',
             'mcp_servers.happier.tool_timeout_sec=2147000',
             ...listHappierToolAutoApprovedNamesV1().map((name) => `mcp_servers.happier.tools.${name}.approval_mode="approve"`),
         ]);
     });
 
-    it('uses the app-server startup budget for optional Happier MCP discovery without making it required', () => {
+    it('requires the first-party Happier bridge within the app-server startup budget', () => {
         const overrides = buildCodexAppServerConfigOverrides({
             happier: { command: 'happier-mcp' },
         }, {
@@ -109,19 +109,25 @@ describe('buildCodexAppServerConfigOverrides', () => {
             },
         });
 
-        expect(overrides).toContain('mcp_optional_startup_grace_ms=90000');
+        // Codex awaits a required server fully and fails thread/start when it
+        // cannot initialize, so Happier tools are never silently missing.
+        expect(overrides).toContain('mcp_servers.happier.required=true');
         expect(overrides).toContain('mcp_servers.happier.startup_timeout_sec=90');
-        expect(overrides.some((override) => override.includes('.required='))).toBe(false);
+        expect(overrides.some(override => override.startsWith('mcp_optional_startup_grace_ms='))).toBe(false);
     });
 
-    it('gives injected third-party tools the same discovery budget before the first turn', () => {
-        const overrides = buildCodexAppServerConfigOverrides({ docs: { command: 'docs-mcp' } }, {
+    it('leaves injected third-party servers on Codex startup defaults so they cannot hold the first turn', () => {
+        const overrides = buildCodexAppServerConfigOverrides({
+            happier: { command: 'happier-mcp' },
+            docs: { command: 'docs-mcp' },
+        }, {
             processEnv: { HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '90000' },
             mcpToolPolicy: { docs: { unlisted: 'ask', tools: { read: 'ask' } } },
         });
-        expect(overrides).toContain('mcp_optional_startup_grace_ms=90000');
-        expect(overrides).toContain('mcp_servers.happier__docs.startup_timeout_sec=90');
-        expect(overrides.some(override => override.includes('.required='))).toBe(false);
+        const thirdParty = overrides.filter(override => override.startsWith('mcp_servers.happier__docs.'));
+        expect(thirdParty).toContain('mcp_servers.happier__docs.enabled=true');
+        expect(thirdParty.some(override => /\.(required|startup_timeout_sec|startup_timeout_ms)=/.test(override))).toBe(false);
+        expect(overrides.some(override => override.startsWith('mcp_optional_startup_grace_ms='))).toBe(false);
     });
 
     it('prefixes configured server names so user Codex MCP entries cannot collide with Happier-injected ones', () => {

@@ -1,7 +1,7 @@
 import { basename, isAbsolute, join } from 'node:path';
 
 import { readExactCodexProviderSessionId } from '../../../../../protocol/runtimeDescriptorV1.js';
-import { parseCodexRolloutFilename } from '../../../../rollout/discovery/indexData.js';
+import { isCodexRolloutFilePath, parseCodexRolloutFilename } from '../../../../rollout/discovery/indexData.js';
 import { isMatchingCodexRolloutFileName } from '../../../../rollout/discovery/sessionFileSearch.js';
 
 export type CodexSessionImportRoot = Readonly<{
@@ -39,7 +39,7 @@ export function createCodexSessionImportRoots(params: Readonly<{
   return CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
     sourceRoot: join(params.destinationCodexHome, entryName),
     destinationRoot: join(params.sourceCodexHome, entryName),
-    includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
+    includeFile: isCodexRolloutFilePath,
   }));
 }
 

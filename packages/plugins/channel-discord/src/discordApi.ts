@@ -4,6 +4,8 @@ import { rethrowConversationProviderLifecycleFailureV1 } from '@happier-dev/chan
 import {
   boundedDiscordRetryAfterMs,
   classifyDiscordDeliveryResponse,
+  classifyDiscordDeliveryFailureResponse,
+  DISCORD_THREAD_NAME_MAXIMUM_CODE_POINTS,
   type DiscordDeliveryResult,
   type DiscordMessageCreatePayload,
 } from './discordDelivery.js';
@@ -65,6 +67,10 @@ export type DiscordApiFailure = Readonly<{
 }>;
 
 export type DiscordBotApi = Readonly<{
+  createThread(input: Readonly<{ channelId: string; name: string }>, options?: DiscordRequestOptions): Promise<
+    | Readonly<{ kind: 'created'; channelId: string }>
+    | Exclude<DiscordDeliveryResult, { kind: 'sent' | 'endpointArchived' }>
+  >;
   getIdentity(options?: DiscordRequestOptions): Promise<DiscordBotIdentity | DiscordApiFailure>;
   getGatewayBot(options?: DiscordRequestOptions): Promise<DiscordGatewayBotInfo | DiscordApiFailure>;
   getChannel(input: Readonly<{ channelId: string }>, options?: DiscordRequestOptions): Promise<DiscordKnownChannel | null | DiscordApiFailure>;
@@ -85,7 +91,7 @@ export type DiscordBotApi = Readonly<{
     options?: DiscordRequestOptions,
   ): Promise<readonly DiscordGuildRolePermissionEvidence[] | DiscordApiFailure>;
   sendMessage(
-    input: Readonly<{ channelId: string; payload: DiscordMessageCreatePayload; canManageThreads: boolean }>,
+    input: Readonly<{ channelId: string; payload: DiscordMessageCreatePayload;  }>,
     options?: DiscordRequestOptions,
   ): Promise<DiscordDeliveryResult>;
 }>;
@@ -356,7 +362,6 @@ export function createDiscordBotApi(input: Readonly<{
         },
         ...(body === undefined ? {} : { body: encodeJson(body) }),
         redirect: 'error',
-        timeoutMs: 15_000,
       }, options);
       return { status: response.status, body: parseJson(response.body) };
     } catch (error) {
@@ -508,6 +513,25 @@ export function createDiscordBotApi(input: Readonly<{
       };
     },
 
+    async createThread(inputValue, options) {
+      // Discord API v10 native channel-name boundary; omit optional archive
+      // settings so the parent's native defaults continue to apply.
+      if (!inputValue.channelId || !inputValue.name.trim() || [...inputValue.name].length > DISCORD_THREAD_NAME_MAXIMUM_CODE_POINTS) {
+        return { kind: 'notSent', retry: 'never', diagnostic: 'Invalid Discord thread name.' };
+      }
+      const response = await requestJson(`/channels/${encodeURIComponent(inputValue.channelId)}/threads`, 'POST', {
+        name: inputValue.name, type: 11,
+      }, options);
+      if (response === null) return { kind: 'outcomeUnknown' };
+      if (response.status < 200 || response.status >= 300) {
+        return classifyDiscordDeliveryFailureResponse(response);
+      }
+      const body = response.body;
+      const channelId = isRecord(body) ? nonEmptyString(body.id) : null;
+      return channelId !== null && isRecord(body) && body.type === 11 && body.parent_id === inputValue.channelId
+        ? { kind: 'created', channelId } : { kind: 'outcomeUnknown' };
+    },
+
     async sendMessage(inputValue, options) {
       const channelId = inputValue.channelId.trim();
       if (!channelId) return { kind: 'outcomeUnknown' };
@@ -521,7 +545,6 @@ export function createDiscordBotApi(input: Readonly<{
       return classifyDiscordDeliveryResponse({
         status: response.status,
         body: response.body,
-        canManageThreads: inputValue.canManageThreads,
       });
     },
   };

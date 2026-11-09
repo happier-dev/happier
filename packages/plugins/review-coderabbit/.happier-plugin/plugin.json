@@ -20,6 +20,9 @@
           }
         },
         "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "coderabbit-cli"
+          },
           "vendorResume": {
             "support": "unsupported"
           }
@@ -57,10 +60,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -147,6 +151,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -157,7 +162,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -174,9 +178,6 @@
   },
   "description": "Runs CodeRabbit as a review-only execution engine.",
   "displayName": "CodeRabbit review engine",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

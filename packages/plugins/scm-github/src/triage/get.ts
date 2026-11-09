@@ -33,6 +33,7 @@ import {
   type GithubIssueOverviewV1,
   type GithubPullRequestOverviewV1,
 } from './detail/overview.js';
+import { fitGithubTaskFieldChoices, readGithubPropertyChoices } from './detail/propertyChoices.js';
 import { createGithubRepositoryReader, type GithubRepositoryReaderV1 } from './repositories.js';
 import { projectGithubRepositoryCapabilities } from './capabilities.js';
 import { readGithubIssueRelations } from './relations.js';
@@ -64,6 +65,8 @@ export type GithubGetInputV1 = Readonly<{
   localRef: GithubTriageEntryLocalRefV1;
   /** The last-known routing token from the newest source observation. */
   routingToken: unknown;
+  /** The detail will offer task edits: also read the repository's people and labels. */
+  includeTaskFieldChoices?: true;
 }>;
 
 export type GithubGetDependenciesV1 = Readonly<{
@@ -272,8 +275,12 @@ async function readGithubNonAlertTriageGet(
   if (observation.kind !== 'present') return observation;
   const currentRoute = parseGithubRoutingToken(observation.locator.routingToken);
   if (currentRoute === null) return observation;
-  const relations = await readGithubIssueRelations(input.localRef, currentRoute, repositories, dependencies,
-    observation.snapshot.relations?.children);
+  const [relations, fieldChoices] = await Promise.all([
+    readGithubIssueRelations(input.localRef, currentRoute, repositories, dependencies, observation.snapshot.relations?.children),
+    input.includeTaskFieldChoices === true
+      ? readGithubPropertyChoices({ route: currentRoute, repositoryId: readGithubRepositoryIdFromCollisionScope(input.localRef.collisionScope) }, dependencies.client)
+      : undefined,
+  ]);
   // Reuse the invocation-local repository reader, including any facts already
   // acquired for issue identity or relations, for the native capability controls.
   const repository = await repositories.read(currentRoute);
@@ -284,11 +291,12 @@ async function readGithubNonAlertTriageGet(
       ? Object.freeze({ kind: 'capabilities' as const, ...projectGithubRepositoryCapabilities(repository, 'issue') })
       : Object.freeze({ kind: 'unavailable' as const, failure: repository.failure }),
   });
-  return Object.freeze({
+  const complete = Object.freeze({
     ...observation,
     ...(detailData === undefined ? {} : { detailData }),
     ...(relations === undefined ? {} : { snapshot: Object.freeze({ ...observation.snapshot, relations }) }),
   });
+  return fieldChoices === undefined ? complete : fitGithubTaskFieldChoices(complete, fieldChoices);
 }
 
 /**

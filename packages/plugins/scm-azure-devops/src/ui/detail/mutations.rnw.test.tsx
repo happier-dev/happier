@@ -4,6 +4,7 @@ import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
@@ -181,24 +182,38 @@ const REVIEW_INPUT = {
 
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
+  navigation?: Array<PluginUiPageNavigationV1 | null>,
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-160', mountNonce: 'fixture-mount-160' },
       authorPlugin: { id: AZURE_DEVOPS_PLUGIN_ID, version: '0.0.0' },
-      surface: (context) => (
-        <TriagePostMutationCompletionProvider
+      surface: (context) => {
+        const body = renderSurface(context);
+        // The SDK element is opaque across its boundary; this RNW host requires a React element.
+        if (body !== null && !React.isValidElement(body)) throw new Error('Expected a native Azure DevOps surface');
+        return <TriagePostMutationCompletionProvider
           onComplete={async () => { completedMutations += 1; }}
         >
-          {renderSurface(context)}
-        </TriagePostMutationCompletionProvider>
-      ),
+          {body}
+        </TriagePostMutationCompletionProvider>;
+      },
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
+        ...(navigation === undefined ? {} : { setPageNavigation: ({ navigation: descriptor }: { navigation: PluginUiPageNavigationV1 | null }) => { navigation.push(descriptor); } }),
         executeAction: async ({ action, input }) => {
+          if (action === 'shell.column.set') {
+            const descriptor = navigation?.at(-1);
+            if (!descriptor) throw new Error('Expected the published page navigation');
+            await fixture.updateSurface(createSurfaceContextFixture({ page: { columnVisible: true,
+              navigation: { pageKind: descriptor.pageKind, presentation: 'top',
+                tabIds: descriptor.items.map(item => item.value), request: (input as { tab: string }).tab },
+            } }));
+            return null;
+          }
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
           if (action === 'reviews.comments.list') {
@@ -231,6 +246,47 @@ afterEach(async () => {
 });
 
 describe('the mounted Azure DevOps pull-request writes', () => {
+  it('publishes direct page Items and changes real provider panels through saved top order and the phone host', async () => {
+    readResults = {
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: ITERATIONS_RESULT,
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges]: CHANGES_RESULT,
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies]: POLICIES_RESULT,
+    };
+    const navigation: Array<PluginUiPageNavigationV1 | null> = [];
+    const { panel: _panel, ...direct } = FIXTURE.detailInput;
+    const fixture = await mountDetail(direct as unknown as JsonValue, navigation);
+    const pageKind = { pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: 'triage-pull-request-detail/pull-request' };
+    expect(navigation.at(-1)).toMatchObject({ pageKind, value: 'overview' });
+    const ids = () => recorded.map(entry => (entry.action as { localId?: string }).localId);
+    expect(ids()).not.toContain(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges);
+    expect(ids()).not.toContain(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies);
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture({ page: { columnVisible: true,
+      navigation: { pageKind, presentation: 'top', tabIds: ['files', 'overview', 'policies'] },
+    } })); });
+    expect((await fixture.getAllByRole('tab')).map(tab => tab.name)).toEqual(['Files', 'Overview', 'Policies']);
+    await act(async () => { await fixture.press(await fixture.getByRole('tab', { name: 'Files' })); });
+    await expect(fixture.getByText('/src/retained.ts')).resolves.toBeDefined();
+    expect(ids()).not.toContain(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies);
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture({ platform: 'ios', page: { columnVisible: true,
+      navigation: { pageKind, presentation: 'bottom', tabIds: [], request: 'policies' },
+    } })); });
+    expect(await fixture.queryAllByRole('tab')).toHaveLength(0);
+    expect(navigation.at(-1)).toMatchObject({ value: 'policies' });
+    await expect(fixture.getByText('Required reviewers')).resolves.toBeDefined();
+    expect(ids().filter(id => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges)).toHaveLength(1);
+    expect(ids().filter(id => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies)).toHaveLength(1);
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture({ platform: 'ios', page: { columnVisible: true } })); });
+    expect((await fixture.getAllByRole('tab')).map(tab => tab.name)).toEqual(['Overview', 'Activity', 'Files', 'Policies']);
+    await expect(fixture.getByText('Required reviewers')).resolves.toBeDefined();
+  });
+
+  it('keeps embedded source panels host-hidden without publishing another page catalog', async () => {
+    const navigation: Array<PluginUiPageNavigationV1 | null> = [];
+    const fixture = await mountDetail({ ...FIXTURE.detailInput, panel: 'overview' } as unknown as JsonValue, navigation);
+    expect(navigation).toEqual([]);
+    expect(await fixture.queryAllByRole('tab')).toHaveLength(0);
+  });
+
   it('hands an applied write to the target-owned re-observation seam', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
@@ -509,6 +565,8 @@ describe('the mounted Azure DevOps review publication', () => {
     await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
 
     const revision = FIXTURE.detailInput.observation.snapshot.reviewRevision;
+    const binding = FIXTURE.detailInput.instance.binding;
+    if (!('account' in binding)) throw new Error('Expected the connected Account fixture');
     expect(recordedWrites().at(-1)).toMatchObject({
       action: {
         pluginId: AZURE_DEVOPS_PLUGIN_ID,
@@ -522,7 +580,7 @@ describe('the mounted Azure DevOps review publication', () => {
         publicationPlan: {
           target: {
             providerId: 'azure-devops',
-            configuredAccountId: FIXTURE.detailInput.instance.binding.account.accountId,
+            configuredAccountId: binding.account.accountId,
             entryRef: {
               sourceId: `${AZURE_DEVOPS_PLUGIN_ID}/azure-devops-forge`,
               kindId: LOCAL_REF.kindId,
@@ -709,7 +767,7 @@ describe('the mounted Azure DevOps thread status', () => {
 });
 
 describe('the mounted Azure DevOps detail read presentation', () => {
-  it('refreshes the shared iteration snapshot and commits through one Activity gesture', async () => {
+  it('refreshes the shared iteration snapshot, commits and threads through the Activity stream\'s one re-read', async () => {
     readResults = {
       [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: ITERATIONS_RESULT,
       [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits]: COMMITS_RESULT,
@@ -719,7 +777,7 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     await expect(detail.queryByText('Current change')).resolves.toBeDefined();
 
     await detail.press(await detail.getByRole('button', {
-      name: 'Re-read the commits from Azure DevOps',
+      name: 'Re-read this activity from Azure DevOps',
     }));
 
     const reads = recorded.map(({ action }) => (
@@ -729,6 +787,10 @@ describe('the mounted Azure DevOps detail read presentation', () => {
       .toHaveLength(2);
     expect(reads.filter((id) => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits))
       .toHaveLength(2);
+    expect(reads.filter((id) => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads))
+      .toHaveLength(2);
+    // One re-read for the whole stream: no per-collection Refresh is left in the panel.
+    await expect(detail.queryByRole('button', { name: 'Re-read the threads from Azure DevOps' })).resolves.toBeUndefined();
   });
 
   it('keeps last-known-good policy rows and names a failed warm refresh inline', async () => {

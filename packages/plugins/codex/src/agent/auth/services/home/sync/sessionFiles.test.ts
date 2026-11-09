@@ -21,18 +21,21 @@ describe('Codex connected-service home sync session files', () => {
       sourceRoot: root.sourceRoot,
       destinationRoot: root.destinationRoot,
       acceptsJsonl: root.includeFile('2026/06/rollout.jsonl'),
+      acceptsCompressed: root.includeFile('2026/06/rollout.jsonl.zst'),
       rejectsOther: root.includeFile('notes.txt'),
     }))).toEqual([
       {
         sourceRoot: join('/materialized/codex-home', 'sessions'),
         destinationRoot: join('/user/.codex', 'sessions'),
         acceptsJsonl: true,
+        acceptsCompressed: true,
         rejectsOther: false,
       },
       {
         sourceRoot: join('/materialized/codex-home', 'archived_sessions'),
         destinationRoot: join('/user/.codex', 'archived_sessions'),
         acceptsJsonl: true,
+        acceptsCompressed: true,
         rejectsOther: false,
       },
     ]);
@@ -48,9 +51,9 @@ describe('Codex connected-service home sync session files', () => {
     expect(result).toBe('11111111-2222-3333-4444-555555555555');
   });
 
-  it('extracts the thread id from a composite continuation rollout path', () => {
+  it.each(['.jsonl', '.jsonl.zst'])('extracts the thread id from a composite %s continuation', extension => {
     expect(resolveCodexVendorResumeIdFromImportedSessionFile({
-      sourcePath: '/materialized/sessions/rollout-2026-06-06T00-00-00-11111111-2222-3333-4444-555555555555_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl',
+      sourcePath: `/materialized/sessions/rollout-2026-06-06T00-00-00-11111111-2222-3333-4444-555555555555_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee${extension}`,
       destinationPath: '/user/.codex/sessions/imported.jsonl',
       relativePath: 'imported.jsonl',
     })).toBe('11111111-2222-3333-4444-555555555555');

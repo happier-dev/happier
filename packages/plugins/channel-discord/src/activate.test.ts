@@ -22,7 +22,6 @@ const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
   endpointResolve: 'discord/choose-channel',
   messageDeliver: 'discord/post-message',
   attachmentFetch: 'discord/fetch-attachment',
-  connectionStop: 'discord/halt-gateway',
 });
 
 const DISCORD_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
@@ -32,7 +31,6 @@ const DISCORD_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
   automationEventAdmit: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
   messageDeliver: DISCORD_CHANNEL_ACTION_IDS.messageDeliver,
   attachmentFetch: DISCORD_CHANNEL_ACTION_IDS.attachmentFetch,
-  connectionStop: DISCORD_CHANNEL_ACTION_IDS.connectionStop,
 });
 
 const discordBotAccount = Object.freeze({
@@ -122,13 +120,14 @@ describe('Discord Channel plugin activation', () => {
       }]);
       const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]));
       for (const localId of Object.values(DISCORD_CHANNEL_ACTION_IDS).filter(
-        (localId) => localId !== DISCORD_CHANNEL_ACTION_IDS.messageDeliver
-          && localId !== DISCORD_CHANNEL_ACTION_IDS.connectionStop,
+        (localId) => localId !== DISCORD_CHANNEL_ACTION_IDS.messageDeliver,
       )) {
         expect(actions.get(localId)?.dangerLevel).toBe('safe');
       }
       expect(actions.get(DISCORD_CHANNEL_ACTION_IDS.messageDeliver)?.dangerLevel).toBe('writesRemote');
-      expect(actions.get(DISCORD_CHANNEL_ACTION_IDS.connectionStop)?.dangerLevel).toBe('writesRemote');
+      expect(actions.has('discord/halt-gateway')).toBe(false);
+      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
+        .not.toHaveProperty('connectionStop');
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
         .not.toHaveProperty('observationsPoll');
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
@@ -141,7 +140,6 @@ describe('Discord Channel plugin activation', () => {
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionTest },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.endpointResolve },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.messageDeliver },
-        { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionStop },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.attachmentFetch },
         { family: 'backgroundServices', localId: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID },
         { family: 'events', localId: 'connections-invalidated-v1' },

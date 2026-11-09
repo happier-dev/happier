@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "Droplet",
-  "machineDigitalOcean.presentation.description": "使用所選規格、映像和區域的雲端 Droplet。",
+  "machineDigitalOcean.account.tokenHint": "使用 DigitalOcean 個人存取權杖。在控制台的 Account → API → Tokens 中建立。",
+  "machineDigitalOcean.presentation.kind": "機器",
+  "machineDigitalOcean.presentation.description": "使用所選規格、映像和區域的雲端機器。",
   "machineDigitalOcean.presentation.ready": "帳戶已連接",
   "machineDigitalOcean.presentation.unavailable": "帳戶不可用",
   "machineDigitalOcean.network.ipv4": "僅 IPv4",

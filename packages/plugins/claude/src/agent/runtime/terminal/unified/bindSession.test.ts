@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createEventsFixture,
   createPluginContextFixture,
+  createSessionHooksFixture,
   createTerminalHostFixture,
   expectRuntimeEnvelope,
 } from '../../engine.testkit.js';
@@ -187,6 +188,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const sessionHooks = {
+      ...createSessionHooksFixture().service,
       startServer: async () => ({
         port: 43123,
         stop: async () => undefined,

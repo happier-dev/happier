@@ -74,6 +74,7 @@ describe('Gemini native runtime migration', () => {
       'agents',
       'connectedAccountDescriptors',
       'hooks',
+      'resources',
       'systemTools',
       'ui',
     ]);
@@ -279,7 +280,6 @@ describe('Gemini native runtime migration', () => {
       }),
       definition: expect.objectContaining({
         mcp: { policy: 'pass_through' },
-        modelConfigOptionId: 'model',
         toolNameInference: GEMINI_ACP_RUNTIME_DEFINITION.toolNameInference,
         stderrRules: GEMINI_ACP_RUNTIME_DEFINITION.stderrRules,
       }),

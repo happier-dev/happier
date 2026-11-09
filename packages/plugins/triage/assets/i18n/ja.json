@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "その他すべて",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "デプロイ",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "環境",
+  "plugins.triage.surface.actions.subject.workflowRun": "ワークフローの実行",
+  "plugins.triage.surface.actions.investigateRun": "この実行を調査",
   "plugins.triage.surface.actions.workspace.referenceOnly": "作業コピーなし",
   "plugins.triage.surface.actions.workspace.repository": "自分が選ぶプロジェクト",
   "plugins.triage.surface.actions.workspace.pullRequest": "準備済みのレビュー用ワークツリー",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "セッションにリンクしたり、プルリクエストでブロックしたり、サブタスクに分けたりできます。",
   "plugins.triage.tasks.firstRun.trackers.title": "トラッカーからタスクを取り込む",
   "plugins.triage.tasks.firstRun.trackers.description": "タスクはトラッカーに残ります。Happier はそこで読み取り、編集します。",
-  "plugins.triage.tasks.firstRun.trust": "トラッカーは選んだマシンでライブに読み取られます。タスクがアカウントにコピーされることはありません。"
+  "plugins.triage.tasks.firstRun.trust": "トラッカーは選んだマシンでライブに読み取られます。タスクがアカウントにコピーされることはありません。",
+  "plugins.triage.surface.sources.permanent": "再試行しても解決しません。サポートに必要な情報は「詳細」にあります。",
+  "plugins.triage.surface.sources.supportCode": "サポート用",
+  "plugins.triage.surface.failure.unreachableSuffix": "に接続できませんでした"
 }

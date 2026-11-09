@@ -109,13 +109,14 @@ describe('Slack Socket Mode worker', () => {
     expect(boundary.sent).toEqual([]);
   });
 
-  it('keeps a warning socket open, then reports the actual refresh gap', async () => {
+  it('keeps a warning socket open and retires a routine refresh without reporting a gap', async () => {
     const boundary = socketBoundary([hello, { type: 'disconnect', reason: 'warning' }, envelope, { type: 'disconnect', reason: 'refresh_requested' }]);
     const admissions: unknown[] = [];
     const worker = startSlackSocketWorker({ connection: { connectionId: 'connection-1', authorityEpoch: 7, identity }, api: httpBoundary().api,
       webSockets: { openWebSocket: async () => boundary.socket }, admitObservation: async value => { admissions.push(value); }, signal: new AbortController().signal });
-    await expect(worker.result).resolves.toEqual({ kind: 'historyGap', reason: 'providerHistoryUnavailable' });
+    await expect(worker.result).resolves.toEqual({ kind: 'stopped' });
     expect(admissions).toHaveLength(1);
+    expect(boundary.sent).toEqual([{ kind: 'text', text: JSON.stringify({ envelope_id: 'envelope-1' }) }]);
   });
 
   it('uses the same verified handshake for setup and closes without ingesting or ACKing', async () => {

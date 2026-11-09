@@ -64,6 +64,9 @@
           "acpRegistryIds": [
             "github-copilot-cli"
           ],
+          "agentCliSystemTool": {
+            "toolId": "copilot-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }

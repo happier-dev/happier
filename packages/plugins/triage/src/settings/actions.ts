@@ -20,8 +20,10 @@ import {
     TriageActionSubjectV1Schema,
     normalizeTriageSingleLineV1,
     TriageActionIdV1Schema as triageActionIdSchema,
+    TriageActionLabelV1Schema as triageActionLabelSchema,
     TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
     TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1,
+    WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1,
     type TriageActionSubjectV1,
     type TriageSourceWorkflowSubjectV1,
     type TriageSubjectActionDeclarationV1,
@@ -190,6 +192,14 @@ export type TriageActionMutableTargetV1 =
         promptArgsText?: string;
     }>;
 
+/** References created by Save default, so subsequent saves edit only this action's copies. */
+export type TriageActionSavedDefaultsV1 = Readonly<{
+    promptDocumentId: string;
+    promptInvocationId: string;
+    profileId: string;
+    sourceProfileId: string | null;
+}>;
+
 export type TriageActionV1 = Readonly<{
     /** Stable within the Account; seeded actions carry literal ids. */
     actionId: string;
@@ -202,6 +212,7 @@ export type TriageActionV1 = Readonly<{
     profileId: string | null;
     workspaceMode: TriageActionWorkspaceModeV1;
     target: TriageActionTargetV1;
+    savedDefaults?: TriageActionSavedDefaultsV1;
     /**
      * Read-only fact, never stored: this is a plugin's record the person edited, and the plugin no longer
      * contributes it (disabled or uninstalled). It stays theirs and is offered nowhere until the plugin returns.
@@ -243,11 +254,6 @@ const ALL_SUBJECTS: readonly TriageSourceWorkflowSubjectV1[] =
  * nowhere on either boundary to express a condition, a step, a
  * retry, a variable, a branch or a hook.
  */
-
-const triageActionLabelSchema = defineProtocolString({
-    minLength: 1,
-    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
-});
 
 const triageNullableActionProfileIdSchema = ProtocolLaunchProfileIdV2Schema.nullable();
 
@@ -366,12 +372,20 @@ export const TriageAccountKvRevisionV1Schema = defineProtocolString({
     maxLength: MAX_TRIAGE_ACCOUNT_KV_REVISION_TOKEN_LENGTH_V1,
 });
 
+const TriageActionSavedDefaultsV1Schema = defineProtocolObject({
+    promptDocumentId: defineProtocolString({ minLength: 1 }),
+    promptInvocationId: defineProtocolString({ minLength: 1 }),
+    profileId: ProtocolLaunchProfileIdV2Schema,
+    sourceProfileId: ProtocolLaunchProfileIdV2Schema.nullable(),
+}, { policy: 'closed' });
+
 export const TriageActionRecordV1Schema = defineProtocolObject({
     actionId: triageActionIdSchema,
     ...TRIAGE_ACTION_DRAFT_MEMBERS_V1,
     // Stored/read records retain this host-seeded member. The mutation
     // projection above deliberately replaces it with the editable target.
     target: TriageActionTargetV1Schema,
+    savedDefaults: TriageActionSavedDefaultsV1Schema.optional(),
 }, { policy: 'closed' });
 
 export const TriageActionRecordsV1Schema = defineProtocolArray(TriageActionRecordV1Schema);
@@ -434,7 +448,7 @@ const TRIAGE_BUILT_IN_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
         target: Object.freeze({
             kind: 'agent',
             promptInvocationId: null,
-            seededFallbackInstruction: 'Fix this entry.',
+            seededFallbackInstruction: 'Fix this.',
             delivery: 'compose',
         }),
     }),
@@ -481,7 +495,7 @@ const TRIAGE_BUILT_IN_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
 ] as readonly TriageActionV1[]);
 
 /** The delivery a launch mode names: `start` sends in the background, `review` composes first. */
-function triageActionDeliveryForLaunchModeV1(mode: TriageActionLaunchModeV1): TriageActionDeliveryV1 {
+export function triageActionDeliveryForLaunchModeV1(mode: TriageActionLaunchModeV1): TriageActionDeliveryV1 {
     return mode === 'start' ? 'send' : 'compose';
 }
 
@@ -696,6 +710,7 @@ const SEEDED_ACTION_TITLE_KEYS_V1: Readonly<Record<string, string>> = Object.fre
     'explain-pr': 'plugins.triage.surface.session.explainPr',
     'code-review': 'plugins.triage.surface.session.codeReview',
     investigate: 'plugins.triage.surface.session.investigate',
+    [WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1]: 'plugins.triage.surface.actions.investigateRun',
 });
 
 export function readTriageActionTitleKeyV1(action: TriageActionV1): string | null {
@@ -779,7 +794,7 @@ type TriageActionCommandBaseV1 = Readonly<{ expectedRevision: string }>;
 export type TriageActionCommandV1 = TriageActionCommandBaseV1 & (
     | Readonly<{ kind: 'reset' }>
     | (TriageActionDraftV1 & Readonly<{ kind: 'create' }>)
-    | (TriageActionDraftV1 & Readonly<{ kind: 'update'; actionId: string }>)
+    | (TriageActionDraftV1 & Readonly<{ kind: 'update'; actionId: string; savedDefaults?: TriageActionSavedDefaultsV1 }>)
     | Readonly<{ kind: 'delete'; actionId: string }>
     /** An exact permutation of the stored set; nothing is added or dropped here. */
     | Readonly<{ kind: 'reorder'; actionIds: readonly string[] }>
@@ -1154,7 +1169,7 @@ function parseStoredTriageActionsV1(
             target: stored.target,
         }, { allowSeededFallbackInstruction: true, defaults });
         if (!parsed.ok) return unreadable;
-        actions.push(parsed.value);
+        actions.push(stored.savedDefaults ? { ...parsed.value, savedDefaults: stored.savedDefaults } : parsed.value);
     }
     return { kind: 'parsed', stored: actions };
 }
@@ -1180,6 +1195,7 @@ function toStoredValue(value: TriageActionsCatalogV1): JsonValue {
                 appliesTo: [...action.appliesTo],
                 profileId: action.profileId,
                 workspaceMode: action.workspaceMode,
+                ...(action.savedDefaults ? { savedDefaults: { ...action.savedDefaults } } : {}),
                 target: action.target.kind === 'reviewStart'
                     ? {
                         kind: 'reviewStart',
@@ -1281,7 +1297,8 @@ function applyCommand(
             : { seededFallbackInstruction, defaults });
         if (!parsed.ok) return { status: 'rejected', reason: parsed.reason };
         const actions = [...current.actions];
-        actions[index] = parsed.value;
+        const savedDefaults = command.savedDefaults ?? existing?.savedDefaults;
+        actions[index] = savedDefaults ? { ...parsed.value, savedDefaults } : parsed.value;
         return { status: 'applied', actionId: command.actionId, value: { v: 1, actions } };
     }
 

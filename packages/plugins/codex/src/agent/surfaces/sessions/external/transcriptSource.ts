@@ -1,6 +1,5 @@
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { createCodexNativeAppServerClient } from '../../../runtime/appServer/client.js';
-import { assertCodexNativeProxyAvailable } from './nativeProxy.js';
 import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
 import { readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
 import { decodeCodexNativeTranscriptCursor, pageCodexNativeTranscript } from './nativeTranscript.js';
@@ -39,7 +38,7 @@ import {
   type CodexTranscriptSemanticCursor,
   type CodexTranscriptSemanticLocations,
 } from './transcript.js';
-import { CodexExternalSessionCandidateSourceChangedError } from './candidateSource.js';
+import { CodexExternalSessionCandidateSourceChangedError } from './candidates.js';
 import type {
   CodexExternalSessionSource,
   CodexExternalSessionTranscriptSourcePage,
@@ -1249,11 +1248,10 @@ async function readCodexNativeTranscriptIfNeeded(
       const env = { ...process.env, ...params.env };
       const processEnv = { ...env, ...await resolveCodexRuntimeHomeEnvironment({ env, codexHome: home.codexHome, home: home.source.home,
         cwd: process.cwd(), expandHomePath: value => expandHomePath(value, resolveHomeDirFromEnvironment(env)) }) };
-      await assertCodexNativeProxyAvailable(processEnv, params.signal);
       client = await createCodexNativeAppServerClient({ exec: params.exec, logger: params.logger, processEnv, signal: params.signal,
-        // History reads may connect to an existing server, but must not start
-        // one (which can backfill or migrate native storage before initialize).
-        transport: { kind: 'daemonProxy' }, initializeRequestOptions: requestOptions() });
+        // History belongs to the selected native store, not a live Agent's
+        // control socket. The runtime owns binary resolution and this client.
+        transport: { kind: 'stdio' }, initializeRequestOptions: requestOptions() });
       const activeClient = client;
       const page = await pageCodexNativeTranscript({ ...params, hasPaginatedRollout, home: home.codexHome,
         client: { request: (method, value) => {
@@ -1277,6 +1275,7 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
   env: NodeJS.ProcessEnv;
   exec?: ExecService;
   remoteSessionId: string;
+  sourceItemId?: string;
   direction: 'older' | 'newer';
   cursor?: string;
   maxBytes: number;

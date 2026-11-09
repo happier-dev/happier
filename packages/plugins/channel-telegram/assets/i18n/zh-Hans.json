@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Telegram 机器人账户",
   "channels.telegram.remediation.credential.description": "选择现有的 Telegram 机器人已连接账户；无需在此输入机器人令牌。",
   "channels.telegram.automation.setup.title": "选择要观察的 Telegram 聊天",
-  "channels.telegram.automation.setup.description": "选择 Telegram 机器人以及其消息应启动此自动化的聊天。",
+  "channels.telegram.automation.setup.description": "选择 Telegram 机器人以及其消息应启动此工作流的聊天。",
   "channels.telegram.automation.setup.submit": "使用此聊天",
   "channels.telegram.automation.setup.credential": "Telegram 机器人账户",
   "channels.telegram.automation.setup.chat": "聊天 ID",

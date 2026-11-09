@@ -2,7 +2,6 @@ import type {
   JsonValue,
   PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -1083,8 +1082,4 @@ export const CHANNELS_PROVIDER_POINT_REF =
   CHANNELS_PLUGIN.contributionPoints[CHANNELS_PROVIDER_POINT_ID];
 
 /** The one admitted V1 provider contribution at Channels' target-owned point. */
-export type ChannelsProviderContributionV1 = (
-  typeof CHANNELS_PROVIDER_POINT_REF
-) extends TargetedContributionPointRef<infer TContribution>
-  ? TContribution
-  : never;
+export type { ConversationProviderContributionV1 as ChannelsProviderContributionV1 } from '@happier-dev/channels-protocol/v1';

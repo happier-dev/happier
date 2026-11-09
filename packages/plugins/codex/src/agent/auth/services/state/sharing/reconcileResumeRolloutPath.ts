@@ -11,6 +11,7 @@ import {
 import {
   findCodexRolloutFileById,
 } from '../../../../rollout/discovery/sessionFileSearch.js';
+import { resolveCodexLogicalRolloutPath, resolveExistingCodexRolloutPath } from '../../../../rollout/discovery/indexData.js';
 import { resolveConfiguredCodexHomePath } from '../../../../rollout/discovery/homeEntries.js';
 import { readExactCodexVendorResumeId } from '../../home/sync/sessionFiles.js';
 import { readExactCodexProviderSessionId } from '../../../../../protocol/runtimeDescriptorV1.js';
@@ -80,9 +81,9 @@ export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
     if (!table) return null;
     const indexedPath = readRolloutPath(database, vendorResumeId);
     if (!indexedPath) return null;
-    const rolloutExists = await isExistingFile(indexedPath);
+    const rolloutPath = await resolveExistingCodexRolloutPath(indexedPath);
     params.signal.throwIfAborted();
-    return rolloutExists ? indexedPath : null;
+    return rolloutPath;
   } finally {
     database.close();
   }
@@ -139,15 +140,16 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
 
     const indexedPath = readRolloutPath(database, vendorResumeId);
     if (!indexedPath || indexedPath === resolvedRolloutPath) return true;
-    if (await isFile(indexedPath)) return true;
+    if (await resolveExistingCodexRolloutPath(indexedPath)) return true;
+
+    const logicalRolloutPath = resolveCodexLogicalRolloutPath(resolvedRolloutPath);
 
     database
       .prepare('UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?')
-      .run(resolvedRolloutPath, vendorResumeId, indexedPath);
+      .run(logicalRolloutPath, vendorResumeId, indexedPath);
 
     const settledPath = readRolloutPath(database, vendorResumeId);
-    if (settledPath === resolvedRolloutPath) return true;
-    return settledPath !== null && await isFile(settledPath);
+    return settledPath !== null && await resolveExistingCodexRolloutPath(settledPath) !== null;
   } catch {
     return false;
   } finally {

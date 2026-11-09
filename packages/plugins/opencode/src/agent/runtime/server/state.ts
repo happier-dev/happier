@@ -69,12 +69,14 @@ export function claimOpenCodeActiveTurnForTerminalEvent(
 export function readProviderEvent(event: unknown): Readonly<{
   type: string;
   properties: Readonly<Record<string, unknown>>;
+  directory: string;
+  sessionId: string;
 }> {
   const eventRecord = asRecord(event);
   const payload = asRecord(eventRecord?.payload) ?? eventRecord;
   const type = normalizeString(payload?.type);
   const properties = asRecord(payload?.properties) ?? {};
-  return { type, properties };
+  return { type, properties, directory: normalizeString(eventRecord?.directory), sessionId: readEventSessionId(properties, type) };
 }
 
 /**
@@ -82,7 +84,12 @@ export function readProviderEvent(event: unknown): Readonly<{
  * the runtime compares it against the id it holds for its own session, so the
  * reader decides presence and returns the exact bytes.
  */
-export function readEventSessionId(properties: Readonly<Record<string, unknown>>): string {
+export function readEventSessionId(properties: Readonly<Record<string, unknown>>, type?: string): string {
+  // OpenCode v1.2.17 Session.Info.id is a session id only on Session lifecycle events.
+  if (type === 'session.created' || type === 'session.updated' || type === 'session.deleted') {
+    const sessionId = readNonBlankOpaqueIdentifier(asRecord(properties.info)?.id);
+    if (sessionId) return sessionId;
+  }
   return readNonBlankOpaqueIdentifier(properties.sessionID)
     ?? readNonBlankOpaqueIdentifier(asRecord(properties.session)?.id)
     ?? readNonBlankOpaqueIdentifier(asRecord(properties.part)?.sessionID)

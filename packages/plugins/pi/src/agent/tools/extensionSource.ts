@@ -183,6 +183,7 @@ function invoke(config, toolName, args, callId, signal, cwd) {
       cwd,
       env: { ...process.env, ...(config.launch.env || {}) },
       shell: false,
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const createOutputCollector = () => {
@@ -265,6 +266,7 @@ function invoke(config, toolName, args, callId, signal, cwd) {
 function openMcpServer(server, cwd) {
   const child = spawn(server.command, server.args || [], {
     cwd, env: { ...process.env, ...(server.env || {}) }, shell: false,
+    windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"],
   });
   const pending = new Map();

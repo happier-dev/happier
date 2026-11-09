@@ -21,6 +21,13 @@ import {
 import { listCodexAppServerSkills } from '../../runtime/appServer/catalog/index.js';
 import { resolveCodexSessionBackendMode } from '../backendMode.js';
 
+// Codex rust-v0.163.0 / 83086188ae0614bd882818ff1aa23f3194962012:
+// protocol/src/user_input.rs MAX_USER_INPUT_TEXT_CHARS; app-server-protocol
+// protocol/v2/turn.rs text_char_count counts only Text items in scalar values.
+// independently of model context/output tokens. Native refusal remains authoritative.
+// https://github.com/openai/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/protocol/src/user_input.rs#L10
+const CODEX_MAX_INPUT_UNICODE_CHARACTERS = 1 << 20;
+
 export const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = Object.freeze([
   'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
   'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
@@ -79,7 +86,7 @@ function passiveRealtimeResult(
   return { v: 1, status };
 }
 
-function usesCodexAppServer(context: AgentPreflightSessionControlsProbeContextV1): boolean {
+function usesCodexAppServer(context: Pick<AgentPreflightSessionControlsProbeContextV1, 'accountSettings' | 'runtimeDescriptorV1' | 'runtimeKindOverride'>): boolean {
   const backendMode = resolveCodexSessionBackendMode({
     accountSettings: context.accountSettings,
     runtimeDescriptorV1: context.runtimeDescriptorV1,
@@ -180,6 +187,7 @@ async function probeCodexPassiveRealtimeSetup(
 }
 
 export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  resolveMaxInputUnicodeCharacters: input => usesCodexAppServer(input) ? CODEX_MAX_INPUT_UNICODE_CHARACTERS : null,
   jsonRpcCommands: Object.freeze([
     CODEX_PREFLIGHT_JSON_RPC_COMMAND,
     CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND,
@@ -190,16 +198,25 @@ export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
     return `codex:${backendMode}`;
   },
   probeModels: async (context) => {
-    if (!usesCodexAppServer(context)) return (await readCodexAcpPreflightSessionControls(context))?.models ?? null;
+    if (!usesCodexAppServer(context)) {
+      const controls = await readCodexAcpPreflightSessionControls(context);
+      return controls?.refreshError
+        ? { availableModels: controls.models ?? [], refreshError: true, source: controls.models === null ? 'unavailable' : 'dynamic',
+          ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
+          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) }
+        : controls?.models ?? null;
+    }
     const controls = await readCodexPreflightSessionControls(context);
-    return controls?.modelsObserved ? controls.availableModels : null;
+    if (!controls?.modelsObserved) return null;
+    if (!controls.availableModels.length) return [];
+    return [{ id: 'default', name: 'Default' }, ...controls.availableModels.filter(model => model.id !== 'default')];
   },
   probeModes: async (context) => usesCodexAppServer(context)
     ? (await readCodexPreflightSessionControls(context))?.availableModes ?? null
     : (await readCodexAcpPreflightSessionControls(context))?.modes ?? null,
   probeConfigOptions: async (context) => usesCodexAppServer(context)
     ? (await readCodexPreflightSessionControls(context))?.configOptions ?? null
-    : (await readCodexAcpPreflightSessionControls(context))?.configOptions ?? null,
+    : await readCodexAcpPreflightSessionControls(context),
   probeCatalogs: async (context) => {
     if (!usesCodexAppServer(context)) {
       const authenticationMethodId = context.nonblankEnvironment?.OPENAI_API_KEY === true

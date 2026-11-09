@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   AgentExecutionRunConversationRuntimeV1,
   AgentExecutionRunConversationEventV1,
   AgentExecutionRunEvent,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeContextV1,
+  AgentSessionModelsSource,
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
   AgentSessionRuntimeContext,
@@ -15,6 +18,7 @@ import type {
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import {
   createClaudeAgentRuntime,
@@ -344,7 +348,10 @@ describe('createClaudeNativeRuntime', () => {
     { unifiedTerminalEnabled: false, requestedHost: 'herdr' as const, placement: 'runner' },
     { unifiedTerminalEnabled: true, requestedHost: 'herdr' as const, placement: 'runner' },
     { unifiedTerminalEnabled: true, requestedHost: 'tmux' as const, placement: 'managed_terminal' },
-  ])('captures selected Claude presentation before opening the same Session ($placement, unified=$unifiedTerminalEnabled, $requestedHost)', async ({ unifiedTerminalEnabled, requestedHost, placement }) => {
+    { unifiedTerminalEnabled: true, requestedHost: 'tmux' as const, placement: 'managed_terminal', nativeModel: 'claude-haiku-4-5' },
+    { unifiedTerminalEnabled: false, requestedHost: 'herdr' as const, placement: 'runner', nativeModel: 'claude-opus-5-5', nativeEffort: 'medium' },
+    { unifiedTerminalEnabled: true, requestedHost: 'tmux' as const, placement: 'managed_terminal', nativeModel: 'claude-opus-5-5', nativeEffort: 'medium' },
+  ])('captures selected Claude presentation before opening the same Session ($placement, unified=$unifiedTerminalEnabled, $requestedHost, $nativeModel)', async ({ unifiedTerminalEnabled, requestedHost, placement, nativeModel, nativeEffort }) => {
     const terminal = createTerminalHostFixture();
     const hooks = createSessionHooksFixture();
     const settingsValues = { claudeUnifiedTerminalEnabled: unifiedTerminalEnabled };
@@ -417,6 +424,9 @@ describe('createClaudeNativeRuntime', () => {
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'gateway-selected',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'gateway-strongest',
     };
+    const modelId = nativeModel ?? 'gateway-selected';
+    const options: NonNullable<AgentSessionOpenRequest['configuration']>['options'] = nativeModel
+      ? { reasoning_effort: { value: nativeEffort ?? 'low', updatedAtMs: 0 } } : {};
     const session = await runtime.sessions.open({
       kind: 'resume', sessionId: 'selected-session', cwd: '/tmp/claude-project', providerSessionId: 'provider-claude',
       runtimeDescriptorV1: selected.runtimeDescriptorV1,
@@ -424,15 +434,15 @@ describe('createClaudeNativeRuntime', () => {
       mcpServers: { linear: { command: 'linear-bridge', args: ['--config-file', '/tmp/private-mcp.json'] } },
       mcpToolPolicy: { linear: { unlisted: 'ask', tools: { read: 'allow', write: 'off' } } },
       configuration: {
-        mode: { value: null, updatedAtMs: 0 }, model: { value: 'gateway-selected', updatedAtMs: 0 },
-        permissionIntent: { value: 'yolo', updatedAtMs: 0 }, options: {},
+        mode: { value: null, updatedAtMs: 0 }, model: { value: modelId, updatedAtMs: 0 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 0 }, options,
         allowedTools: ['mcp__wilson__*'], unlistedTools: 'deny',
       },
-      providerBinding: {
+      ...(!nativeModel ? { providerBinding: {
         connectionId: 'pc_selected_claude', model: { id: 'gateway-selected', name: 'Selected' },
         upstream: { protocol: 'anthropic', normalizedUrl: null, credential: 'apiKey' },
         materialization: { v: 1, kind: 'spawnEnv' },
-      },
+      } } : {}),
     }, selectedContext);
     try {
       if (unifiedTerminalEnabled) {
@@ -440,6 +450,11 @@ describe('createClaudeNativeRuntime', () => {
         // client or the SDK's exclusive local/remote switch surface.
         expect(session.runtimeCapabilities?.localControl).toMatchObject({ supported: false });
       }
+      const metadata = SessionOwnerMetadataV1Schema.parse({ v: 1, runtime: {
+        agentRuntimeCapabilitiesV1: session.runtimeCapabilities,
+      } });
+      expect(metadata.runtime?.agentRuntimeCapabilitiesV1?.backend?.session?.media?.acceptsImageInput?.supported)
+        .toBe(!unifiedTerminalEnabled);
       const prepare = session.prepareTerminalPresentation;
       expect(prepare).toEqual(expect.any(Function));
       if (typeof prepare !== 'function') throw new Error('Selected Session terminal preparation is unavailable');
@@ -462,14 +477,46 @@ describe('createClaudeNativeRuntime', () => {
       });
       expect(nativeSettings.permissions.deny).toContain('mcp__linear__write');
       expect(nativeSettings.permissions.ask).toContain('mcp__linear__read');
-      expect(nativeSettings.env).toEqual(helperPins);
-      expect(Object.keys(nativeSettings.env)).not.toContain('ANTHROPIC_AUTH_TOKEN');
+      if (!nativeModel) {
+        expect(nativeSettings.env).toEqual(helperPins);
+        expect(Object.keys(nativeSettings.env)).not.toContain('ANTHROPIC_AUTH_TOKEN');
+      }
+      if (nativeModel) {
+        expect(args[args.indexOf('--model') + 1]).toBe(nativeModel);
+        if (nativeEffort) {
+          expect(args).toEqual(expect.arrayContaining(['--resume', 'provider-claude', '--effort', nativeEffort]));
+          return;
+        }
+        expect(args).not.toContain('--effort');
+        // Haiku 4.5 has no effort control. A metadata replay must settle as a
+        // typed unsupported option before attempting any native TUI control.
+        const controlsBefore = vi.mocked(terminal.service.controlPort).mock.calls.length;
+        await expect(session.updateConfiguration({
+          mode: { value: null, updatedAtMs: 1 }, model: { value: nativeModel, updatedAtMs: 1 },
+          permissionIntent: { value: 'yolo', updatedAtMs: 1 },
+          options: { reasoning_effort: { value: 'low', updatedAtMs: 1 } },
+          allowedTools: ['mcp__wilson__*'], unlistedTools: 'deny',
+        })).resolves.toMatchObject({
+          status: 'unsupported', diagnostic: { code: 'claude_model_option_unsupported' },
+        });
+        expect(terminal.service.controlPort).toHaveBeenCalledTimes(controlsBefore);
+        // The host withdraws a definitively refused override. This must not
+        // attempt to reset a control the launch never applied to this model.
+        await expect(session.updateConfiguration({
+          mode: { value: null, updatedAtMs: 1 }, model: { value: nativeModel, updatedAtMs: 1 },
+          permissionIntent: { value: 'yolo', updatedAtMs: 1 }, options: {},
+          allowedTools: ['mcp__wilson__*'], unlistedTools: 'deny',
+        })).resolves.toMatchObject({ status: 'deferred' });
+        return;
+      }
       const serializedConfiguration = AgentSessionConfigurationSnapshotV1Schema.parse(JSON.parse(JSON.stringify({
         mode: { value: null, updatedAtMs: 1 }, model: { value: 'gateway-selected', updatedAtMs: 1 },
         permissionIntent: { value: 'yolo', updatedAtMs: 1 }, options: {},
         allowedTools: ['mcp__wilson__*'], unlistedTools: 'deny',
       })));
-      await expect(session.updateConfiguration(serializedConfiguration)).resolves.toEqual(expect.objectContaining({ status: 'applied' }));
+      await expect(session.updateConfiguration(serializedConfiguration)).resolves.toEqual(expect.objectContaining({
+        status: 'deferred',
+      }));
       await expect(session.updateConfiguration({
         ...serializedConfiguration,
         mcpToolPolicy: { linear: { unlisted: 'ask', tools: { read: 'off', write: 'off' } } },
@@ -1503,13 +1550,13 @@ describe('createClaudeNativeRuntime', () => {
     expect(disposeBinding).toHaveBeenCalledTimes(1);
   });
 
-  it('delegates exact connected-service application settlement to the provider-owned surface cleanup', async () => {
+  it('delegates exact connected-service application settlement to the provider-owned Pending wake', async () => {
     const native = createNativeOperations('session-connected-service-settlement');
-    const releaseConnectedServiceUsageLimitDialog = vi.fn(async () => undefined);
+    const connectedServiceApplicationSettled = vi.fn(async () => undefined);
     const runtime = createTestClaudeNativeRuntime({
       openSession: () => ({
         ...native.runtime,
-        releaseConnectedServiceUsageLimitDialog,
+        connectedServiceApplicationSettled,
       }),
     });
     const session = await runtime.sessions.open({
@@ -1523,96 +1570,89 @@ describe('createClaudeNativeRuntime', () => {
       groupId: 'primary',
     });
 
-    expect(releaseConnectedServiceUsageLimitDialog).toHaveBeenCalledOnce();
+    expect(connectedServiceApplicationSettled).toHaveBeenCalledOnce();
   });
 
-  it('binds the native model source and publishes applied model configuration', async () => {
-    const native = createNativeOperations('session-models');
-    const modelListeners = new Set<(snapshot: { currentModelId?: string | null }) => void>();
-    const disposeModels = vi.fn();
-    const bindModels = vi.fn((source: {
-      read(): { currentModelId?: string | null };
-      subscribe(listener: (snapshot: { currentModelId?: string | null }) => void): { dispose(): void };
-    }) => {
-      source.subscribe((snapshot) => {
-        for (const listener of modelListeners) listener(snapshot);
-      });
-      return { dispose: disposeModels };
+  it('publishes observed native models separately from next-prompt configuration', async () => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+      exec: exec.service,
+      sessionHooks: createSessionHooksFixture().service,
     });
+    const operations = createClaudeAgentSdkTurnOperations({
+      ctx, directory: '/tmp/claude-project', launchEnv: {}, permissionMode: 'default',
+      happierSessionId: 'session-models', initialModelId: 'claude-sonnet-4-6',
+    });
+    const disposeModels = vi.fn();
+    const bindModels = vi.fn((_source: AgentSessionModelsSource) => ({ dispose: disposeModels }));
     const sessionContext = {
       ...context,
-      session: {
-        services: {
-          activeInput: { bind: () => ({ dispose() {} }), publishStatus: vi.fn() },
-          models: { bind: bindModels },
-        },
-      },
+      session: { services: {
+        activeInput: { bind: () => ({ dispose() {} }), publishStatus: vi.fn() },
+        models: { bind: bindModels },
+      } },
     } as unknown as AgentSessionRuntimeContext;
-    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
-    const session = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'session-models',
-      cwd: '/repo',
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId: 'session-models', cwd: '/tmp/claude-project',
       configuration: {
         mode: { value: null, updatedAtMs: 1 },
         model: { value: 'claude-sonnet-4-6', updatedAtMs: 1 },
-        permissionIntent: { value: 'default', updatedAtMs: 1 },
-        options: {},
+        permissionIntent: { value: 'default', updatedAtMs: 1 }, options: {},
       },
     }, sessionContext);
+    const source = bindModels.mock.calls[0]![0];
+    const snapshots: ReturnType<AgentSessionModelsSource['read']>[] = [];
+    const subscription = source.subscribe(snapshot => snapshots.push(snapshot));
+    try {
+      expect(source.read()).toMatchObject({ currentModelId: null });
+      await operations.sendProviderTurnPrompt('First turn');
+      await exec.emit({ type: 'assistant', message: { id: 'msg-first', role: 'assistant', model: 'claude-sonnet-4-6', content: [] } });
+      expect(source.read()).toMatchObject({ currentModelId: 'claude-sonnet-4-6' });
+      await exec.emit({ type: 'result', subtype: 'success', is_error: false, result: 'Done' });
+      await operations.waitForProviderTurnCompletion();
 
-    expect(bindModels).toHaveBeenCalledTimes(1);
-    const source = bindModels.mock.calls[0]?.[0];
-    expect(source?.read()).toMatchObject({ currentModelId: 'claude-sonnet-4-6' });
-    const snapshots: Array<{ currentModelId?: string | null }> = [];
-    const subscription = source?.subscribe((snapshot) => snapshots.push(snapshot));
+      await expect(session.updateConfiguration?.({
+        mode: { value: null, updatedAtMs: 2 },
+        model: { value: 'claude-opus-4-8', updatedAtMs: 2 },
+        permissionIntent: { value: 'default', updatedAtMs: 2 }, options: {},
+      })).resolves.toMatchObject({ status: 'deferred' });
+      const configurationSnapshot = source.read();
+      expect(configurationSnapshot.currentModelId).toBe('claude-sonnet-4-6');
 
-    await expect(session.updateConfiguration?.({
-      mode: { value: null, updatedAtMs: 2 },
-      model: { value: 'claude-opus-4-8', updatedAtMs: 2 },
-      permissionIntent: { value: 'default', updatedAtMs: 2 },
-      options: {},
-    })).resolves.toMatchObject({ status: 'applied' });
-    expect(snapshots.at(-1)).toMatchObject({ currentModelId: 'claude-opus-4-8' });
-    const configurationSnapshot = snapshots.at(-1) as Readonly<{
-      currentModelId?: string | null;
-      models?: readonly Readonly<{ id: string }>[];
-    }>;
+      await operations.sendProviderTurnPrompt('Second turn');
+      await exec.processes.at(-1)!.emit({
+        type: 'assistant', message: { id: 'msg-second', role: 'assistant', model: 'claude-runtime-observed', content: [] },
+      });
+      expect(source.read()).toMatchObject({
+        currentModelId: 'claude-runtime-observed',
+        models: expect.arrayContaining([
+          expect.objectContaining({ id: 'claude-runtime-observed', name: 'claude-runtime-observed' }),
+        ]),
+      });
+      expect(configurationSnapshot.currentModelId).toBe('claude-sonnet-4-6');
+      expect(configurationSnapshot.models?.some(model => model.id === 'claude-runtime-observed')).toBe(false);
+      await exec.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false, result: 'Done' });
+      await operations.waitForProviderTurnCompletion();
 
-    native.publishEffectiveModel({
-      modelId: 'claude-runtime-observed',
-      displayName: 'Claude Runtime Observed',
-      contextWindowTokens: 400_000,
-    });
-    expect(snapshots.at(-1)).toMatchObject({
-      currentModelId: 'claude-runtime-observed',
-      models: expect.arrayContaining([
-        expect.objectContaining({
-          id: 'claude-runtime-observed',
-          name: 'Claude Runtime Observed',
-          contextWindowTokens: 400_000,
-        }),
-      ]),
-    });
-    expect(configurationSnapshot.currentModelId).toBe('claude-opus-4-8');
-    expect(configurationSnapshot.models?.some((model) => model.id === 'claude-runtime-observed')).toBe(false);
-
-    native.publishEffectiveModel({ modelId: 'claude-haiku-4-5-20251001' });
-    expect(source?.read()).toMatchObject({
-      currentModelId: 'claude-haiku-4-5-20251001',
-      models: expect.arrayContaining([{ id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5' }]),
-    });
-    native.publishEffectiveModel({ modelId: 'claude-haiku-4-5-20990101' });
-    expect(source?.read()).toMatchObject({
-      models: expect.arrayContaining([{ id: 'claude-haiku-4-5-20990101', name: 'claude-haiku-4-5-20990101' }]),
-    });
-
-    await session.dispose();
-    expect(disposeModels).toHaveBeenCalledTimes(1);
+      await expect(session.updateConfiguration?.({
+        mode: { value: null, updatedAtMs: 3 },
+        model: { value: null, updatedAtMs: 3 },
+        permissionIntent: { value: 'default', updatedAtMs: 3 }, options: {},
+      })).resolves.toMatchObject({ status: 'deferred' });
+      expect(source.read().currentModelId).toBe('claude-runtime-observed');
+      await operations.sendProviderTurnPrompt('Use native model defaults');
+      const resetLaunch: unknown = Reflect.get(exec.spawnClient.mock.calls.at(-1) ?? [], 0);
+      expect(resetLaunch).toMatchObject({ launch: { args: expect.not.arrayContaining(['--model']) } });
+      await exec.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false, result: 'Done' });
+      await operations.waitForProviderTurnCompletion();
+    } finally {
+      await session.dispose();
+      subscription.dispose();
+    }
+    expect(disposeModels).toHaveBeenCalledOnce();
     const snapshotCountAfterDispose = snapshots.length;
-    native.publishEffectiveModel({ modelId: 'claude-after-dispose' });
+    await exec.emit({ type: 'assistant', message: { id: 'msg-disposed', role: 'assistant', model: 'claude-after-dispose', content: [] } });
     expect(snapshots).toHaveLength(snapshotCountAfterDispose);
-    subscription?.dispose();
   });
 
   it.each(['create', 'resume', 'fork'] as const)(
@@ -1685,7 +1725,7 @@ describe('createClaudeNativeRuntime', () => {
       const source = bindModels.mock.calls[0]?.[0];
       expect(source?.read()).toEqual({
         observedAt: 0,
-        currentModelId: 'deepseek-ai/DeepSeek-V3.1',
+        currentModelId: null,
         models: [{
           id: 'deepseek-ai/DeepSeek-V3.1',
           name: 'DeepSeek V3.1',
@@ -1843,6 +1883,7 @@ describe('createClaudeNativeRuntime', () => {
       configuration: baseConfiguration,
       providerBinding: currentBinding,
     }, sessionContext);
+    native.publishEffectiveModel({ modelId: currentBinding.model.id });
 
     await expect(session.updateConfiguration?.({
       ...baseConfiguration,
@@ -1923,6 +1964,7 @@ describe('createClaudeNativeRuntime', () => {
       configuration: baseConfiguration,
       providerBinding: currentBinding,
     }, sessionContext);
+    native.publishEffectiveModel({ modelId: currentBinding.model.id });
 
     await expect(session.updateConfiguration?.({
       ...baseConfiguration,
@@ -1939,7 +1981,7 @@ describe('createClaudeNativeRuntime', () => {
     await session.dispose();
   });
 
-  it('commits exact Provider model facts only after the live runtime applies the authorized binding', async () => {
+  it('retains observed models independently of accepted and deferred Provider descriptors', async () => {
     const native = createNativeOperations('session-provider-switch');
     const updateProviderConfiguration = vi.fn()
       .mockResolvedValueOnce({ status: 'applied' as const })
@@ -1987,7 +2029,7 @@ describe('createClaudeNativeRuntime', () => {
           name: 'Reasoning',
           type: 'select',
           currentValue: 'medium',
-          options: [{ value: 'high', name: 'High' }],
+          options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }],
         }],
       },
     } satisfies AgentSessionProviderBinding;
@@ -2039,7 +2081,7 @@ describe('createClaudeNativeRuntime', () => {
     }));
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      currentModelId: nextBinding.model.id,
+      currentModelId: null,
       models: [nextBinding.model],
     });
 
@@ -2050,7 +2092,7 @@ describe('createClaudeNativeRuntime', () => {
     expect(updateProviderConfiguration).toHaveBeenCalledTimes(1);
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      currentModelId: nextBinding.model.id,
+      currentModelId: null,
       models: [nextBinding.model],
     });
 
@@ -2058,11 +2100,11 @@ describe('createClaudeNativeRuntime', () => {
       ...baseConfiguration,
       model: { value: deferredBinding.model.id, updatedAtMs: 4 },
       providerBinding: deferredBinding,
-    })).resolves.toMatchObject({ status: 'rejected' });
+    })).resolves.toMatchObject({ status: 'deferred' });
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      currentModelId: nextBinding.model.id,
-      models: [nextBinding.model],
+      currentModelId: null,
+      models: [deferredBinding.model],
     });
 
     await expect(session.updateConfiguration?.({
@@ -2072,8 +2114,8 @@ describe('createClaudeNativeRuntime', () => {
     })).resolves.toMatchObject({ status: 'rejected' });
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      currentModelId: nextBinding.model.id,
-      models: [nextBinding.model],
+      currentModelId: null,
+      models: [deferredBinding.model],
     });
 
     await session.dispose();
@@ -2289,6 +2331,29 @@ describe('createClaudeNativeRuntime', () => {
       diagnostic: { code: 'inactive_agent_control_unsupported' },
     });
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('protects shared native transcripts using the direct terminal launch environment', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-terminal-retention-'));
+    try {
+      const nativeHome = join(root, 'native');
+      const activeHome = join(root, 'managed');
+      await mkdir(join(nativeHome, 'projects'), { recursive: true });
+      await mkdir(activeHome);
+      await symlink(join(nativeHome, 'projects'), join(activeHome, 'projects'), 'junction');
+      await writeFile(join(nativeHome, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+      await writeFile(join(activeHome, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 7 }));
+      const runtime = createTestClaudeNativeRuntime({ openSession: ({ request }) => createNativeOperations(request.sessionId).runtime });
+      const plan = await runtime.surfaces?.terminal?.resolveLaunch({
+        sessionId: 'shared-transcripts', cwd: root, metadata: {}, modelSelection: null,
+        launchEnvironment: { values: { CLAUDE_CONFIG_DIR: activeHome, HAPPIER_CLAUDE_NATIVE_CONFIG_DIR: nativeHome }, unset: [] },
+      });
+      const args = plan?.argv ?? [];
+      expect(args.filter(arg => arg === '--settings')).toHaveLength(1);
+      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}').cleanupPeriodDays).toBe(365);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('enforces the host hands-off restriction in the native terminal launch', async () => {
@@ -2761,30 +2826,6 @@ describe('createClaudeNativeRuntime', () => {
     expect(events).toContainEqual(expect.objectContaining({
       kind: 'input-accepted',
       inputIds: ['input-unified-draft-later'],
-    }));
-  });
-
-  it('projects an actual Claude session-ended event as runtime-ended', async () => {
-    const native = createNativeOperations('session-actual-ended');
-    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
-    const session = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'session-actual-ended',
-      cwd: '/repo',
-    }, context);
-    const events: AgentSessionRuntimeEvent[] = [];
-    session.watch((event) => events.push(event));
-
-    native.publish({
-      kind: 'session-ended',
-      sessionId: 'session-actual-ended',
-      emittedAtMs: 10,
-      reason: 'Claude process exited.',
-    });
-
-    expect(events).toContainEqual(expect.objectContaining({
-      kind: 'runtime-ended',
-      cause: 'providerEnded',
     }));
   });
 

@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { isRecord } from '@happier-dev/plugin-sdk';
 import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 import { createExternalSessionUnsupportedTranscriptItem, readJsonlFileForwardLines } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import type { ExternalSessionContentSearchControl } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 export type GeminiTranscript = Readonly<{
   sessionId: string;
@@ -51,19 +52,22 @@ export function geminiItemText(item: AgentExternalSessionTranscriptItem): string
 
 /** Replay the vendor v0.64.0 writer's patches, checkpoint and inclusive rewind.
  * Both native paging and search consume this one active-history projection. */
-export async function readGeminiTranscript(filePath: string, signal: AbortSignal): Promise<GeminiTranscript> {
+export async function readGeminiTranscript(filePath: string, signal: AbortSignal,
+  control?: ExternalSessionContentSearchControl): Promise<GeminiTranscript> {
   signal.throwIfAborted();
   const info = await stat(filePath);
   let metadata: Record<string, unknown> = {};
   let partial = false;
   const messages = new Map<string, Record<string, unknown>>();
   const put = (value: unknown) => {
+    control?.checkWork();
     if (!isRecord(value) || typeof value.id !== 'string' || typeof value.type !== 'string') { partial = true; return; }
     if (Object.keys(value).some(key => !['id', 'timestamp', 'content', 'displayContent', 'type', 'toolCalls',
       'thoughts', 'tokens', 'model'].includes(key)) || typeof value.timestamp !== 'string') partial = true;
     messages.set(value.id, { ...value });
   };
   const patch = (value: unknown) => {
+    control?.checkWork();
     if (!isRecord(value) || typeof value.id !== 'string') { partial = true; return; }
     if (Object.keys(value).some(key => !['id', 'content', 'toolCalls'].includes(key))) partial = true;
     const message = messages.get(value.id);
@@ -81,6 +85,7 @@ export async function readGeminiTranscript(filePath: string, signal: AbortSignal
   };
   const consume = (value: unknown) => {
     signal.throwIfAborted();
+    control?.checkWork();
     if (!isRecord(value)) { partial = true; return; }
     const allowed = '$rewindTo' in value ? ['$rewindTo'] : '$patch' in value ? ['$patch'] : '$set' in value ? ['$set']
       : typeof value.sessionId === 'string' ? ['sessionId', 'projectHash', 'startTime', 'lastUpdated', 'messages', 'summary', 'memoryScratchpad', 'directories', 'kind']
@@ -118,6 +123,7 @@ export async function readGeminiTranscript(filePath: string, signal: AbortSignal
     } else if (typeof value.id === 'string') put(value);
     else partial = true;
   };
+  control?.checkWork();
   if (filePath.endsWith('.json')) {
     let value: unknown;
     try { value = JSON.parse(await readFile(filePath, { encoding: 'utf8', signal })); }
@@ -125,9 +131,9 @@ export async function readGeminiTranscript(filePath: string, signal: AbortSignal
     if (!isRecord(value) || !Array.isArray(value.messages)) throw new UnsupportedGeminiTranscript('Unknown legacy Gemini recording');
     consume(value);
   } else {
-    // The native writer can patch any earlier row; the fold is one indivisible
-    // native history unit. The SDK owns JSONL framing/UTF-8; physical file size
-    // bounds its complete replay, without adding a local truncation ceiling.
+    // Patches can invalidate earlier hits. Check the containing scan deadline
+    // between native records and publish only a completely replayed history.
+    // The SDK owns framing/UTF-8; the native file supplies the byte boundary.
     const bytes = Math.max(1, info.size);
     const page = await readJsonlFileForwardLines({ filePath, offsetBytes: 0, maxBytes: bytes, maxItems: bytes,
       maxOversizeLineBytes: bytes, onLine: line => consume(line.value) });
@@ -140,6 +146,8 @@ export async function readGeminiTranscript(filePath: string, signal: AbortSignal
   const createdAtMs = time(metadata.startTime) || info.birthtimeMs;
   const items: AgentExternalSessionTranscriptItem[] = [];
   for (const [id, message] of messages) {
+    signal.throwIfAborted();
+    control?.checkWork();
     const createdAt = time(message.timestamp) || createdAtMs;
     if (message.type === 'info' || message.type === 'error' || message.type === 'warning') continue;
     if (message.type !== 'user' && message.type !== 'gemini') {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
@@ -5,6 +6,19 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { resolveCodexUsageSubjectRef } from './identity.js';
 
 describe('resolveCodexUsageSubjectRef', () => {
+  it('preserves incumbent provisional subject bytes when hashing portably', () => {
+    const provisionalDiscriminator = 'native-home-å:日本語';
+    const incumbentHash = createHash('sha256')
+      .update(`openai-codex:${provisionalDiscriminator}`)
+      .digest('hex')
+      .slice(0, 24);
+
+    expect(resolveCodexUsageSubjectRef({ provisionalDiscriminator })).toMatchObject({
+      kind: 'provisionalLocalSubject',
+      accountSubjectId: `provisional:${incumbentHash}`,
+    });
+  });
+
   it('uses provider-owned chatgpt account id evidence as the stable subject', () => {
     const now = 1_000;
     const record = buildConnectedServiceCredentialRecord({

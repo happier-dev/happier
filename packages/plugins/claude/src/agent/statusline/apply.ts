@@ -22,7 +22,7 @@ export type ClaudeStatuslineApplierLogger = Readonly<{
 }>;
 
 /**
- * Verified effective runtime truth observed on the statusline (the `lastVerified` analogue):
+ * Effective runtime truth observed from native statusline, assistant or verified controls:
  * what the live TUI is ACTUALLY running. Consumers may fold this into convergence baselines
  * only — never into desired-state surfaces.
  */
@@ -70,6 +70,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     onModelChanged?: (change: ClaudeEffectiveModelChange) => void | Promise<void>;
 }>): Readonly<{
     apply(payload: ClaudeStatuslinePayload): Promise<void>;
+    readRuntimeTruth(): ClaudeStatuslineRuntimeTruth;
     applyModelEvidence(input: Readonly<{
         source: 'assistant' | 'control';
         modelId: string | null;
@@ -82,8 +83,14 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     let lastCanaryKey: string | null = null;
     let lastRuntimeTruthKey: string | null = null;
     let lastObservedModelId: string | null = null;
+    let lastObservedEffortLevel: string | null = null;
+    let lastNotifiedModelId: string | null = null;
     let hasStatuslineModel = false;
     const publishedModelChangeEventIds = new Set<string>();
+    const readRuntimeTruth = (): ClaudeStatuslineRuntimeTruth => ({
+        modelId: lastObservedModelId,
+        effortLevel: lastObservedEffortLevel,
+    });
 
     const maybeAdoptModelAndWindow = async (input: Readonly<{
         modelId: string | null;
@@ -91,7 +98,8 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         contextWindowTokens?: number | null | undefined;
         reasoningEffort?: string | null | undefined;
     }>): Promise<void> => {
-        const modelId = readString(input.modelId);
+        const modelId = readString(input.modelId)
+            ?? (readString(input.reasoningEffort) ? lastObservedModelId : null);
         if (!modelId) return;
         const contextWindowTokens = readPositiveTokens(input.contextWindowTokens);
         const displayName = readString(input.displayName);
@@ -100,14 +108,21 @@ export function createClaudeStatuslineApplier(params: Readonly<{
         // Dedupe: identical payloads (~300ms debounce upstream, but state changes repeat the same
         // model/window) must not spam metadata writes.
         const modelKey = `${modelId}|${contextWindowTokens ?? ''}|${reasoningEffort ?? ''}`;
-        if (modelKey === lastModelKey) return;
-        params.onEffectiveModel?.({
-            modelId,
-            ...(displayName ? { displayName } : {}),
-            ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
-            ...(reasoningEffort ? { reasoningEffort } : {}),
-        });
-        const previousModelId = lastObservedModelId;
+        if (modelKey !== lastModelKey) {
+            lastObservedEffortLevel = reasoningEffort
+                ?? (modelId === lastObservedModelId ? lastObservedEffortLevel : null);
+            // Observation and its dedupe key move together, before any durable notification wait.
+            lastObservedModelId = modelId;
+            lastModelKey = modelKey;
+            maybeFeedRuntimeTruth();
+            params.onEffectiveModel?.({
+                modelId,
+                ...(displayName ? { displayName } : {}),
+                ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+                ...(reasoningEffort ? { reasoningEffort } : {}),
+            });
+        }
+        const previousModelId = lastNotifiedModelId;
         if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
             const eventId = `claude-model-changed:${previousModelId}:${modelId}`;
             if (!publishedModelChangeEventIds.has(eventId)) {
@@ -115,15 +130,13 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 publishedModelChangeEventIds.add(eventId);
             }
         }
-        lastModelKey = modelKey;
-        lastObservedModelId = modelId;
+        lastNotifiedModelId = modelId;
     };
 
-    const maybeFeedRuntimeTruth = (payload: ClaudeStatuslinePayload): void => {
+    const maybeFeedRuntimeTruth = (): void => {
         if (!params.onRuntimeTruth) return;
-        const modelId = readString(payload.model?.id);
-        const effortLevel = readString(payload.effort?.level);
-        if (!modelId && !effortLevel) return;
+        const { modelId, effortLevel } = readRuntimeTruth();
+        if (!modelId) return;
         // Own dedup key: the metadata dedup (`model|window`) cannot see effort changes, so the
         // runtime-truth feed keys on `model|effort` to keep convergence baselines current.
         const truthKey = `${modelId ?? ''}|${effortLevel ?? ''}`;
@@ -148,6 +161,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     };
 
     return {
+        readRuntimeTruth,
         async apply(payload) {
             if (!matchesSession(params.readIdentity(), payload)) {
                 params.logger.debug('[ClaudeStatusline] ignoring statusline payload from foreign/stale Claude session', {
@@ -163,7 +177,6 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 contextWindowTokens: payload.context_window?.context_window_size ?? null,
                 reasoningEffort: payload.effort?.level ?? null,
             });
-            maybeFeedRuntimeTruth(payload);
             maybeLogRuntimeCanary(payload);
         },
         async applyModelEvidence(input) {

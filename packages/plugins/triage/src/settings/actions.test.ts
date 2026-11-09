@@ -200,7 +200,7 @@ describe('the Triage action record', () => {
             delivery: 'compose',
         });
         expect(ASK.target).toEqual({ kind: 'agent', promptInvocationId: null, delivery: 'compose' });
-        expect(FIX.target).toMatchObject({ seededFallbackInstruction: 'Fix this entry.' });
+        expect(FIX.target).toMatchObject({ seededFallbackInstruction: 'Fix this.' });
 
         // Only a pull request reaches either review action.
         expect(REVIEW.appliesTo).toEqual(['pullRequest']);
@@ -495,7 +495,7 @@ describe('the Triage action record', () => {
             .toEqual({
                 kind: 'agent',
                 promptInvocationId: null,
-                seededFallbackInstruction: 'Fix this entry.',
+                seededFallbackInstruction: 'Fix this.',
                 delivery: 'send',
             });
     });

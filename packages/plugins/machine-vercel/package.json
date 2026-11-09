@@ -6,6 +6,14 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/account-runtime": {
+      "happier-source": "./src/manifest.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./happier-plugin-ui/connected-account-authentication": {
+      "happier-source": "./src/account.ts",
+      "default": "./dist/account.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",

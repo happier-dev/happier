@@ -17,8 +17,8 @@ export function TriageFailureLineAction(props: Readonly<{
   onPress: () => unknown;
 }>): React.ReactElement {
   return <Button accessibilityLabel={props.accessibilityLabel ?? props.label} variant="plain" size="small" onPress={props.onPress}
-    {...(props.busy === undefined ? {} : { busy: props.busy })}
-    {...(props.disabled === undefined ? {} : { disabled: props.disabled })}>
+    // A busy Button swaps its words for a spinner, stranded under the line at phone width: it holds its word instead.
+    {...(props.busy === true || props.disabled === true ? { disabled: true } : {})}>
     <Text variant="meta" tone="secondary" value={props.label} />
   </Button>;
 }

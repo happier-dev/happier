@@ -1,10 +1,16 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { ConversationProviderAutomationEventAdmitResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { admitCheckpointedPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { describe, expect, it, vi } from 'vitest';
 
 import { admitTelegramAutomationEvent, TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS } from './automationEvents.js';
 import { setupTelegramChatEventSource } from './channelActions.js';
 import { TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID } from './constants.js';
-import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
+const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
@@ -114,6 +120,37 @@ function admissionInput(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Telegram Automation Event source', () => {
+  it.each([
+    { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+    { kind: 'rejoined', runId: 'run-1', checkpointSafe: true },
+    { kind: 'skipped', reason: 'filtered', checkpointSafe: true },
+  ] as const)('projects $kind SDK admission metadata onto the closed Channels wire result', async result => {
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') return {
+        kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7',
+      };
+      if (actionId === 'automation.event.admit') return { results: [result] };
+      if (actionId === 'automation.event.source.status.report') return {};
+      throw new Error(`unexpected ${actionId}`);
+    });
+    const request = admissionInput();
+    const invocation = context(noHttp, execute);
+    const disposition = await admitCheckpointedPluginEventObservationV1({
+      ...request.candidate,
+      occurrenceId: request.occurrenceId,
+      occurredAt: request.occurredAt,
+      observationReceivedAt: request.observationReceivedAt,
+      observedDelta: 1,
+    }, invocation);
+    expect(disposition).toMatchObject({ kind: 'checkpointSafe', admissions: [expect.objectContaining({ result })] });
+    expect(ConversationProviderAutomationEventAdmitResultV1Schema.safeParse(disposition).success).toBe(false);
+
+    const wireResult = await admitTelegramAutomationEvent(request, invocation);
+
+    expect(ConversationProviderAutomationEventAdmitResultV1Schema.parse(wireResult)).toEqual({ kind: 'checkpointSafe' });
+    expect(wireResult).toEqual({ kind: 'checkpointSafe' });
+  });
+
   it('admits a frozen Channels Event obligation to the matching current source', async () => {
     const admitted: unknown[] = [];
     const statuses: unknown[] = [];
@@ -417,7 +454,7 @@ describe('Telegram Automation Event source', () => {
         ...('description' in field && field.description ? [field.description.key] : []),
       ]),
     ];
-    for (const bundle of TELEGRAM_UI_TRANSLATION_BUNDLES) {
+    for (const bundle of PACKAGED_UI_TRANSLATION_BUNDLES) {
       const messages = bundle.messages as Readonly<Record<string, string>>;
       const missing = referencedKeys.filter((key) => typeof messages[key] !== 'string');
       expect({ locale: bundle.locale, missing }).toEqual({ locale: bundle.locale, missing: [] });

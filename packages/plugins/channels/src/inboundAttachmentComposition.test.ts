@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import type { JsonValue, PluginServices } from '@happier-dev/plugin-sdk';
 import type { SessionSendRequest, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate as activateTelegram, PLUGIN_MANIFEST as telegramManifest } from '@happier-dev/plugins-channel-telegram';
 import { activate as activateDiscord, PLUGIN_MANIFEST as discordManifest } from '@happier-dev/plugins-channel-discord';
 import { createDiscordGatewaySession } from '../../channel-discord/src/discordGateway.js';
@@ -38,7 +38,7 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
   const byteLength = options.failure === 'overLimit' ? 20 * 1024 * 1024 + 1 : fileBytes.byteLength;
   const nativeDiscordFile = { id: 'file-1', filename: 'lead.txt', content_type: 'text/plain', size: byteLength,
     url: 'https://cdn.discordapp.com/attachments/channel-1/file-1/lead.txt?ex=old&hm=old' };
-  const http: PluginServices['http'] = {
+  const http: PluginServices['http'] = createPluginHttpFixture({
     async openWebSocket() { throw new Error('This native-frame fixture does not open a live socket'); },
     async request(request) {
       const url = new URL(request.url);
@@ -72,7 +72,7 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
       }
       throw new Error(`Unexpected Discord HTTP path ${url.pathname}`);
     },
-  };
+  });
   // Credential materialization is the real host boundary; no stored credentials are read.
   const connectedAccounts = { async materialize() { return { kind: 'environment', env: kind === 'Telegram'
     ? { TELEGRAM_BOT_TOKEN: '123:fixture' } : { DISCORD_BOT_TOKEN: 'fixture' } }; } } as unknown as PluginServices['connectedAccounts'];
@@ -141,7 +141,7 @@ async function attachmentJourney(kind: Provider, options: { failure?: Failure; t
         context: { botUserId: 'bot-1', applicationId: 'app-1', botRoleIds: [], messageContentIntentEnabled: true } });
       const observation = mapDiscordMessageToSocketIngress({ parsed });
       if (!observation) throw new Error('Missing native observation');
-      await journey.ingest({ connectionId, entry: { observation, eventCandidate: null } });
+      await journey.ingest({ connectionId, authorityEpoch: 1, entry: { observation, eventCandidate: null } });
     },
     async resolve() {
       const attachments = admissions[0]?.attachments;

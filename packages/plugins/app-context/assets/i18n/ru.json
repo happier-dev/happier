@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Аннотация",
+  "plugins.appContext.annotation.note": "Ваша заметка",
+  "plugins.appContext.annotation.save": "Сохранить заметку",
+  "plugins.appContext.annotation.saved": "Заметка сохранена",
+  "plugins.appContext.annotation.refused": "Сейчас не удаётся сохранить заметку — она остаётся здесь. Если вы редактируете ожидающее сообщение, сначала завершите это.",
+  "plugins.appContext.annotation.unavailable": "Эта аннотация недоступна."
+}

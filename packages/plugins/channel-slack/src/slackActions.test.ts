@@ -45,12 +45,30 @@ function boundary(options: { foreignApp?: boolean; foreignUser?: boolean; direct
 }
 
 describe('Slack provider Actions', () => {
+  it('uses admitted connection identity for ordinary Actions and verifies identity on an explicit connection test', async () => {
+    const b = boundary();
+    const endpoint = { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' } as const;
+    await expect(resolveSlackEndpoint({ ...connection, query: 'C1' }, b.context))
+      .resolves.toMatchObject({ kind: 'resolved', candidates: [endpoint] });
+    await expect(resolveSlackPrincipal({ ...connection, endpoint, query: 'U2' }, b.context))
+      .resolves.toMatchObject({ kind: 'resolved', candidates: [{ id: 'slack:T1:user:U2' }] });
+    await expect(deliverSlackMessage({ ...connection, endpoint, content: { text: 'hello' },
+      deliveryKey: 'ordinary-identity-read', linkPreviewPolicy: 'suppress' }, b.context))
+      .resolves.toEqual({ kind: 'delivered', providerMessageIds: ['1700000000.000002'] });
+    const identityReads = () => b.request.mock.calls.filter(([request]) => /\/(auth\.test|bots\.info)$/.test(new URL(request.url).pathname)).length;
+    expect(identityReads()).toBe(0);
+    expect(await testSlackConnection({ ...connection, selectedTransport: 'socket' }, b.context)).toMatchObject({ kind: 'ready' });
+    expect(identityReads()).toBe(2);
+  });
+
   it('declares its provider name through the public Channels contribution contract', () => {
     assertConversationProviderContributionV1(PLUGIN_MANIFEST);
     expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions).toContainEqual(expect.objectContaining({
       target: { pluginId: 'happier.channels', pointId: 'providers' },
       descriptor: { v: 1, displayName: 'Slack' },
     }));
+    expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations).not.toHaveProperty('connectionStop');
+    expect(PLUGIN_MANIFEST.contributes.actions?.some(action => action.id === 'slack/halt-socket')).toBe(false);
   });
   it('verifies both tokens through the shared hello proof and returns secret-free connection facts', async () => {
     const b = boundary();
@@ -104,7 +122,7 @@ describe('Slack provider Actions', () => {
   });
   it('revalidates destination topology and refuses contradictory thread routes before any post', async () => {
     const input = { ...connection, endpoint: { kind: 'thread', audience: 'shared', id: 'slack:T1:channel:C1:thread:1700000000.000001', parentId: 'slack:T1:channel:C1' },
-      content: { text: 'hello' }, deliveryKey: 'delivery-1', mentionPolicy: 'suppress', linkPreviewPolicy: 'suppress' };
+      content: { text: 'hello' }, deliveryKey: 'delivery-1',  linkPreviewPolicy: 'suppress' };
     const good = boundary();
     expect(await deliverSlackMessage(input, good.context)).toEqual({ kind: 'delivered', providerMessageIds: ['1700000000.000002'] });
     expect(good.effects).toMatchObject([{ channel: 'C1', thread_ts: '1700000000.000001', text: 'hello' }]);

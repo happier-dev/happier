@@ -211,6 +211,9 @@ export function createClaudeNativeAgentSdkContext(
     agentRuntime: {
       exec: createClaudeNativeSdkQueryContext(context.services.exec, (message) => context.services.logger.warn(message), services.nativeLaunch),
       sessionHooks: {
+        async observeSessionHook(request) {
+          await services.sessionHooks.observeSessionHook(request);
+        },
         async startServer(request) {
           const { providerId: _providerId, sessionId: _sessionId, lifecycle: _lifecycle, ...nativeRequest } = request;
           return await services.sessionHooks.startServer(nativeRequest);

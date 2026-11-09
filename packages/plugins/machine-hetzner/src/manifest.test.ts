@@ -44,6 +44,31 @@ async function activated(response: unknown, status = 200, errorOnCreate?: { stat
   return { handlers, context, requests };
 }
 describe('public hetzner machine provisioner', () => {
+  it('curates server operating systems and declares an available Ubuntu LTS and price-location default', async () => {
+    const pair = { net: '1', gross: '1' };
+    const image = { architecture: 'x86', type: 'system', status: 'available', deprecated: null };
+    const runtime = await activated({
+      server_types: [{ id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
+        locations: [{ name: 'fsn1', available: false, deprecation: null }, { name: 'hel1', available: true, deprecation: null }],
+        prices: ['fsn1', 'hel1'].map(location => ({ location, price_hourly: pair, price_monthly: pair })) }],
+      images: [
+        { ...image, id: 1, name: 'jitsi', type: 'app' },
+        { ...image, id: 2, name: 'ubuntu-22.04' },
+        { ...image, id: 3, name: 'debian-13' },
+        { ...image, id: 4, name: 'ubuntu-24.04' },
+        { ...image, id: 5, name: 'ubuntu-24.04', architecture: 'arm' },
+        { ...image, id: 6, name: 'ubuntu-24.04', deprecated: '2026-01-01' },
+        { ...image, id: 7, name: null, type: 'snapshot' },
+      ], locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein' }, { id: 2, name: 'hel1', description: 'Helsinki' }],
+      pricing: { currency: 'EUR' }, meta: { pagination: { next_page: null } },
+    });
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
+    expect(options.dimensions.image.map(option => option.id)).toEqual(['4', '5', '3', '2']);
+    expect(options.base?.launch).toEqual({ imageId: '4', locationId: 'hel1' });
+    expect(projectMachineProvisionerSelectionV1({ options, selection: { size: '1', image: '5', location: 'hel1', network: '10' },
+      launchSchema: exports.MACHINE_PROVISIONER.launchSchema }).kind).toBe('unavailable');
+    expect(runtime.requests).toHaveLength(4);
+  });
   it.each(['live', 'CLOUD33'] as const)('resolves the %s per-location catalog with architecture-matched Ubuntu and either IP family', async observation => {
     // Read-only REST v1 GETs, 2026-11-05 18:52Z; public catalog ids remapped.
     // CLOUD33 (18:14Z) observed the opposite cx23 availability in fsn1/hel1.
@@ -306,22 +331,22 @@ describe('public hetzner machine provisioner', () => {
       server_types: [], locations: [], pricing: { currency: 'USD' },
       images: [
         // REST v1 removed deprecated on 2026-11-02; deprecation is authoritative.
-        { id: 1, name: 'not-a-linux-name', architecture: 'x86', type: 'system', status: 'available', deprecation: null, os_flavor: 'ubuntu' },
-        { id: 2, name: null, description: 'Ubuntu snapshot', architecture: 'x86', type: 'snapshot', status: 'available', deprecated: null, os_flavor: 'unknown' },
-        { id: 3, name: null, architecture: 'x86', type: 'backup', status: 'available', deprecated: null },
-        { id: 4, name: null, architecture: 'x86', type: 'snapshot', status: 'available', deprecated: null, os_flavor: 'debian' },
-        { id: 5, name: 'old-current-image', architecture: 'x86', type: 'system', status: 'available', deprecated: null,
+        { id: 1, name: 'ubuntu-24.04', architecture: 'x86', type: 'system', status: 'available', deprecation: null, os_flavor: 'ubuntu' },
+        { id: 2, name: 'debian-13', architecture: 'x86', type: 'system', status: 'available', deprecated: null, os_flavor: 'unknown' },
+        { id: 3, name: 'ubuntu-22.04', architecture: 'x86', type: 'system', status: 'available', deprecated: null },
+        { id: 4, name: 'debian-13', architecture: 'arm', type: 'system', status: 'available', deprecated: null, os_flavor: 'debian' },
+        { id: 5, name: 'ubuntu-24.04', architecture: 'x86', type: 'system', status: 'available', deprecated: null,
           deprecation: { announced: '2026-08-31T00:00:00Z', unavailable_after: '2026-11-30T00:00:00Z' } },
-        { id: 6, name: 'old-legacy-image', architecture: 'x86', type: 'system', status: 'available', deprecated: '2026-08-31T00:00:00Z' },
+        { id: 6, name: 'ubuntu-22.04', architecture: 'x86', type: 'system', status: 'available', deprecated: '2026-08-31T00:00:00Z' },
       ], meta: { pagination: { next_page: null } },
     });
     const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!({}, runtime.context));
-    expect(options.dimensions.image.map(image => image.id)).toEqual(['1', '2', '3', '4']);
+    expect(options.dimensions.image.map(image => image.id)).toEqual(['1', '2', '4', '3']);
     expect(options.base).not.toHaveProperty('guestPlatform');
     expect(options.dimensions.image[0]).toMatchObject({ guestPlatform: 'linux' });
     expect(options.dimensions.image[1]).not.toHaveProperty('guestPlatform');
-    expect(options.dimensions.image[2]).not.toHaveProperty('guestPlatform');
-    expect(options.dimensions.image[3]).toMatchObject({ guestPlatform: 'linux' });
+    expect(options.dimensions.image[2]).toMatchObject({ guestPlatform: 'linux' });
+    expect(options.dimensions.image[3]).not.toHaveProperty('guestPlatform');
     expect(runtime.requests).toHaveLength(4);
   });
 
@@ -516,7 +541,8 @@ describe('public hetzner machine provisioner', () => {
     const serverTypes = Array.from({ length: 59 }, (_, index) => ({ id: index + 1, name: `type-${index}`, cores: 2, memory: 4, disk: 40,
       architecture: 'x86', locations: locations.map(location => ({ id: location.id, name: location.name, available: true, deprecation: null })),
       prices: locations.map(location => ({ location: location.name, price_hourly: pair('0.01'), price_monthly: pair('6') })) }));
-    const images = Array.from({ length: 16 }, (_, index) => ({ id: index + 1, name: `ubuntu-${index}`, architecture: 'x86',
+    const images = Array.from({ length: 16 }, (_, index) => ({ id: index + 1,
+      name: index === 0 ? 'ubuntu-24.04' : index === 1 ? 'debian-13' : index === 2 ? 'ubuntu-22.04' : `ubuntu-${index}`, architecture: 'x86',
       type: 'system', status: 'available', deprecated: null }));
     const runtime = await activated({ server_types: serverTypes, images, locations, pricing: { currency: 'EUR' },
       meta: { pagination: { next_page: null } } });
@@ -527,7 +553,7 @@ describe('public hetzner machine provisioner', () => {
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
     const dimensionCount = Object.values(result.dimensions).reduce((total, entries) => total + entries.length, 0);
     console.info(`Hetzner native sizes=${serverTypes.length}; dimensions=${dimensionCount}; bytes=${new TextEncoder().encode(wire).byteLength}; elapsedMs=${elapsedMs.toFixed(1)}`);
-    expect(dimensionCount).toBe(81);
+    expect(result.dimensions.size).toHaveLength(serverTypes.length);
     expect(wire.match(/"cpuCores":/g)?.length ?? 0)
       .toBe(serverTypes.length);
   });
@@ -578,7 +604,7 @@ describe('public hetzner machine provisioner', () => {
       ],
       images: [
         { id: 10, name: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS', architecture: 'x86', type: 'system', status: 'available', deprecated: null },
-        { id: 11, name: 'ubuntu-arm', architecture: 'arm', type: 'system', status: 'available', deprecated: null },
+        { id: 11, name: 'ubuntu-24.04', architecture: 'arm', type: 'system', status: 'available', deprecated: null },
       ],
       locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: 'DE' }, { id: 2, name: 'hel1', description: 'Helsinki', country: 'FI' }],
       pricing: { currency: 'EUR', primary_ips: [{ type: 'ipv4', prices: [

@@ -1,4 +1,4 @@
-import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionGoalRefreshResult, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { decodeCodexAppServerGoal } from './goalCodec.js';
 
@@ -30,7 +30,7 @@ export function readCodexGoalPayload(value: unknown): CodexGoalPayload {
 export function createCodexGoalProjection() {
   let sourceSequence = 0;
   return Object.freeze({
-    async publish(payload: CodexGoalPayload, goalSource: WorkStatePublisher) {
+    async publish(payload: CodexGoalPayload, goalSource: WorkStatePublisher): Promise<AgentSessionGoalRefreshResult> {
       if (payload.kind === 'malformed') {
         return { status: 'unavailable' as const, retryable: false, diagnostic: diagnostic('codex_goal_payload_invalid'), goalControlFailure: { phase: 'native_effect' as const } };
       }

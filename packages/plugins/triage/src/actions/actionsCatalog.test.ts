@@ -28,6 +28,21 @@ import type { TriageDataActionContext } from './dataContext.js';
 const NO_AGENT_ACTIONS = { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose: () => {} }) };
 
 describe('the configured-action Actions', () => {
+    it('offers the Workflows owner record only for Workflow Runs through the shared catalog', async () => {
+        const testkit = createTestkitAccountKv();
+        const context = { signal: new AbortController().signal,
+            services: { storage: { account: { kv: testkit.kv } }, targetedContributions: NO_AGENT_ACTIONS } } as unknown as TriageDataActionContext;
+        const read = await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse({
+            v: 1, projection: 'sessionHandoff', task: 'investigate', subject: 'workflowRun' }), context);
+        expect(read).toMatchObject({ kind: 'choices', actions: expect.arrayContaining([
+            expect.objectContaining({ forSubject: true, selection: expect.objectContaining({ configuredActionId: 'workflows.investigate-run' }) }),
+        ]) });
+        const other = await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse({
+            v: 1, projection: 'sessionHandoff', task: 'investigate', subject: 'deploymentEnvironment' }), context);
+        if (!('kind' in other) || other.kind !== 'choices') throw new Error('Expected handoff choices');
+        expect(other.actions.some(action => action.selection.configuredActionId === 'workflows.investigate-run')).toBe(false);
+        expect(testkit.setCallCount()).toBe(0);
+    });
     it('chooses the configured investigation default and preserves its disabled choice through the same catalog read', async () => {
         const testkit = createTestkitAccountKv();
         // Account storage is the genuine host boundary; catalog policy and CAS remain real.

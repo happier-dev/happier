@@ -1,7 +1,10 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
 import { FX_UI_DESCRIPTOR } from './descriptor.js';
-import { FX_UI_TRANSLATIONS } from './translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
 
 describe('FX UI projection source', () => {
   /**
@@ -40,7 +43,7 @@ describe('FX UI projection source', () => {
       localControl: true,
       picker: { cliGlyph: 'FX' },
     });
-    for (const messages of Object.values(FX_UI_TRANSLATIONS)) {
+    for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
       expect(messages['agentInput.agent.fx']).toBeTruthy();
       expect(messages['sessionInfo.fxSessionId']).toBeTruthy();
       expect(messages['sessionInfo.fxSessionIdCopied']).toBeTruthy();

@@ -22,7 +22,7 @@ export async function admitDiscordAutomationEvent(
 ): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertDiscordChannelsCoreCaller(context);
   const request = ConversationProviderAutomationEventAdmitInputV1Schema.parse(input);
-  return admitSessionSocketPluginEventObservationV1({
+  const disposition = await admitSessionSocketPluginEventObservationV1({
     eventRef: request.candidate.eventRef,
     sourceInstanceId: request.candidate.sourceInstanceId,
     sourceContractVersion: request.candidate.sourceContractVersion,
@@ -32,4 +32,5 @@ export async function admitDiscordAutomationEvent(
     observedDelta: request.observedDelta,
     payload: request.candidate.payload,
   }, context);
+  return { kind: disposition.kind };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CodexUsageSubjectRef } from '../usage/identity.js';
 import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../usage/snapshot.js';
+import { readCodexRateLimitSnapshotPlanLabel } from './rateLimitSnapshot.js';
 
 function mapCodexRateLimitSnapshotToUsageSnapshot(params: Readonly<{
   profileId: string;
@@ -37,6 +38,37 @@ function mapCodexRateLimitSnapshotToUsageSnapshot(params: Readonly<{
 }
 
 describe('Codex public runtime usage snapshots', () => {
+  it.each([null, false, ' '] as const)('keeps an unreported allowance unknown instead of inventing zero usage (%j)', missing => {
+    const resetAt = 1_800_000_000;
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({ profileId: 'work', fetchedAt: 1_768_000_000_000,
+      rawSnapshot: { primary: { used_percent: 0, resets_at: resetAt }, secondary: {
+        utilization_pct: missing, used_tokens: missing, token_limit: 100, resets_at: resetAt,
+      } } });
+    expect(snapshot.meters.find(meter => meter.meterId === 'secondary')).toMatchObject({
+      utilizationPct: null, used: null, limit: 100, remainingPct: null, confidence: 'unknown', resetsAt: resetAt * 1000,
+    });
+    expect(snapshot.meters.find(meter => meter.meterId === 'primary')).toMatchObject({
+      utilizationPct: 0, remainingPct: 100, confidence: 'exact',
+    });
+  });
+
+  it.each([
+    // Codex rust-v0.162.1 protocol/src/auth.rs KnownPlan::display_name and raw aliases.
+    ['promax', 'ChatGPT Pro (Max)'], ['prolite', 'ChatGPT Pro'], ['pro', 'ChatGPT Pro (More)'],
+    ['free', 'ChatGPT Free'], ['go', 'ChatGPT Go'], ['plus', 'ChatGPT Plus'], ['team', 'ChatGPT Team'],
+    ['self_serve_business_prolite', 'ChatGPT Self Serve Business ProLite'],
+    ['self_serve_business_usage_based', 'ChatGPT Self Serve Business Usage Based'],
+    ['business', 'ChatGPT Business'], ['ent26', 'ChatGPT Enterprise'],
+    ['enterprise_cbp_automation', 'ChatGPT Enterprise (Automation)'],
+    ['enterprise_cbp_usage_based', 'ChatGPT Enterprise CBP Usage Based'],
+    ['enterprise', 'ChatGPT Enterprise'], ['hc', 'ChatGPT Enterprise'],
+    ['edu', 'ChatGPT Edu'], ['education', 'ChatGPT Edu'], ['edu_plus', 'ChatGPT Edu Plus'], ['edu_pro', 'ChatGPT Edu Pro'],
+    ['A future plan', 'A future plan'], ['future_sku', 'future_sku'],
+  ])('publishes display-ready plan %s through both snapshot envelopes', (id, label) => {
+    expect(readCodexRateLimitSnapshotPlanLabel({ plan_type: id })).toBe(label);
+    expect(readCodexRateLimitSnapshotPlanLabel({ rateLimits: { planType: id } })).toBe(label);
+  });
+
   it('maps Codex app-server rate-limit snapshots into connected-service quota meters', () => {
     const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
@@ -67,7 +99,7 @@ describe('Codex public runtime usage snapshots', () => {
       },
       accountSubject: { kind: 'providerSubject', id: 'acct_123' },
       fetchedAtMs: 1_768_000_000_000,
-      planLabel: 'plus',
+      planLabel: 'ChatGPT Plus',
       accountLabel: 'alice@example.com',
       meters: [
         {
@@ -136,7 +168,7 @@ describe('Codex public runtime usage snapshots', () => {
       });
 
       expect(snapshot).toMatchObject({
-        planLabel: 'pro',
+        planLabel: 'ChatGPT Pro (More)',
         meters: [{
           meterId: 'primary',
           utilizationPct: 100,
@@ -245,7 +277,7 @@ describe('Codex public runtime usage snapshots', () => {
       providerId: 'openai-codex',
       accountSubject: { kind: 'providerSubject', id: 'acct_live_codex' },
       accountLabel: 'codex-user@example.test',
-      planLabel: 'pro',
+      planLabel: 'ChatGPT Pro (More)',
       meters: [
         {
           meterId: 'primary',
@@ -304,7 +336,7 @@ describe('Codex public runtime usage snapshots', () => {
     });
 
     expect(snapshot).toMatchObject({
-      planLabel: 'team',
+      planLabel: 'ChatGPT Team',
       meters: [
         {
           meterId: 'primary',

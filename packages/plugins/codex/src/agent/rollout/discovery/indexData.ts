@@ -35,7 +35,7 @@ type ScanOptions = {
 
 const CODEX_SESSION_META_CLOCK_SKEW_MS = 2_000;
 
-const CODEX_ROLLOUT_SUFFIX_PATTERN = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl$/i;
+const CODEX_ROLLOUT_SUFFIX_PATTERN = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl(?:\.zst)?$/i;
 const CODEX_ROLLOUT_ID_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i;
 
 export type CodexRolloutFilename = Readonly<{
@@ -43,6 +43,31 @@ export type CodexRolloutFilename = Readonly<{
     threadId?: string;
     turnId?: string;
 }>;
+
+/** Physical rollout formats supported by Codex, including legacy noncanonical names. */
+export function isCodexRolloutFilePath(path: string): boolean {
+    return /\.jsonl(?:\.zst)?$/i.test(path);
+}
+
+/** Codex indexes the logical plain path even while the physical rollout is compressed. */
+export function resolveCodexLogicalRolloutPath(path: string): string {
+    return /\.jsonl\.zst$/i.test(path) ? path.slice(0, -4) : path;
+}
+
+/** Leave decoding and append-time materialization to Codex's native rollout owner. */
+export async function resolveExistingCodexRolloutPath(path: string): Promise<string | null> {
+    const plainPath = resolveCodexLogicalRolloutPath(path);
+    const candidates = isCodexRolloutFilePath(path) ? [plainPath, `${plainPath}.zst`] : [path];
+    for (const candidate of candidates) {
+        try {
+            if ((await stat(candidate)).isFile()) return candidate;
+        } catch (error) {
+            if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) continue;
+            throw error;
+        }
+    }
+    return null;
+}
 
 /** Matches rollout identities exactly, with case folding only for UUIDs. */
 export function isMatchingCodexRolloutIdentity(candidateId: string | undefined, requestedId: string): boolean {

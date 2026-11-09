@@ -3,16 +3,17 @@ import { machinePresentationLabel, machineCheckPresentation } from './ui/transla
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+  observeMachineProvisionerNativeRead,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
-  MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+  MachineProvisionerOptionsResultV1Schema, MachineProvisionerPutFileResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MODAL_ACCOUNT_ID, MODAL_ACCOUNT_PURPOSE, MODAL_CONNECTED_ACCOUNT_RUNTIME } from './machine/connectedAccount.js';
 import { MODAL_BILLING, MODAL_PLUGIN_ID, MODAL_PROVISIONER_ID } from './machine/roles.js';
 import { MODAL_ROLE_SCHEMAS, MODAL_RECONCILIATION_SCHEMAS, ModalOptionsInputV1Schema, ModalNativeOperationV1Schema, ModalLaunchV1Schema, ModalResourceV1Schema } from './machine/schemas.js';
 import { invokeScopedModalRole } from './machine/scopedSdk.js';
-import { MODAL_CONFIGURATION_LABELS, MODAL_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { MODAL_CONFIGURATION_LABELS } from './ui/translations.js';
 
 const networkAccess = 'modal-network';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [MODAL_ACCOUNT_PURPOSE, networkAccess] } as const;
@@ -29,6 +30,7 @@ function configurationLabel(id: keyof typeof MODAL_CONFIGURATION_LABELS.en) {
 
 export const MODAL_MACHINE_PROVISIONER = {
   title: 'Modal', icon: 'cloud', resourceKind: 'modal-sandbox', schemaVersion: 1,
+  enrollmentRole: 'sandbox',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: ModalLaunchV1Schema.jsonSchema, resourceSchema: ModalResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
@@ -43,9 +45,21 @@ export const MODAL_PLUGIN = definePlugin({
   id: MODAL_PLUGIN_ID, version: '0.0.0', displayName: 'Modal Machines',
   // The provider's own mark beside its name in Machines: Modal's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
   brand: { iconResourceId: 'brand-icon', monochrome: true },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
-  description: 'Finite Modal Sandboxes with private native bootstrap IO.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
+  description: 'Finite Modal Sandboxes with private native bootstrap IO.', entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{ id: MODAL_ACCOUNT_PURPOSE, capability: 'connectedAccounts',
     reason: 'Use the exact reviewed Modal token and profile.',
     scope: { serviceRefs: [MODAL_ACCOUNT_ID], operations: ['select', 'use'], materializationKinds: ['environment'] },
@@ -54,16 +68,18 @@ export const MODAL_PLUGIN = definePlugin({
       { kind: 'httpsHostSuffix', hostSuffix: 'modal.run' }] },
   }], optional: [] },
   connectedAccountDescriptors: { [MODAL_ACCOUNT_ID]: {
-    declaration: { title: 'Modal', authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual',
+    declaration: { title: 'Modal', description: 'Run coding sessions in Modal Sandboxes.', ui: { category: 'cloud-machines' },
+      authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual',
+      setup: { url: 'https://modal.com/settings/tokens', createKeyTitle: 'Open Modal API tokens',
+        checklist: ['Open your workspace settings in the Modal Dashboard.', 'Create an API token, then paste its token ID and token secret here.'],
+        shapeHint: 'Use the API token ID (ak-…) and secret (as-…), not a Web Function proxy token.' },
       outcomeReconciliation: 'none', directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+      credentialFieldKeys: { tokenId: 'tokenId', tokenSecret: 'tokenSecret' },
       fields: [{ id: 'tokenId', title: 'Token ID', schema: { type: 'string', minLength: 1 }, secret: true },
         { id: 'tokenSecret', title: 'Token secret', schema: { type: 'string', minLength: 1 }, secret: true }],
       configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [{ id: 'serverUrl', title: 'Modal API origin', semantic: 'connectedAccountOrigin',
         schema: { type: 'string', minLength: 1 }, required: true, secret: false },
       { id: 'environment', title: 'Modal environment', schema: { type: 'string' }, required: false, secret: false }] },
-      setup: { url: 'https://modal.com/settings/tokens', createKeyTitle: 'Open Modal API tokens',
-        checklist: ['Open your workspace settings in the Modal Dashboard.', 'Create an API token, then paste its token ID and token secret here.'],
-        shapeHint: 'Use the API token ID (ak-…) and secret (as-…), not a Web Function proxy token.' },
     }] } }, runtime: MODAL_CONNECTED_ACCOUNT_RUNTIME,
   } },
   machineProvisioners: { [MODAL_PROVISIONER_ID]: MODAL_MACHINE_PROVISIONER },
@@ -89,6 +105,8 @@ export const MODAL_PLUGIN = definePlugin({
       resultSchema: MODAL_RECONCILIATION_SCHEMAS.result, async run(input, context) {
         try { return MODAL_RECONCILIATION_SCHEMAS.result.parse(await invokeScopedModalRole('acquire', input, context)); }
         catch (error) { const reason = code(error);
+          // Worker qualification fails before the native allocation role runs.
+          if (reason === 'modal_sdk_unsupported') throw error;
           return reason === 'credential_unavailable' ? { kind: 'rejected' as const, code: 'credential_unavailable' as const }
             : input.managedId ? { kind: 'pending' as const, nativeOperationRef: {
               contributionRef: { pluginId: MODAL_PLUGIN_ID, localId: MODAL_PROVISIONER_ID }, schemaVersion: 1,
@@ -106,11 +124,11 @@ export const MODAL_PLUGIN = definePlugin({
     inspect: { ...defaults, title: 'Inspect retained Modal Sandbox', dangerLevel: 'safe', inputSchema: MODAL_ROLE_SCHEMAS.resourceInput,
       resultSchema: MachineProvisionerObservationV1Schema, async run(input, context) {
         try { return MachineProvisionerObservationV1Schema.parse(await invokeScopedModalRole('inspect', input, context)); }
-        catch (error) { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: code(error) }; }
+        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: code(error) }); }
       } },
     destroy: { ...defaults, ...destroyConfirmation, title: 'Terminate exact Modal Sandbox', dangerLevel: 'destructive', inputSchema: MODAL_RECONCILIATION_SCHEMAS.destroyInput,
-      resultSchema: MachineProvisionerPowerResultV1Schema, async run(input, context) {
-        try { return MachineProvisionerPowerResultV1Schema.parse(await invokeScopedModalRole('destroy', input, context)); }
+      resultSchema: MODAL_RECONCILIATION_SCHEMAS.destroyResult, async run(input, context) {
+        try { return MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await invokeScopedModalRole('destroy', input, context)); }
         catch (error) { return { kind: 'unknown' as const, code: code(error) }; }
       } },
     exec: { ...defaults, ...effectConfirmation, title: 'Execute private Modal bootstrap IO', dangerLevel: 'writesRemote', inputSchema: MODAL_ROLE_SCHEMAS.execInput,
@@ -123,7 +141,20 @@ export const MODAL_PLUGIN = definePlugin({
         catch (error) { return { kind: 'unknown' as const, code: code(error) }; }
       } },
   },
-  ui: { translations: MODAL_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
 });
 
 export const PLUGIN_MANIFEST = MODAL_PLUGIN.manifest;

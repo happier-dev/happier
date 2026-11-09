@@ -1,4 +1,3 @@
-import { AGENT_DEFINITION } from '../../definition.js';
 import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunConversationRuntimeV1,
@@ -8,6 +7,7 @@ import type {
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { AGENT_DEFINITION } from '../../definition.js';
 import type {
   ManagedServiceHandle,
   ManagedServiceSnapshot,
@@ -114,6 +114,7 @@ async function resolveOpenCodeServer(params: Readonly<{
   providerConfigPart?: OpenCodeConfigPart;
   configParts?: readonly OpenCodeConfigPart[];
   permissionMode?: string | null;
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'];
   signal?: AbortSignal;
   systemToolId: OpenCodeSystemToolId;
   requestedDialect: ReturnType<typeof resolveRequestedOpenCodeServerDialect>;
@@ -163,6 +164,7 @@ async function resolveOpenCodeServer(params: Readonly<{
     dialect: managedServerResolution.dialect,
     healthPath: managedServerResolution.healthPath,
     systemToolId: params.systemToolId,
+    workspaceWrites: params.workspaceWrites,
     ...(params.env ? { env: params.env } : {}),
     ...(params.permissionMode === undefined
       ? {}
@@ -270,6 +272,7 @@ export async function createOpenCodeServerRuntimeAssembly(
       ],
       permissionMode: params.permissionMode,
       signal: params.signal,
+      workspaceWrites: configuration?.workspaceWrites,
       systemToolId,
       requestedDialect,
       requestAuthRequested,
@@ -349,6 +352,8 @@ export async function createOpenCodeServerRuntimeAssembly(
       env: params.env,
       permissionMode: params.permissionMode,
       dialect: dialectDetection.dialect,
+      workspaceWrites: configuration?.workspaceWrites,
+      ...(typeof providerConfigPart?.model === 'string' ? { providerModelId: providerConfigPart.model } : {}),
       readManagedServiceSnapshot: () => server.readSnapshot(),
       mcpRegistration,
       mcpProjection,
@@ -409,6 +414,7 @@ export async function createOpenCodeServerRuntimeAssembly(
             };
           },
           ...(params.models ? { models: params.models } : {}),
+          ...(typeof providerConfigPart?.model === 'string' ? { providerModelId: providerConfigPart.model } : {}),
           ...(params.modes ? { modes: params.modes } : {}),
           ...(params.inputFiles ? { inputFiles: params.inputFiles } : {}),
           ...(params.bindActiveSkillsReader

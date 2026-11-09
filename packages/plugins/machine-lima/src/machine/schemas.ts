@@ -18,7 +18,7 @@ const mounts = defineProtocolArray(defineProtocolObject({
 }, closed));
 
 export const LimaLaunchSchema = defineProtocolObject({
-  instance: name, store: absolutePath, image, arch: architecture, vmType,
+  store: absolutePath, image, arch: architecture, vmType,
   cpus: positiveInteger, memoryGiB: positiveInteger, diskGiB: positiveInteger,
   mounts,
 }, closed);
@@ -26,7 +26,7 @@ export const LimaLaunchSchema = defineProtocolObject({
 // Draft fields keep the executable launch paths so retained recipes use the
 // same editor and native qualification. Completeness still belongs to launch.
 export const LimaOptionsInputSchema = defineProtocolObject({
-  instance: name.optional(), store: absolutePath.optional(), image: image.optional(),
+  store: absolutePath.optional(), image: image.optional(),
   arch: architecture.optional(), vmType: vmType.optional(), cpus: positiveInteger.optional(),
   memoryGiB: positiveInteger.optional(), diskGiB: positiveInteger.optional(), mounts: mounts.optional(),
 }, closed);

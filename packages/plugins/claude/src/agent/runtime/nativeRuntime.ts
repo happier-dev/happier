@@ -1,4 +1,4 @@
-import { AGENT_DEFINITION } from '../definition.js';
+import type { ClaudeIssuedRequestIdentity } from '../auth/services/runtime/requestIdentity.js';
 import type {
   AgentExecutionRunConversationEventV1,
   AgentExecutionRunConversationRuntimeV1,
@@ -28,11 +28,12 @@ import {
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isRuntimeConfigUpdateOutcomeApplied, isRuntimeConfigUpdateOutcomeDeferred } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
 import { createClaudeNativePermissionEngine } from '../permissions/nativePermissionEngine.js';
 import { CLAUDE_STATIC_MODELS } from '../models.js';
+import { AGENT_DEFINITION } from '../definition.js';
 import type {
   ClaudeEffectiveModelEvidence,
   ClaudeEffectiveModelEvidenceSubscription,
@@ -173,7 +174,7 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
         sessionId?: string;
       }
   >>;
-  releaseConnectedServiceUsageLimitDialog?: () => Promise<void>;
+  connectedServiceApplicationSettled?: () => Promise<void>;
   interruptPendingInputAndRun?: (request: Readonly<{
     sessionId?: string;
     localId: string;
@@ -297,7 +298,7 @@ function committedMessage(
 
 const claudeRuntimeAuthAdapter = createClaudeConnectedServiceRuntimeAuthAdapter();
 
-function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | null): AgentExecutionRunConversationEventV1 | null {
+function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | null, issuedIdentity?: ClaudeIssuedRequestIdentity | null): AgentExecutionRunConversationEventV1 | null {
   switch (event.kind) {
     case 'available-commands':
       return { kind: event.kind, commands: event.commands };
@@ -315,7 +316,8 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
         startedBy: event.startedBy === 'host' ? 'host' : 'provider',
       };
     case 'turn-progress':
-      return { kind: event.kind, turnId: event.turnId, ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}) };
+      return { kind: event.kind, turnId: event.turnId, ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+        ...(event.retry ? { retry: event.retry } : {}) };
     case 'turn-agent-id-observed':
       return { kind: event.kind, turnId: event.turnId, agentTurnId: event.agentTurnId };
     case 'turn-complete':
@@ -323,7 +325,7 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
     case 'turn-failed': {
       const runtimeAuthClassification = claudeRuntimeAuthAdapter.classifyRuntimeAuthFailure({
         target: { agentId: 'claude' }, error: event.issue, normalizedDetails: event.issue,
-        ...(runtimeAuthServiceId ? { selection: { serviceId: runtimeAuthServiceId } } : {}),
+        ...(issuedIdentity ? {selection: issuedIdentity} : runtimeAuthServiceId ? { selection: { serviceId: runtimeAuthServiceId } } : {}),
       });
       return {
         kind: event.kind,
@@ -409,13 +411,6 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
           ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}), ...message }
         : null;
     }
-    case 'session-ended':
-      return {
-        kind: 'runtime-ended',
-        cause: 'providerEnded',
-        retryable: false,
-        ...(event.reason ? { diagnostic: diagnostic('claude_runtime_ended', event.reason) } : {}),
-      };
     case 'backend-error':
       return null;
     default:
@@ -436,6 +431,10 @@ function sendFailure(
   };
 }
 
+function acceptsClaudeImageInput(operations: ClaudeNativeSessionOperations): boolean {
+  return operations.promptCustody !== 'unified_terminal';
+}
+
 async function submitClaudeProviderInput(
   operations: ClaudeNativeSessionOperations,
   request: Parameters<AgentSessionRuntime['send']>[0],
@@ -443,7 +442,7 @@ async function submitClaudeProviderInput(
   const structuredInput = request.input.structuredInput;
   const structured = structuredInput && typeof structuredInput === 'object' && !Array.isArray(structuredInput)
     ? structuredInput as Readonly<Record<string, unknown>> : null;
-  if (operations.promptCustody === 'unified_terminal' && Array.isArray(structured?.imageInputs) && structured.imageInputs.length > 0) {
+  if (!acceptsClaudeImageInput(operations) && Array.isArray(structured?.imageInputs) && structured.imageInputs.length > 0) {
     return { kind: 'rejected_before_effect', code: 'claude_image_input_unsupported', reason: 'The terminal text transport cannot deliver image content.' };
   }
   const skillReferences: Readonly<{ name: string; path: string }>[] = [];
@@ -491,13 +490,14 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   let disposed = false;
   let appliedConfiguration = request.configuration;
   let currentProviderBinding = request.providerBinding;
-  let bufferedEvents: AgentSessionPreAdmissionBuffer<NativeSessionEventInput> | null = null;
+  let bufferedEvents: (AgentSessionPreAdmissionBuffer<NativeSessionEventInput> & Readonly<{
+    delivery: Parameters<AgentSessionRuntime['send']>[0]['delivery'];
+  }>) | null = null;
   let bufferedEventFailure: Exclude<AgentSessionPreAdmissionBufferResult, { status: 'accepted' }> | null = null;
   const readBufferedEventFailure = () => bufferedEventFailure;
   let currentActivity: Extract<AgentSessionRuntimeEvent, { kind: 'runtime-activity-snapshot' }> | null = null;
-  let currentModelId = currentProviderBinding?.model.id
-    ?? request.configuration?.model.value
-    ?? null;
+  // Configuration chooses the next launch; only native evidence reports the running model.
+  let currentModelId: string | null = null;
   const terminalPromptDeliveriesByInputId = new Map<string, ClaudeTerminalPromptDelivery>();
   const unifiedPromptAcceptanceOperations =
     operations.promptCustody === 'unified_terminal' ? operations : null;
@@ -640,7 +640,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   };
   const runtimeAuthServiceId = readClaudeConnectedServiceRuntimeServiceFromEnv(request.launchEnvironment?.values);
   const unsubscribeEvents = operations.subscribeProviderEvents((event) => {
-    const mapped = mapEvent(event, runtimeAuthServiceId);
+    const mapped = mapEvent(event, runtimeAuthServiceId, event.kind === 'turn-failed' ? operations.runtimeAuthIdentity?.readFailure(event.issue.occurredAt, operations.readProviderIdentity().sessionId) : undefined);
     if (mapped) enqueueOrEmit(mapped, event.emittedAtMs);
   });
   const unsubscribeActivity = operations.subscribeCanonicalAgentSessionEvents?.((event) => {
@@ -797,6 +797,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         compaction: readClaudeSessionCompactionCapability(unifiedPromptAcceptanceOperations ? 'unifiedTerminal' : 'agentSdk'),
       },
       ...(unifiedPromptAcceptanceOperations ? { localControl: { supported: false } } : {}),
+      backend: { session: { media: { acceptsImageInput: { supported: acceptsClaudeImageInput(operations) } } } },
     },
     ...(operations.prepareTerminalPresentation ? {
       async prepareTerminalPresentation(presentationRequest: Parameters<NonNullable<AgentSessionRuntime['prepareTerminalPresentation']>>[0]) {
@@ -811,15 +812,24 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     ...(operations.observeSourceTranscript ? {
       observeSourceTranscript: async (input: Parameters<NonNullable<AgentSessionRuntime['observeSourceTranscript']>>[0]) => {
-        if (!disposed) await operations.observeSourceTranscript?.(input);
+        if (disposed) return;
+        const currentNativeSessionId = operations.readProviderIdentity().sessionId;
+        const identity = !currentNativeSessionId || currentNativeSessionId === input.providerSessionId
+          ? operations.runtimeAuthIdentity?.observeSource(input) : null;
+        if (identity) enqueueOrEmit({kind: 'connected-account-identity-observed',
+          service: {pluginId: 'happier.agent.claude', localId: 'claude-subscription'}, ...identity}, identity.observedAtMs);
+        await operations.observeSourceTranscript?.(input);
       },
     } : {}),
     async connectedServiceApplicationSettled() {
-      await operations.releaseConnectedServiceUsageLimitDialog?.();
+      await operations.connectedServiceApplicationSettled?.();
     },
     async send(nativeRequest) {
       if (disposed) return sendFailure('unavailable', 'Claude runtime is disposed.');
-      bufferedEvents = createAgentSessionPreAdmissionBuffer();
+      bufferedEvents = {
+        ...createAgentSessionPreAdmissionBuffer<NativeSessionEventInput>(),
+        delivery: nativeRequest.delivery,
+      };
       bufferedEventFailure = null;
       const nativeDelivery: NativeInputAcceptedDelivery = nativeRequest.delivery.kind === 'followUp'
         ? { kind: 'followUp', turnId: nativeRequest.delivery.turnId }
@@ -1048,18 +1058,23 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       const effectiveConfigOption = changedOption
         ? { id: changedOption[0], value: changedOption[1].value }
         : null;
-      if (effectiveProviderBinding && effectiveConfigOption) {
+      if (effectiveConfigOption) {
         const { id, value } = effectiveConfigOption;
+        const modelId = effectiveProviderBinding?.model.id ?? configuration.model.value ?? currentModelId;
         const supported = id === 'reasoning_effort'
           ? value === null
-            || isClaudeEffortSupportedForProviderModel(effectiveProviderBinding.model, value)
+            || resolveClaudeEffortForModel({
+              modelId,
+              effort: value,
+              ...(effectiveProviderBinding ? { providerModel: effectiveProviderBinding.model } : {}),
+            }) !== null
           : id === 'ultracode'
             ? (value === null || value === false || value === 'false')
               || (
                 (value === true || value === 'true')
                 && isClaudeUltracodeSupportedModelId(
-                  effectiveProviderBinding.model.id,
-                  effectiveProviderBinding.model,
+                  modelId,
+                  effectiveProviderBinding?.model,
                 )
               )
             : false;
@@ -1067,8 +1082,8 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           return {
             status: 'unsupported',
             diagnostic: diagnostic(
-              'claude_provider_model_option_unsupported',
-              `Provider model '${effectiveProviderBinding.model.id}' does not support this Claude configuration option.`,
+              effectiveProviderBinding ? 'claude_provider_model_option_unsupported' : 'claude_model_option_unsupported',
+              `Model '${modelId}' does not support this Claude configuration option.`,
             ),
           };
         }
@@ -1078,20 +1093,20 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         ...(configuration.permissionIntent.value === null
           ? {}
           : { permissionMode: configuration.permissionIntent.value }),
-        ...(configuration.model.value === null ? {} : { modelId: configuration.model.value }),
+        modelId: configuration.model.value,
         ...(nextProviderBinding ? { providerBinding: nextProviderBinding } : {}),
         ...(effectiveConfigOption ? { configOption: effectiveConfigOption } : {}),
       });
-      if (isRuntimeConfigUpdateOutcomeApplied(result)) {
+      const deferred = isRuntimeConfigUpdateOutcomeDeferred(result);
+      if (isRuntimeConfigUpdateOutcomeApplied(result) || deferred) {
         if (nextProviderBinding) {
           currentProviderBinding = nextProviderBinding;
           models = [projectRuntimeModel(nextProviderBinding.model)];
+          publishModels();
         }
-        currentModelId = configuration.model.value;
         appliedConfiguration = configuration;
-        publishModels();
         return {
-          status: 'applied',
+          status: deferred ? 'deferred' : 'applied',
           changed: [
             'permissionIntent',
             'model',
@@ -1161,7 +1176,7 @@ function createClaudeExecutionRunConversationFromOperations(
   let disposed = false;
   const unsubscribe = operations.subscribeProviderEvents((providerEvent) => {
     if (disposed) return;
-    const mapped = mapEvent(providerEvent, runtimeAuthServiceId);
+    const mapped = mapEvent(providerEvent, runtimeAuthServiceId, providerEvent.kind === 'turn-failed' ? operations.runtimeAuthIdentity?.readFailure(providerEvent.issue.occurredAt, operations.readProviderIdentity().sessionId) : undefined);
     if (!mapped) return;
     const event = Object.freeze({ ...mapped, emittedAtMs: providerEvent.emittedAtMs });
     for (const listener of listeners) listener(event);
@@ -1263,6 +1278,8 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
           ],
           interactionKind: 'interactive_terminal',
           permissionMode: permissionMode ? mapToClaudePermissionMode(permissionMode) : null,
+          launchEnv: request.launchEnvironment?.values,
+          cwd: request.cwd,
           launchSettings: {},
           workspaceWrites: request.configuration?.workspaceWrites,
           allowedTools: request.configuration?.allowedTools,

@@ -15,12 +15,16 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
   TriageSourceAdministrationActionInputV1Schema, TriageSourceInstanceDraftV1Schema,
   TriageSourceAdministrationActionResultV1Schema, TriageReadConfiguredSourceInstancesResultV1Schema,
+  TriageConfiguredSourceInstanceV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SESSION_LINKS_COLLECTION_ID } from '../corpus/collections/ids.js';
+import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
+import { deriveConfiguredSourceInstanceTag } from '../corpus/identity/tags.js';
 import { createTriageAdministerSourceInstanceActionHandler } from './administerSourceInstanceAction.js';
 import { createTriageReadConfiguredSourceInstancesActionHandler } from './readConfiguredSourceInstances.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
@@ -45,12 +49,78 @@ const draft = TriageSourceInstanceDraftV1Schema.parse({
 });
 const surface = createTriageSourceSettingsSurface({
   pluginId: SOURCE.pluginId, listInstancesLocalActionId: 'list-instances',
+  sourceLocalId: SOURCE.localId,
   connectedAccountServiceLocalId: 'accounts', sourceDisplayName: 'Example tracker',
 });
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { for (const page of mounted.splice(0)) await page.dispose(); });
 
 describe('source Remove through the shared Action admission and durable writer', () => {
+  it('renders only the selected source from the real configured-read Action result', async () => {
+    const { collections, control } = createTestkitCorpusCollections();
+    const otherSource = { pluginId: 'example.gitlab', localId: 'gitlab-forge' };
+    const own = TriageConfiguredSourceInstanceV1Schema.parse({
+      v: 1, instance: { source: SOURCE, sourceInstanceId: INSTANCE_ID }, binding: draft.binding,
+      localInstanceKey: draft.localInstanceKey, configuration: draft.configuration, locator: draft.locator,
+    });
+    const other = TriageConfiguredSourceInstanceV1Schema.parse({
+      v: 1, instance: { source: otherSource, sourceInstanceId: '22222222-2222-4222-8222-222222222222' },
+      binding: { purpose: 'gitlab-account', account: { service: { pluginId: otherSource.pluginId, localId: 'gitlab-account' }, accountId: 'account-gitlab' } },
+      localInstanceKey: 'gitlab/project', configuration: { v: 1, token: 'other-source-token' },
+      locator: { v: 1, displayLabel: 'GitLab project' },
+    });
+    for (const [seed, configured] of [own, other].entries()) {
+      const instanceTag = await deriveConfiguredSourceInstanceTag(collections.sourceInstances, {
+        source: configured.instance.source, binding: configured.binding,
+        localInstanceKey: configured.localInstanceKey,
+      });
+      const row = {
+        instanceTag, sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`,
+        lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: seed + 1, configured,
+      } satisfies CorpusSourceInstanceRowV1;
+      control.sourceInstances.seed(toCorpusStoredValue(row));
+    }
+    const admitted = [SOURCE, otherSource].map((source) => ({
+      contributor: { pluginId: source.pluginId, contributionId: source.localId, immutableGenerationId: 'generation-1' },
+      protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
+      descriptor: { v: 1, purpose: PURPOSE, displayName: source.pluginId,
+        kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
+      operations: { listInstances: {}, scan: {}, get: {} }, surfaces: { detail: {} },
+    } as unknown as TriageAdmittedSourceV1));
+    const hostContext = {
+      signal: new AbortController().signal, surface: 'ui',
+      services: {
+        storage: { account: { collection: (definition: PluginAccountCollectionDefinition) => (
+          definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID ? collections.sourceInstances : collections.userMarks
+        ) } },
+        targetedContributions: { observeForSelf: () => ({
+          readCurrent: async () => ({ generation: 'generation-1', contributions: admitted }), dispose: () => {},
+        }) },
+      },
+    } as unknown as PluginInvocationContext;
+    const read = createTriageReadConfiguredSourceInstancesActionHandler();
+    const result = TriageReadConfiguredSourceInstancesResultV1Schema.parse(
+      await read({ v: 1, source: SOURCE }, hostContext),
+    );
+    expect(result).toMatchObject({ kind: 'read', instances: [{ configured: { instance: { source: SOURCE } } }] });
+    expect(result.kind === 'read' ? result.instances.map((row) => row.configured.instance.source) : [])
+      .toEqual([SOURCE]);
+    let page!: PluginUiTestkit;
+    await act(async () => {
+      page = await createPluginUiTestkit({
+        identity: { instanceId: 'selector-settings', mountNonce: 'selector-mount' },
+        authorPlugin: { id: SOURCE.pluginId, version: '0.0.0' }, surface,
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+        handlers: { executeAction: async ({ action: ref, input }): Promise<JsonValue> => {
+          if ((ref as { pluginId?: string }).pluginId === SOURCE.pluginId) return { kind: 'complete', candidates: [], failures: [] };
+          return await read(input as Parameters<typeof read>[0], hostContext);
+        } },
+      });
+    });
+    mounted.push(page);
+    await expect(page.getByText('acme/api')).resolves.toBeDefined();
+    await expect(page.queryByText('GitLab project')).resolves.toBeUndefined();
+  });
   it.each([
     { name: 'default asks once', settings: defaults, approved: true, prompts: 1, lifecycle: 'retired' },
     { name: 'Allowed asks nothing', settings: allowed, approved: true, prompts: 0, lifecycle: 'retired' },

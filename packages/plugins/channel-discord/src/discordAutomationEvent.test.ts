@@ -1,3 +1,5 @@
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sdk/events';
 import { describe, expect, it } from 'vitest';
 
@@ -13,7 +15,9 @@ import {
   parseDiscordAutomationMessageSourceConfig,
 } from './discordAutomationEvent.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
-import { DISCORD_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
+const PACKAGED_UI_TRANSLATION_BUNDLES = Object.entries(PACKAGED_UI_TRANSLATIONS).map(([locale, messages]) => ({ locale, messages }));
 
 const DISCORD_PLUGIN_ID = 'happier.channel.discord';
 
@@ -168,7 +172,7 @@ describe('Discord Automation Event contribution', () => {
         field.description.key,
       ]),
     ];
-    for (const bundle of DISCORD_UI_TRANSLATION_BUNDLES) {
+    for (const bundle of PACKAGED_UI_TRANSLATION_BUNDLES) {
       const messages = bundle.messages as Readonly<Record<string, string>>;
       const missing = referencedKeys.filter((key) => typeof messages[key] !== 'string');
       expect({ locale: bundle.locale, missing }).toEqual({ locale: bundle.locale, missing: [] });

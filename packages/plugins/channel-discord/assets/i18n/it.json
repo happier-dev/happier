@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "Osserva un canale Discord",
-  "discord.automation.messageSource.setup.description": "Scegli il bot Discord e il canale i cui messaggi devono avviare questa automazione.",
+  "discord.automation.messageSource.setup.description": "Scegli il bot Discord e il canale i cui messaggi devono avviare questo flusso di lavoro.",
   "discord.automation.messageSource.setup.submit": "Osserva canale",
   "discord.automation.messageSource.setup.credential": "Account del bot Discord",
   "discord.automation.messageSource.setup.credential.description": "Scegli l’account connesso esistente del bot Discord; i token del bot non si inseriscono mai qui.",

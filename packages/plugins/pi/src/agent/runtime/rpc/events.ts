@@ -532,6 +532,12 @@ export function projectPiRuntimeEvents(
   const raw = isRecord(record) ? record : null;
   if (!raw) return [];
   const type = readString(raw.type);
+  if (type === 'auto_retry_start') {
+    const base = turnEventBase(context);
+    const attempt = raw.attempt;
+    if (!base || typeof attempt !== 'number' || !Number.isSafeInteger(attempt) || attempt <= 0) return [];
+    return [{ ...base, kind: 'turn-progress', retry: { attempt, reason: 'unknown' } }];
+  }
   if (type === 'message_update') return projectMessageEvent(raw, context);
   if (type === 'tool_execution_start') return projectToolStartEvent(raw, context);
   if (type === 'tool_execution_end') return projectToolEndEvent(raw, context);

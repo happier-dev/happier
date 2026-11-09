@@ -10,10 +10,11 @@
     "agents": [],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -55,7 +56,7 @@
             }
           ],
           "source": "probe",
-          "sourceRegistryVersion": "v7.2.95:reasoning-image-capabilities-v2"
+          "sourceRegistryVersion": "v8.0.61:reasoning-image-capabilities-v2"
         },
         "credential": {
           "kind": "apiKey",
@@ -206,142 +207,6 @@
                     "reasoningControls": "unknown",
                     "toolRoundTrips": "unknown"
                   },
-                  "id": "gpt-5.3-codex-spark",
-                  "modelOptions": [
-                    {
-                      "currentValue": "low",
-                      "id": "reasoning_effort",
-                      "name": "Thinking",
-                      "options": [
-                        {
-                          "name": "Low",
-                          "value": "low"
-                        },
-                        {
-                          "name": "Medium",
-                          "value": "medium"
-                        },
-                        {
-                          "name": "High",
-                          "value": "high"
-                        },
-                        {
-                          "name": "XHigh",
-                          "value": "xhigh"
-                        }
-                      ],
-                      "type": "select"
-                    }
-                  ],
-                  "name": "gpt-5.3-codex-spark"
-                },
-                {
-                  "capabilities": {
-                    "reasoningControls": "unknown",
-                    "toolRoundTrips": "unknown"
-                  },
-                  "id": "gpt-5.4",
-                  "modelOptions": [
-                    {
-                      "currentValue": "low",
-                      "id": "reasoning_effort",
-                      "name": "Thinking",
-                      "options": [
-                        {
-                          "name": "Low",
-                          "value": "low"
-                        },
-                        {
-                          "name": "Medium",
-                          "value": "medium"
-                        },
-                        {
-                          "name": "High",
-                          "value": "high"
-                        },
-                        {
-                          "name": "XHigh",
-                          "value": "xhigh"
-                        }
-                      ],
-                      "type": "select"
-                    }
-                  ],
-                  "name": "gpt-5.4"
-                },
-                {
-                  "capabilities": {
-                    "reasoningControls": "unknown",
-                    "toolRoundTrips": "unknown"
-                  },
-                  "id": "gpt-5.4-mini",
-                  "modelOptions": [
-                    {
-                      "currentValue": "low",
-                      "id": "reasoning_effort",
-                      "name": "Thinking",
-                      "options": [
-                        {
-                          "name": "Low",
-                          "value": "low"
-                        },
-                        {
-                          "name": "Medium",
-                          "value": "medium"
-                        },
-                        {
-                          "name": "High",
-                          "value": "high"
-                        },
-                        {
-                          "name": "XHigh",
-                          "value": "xhigh"
-                        }
-                      ],
-                      "type": "select"
-                    }
-                  ],
-                  "name": "gpt-5.4-mini"
-                },
-                {
-                  "capabilities": {
-                    "reasoningControls": "unknown",
-                    "toolRoundTrips": "unknown"
-                  },
-                  "id": "gpt-5.5",
-                  "modelOptions": [
-                    {
-                      "currentValue": "low",
-                      "id": "reasoning_effort",
-                      "name": "Thinking",
-                      "options": [
-                        {
-                          "name": "Low",
-                          "value": "low"
-                        },
-                        {
-                          "name": "Medium",
-                          "value": "medium"
-                        },
-                        {
-                          "name": "High",
-                          "value": "high"
-                        },
-                        {
-                          "name": "XHigh",
-                          "value": "xhigh"
-                        }
-                      ],
-                      "type": "select"
-                    }
-                  ],
-                  "name": "gpt-5.5"
-                },
-                {
-                  "capabilities": {
-                    "reasoningControls": "unknown",
-                    "toolRoundTrips": "unknown"
-                  },
                   "id": "gpt-5.6-luna",
                   "modelOptions": [
                     {
@@ -454,6 +319,234 @@
                 {
                   "capabilities": {
                     "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6-astra",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6-astra"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6-chat-thinking",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6-chat-thinking"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6-luna",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6-luna"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6-sol",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6-sol"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6.1-sol",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6.1-sol"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "gpt-6.1-terra",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "gpt-6.1-terra"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
                     "toolRoundTrips": "unsupported"
                   },
                   "id": "gpt-image-1.5",
@@ -466,6 +559,54 @@
                   },
                   "id": "gpt-image-2",
                   "name": "gpt-image-2"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.5",
+                  "name": "gpt-image-2.5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.5-flare",
+                  "name": "gpt-image-2.5-flare"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.5-sunburst",
+                  "name": "gpt-image-2.5-sunburst"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.6",
+                  "name": "gpt-image-2.6"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.6-flare",
+                  "name": "gpt-image-2.6-flare"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unsupported"
+                  },
+                  "id": "gpt-image-2.6-sunburst",
+                  "name": "gpt-image-2.6-sunburst"
                 }
               ],
               "title": {
@@ -548,8 +689,84 @@
                     "reasoningControls": "unknown",
                     "toolRoundTrips": "unknown"
                   },
+                  "id": "claude-fable-5-1",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-fable-5-1"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
                   "id": "claude-haiku-4-5-20251001",
                   "name": "claude-haiku-4-5-20251001"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-haiku-5-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-haiku-5-5"
                 },
                 {
                   "capabilities": {
@@ -690,6 +907,82 @@
                     "reasoningControls": "unknown",
                     "toolRoundTrips": "unknown"
                   },
+                  "id": "claude-opus-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-opus-5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-opus-5-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-opus-5-5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
                   "id": "claude-sonnet-4-20250514",
                   "name": "claude-sonnet-4-20250514"
                 },
@@ -772,6 +1065,44 @@
                     }
                   ],
                   "name": "claude-sonnet-5"
+                },
+                {
+                  "capabilities": {
+                    "reasoningControls": "unknown",
+                    "toolRoundTrips": "unknown"
+                  },
+                  "id": "claude-sonnet-5-5",
+                  "modelOptions": [
+                    {
+                      "currentValue": "low",
+                      "id": "reasoning_effort",
+                      "name": "Thinking",
+                      "options": [
+                        {
+                          "name": "Low",
+                          "value": "low"
+                        },
+                        {
+                          "name": "Medium",
+                          "value": "medium"
+                        },
+                        {
+                          "name": "High",
+                          "value": "high"
+                        },
+                        {
+                          "name": "XHigh",
+                          "value": "xhigh"
+                        },
+                        {
+                          "name": "Max",
+                          "value": "max"
+                        }
+                      ],
+                      "type": "select"
+                    }
+                  ],
+                  "name": "claude-sonnet-5-5"
                 }
               ],
               "title": {
@@ -825,6 +1156,78 @@
         "id": "brand-icon",
         "kind": "asset",
         "path": "assets/brand.png"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
       }
     ],
     "roles": [],
@@ -836,9 +1239,9 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -847,87 +1250,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "managedPurpose.anthropic.title": "Claude account or pool",
-            "managedPurpose.openai.title": "ChatGPT account or pool"
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "de",
-          "messages": {
-            "managedPurpose.anthropic.title": "Claude-Konto oder Pool",
-            "managedPurpose.openai.title": "ChatGPT-Konto oder Pool"
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "ru",
-          "messages": {
-            "managedPurpose.anthropic.title": "Учётная запись или пул Claude",
-            "managedPurpose.openai.title": "Учётная запись или пул ChatGPT"
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "managedPurpose.anthropic.title": "Konto lub pula Claude",
-            "managedPurpose.openai.title": "Konto lub pula ChatGPT"
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "managedPurpose.anthropic.title": "Cuenta o grupo de Claude",
-            "managedPurpose.openai.title": "Cuenta o grupo de ChatGPT"
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "managedPurpose.anthropic.title": "Compte ou groupe Claude",
-            "managedPurpose.openai.title": "Compte ou groupe ChatGPT"
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "managedPurpose.anthropic.title": "Account o pool Claude",
-            "managedPurpose.openai.title": "Account o pool ChatGPT"
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "managedPurpose.anthropic.title": "Conta ou grupo do Claude",
-            "managedPurpose.openai.title": "Conta ou grupo do ChatGPT"
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "managedPurpose.anthropic.title": "Compte o grup de Claude",
-            "managedPurpose.openai.title": "Compte o grup de ChatGPT"
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "managedPurpose.anthropic.title": "Claude 帐户或帐户池",
-            "managedPurpose.openai.title": "ChatGPT 帐户或帐户池"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "managedPurpose.anthropic.title": "Claude 帳戶或帳戶集區",
-            "managedPurpose.openai.title": "ChatGPT 帳戶或帳戶集區"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "managedPurpose.anthropic.title": "Claude アカウントまたはプール",
-            "managedPurpose.openai.title": "ChatGPT アカウントまたはプール"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -940,9 +1307,6 @@
   },
   "description": "Use models served by an external or locally detected CLIProxyAPI gateway.",
   "displayName": "CLIProxyAPI",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

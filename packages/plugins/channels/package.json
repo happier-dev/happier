@@ -24,10 +24,7 @@
     "./happier-plugin-ui/channels-account-runtime": "./src/accountRuntime.ts",
     "./happier-plugin-ui/channels-app-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/channels-glance-native": "./src/ui/glance/channelsGlance.tsx",
-    "./happier-plugin-ui/channel-state-migrations": "./src/collectionMigrationArtifact.ts",
-    "./happier-plugin-ui/react-native/channels-app-native/entry.cjs.bundle": "./dist/happier-plugin-ui/react-native/channels-app-native/entry.cjs.bundle",
-    "./happier-plugin-ui/react-native/channels-glance-native/entry.cjs.bundle": "./dist/happier-plugin-ui/react-native/channels-glance-native/entry.cjs.bundle",
-    "./happier-plugin-ui/react-native/channel-state-migrations/entry.cjs.bundle": "./dist/happier-plugin-ui/react-native/channel-state-migrations/entry.cjs.bundle"
+    "./happier-plugin-ui/channel-state-migrations": "./src/collectionMigrationArtifact.ts"
   },
   "files": [
     "assets",

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Button } from '@happier-dev/plugin-ui';
 
 import { TriageListFailureStatus, TriageOutsideSourcesNotice } from './sourceFailure.js';
-import { readTriageSourceFailureRowV1 } from './windowState.js';
+import { readTriageListFailureNotice, readTriageSourceFailureRowV1 } from './windowState.js';
 
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => {
@@ -35,6 +35,18 @@ async function mount(node: React.ReactElement): Promise<PluginUiTestkit> {
 }
 
 describe('source failure presentation', () => {
+  it('keeps the producer explanation in Details instead of exposing only its machine code', () => {
+    const source = { sourceInstanceId: 'account-tasks', displayName: 'Tasks',
+      reason: 'The account task content could not be read.', lineReason: 'Could not be reached just now.',
+      code: 'accountDataUnavailable' };
+    const result = readTriageSourceFailureRowV1(source);
+    expect(result.details).toContain(source.reason);
+    expect(result.details).toContain(source.code);
+    expect(result.reason).toBe(source.lineReason);
+    const notice = readTriageListFailureNotice({ kind: 'sources', sources: [source] });
+    expect(notice.details).toContain(source.reason);
+    expect(notice.details).toContain(source.code);
+  });
   it('takes one line with one recovery press and no diagnostics row beside the rows', async () => {
     const fixture = await mount(<TriageListFailureStatus failure={FAILURE}
       retry={<Button title="Try again" onPress={() => {}} />} manageSources={<Button title="Manage sources" onPress={() => {}} />} />);
@@ -62,7 +74,7 @@ describe('source failure presentation', () => {
 
   it('gives each connection its own reason, fix and on-demand cause for its Manage sources row', () => {
     const [native, stored] = FAILURE.sources.map((source) => readTriageSourceFailureRowV1(source));
-    expect(native).toMatchObject({ fix: 'connection', details: 'Native GitHub — plugin_activation_failed · retryable=false' });
-    expect(stored).toMatchObject({ fix: 'connection', details: 'Stored GitHub — github_credential_mismatch' });
+    expect(native).toMatchObject({ fix: 'connection', details: 'For support: plugin_activation_failed' });
+    expect(stored).toMatchObject({ fix: 'connection', details: 'For support: github_credential_mismatch' });
   });
 });

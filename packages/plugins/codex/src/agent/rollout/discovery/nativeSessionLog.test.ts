@@ -37,6 +37,39 @@ afterEach(async () => {
  * rather than in a host branch.
  */
 describe('resolveCodexNativeSessionLogPath', () => {
+  it('keeps searching the same sessions tree after a newer compressed match', async () => {
+    const newerDay = join(codexHome, 'sessions', '2026', '08', '18');
+    await mkdir(newerDay, { recursive: true });
+    await writeFile(join(newerDay, `rollout-2026-08-18T10-00-00-${VENDOR_RESUME_ID}.jsonl.zst`),
+      Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+    await expect(resolveCodexNativeSessionLogPath({
+      vendorResumeId: VENDOR_RESUME_ID, env: { CODEX_HOME: codexHome },
+    })).resolves.toBe(rolloutPath);
+    await expect(resolveCodexNativeTranscriptPathCandidate({
+      identity: { v: 1, vendorResumeId: VENDOR_RESUME_ID },
+      runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+        backendMode: 'appServer', providerSessionId: VENDOR_RESUME_ID, homePath: codexHome,
+      }),
+    })).resolves.toEqual({ path: rolloutPath, containmentRoot: codexHome });
+  });
+
+  it('exposes raw transcript paths only after Codex materializes a compressed rollout', async () => {
+    await rm(rolloutPath);
+    await writeFile(`${rolloutPath}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+    const input = { vendorResumeId: VENDOR_RESUME_ID, env: { CODEX_HOME: codexHome } };
+    const candidateInput = {
+      identity: { v: 1 as const, vendorResumeId: VENDOR_RESUME_ID },
+      runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+        backendMode: 'appServer', providerSessionId: VENDOR_RESUME_ID, homePath: codexHome,
+      }),
+    };
+    await expect(resolveCodexNativeSessionLogPath(input)).resolves.toBeNull();
+    await expect(resolveCodexNativeTranscriptPathCandidate(candidateInput)).resolves.toBeNull();
+    await writeFile(rolloutPath, '{}\n');
+    await expect(resolveCodexNativeSessionLogPath(input)).resolves.toBe(rolloutPath);
+    await expect(resolveCodexNativeTranscriptPathCandidate(candidateInput)).resolves.toEqual({ path: rolloutPath, containmentRoot: codexHome });
+  });
+
   it('derives a native transcript candidate only from the canonical descriptor home path', async () => {
     const environmentCodexHome = join(root, 'environment-codex-home');
     const environmentRolloutDir = join(environmentCodexHome, 'sessions', '2026', '08', '17');
@@ -90,6 +123,7 @@ describe('resolveCodexNativeSessionLogPath', () => {
 
   it('finds an archived rollout with the same exact vendor-resume suffix', async () => {
     await rm(rolloutPath);
+    await writeFile(`${rolloutPath}.zst`, Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
     const archivedDayDir = join(codexHome, 'archived_sessions', '2026', '08', '17');
     const archivedRolloutPath = join(
       archivedDayDir,

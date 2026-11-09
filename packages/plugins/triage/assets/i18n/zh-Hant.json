@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "其他所有",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "部署",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "環境",
+  "plugins.triage.surface.actions.subject.workflowRun": "工作流程執行",
+  "plugins.triage.surface.actions.investigateRun": "調查此執行",
   "plugins.triage.surface.actions.workspace.referenceOnly": "沒有工作副本",
   "plugins.triage.surface.actions.workspace.repository": "我選擇的專案",
   "plugins.triage.surface.actions.workspace.pullRequest": "已準備好的審查工作樹",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "將它們連結到工作階段，用拉取請求阻擋它們，拆分為子任務。",
   "plugins.triage.tasks.firstRun.trackers.title": "從追蹤器帶入任務",
   "plugins.triage.tasks.firstRun.trackers.description": "它們留在原本的追蹤器中。Happier 在那裡讀取和編輯它們。",
-  "plugins.triage.tasks.firstRun.trust": "追蹤器會在你選擇的機器上即時讀取。其中的任務絕不會複製到你的帳戶。"
+  "plugins.triage.tasks.firstRun.trust": "追蹤器會在你選擇的機器上即時讀取。其中的任務絕不會複製到你的帳戶。",
+  "plugins.triage.surface.sources.permanent": "重試無法解決此問題。「詳情」中有支援團隊需要的資訊。",
+  "plugins.triage.surface.sources.supportCode": "供支援團隊使用",
+  "plugins.triage.surface.failure.unreachableSuffix": "無法連線"
 }

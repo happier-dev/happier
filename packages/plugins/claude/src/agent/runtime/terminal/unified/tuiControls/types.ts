@@ -166,6 +166,8 @@ export interface ClaudeUnifiedTuiControlController {
    */
   reconcileFromStatusline(metadata: ClaudeStatuslineRuntimeMetadata): void;
   getLastVerifiedRuntimeConfig(): ClaudeUnifiedVerifiedRuntimeConfig;
+  /** Deferred controls must be reconciled before an outer equality shortcut can succeed. */
+  hasPendingRuntimeConfig(): boolean;
   /** True while a control op holds the terminal lock; prompt injection must not run while held. */
   isControlInFlight(): boolean;
   /** Resolves once no control op holds the lock. Prompt injection awaits this. */

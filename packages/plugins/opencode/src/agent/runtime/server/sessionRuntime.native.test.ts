@@ -37,7 +37,7 @@ function createOperationsFixture() {
     compactContext: vi.fn(async () => undefined),
     listSkills: vi.fn(async () => []),
     readSessionIdentity: vi.fn(() => ({ sessionId: 'provider-session-child' })),
-    readModelCatalog: () => ({ observedAt: 0, models: null }),
+    readModelCatalog: vi.fn<OpenCodeRuntimeTurnOperations['readModelCatalog']>(() => ({ observedAt: 0, models: null })),
     readModeCatalog: () => ({ observedAt: 0, modes: null, currentModeId: null }),
     isHappierAuthoredProviderUserMessageId: vi.fn(() => false),
     updateSessionRuntimeConfig: vi.fn(async () => undefined),
@@ -557,7 +557,7 @@ describe('createOpenCodeSessionRuntime', () => {
     });
   });
 
-  it('publishes the effective model only after the provider accepts a prompt using it', async () => {
+  it('publishes the effective model only after native model evidence', async () => {
     let modelSource: {
       read(): Readonly<{
         models: readonly Readonly<{ id: string; name: string }>[];
@@ -575,10 +575,9 @@ describe('createOpenCodeSessionRuntime', () => {
         return { dispose: disposeModels };
       }),
     };
-    const { runtime, operations } = createRuntime({ models });
+    const { runtime, operations, publish } = createRuntime({ models });
     operations.sendTurnPrompt.mockResolvedValueOnce({
       providerUserMessageId: 'provider-user-message-model',
-      effectiveModelId: 'anthropic/sonnet',
     });
 
     expect(modelSource?.read()).toEqual({ observedAt: 0, models: [], currentModelId: null });
@@ -587,6 +586,9 @@ describe('createOpenCodeSessionRuntime', () => {
       input: { text: 'Use Sonnet' },
       delivery: { kind: 'newTurn', turnId: 'turn-model' },
     });
+    expect(modelSource?.read().currentModelId).toBeNull();
+    operations.readModelCatalog.mockReturnValue({ observedAt: 0, models: null, currentModelId: 'anthropic/sonnet' });
+    publish({ kind: 'model-catalog-observed', sessionId: 'happier-session-child', emittedAtMs: 1 });
 
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
@@ -597,7 +599,7 @@ describe('createOpenCodeSessionRuntime', () => {
     expect(disposeModels).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the private OpenCode dispatch provider out of the public effective model for a Provider binding', async () => {
+  it('does not substitute configured Provider intent for missing native readback', async () => {
     let modelSource: {
       read(): Readonly<{
         models: readonly Readonly<{ id: string; name: string }>[];
@@ -632,7 +634,6 @@ describe('createOpenCodeSessionRuntime', () => {
     const { runtime, operations } = createRuntime({ models, providerBinding });
     operations.sendTurnPrompt.mockResolvedValueOnce({
       providerUserMessageId: 'provider-user-message-private-model',
-      effectiveModelId: 'happier_0123456789abcdef0123456789abcdef/vendor/gateway-model',
     });
 
     await runtime.send({
@@ -643,8 +644,8 @@ describe('createOpenCodeSessionRuntime', () => {
 
     expect(modelSource?.read()).toEqual({
       observedAt: 0,
-      models: [{ id: 'vendor/gateway-model', name: 'vendor/gateway-model' }],
-      currentModelId: 'vendor/gateway-model',
+      models: null,
+      currentModelId: null,
     });
   });
 
@@ -904,15 +905,16 @@ describe('createOpenCodeSessionRuntime', () => {
         return { dispose: vi.fn() };
       }),
     };
-    const { runtime, operations } = createRuntime({ models });
+    const { runtime, operations, publish } = createRuntime({ models });
     const events: Array<{ kind: string; inputIds?: readonly string[] }> = [];
     runtime.watch((event) => events.push(event));
     modelSource?.subscribe((snapshot) => {
       if (snapshot.currentModelId) void runtime.dispose();
     });
-    operations.sendTurnPrompt.mockResolvedValueOnce({
-      providerUserMessageId: 'provider-projection-dispose-message',
-      effectiveModelId: 'anthropic/sonnet',
+    operations.sendTurnPrompt.mockImplementationOnce(async () => {
+      operations.readModelCatalog.mockReturnValue({ observedAt: 0, models: null, currentModelId: 'anthropic/sonnet' });
+      publish({ kind: 'model-catalog-observed', sessionId: 'happier-session-child', emittedAtMs: 1 });
+      return { providerUserMessageId: 'provider-projection-dispose-message' };
     });
 
     await expect(runtime.send({

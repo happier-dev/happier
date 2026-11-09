@@ -1,3 +1,6 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1 } from '@happier-dev/triage-protocol/v1';
+import { resolveLaunchProfilePlacementDirectoryIntentV1, type LaunchProfilePlacementPreferenceV1, type LaunchProfileCheckoutPreferenceV1, type SessionDirectoryIntentV1 } from '@happier-dev/plugin-sdk/protocol';
 import {
     resolveTriageLaunchPlacementV1,
     resolveTriageLaunchCandidatesV1,
@@ -42,15 +45,8 @@ import type { TriageWorkspaceModeV1 } from './entrySessionWorkspace.js';
  * `LaunchProfileV2` publishes (`packages/protocol/src/profiles/v2/schema.ts`).
  * It is a PREFERENCE, never a stored resolution.
  */
-export type TriageProfilePlacementPreferenceV1 =
-    | 'automatic'
-    | 'ask'
-    | Readonly<{
-        fixed: Readonly<{ serverId: string; machineId: string }>;
-        directory?: string;
-    }>;
-
-export type TriageProfileCheckoutPreferenceV1 = 'reuse_workspace' | 'create_worktree' | 'ask';
+export type TriageProfilePlacementPreferenceV1 = LaunchProfilePlacementPreferenceV1;
+export type TriageProfileCheckoutPreferenceV1 = LaunchProfileCheckoutPreferenceV1;
 
 /**
  * What the pressed action's Launch Profile contributes to the placement
@@ -105,6 +101,7 @@ export type TriageActionPlacementV1 =
         kind: 'pinned';
         target: Readonly<{ serverId: string; machineId: string }>;
         directory?: string;
+        directoryIntent?: SessionDirectoryIntentV1;
         candidates: Extract<TriageLaunchPlacementV1, { kind: 'prefill' }>['candidates'];
     }>
     /** The join resolved exactly one reachable checkout. */
@@ -119,6 +116,15 @@ export type TriageActionPlacementV1 =
         reason: 'profileAsk' | Extract<TriageLaunchPlacementV1, { kind: 'prefill' }>['reason'];
         candidates: Extract<TriageLaunchPlacementV1, { kind: 'prefill' }>['candidates'];
     }>;
+
+/** A required source checkout cannot be replaced by a private no-folder directory. */
+export function readTriageActionDirectoryRefusalV1(
+    workspaceMode: TriageWorkspaceModeV1,
+    directoryIntent: SessionDirectoryIntentV1 | undefined,
+): typeof TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1 | undefined {
+    return directoryIntent?.kind === 'managed' && workspaceMode !== 'reference_only'
+        ? TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1 : undefined;
+}
 
 export function resolveTriageActionPlacementV1(input: Readonly<{
     /** The pressed action's declared mode. Read first, and never overridden. */
@@ -137,16 +143,20 @@ export function resolveTriageActionPlacementV1(input: Readonly<{
 }>): TriageActionPlacementV1 {
     const preference = input.profile?.placement;
 
-    // A pinned placement is a STATED choice and an inference can never overrule
-    // one. It is admitted for every mode: `pull_request` still needs the
-    // source-prepared workspace, and pinning names the machine that prepares
-    // it, not a way around preparing it.
+    // A pinned machine is a stated choice; its directory intent must still
+    // satisfy the action's workspace requirement. For pull requests, pinning
+    // chooses the machine that prepares the source workspace.
     if (preference !== undefined && preference !== 'automatic' && preference !== 'ask') {
+        const directoryIntent = resolveLaunchProfilePlacementDirectoryIntentV1(preference);
+        const refusal = readTriageActionDirectoryRefusalV1(input.workspaceMode, directoryIntent);
+        if (refusal) throw new PluginError({ code: 'invalid_parameters',
+            diagnostics: [{ code: refusal, severity: 'error' }] });
         return {
             kind: 'pinned',
             target: preference.fixed,
             candidates: resolveTriageLaunchCandidatesV1(input),
-            ...(preference.directory === undefined ? {} : { directory: preference.directory }),
+            ...(directoryIntent?.kind === 'path' ? { directory: directoryIntent.path }
+                : directoryIntent === undefined ? {} : { directoryIntent }),
         };
     }
 
@@ -179,12 +189,13 @@ export function resolveTriageActionPlacementV1(input: Readonly<{
  * nothing, because a place chosen between two clones would put an agent to work
  * where the reader never picked.
  *
- * `directory` is absent exactly when the placement named a machine and no path
- * on it. A pinned machine with no path is a machine, not a guess at a path.
+ * A managed directory intent explicitly chooses no folder. When both directory
+ * fields are absent, the pinned machine leaves that choice to the reader.
  */
 export type TriageActionExecutionPlacementV1 = Readonly<{
     executionTarget: Readonly<{ serverId: string; machineId: string }>;
     directory?: string;
+    directoryIntent?: SessionDirectoryIntentV1;
 }>;
 
 export function readTriageActionExecutionPlacementV1(
@@ -194,6 +205,7 @@ export function readTriageActionExecutionPlacementV1(
         return Object.freeze({
             executionTarget: placement.target,
             ...(placement.directory === undefined ? {} : { directory: placement.directory }),
+            ...(placement.directoryIntent === undefined ? {} : { directoryIntent: placement.directoryIntent }),
         });
     }
     if (placement.kind === 'launch') {
@@ -206,4 +218,18 @@ export function readTriageActionExecutionPlacementV1(
         });
     }
     return null;
+}
+
+/** A complete launch answers the action's checkout requirement as well as its directory choice. */
+export function readTriageActionLaunchDirectoryV1(
+    placement: TriageActionExecutionPlacementV1 | null,
+    checkout: TriageActionCheckoutResolutionV1,
+): SessionDirectoryIntentV1 | undefined {
+    if (placement === null) return undefined;
+    const directory: SessionDirectoryIntentV1 | undefined = placement.directory === undefined
+        ? placement.directoryIntent : { kind: 'path', path: placement.directory };
+    if (directory === undefined) return undefined;
+    if (checkout === 'none') return directory;
+    if ((checkout === 'reuseWorkspace' || checkout === 'preparedReviewWorkspace') && directory.kind === 'path') return directory;
+    return undefined;
 }

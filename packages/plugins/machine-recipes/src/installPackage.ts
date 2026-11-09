@@ -37,9 +37,7 @@ const explicitPackages = (state: 'present' | 'absent'): MachineRecipeV1['steps']
 /** Exact reviewed native identities only; no search, manager installation or shell. */
 export const installPackage: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Install a package by name', software: true, icon: 'download',
-  description: 'Install exact native package ids using the first available supplied manager: apt, dnf, Homebrew, then WinGet. '
-    + 'Optional versions are exact pins. Missing sources, unavailable pins and insufficient authority require a remedy; another manager is never substituted. '
-    + 'The package form uses the explicitly selected manager. Removal removes only these packages and preserves dependencies and user data.',
+  description: 'Anything else, by its exact name from apt, dnf, Homebrew or WinGet.',
   inputSchema: {
     type: 'object', properties: {
       apt: packages(nativeIdentities.apt, ['name']),
@@ -55,6 +53,7 @@ export const installPackage: Omit<MachineRecipeV1, 'id'> = {
   },
   inputHints: { fields: [
     { path: 'package.manager', title: 'Package manager', widget: 'select', required: true,
+      visibleWhen: { op: 'not', predicate: { op: 'or', any: managers.map(manager => ({ op: 'truthy' as const, path: manager })) } },
       options: [{ value: 'apt', label: 'APT' }, { value: 'dnf', label: 'DNF' },
         { value: 'brew', label: 'Homebrew' }, { value: 'winget', label: 'WinGet' }] },
     ...managers.flatMap(manager => [
@@ -71,6 +70,10 @@ export const installPackage: Omit<MachineRecipeV1, 'id'> = {
     { path: 'package.winget.scope', title: 'WinGet scope', widget: 'select',
       visibleWhen: { op: 'eq', path: 'package.manager', value: 'winget' },
       options: [{ value: 'user', label: 'User' }, { value: 'machine', label: 'Machine' }] },
+    // Existing multi-manager selections stay reviewable; absent alternatives
+    // must not become four empty schema-derived JSON editors in every form.
+    ...managers.map(manager => ({ path: manager, title: `Packages (${manager})`, widget: 'json' as const,
+      visibleWhen: { op: 'truthy' as const, path: manager } })),
   ] },
   checks: legacySelection.checks,
   steps: [...legacySelection.steps, ...explicitPackages('present')],

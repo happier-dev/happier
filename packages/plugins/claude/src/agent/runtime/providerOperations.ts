@@ -6,6 +6,7 @@ import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/plugin-sdk/agent
 
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
 import type { ClaudeProviderEvent } from './providerEvents.js';
+import type { ClaudeRuntimeAuthIdentity } from '../auth/services/runtime/requestIdentity.js';
 
 /**
  * Claude-provider operations below the canonical AgentRuntime owner.
@@ -22,7 +23,7 @@ export type ClaudeProviderPermissionResponseOutcome =
 
 export type ClaudeProviderConfigurationUpdate = Readonly<{
   modeId?: string;
-  modelId?: string;
+  modelId?: string | null;
   permissionMode?: string;
   configOption?: Readonly<Record<string, unknown>>;
   providerBinding?: AgentSessionProviderBinding;
@@ -95,6 +96,7 @@ export type ClaudeProviderPromptDeliveryOutcomeCallback = (
 ) => void;
 
 export type ClaudeRuntimeTurnOperations = Readonly<{
+  runtimeAuthIdentity?: ClaudeRuntimeAuthIdentity;
   beginProviderTurn(turnId?: string): void;
   startProviderSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null | Readonly<Record<string, unknown>>>;
   sendProviderTurnPrompt(

@@ -1,7 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+export const CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY = 'HAPPIER_CLAUDE_NATIVE_CONFIG_DIR' as const;
+
 export const HAPPIER_CLAUDE_CONFIG_DIR_ENV = 'HAPPIER_CLAUDE_CONFIG_DIR' as const;
+export const CLAUDE_CONFIG_DIR_ENV_KEYS = ['CLAUDE_CONFIG_DIR', HAPPIER_CLAUDE_CONFIG_DIR_ENV] as const;
 
 type ClaudeConfigEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -14,8 +17,11 @@ function readNonEmptyEnvironmentValue(value: string | undefined): string | null 
  * materialization writes Claude's native variable, so it remains authoritative when both exist.
  */
 export function resolveClaudeConfigDirOverride(env: ClaudeConfigEnvironment): string | null {
-    return readNonEmptyEnvironmentValue(env.CLAUDE_CONFIG_DIR)
-        ?? readNonEmptyEnvironmentValue(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
+    for (const key of CLAUDE_CONFIG_DIR_ENV_KEYS) {
+        const value = readNonEmptyEnvironmentValue(env[key]);
+        if (value) return value;
+    }
+    return null;
 }
 
 /** Preserve the native override's presence instead of synthesizing the filesystem default. */

@@ -84,6 +84,9 @@
           "acpRegistryIds": [
             "grok-build"
           ],
+          "agentCliSystemTool": {
+            "toolId": "grok-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -211,10 +214,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -247,7 +251,80 @@
     "providers": [],
     "registrySources": [],
     "requestInterceptors": [],
-    "resources": [],
+    "resources": [
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
+      }
+    ],
     "roles": [],
     "scmBackends": [],
     "scmHostingProviders": [],
@@ -257,6 +334,7 @@
     "sessionInfoSections": [],
     "settings": [],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -267,7 +345,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -276,111 +353,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
-            "sessionInfo.grokSessionId": "Grok session ID",
-            "sessionInfo.grokSessionIdCopied": "Grok session ID copied"
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "de",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimentell)",
-            "sessionInfo.grokSessionId": "Grok-Sitzungs-ID",
-            "sessionInfo.grokSessionIdCopied": "Grok-Sitzungs-ID kopiert"
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "ru",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (экспериментально)",
-            "sessionInfo.grokSessionId": "Идентификатор сессии Grok",
-            "sessionInfo.grokSessionIdCopied": "Идентификатор сессии Grok скопирован"
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (eksperymentalne)",
-            "sessionInfo.grokSessionId": "Identyfikator sesji Grok",
-            "sessionInfo.grokSessionIdCopied": "Skopiowano identyfikator sesji Grok"
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
-            "sessionInfo.grokSessionId": "ID de sesión de Grok",
-            "sessionInfo.grokSessionIdCopied": "ID de sesión de Grok copiado"
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (expérimental)",
-            "sessionInfo.grokSessionId": "Identifiant de session Grok",
-            "sessionInfo.grokSessionIdCopied": "Identifiant de session Grok copié"
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (sperimentale)",
-            "sessionInfo.grokSessionId": "ID sessione Grok",
-            "sessionInfo.grokSessionIdCopied": "ID sessione Grok copiato"
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
-            "sessionInfo.grokSessionId": "ID da sessão Grok",
-            "sessionInfo.grokSessionIdCopied": "ID da sessão Grok copiado"
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimental)",
-            "sessionInfo.grokSessionId": "ID de sessió de Grok",
-            "sessionInfo.grokSessionIdCopied": "S’ha copiat l’ID de sessió de Grok"
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI（实验性）",
-            "sessionInfo.grokSessionId": "Grok 会话 ID",
-            "sessionInfo.grokSessionIdCopied": "已复制 Grok 会话 ID"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI（實驗性）",
-            "sessionInfo.grokSessionId": "Grok 工作階段 ID",
-            "sessionInfo.grokSessionIdCopied": "已複製 Grok 工作階段 ID"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "agentInput.agent.grok": "Grok",
-            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI（実験的）",
-            "sessionInfo.grokSessionId": "Grok セッション ID",
-            "sessionInfo.grokSessionIdCopied": "Grok セッション ID をコピーしました"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -392,9 +409,6 @@
     "workflows": []
   },
   "displayName": "Grok",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

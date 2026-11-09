@@ -22,6 +22,61 @@ const SCREEN = [
 ].join('\n');
 
 describe('native Claude permission presentation', () => {
+    it('separates Claude’s permission explanation from a clipped command block without dropping its visible identity', () => {
+        const explanation = "A variable in this command can't be checked before it runs\n Permission rule Bash(cat *) requires confirmation for this command.\n /permissions to update rules\n\n Do you want to proceed?";
+        const screen = ` │ synthetic command tail\n╌╌╌╌╌╌╌\n ${explanation}\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend`;
+        expect(parseClaudeNativePermissionScreen(screen)).toMatchObject({
+            context: expect.stringContaining('synthetic command tail'), explanation,
+            options: [{ label: 'Yes', focused: true }, { label: 'No', focused: false }],
+            amended: false,
+        });
+    });
+    it.each([
+        ['claude-2.1.310-read-outside.txt', 0],
+        ['claude-2.1.310-read-outside-narrow.txt', 3],
+    ] as const)('preserves every native read-outside-directory scope, including wrapped labels (%s)', (fixture, focused) => {
+        const screen = readFileSync(new URL(`./__fixtures__/${fixture}`, import.meta.url), 'utf8');
+        const labels = [
+            'Yes, and keep allowing any reads outside the working directories',
+            'No, and block reads outside the working directories from now on',
+            'No, and ask again next time',
+            'Yes, but ask again next time',
+        ];
+        expect(parseClaudeNativePermissionScreen(screen)).toMatchObject({
+            kind: 'tool', amended: false,
+            options: labels.map((label, index) => ({ label, focused: index === focused })),
+        });
+        // Persistent scopes hide the amendment hint; they remain the same native form.
+        const blockFocused = screen.replace(/^ ❯ (\d+)\./mu, '   $1.')
+            .replace(/^   2\./mu, ' ❯ 2.').replace(' · Tab to amend', '');
+        expect(parseClaudeNativePermissionScreen(blockFocused)).toMatchObject({
+            kind: 'tool', amended: false, options: labels.map((label, index) => ({ label, focused: index === 1 })),
+        });
+        expect(parseClaudeNativePermissionScreen(blockFocused.slice(blockFocused.indexOf(' Allow this read')))).toMatchObject({
+            kind: 'tool', amended: false, options: labels.map((label, index) => ({ label, focused: index === 1 })),
+        });
+    });
+    it('preserves an ordinary native Read file scope while focus hides the amendment hint', () => {
+        const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-read-focused.txt', import.meta.url), 'utf8');
+        expect(parseClaudeNativePermissionScreen(screen)).toMatchObject({
+            kind: 'tool', amended: false,
+            options: [
+                { label: 'Yes', focused: false },
+                { label: 'Yes, allow reading from /tmp/issue671-native-probe/workspace during this session', focused: true },
+                { label: 'No', focused: false },
+            ],
+        });
+    });
+    it('keeps read-outside-directory amendments, unknown scopes and incomplete forms out of remote approval', () => {
+        const screen = readFileSync(new URL('./__fixtures__/claude-2.1.310-read-outside.txt', import.meta.url), 'utf8');
+        expect(parseClaudeNativePermissionScreen(screen.replace('4. Yes, but ask again next time',
+            '4. Yes, but ask again next time, Use only the synthetic fixture.'))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen.replace('2. No, and block reads outside the working directories from now on',
+            '2. No, and change an unknown policy'))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen.replace(/^.*4\. Yes.+\n/mu, ''))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen.replace('Allow this read outside the working directories?', 'Allow an unknown scope?'))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen + 'Unknown active dialog')).toBeNull();
+    });
     it('recognizes native permission and plan forms above the observed session-title rule while keeping unknown tails blocked', () => {
         const title = '\n──────────────────────────────────────────────────── test-plan-approval-prompt ─';
         expect(parseClaudeNativePermissionScreen(SCREEN + title)?.kind).toBe('tool');
@@ -46,7 +101,6 @@ describe('native Claude permission presentation', () => {
         const parsed = parseClaudeNativePermissionScreen(screen);
         expect(parsed?.options[1]).toEqual({ label: 'Yes, and don’t ask again for: ruby *', focused: true });
         expect(parsed?.options.at(-1)?.label).toBe('No');
-        expect(parseClaudeNativePermissionScreen(screen.replace(' Bash command\n', ' Upgrade notice\n'))).toBeNull();
     });
     it('recognizes native ExitPlanMode choices and its editable feedback row without copying plan content', () => {
         const screen = readFileSync(new URL('./__fixtures__/claude-2.1.304-plan-exit.txt', import.meta.url), 'utf8');

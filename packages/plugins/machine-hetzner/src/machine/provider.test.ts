@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHetznerNativeClient } from './nativeClient.js';
+import { createHetznerProvider } from './provider.js';
 
 const resource = { serverId: 41, owned: { volumeIds: [], primaryIpIds: [] } };
 const server = { id: 41, status: 'off', labels: { 'happier-managed': 'row-1' }, public_net: { ipv4: { id: 9, ip: '192.0.2.1' }, ipv6: null }, volumes: [] };
@@ -50,6 +51,84 @@ describe('Hetzner native boundary', () => {
       .rejects.toMatchObject({ code: 'native_response_invalid' });
   });
 
+  it.each(['off', 'error', 'unknown', 'stopping', 'deleting', 'rebuilding', 'migrating'])(
+    'settles bootstrap for native %s without claiming startup is pending', async status => {
+      const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ server: { ...server, status } }));
+      await expect(createHetznerProvider({ token: 'fixture', fetch: transport }).bootstrap(resource))
+        .rejects.toMatchObject({ code: 'native_resource_unavailable' });
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(transport.mock.calls[0]?.[1]?.method).toBe('GET');
+    });
+
+  it('waits for a running server address without retrying malformed IPv6 facts', async () => {
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ server: { ...server, status: 'initializing' } }))
+      .mockResolvedValueOnce(json({ server: { ...server, status: 'running', public_net: { ipv4: null, ipv6: null } } }))
+      .mockResolvedValueOnce(json({ server: { ...server, status: 'running', public_net: { ipv4: null, ipv6: { ip: '2001:db8::/32' } } } }))
+      .mockResolvedValueOnce(json({ server: { ...server, status: 'running' } }));
+    const provider = createHetznerProvider({ token: 'fixture', fetch: transport });
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'native_not_ready' });
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'native_not_ready' });
+    await expect(provider.bootstrap(resource)).rejects.toMatchObject({ code: 'native_ssh_address_unavailable' });
+    await expect(provider.bootstrap(resource)).resolves.toMatchObject({ address: '192.0.2.1', username: 'happier-bootstrap' });
+    expect(transport.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+  });
+
+  it('projects documented invalid fields once without retaining messages, reflected labels or arbitrary content', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ error: {
+      code: 'invalid_input', message: 'private native response', details: { fields: [
+        { name: 'image', messages: ['private image value'] }, { name: 'public_net', messages: ['private'] },
+        { name: 'image', messages: ['duplicate'] }, { name: 'private-token', messages: ['private'] },
+        { name: 'labels.private-value', messages: ['private'] }, { name: 'ssh_keys', messages: ['not submitted'] }, null,
+      ] },
+    } }, 422));
+    const result = await createHetznerNativeClient({ token: 'private-token', fetch: transport }).acquire(acquire);
+    expect(result).toEqual({ kind: 'rejected', code: 'native_request_failed',
+      nativeCause: { httpStatusClass: '4xx', code: 'invalid_input', fields: ['image', 'public_net'] } });
+    expect(JSON.stringify(result)).not.toContain('private');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('keeps missing server custody until every owned volume and primary IP is absent', async () => {
+    const owned = { serverId: 41, owned: { volumeIds: [3], primaryIpIds: [9] } };
+    const missing = () => json({ error: { code: 'not_found' } }, 404);
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(missing()).mockResolvedValueOnce(json({ volume: { id: 3 } }))
+      .mockResolvedValueOnce(missing()).mockResolvedValueOnce(missing()).mockResolvedValueOnce(json({ error: { code: 'unauthorized' } }, 401))
+      .mockResolvedValueOnce(missing()).mockResolvedValueOnce(missing()).mockResolvedValueOnce(missing());
+    const client = createHetznerNativeClient({ token: 'private', fetch: transport });
+    await expect(client.inspect(owned)).rejects.toMatchObject({ code: 'native_cleanup_unconfirmed' });
+    await expect(client.inspect(owned)).rejects.toMatchObject({ code: 'native_authorization_failed' });
+    expect(await client.inspect(owned)).toEqual({ kind: 'absent' });
+    expect(transport.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+  it.each([
+    [422, 'invalid_input'], [403, 'resource_limit_exceeded'], [401, 'unauthorized'],
+    [403, 'forbidden'], [422, 'placement_error'], [409, 'uniqueness_error'],
+  ] as const)('retains safe native cause for HTTP %s %s without vendor content', async (status, code) => {
+    // REST v1 Errors, fetched 2026-10-25: error.code is machine-parsable;
+    // message/details can reflect request content and must never escape.
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ error: {
+      code, message: 'private-request-content',
+      ...(code === 'invalid_input' ? { details: { fields: [{ name: 'broken_field', messages: ['private-request-content'] }] } }
+        : code === 'resource_limit_exceeded' ? { details: { limits: [{ name: 'project_limit' }] } } : {}),
+    } }, status));
+    const client = createHetznerNativeClient({ token: 'private-token', fetch: transport });
+    const result = await client.acquire(acquire);
+    expect(result).toEqual({ kind: 'rejected', code: status === 401 || status === 403 ? 'native_authorization_failed' : 'native_request_failed',
+      nativeCause: { httpStatusClass: '4xx', code } });
+    expect(JSON.stringify(result)).not.toContain('private');
+    expect(transport).toHaveBeenCalledTimes(1); // A permanent refusal never repeats allocation.
+  });
+
+  it('retains HTTP class when a vendor code is unknown or its error body is invalid', async () => {
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ error: { code: 'secret-token-value', message: 'private' } }, 422))
+      .mockResolvedValueOnce(new Response('private invalid JSON', { status: 503 }));
+    const client = createHetznerNativeClient({ token: 'private', fetch: transport });
+    expect(await client.acquire(acquire)).toEqual({ kind: 'rejected', code: 'native_request_failed', nativeCause: { httpStatusClass: '4xx' } });
+    expect(await client.acquire(acquire)).toEqual({ kind: 'unknown', code: 'native_service_unavailable', correlation: 'row-1', nativeCause: { httpStatusClass: '5xx' } });
+  });
+
   it('retains create uncertainty after a dropped reply without replaying allocation', async () => {
     const transport = vi.fn<typeof fetch>().mockRejectedValue(new Error('token-do-not-disclose'));
     const client = createHetznerNativeClient({ token: 'token-do-not-disclose', fetch: transport });
@@ -62,6 +141,22 @@ describe('Hetzner native boundary', () => {
     const client = createHetznerNativeClient({ token: 'private', fetch: transport });
     await expect(client.acquire({ ...acquire, launch: { ...launch, enrollmentBearer: 'private' } })).rejects.toMatchObject({ code: 'native_input_invalid' });
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it.each(['', 'a'.repeat(64), '_row', 'row-', 'row/value', 'row value'])(
+    'rejects a correlation outside the documented label-value grammar before HTTP (%j)', async correlation => {
+      const transport = vi.fn<typeof fetch>();
+      const client = createHetznerNativeClient({ token: 'private', fetch: transport });
+      await expect(client.acquire({ ...acquire, correlation })).rejects.toMatchObject({ code: 'native_input_invalid' });
+      expect(transport).not.toHaveBeenCalled();
+    });
+
+  it('submits the valid 63-character label boundary without truncating correlation', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ server: { id: 41 } }, 201));
+    const correlation = `a${'_.-'.repeat(20)}a1`;
+    expect(correlation).toHaveLength(63);
+    await createHetznerNativeClient({ token: 'private', fetch: transport }).acquire({ ...acquire, correlation });
+    expect(JSON.parse(String(transport.mock.calls[0][1]?.body)).labels).toEqual({ 'happier-managed': correlation });
   });
 
   it('recovers one exact labeled candidate across native pages, but refuses ambiguous candidates', async () => {
@@ -88,9 +183,11 @@ describe('Hetzner native boundary', () => {
   it('binds accepted identity without equating a running action with readiness; injects only the public SSH key', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValue(json({ server: { ...server, status: 'initializing' }, action: { id: 7, status: 'running' } }, 201));
     const client = createHetznerNativeClient({ token: 'private-bearer', fetch: transport });
-    expect(await client.acquire(acquire)).toMatchObject({ kind: 'bound', resource: { serverId: 41, owned: { volumeIds: [], primaryIpIds: [9] } }, nativeAction: { id: 7, status: 'running' }, power: 'transitioning' });
+    expect(await client.acquire(acquire)).toMatchObject({ kind: 'bound', resource: { serverId: 41, owned: { volumeIds: [], primaryIpIds: [9] } }, power: 'transitioning' });
     const body = JSON.parse(String(transport.mock.calls[0][1]?.body));
     expect(body.user_data).toContain(acquire.bootstrapSshPublicKey.split(' ').slice(0, 2).join(' '));
+    expect(body.user_data).toContain('"name":"happier-bootstrap"');
+    expect(body).not.toHaveProperty('ssh_keys');
     expect(JSON.stringify(body)).not.toContain('private-bearer');
     expect(body).not.toHaveProperty('enrollment');
   });
@@ -118,7 +215,9 @@ describe('Hetzner native boundary', () => {
 
   it('preserves returned hourly and monthly prices rather than synthesizing a conversion', async () => {
     const transport = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(json({ server_types: [{ id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86', prices: [{ location: 'fsn1', price_hourly: { net: '0.0048', gross: '0.0057' }, price_monthly: { net: '2.99', gross: '3.56' } }] }], meta: { pagination: { next_page: null } } }))
+      .mockResolvedValueOnce(json({ server_types: [{ id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
+        locations: [{ id: 1, name: 'fsn1', available: true, deprecation: null }],
+        prices: [{ location: 'fsn1', price_hourly: { net: '0.0048', gross: '0.0057' }, price_monthly: { net: '2.99', gross: '3.56' } }] }], meta: { pagination: { next_page: null } } }))
       .mockResolvedValueOnce(json({ images: [{ id: 2, name: 'ubuntu-24.04', architecture: 'x86', type: 'system', status: 'available', deprecated: null }], meta: { pagination: { next_page: null } } }))
       .mockResolvedValueOnce(json({ locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein' }], meta: { pagination: { next_page: null } } }))
       .mockResolvedValueOnce(json({ pricing: { currency: 'EUR',
@@ -162,7 +261,7 @@ describe('Hetzner native boundary', () => {
     expect(transport.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
   });
 
-  it('retains server and attachments until exact server absence is observed', async () => {
+  it('retains server and attachments while the native delete action runs', async () => {
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ action: { id: 10, status: 'running' } }))
       .mockResolvedValueOnce(json({ server: { ...server, status: 'deleting' } }));
@@ -170,7 +269,7 @@ describe('Hetzner native boundary', () => {
     expect(await client.destroy({ serverId: 41, owned: { volumeIds: [3], primaryIpIds: [9] } })).toMatchObject({
       kind: 'incomplete', remaining: [{ kind: 'server', id: 41 }, { kind: 'volume', id: 3 }, { kind: 'primary-ip', id: 9 }],
     });
-    expect(transport.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/servers/41', '/v1/servers/41']);
+    expect(transport.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/servers/41']);
   });
 
   it('redacts failed cleanup and never replays a lost delete reply', async () => {
@@ -198,14 +297,14 @@ describe('Hetzner native boundary', () => {
   it('retains accepted server identity when its returned action facts are malformed', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ server, action: { id: 'broken', status: 'unknown' } }, 201));
     const client = createHetznerNativeClient({ token: 'private', fetch: transport });
-    expect(await client.acquire(acquire)).toMatchObject({ kind: 'bound', resource: { serverId: 41 }, nativeActionUnavailable: true });
+    expect(await client.acquire(acquire)).toMatchObject({ kind: 'bound', resource: { serverId: 41 } });
   });
 
   it('retains paid identity when accepted response readiness and network facts are incomplete', async () => {
     const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ server: { id: 41 }, action: { id: 7, status: 'success' } }, 201));
     const client = createHetznerNativeClient({ token: 'private', fetch: transport });
     expect(await client.acquire(acquire)).toMatchObject({
-      kind: 'bound', resource, power: 'unknown', nativeFactsUnavailable: true,
+      kind: 'bound', resource, power: 'unknown',
     });
   });
 
@@ -213,10 +312,15 @@ describe('Hetzner native boundary', () => {
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ action: { id: 10, status: 'success' } }))
       .mockResolvedValueOnce(json({ error: { code: 'not_found' } }, 404))
+      .mockResolvedValueOnce(json({ volume: { id: 3 } }))
       .mockResolvedValueOnce(json({ action: { id: 11, status: 'running' } }, 202))
       .mockResolvedValueOnce(json({ volume: { id: 3 } }));
     const client = createHetznerNativeClient({ token: 'private', fetch: transport });
-    expect(await client.destroy({ serverId: 41, owned: { volumeIds: [3], primaryIpIds: [] } })).toMatchObject({ kind: 'incomplete', remaining: [{ kind: 'volume', id: 3 }] });
+    const owned = { serverId: 41, owned: { volumeIds: [3], primaryIpIds: [] } };
+    const result = await client.destroy({ ...owned, deleteActionId: 10 }, true);
+    expect(result).toMatchObject({ kind: 'incomplete', remaining: [{ kind: 'volume', id: 3 }] });
+    // Attachment continuation must not retain/re-poll the completed server action.
+    expect(result.nativeOperation).toEqual(owned);
   });
 
   it('accepts a native RFC1123 name spanning multiple labels', async () => {

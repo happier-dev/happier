@@ -33,7 +33,6 @@ function fixture() {
   }) } satisfies AgentSessionSubagentObservationPublisher;
   const runtime = createCodexAppServerRuntime({
     happierSessionId: 'session', directory: '/workspace',
-    processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
     host: { baseProcessEnv: {}, logger: { debug: vi.fn(), warn: vi.fn() }, createClient: async () => client, subagents },
   });
   runtime.events.subscribe((event) => events.push(event));

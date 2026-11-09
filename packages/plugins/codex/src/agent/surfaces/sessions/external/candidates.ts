@@ -2,7 +2,14 @@ import type {
   CodexRolloutCandidateScanBoundary,
 } from '../../../rollout/discovery/candidates.js';
 
-const DEFAULT_APP_SERVER_LIST_BUDGET_MS = 3_000;
+export class CodexExternalSessionCandidateSourceChangedError extends Error {
+  readonly code = 'codex_candidate_source_changed';
+
+  constructor() {
+    super('Codex rollout candidate source changed; refresh the candidate list.');
+    this.name = 'CodexExternalSessionCandidateSourceChangedError';
+  }
+}
 
 /**
  * Which rollout scan produced the rows a searched page served, and how the
@@ -297,9 +304,4 @@ export function decodeCodexExternalSessionCandidateCursor(
   } catch {
     return null;
   }
-}
-
-export function resolveCodexExternalSessionAppServerListBudgetMs(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS ?? ''), 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_APP_SERVER_LIST_BUDGET_MS;
 }

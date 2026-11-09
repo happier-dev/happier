@@ -62,7 +62,7 @@ async function corpus() {
 }
 
 describe('Claude candidate conversation search', () => {
-    it('scans independent prefilter batches concurrently without advancing deadline continuation past unvisited hits', async () => {
+    it('publishes the next hit without waiting for its held lookahead batch', async () => {
         const params = await corpus();
         const directory = join(params.source.configDir, 'projects', 'project');
         await rm(join(directory, 'session.jsonl'));
@@ -73,28 +73,23 @@ describe('Claude candidate conversation search', () => {
             await utimes(path, new Date(1000 * (index + 1)), new Date(1000 * (index + 1)));
         }
         const run = params.ripgrep.run.getMockImplementation()!;
-        let nowMs = Date.now();
-        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-        const deadlineAtMs = nowMs + 15000;
         let release!: () => void;
         const held = new Promise<void>(resolve => { release = resolve; });
+        let admitLater!: () => void;
+        const later = new Promise<void>(resolve => { admitLater = resolve; });
         const admittedPaths = new Set<string>();
         const ripgrep = { run: async (request: Parameters<typeof run>[0]) => {
-            if (request.paths.some(path => path.endsWith('session-3.jsonl'))) return run(request);
             for (const path of request.paths) admittedPaths.add(path);
-            // Hold real process admission to distinguish concurrent corpus work
-            // from awaiting the first native scan before starting the next.
-            await held;
+            if (request.paths.some(path => path.endsWith('session-1.jsonl'))) { admitLater(); await held; }
             return run(request);
         } };
-        const first = listClaudeExternalSessionCandidates({ ...params, limit: 1, searchTerm: 'needle', ripgrep, deadlineAtMs });
+        const first = listClaudeExternalSessionCandidates({ ...params, limit: 1, searchTerm: 'needle', ripgrep });
         try {
-            await vi.waitFor(() => expect(admittedPaths.size).toBe(3));
-        } finally { nowMs = deadlineAtMs; release(); await first; }
+            expect(await Promise.race([first.then(() => 'published'), later.then(() => 'lookahead admitted')])).toBe('lookahead admitted');
+            expect((await first).candidates.map(candidate => candidate.remoteSessionId)).toEqual(['session-2']);
+            expect([...admittedPaths].map(path => path.split(/[\\/]/).at(-1)).sort()).toEqual(['session-1.jsonl', 'session-2.jsonl', 'session-3.jsonl']);
+        } finally { release(); await first; }
         const page = await first;
-        // The existing decoder may commit its first indivisible file at EOF
-        // even across the soft deadline; prefilter completion must not skip
-        // either of the other, still-unvisited native hits on continuation.
         expect(page.candidates.map(candidate => candidate.remoteSessionId)).toEqual(['session-2']);
         expect(page.contentCoverage).toBe('partial');
         expect(page.nextCursor).toBeTruthy();
@@ -108,6 +103,31 @@ describe('Claude candidate conversation search', () => {
             if (!cursor) expect(next.contentCoverage).toBe('complete');
         }
         expect(ids).toEqual(['session-2', 'session-1', 'session-0']);
+    });
+    it('starts native prefilters in proportion to page demand on a large frontier', async () => {
+        const params = await corpus();
+        const directory = join(params.source.configDir, 'projects', 'project');
+        await rm(join(directory, 'session.jsonl'));
+        await Promise.all(Array.from({ length: 1000 }, async (_, index) => {
+            const path = join(directory, `scale-${String(index).padStart(4, '0')}.jsonl`);
+            await writeFile(path, JSON.stringify({ type: 'user', uuid: `body-${index}`, parentUuid: null,
+                message: { role: 'user', content: index === 999 ? 'ordinary' : 'visible needle' } }) + '\n');
+            await utimes(path, new Date(index * 1000), new Date(index * 1000));
+        }));
+        const run = params.ripgrep.run.getMockImplementation()!;
+        const paths: string[] = [];
+        const ripgrep = { run: async (request: Parameters<typeof run>[0]) => {
+            paths.push(...request.paths);
+            // Count every native process admission without actually forking
+            // 998 irrelevant children when exercising the broken scheduler.
+            if (paths.length > 3) return { exitCode: 1, stdout: '', stderr: '' };
+            return run(request);
+        } };
+        const page = await listClaudeExternalSessionCandidates({ ...params, limit: 1, searchTerm: 'needle', ripgrep });
+        expect(page.candidates.map(candidate => candidate.remoteSessionId)).toEqual(['scale-0998']);
+        expect(paths.length).toBeGreaterThanOrEqual(2);
+        expect(paths.length).toBeLessThanOrEqual(3);
+        expect(page.nextCursor).toBeTruthy();
     });
     it('excludes unrelated transform-shaped rows from query-local decoding and coverage', async () => {
         const params = await corpus();
@@ -761,7 +781,9 @@ describe('Claude candidate conversation search', () => {
         const first = await contribution.listCandidates({ ...request, scanDeadlineAtMs: deadlineAtMs });
         expect(first).toMatchObject({ ok: true });
         if (!first.ok) throw new Error(`${first.code}: ${first.message}`);
-        expect(nowMs).toBeLessThan(deadlineAtMs);
+        // NI27 uses the actual cooperative boundary, without predicting a
+        // shorter deadline from the previous native read's duration.
+        expect(nowMs).toBe(deadlineAtMs);
         expect(first.value).toMatchObject({ candidates: [], contentCoverage: 'partial', nextCursor: expect.any(String) });
         await appendFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'),
             JSON.stringify({ type: 'cost-state', totalCostUSD: 0 }) + '\n');
@@ -1004,7 +1026,7 @@ describe('Claude candidate conversation search', () => {
         });
         await expect(listClaudeExternalSessionCandidates({ ...params, signal: controller.signal, searchTerm: 'Body-only' })).rejects.toThrow();
     });
-    it('cancels and observes every concurrent prefilter batch before returning the abort', async () => {
+    it('cancels the demanded and lookahead prefilters without starting later batches', async () => {
         const params = await corpus();
         const directory = join(params.source.configDir, 'projects', 'project');
         for (let index = 0; index < 3; index++) {
@@ -1023,9 +1045,10 @@ describe('Claude candidate conversation search', () => {
         });
         const pending = listClaudeExternalSessionCandidates({ ...params, limit: 1, signal: controller.signal, searchTerm: 'needle' });
         const outcome = pending.then(value => ({ value }), error => ({ error }));
-        try { await vi.waitFor(() => expect(started).toBe(4)); }
+        try { await vi.waitFor(() => expect(started).toBe(3)); }
         finally { controller.abort(new Error('cancelled parallel scan')); }
         expect(await outcome).toMatchObject({ error: { message: 'cancelled parallel scan' } });
-        expect(cancelled).toBe(3);
+        expect(started).toBe(3);
+        expect(cancelled).toBe(2);
     });
 });

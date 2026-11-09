@@ -4,7 +4,7 @@ import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollecti
 import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import type { PluginAccountActionContext, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
 import { createTriageConfiguredActionHost } from '../actions/configuredActionHost.js';
 import { TriageLegacyRunConfiguredActionResultV1Schema as TriageRunConfiguredActionResultV1Schema,
@@ -82,6 +82,39 @@ function projectOperation(sourceWorkspace = acceptedWorkspace.checkout) {
 }
 
 describe('configured action execution through the shared Session owner', () => {
+    it('starts a saved fixed no-folder preference through the configured entry launch owner', async () => {
+        const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
+        const targetKey = buildAgentTargetKeyV2(agentTarget);
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'saved-no-folder' })],
+            send: [{ status: 'accepted', localId: 'saved-default-input' }] });
+        const host = {
+            version: () => ({ methods: [] }),
+            context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
+            executeAction: async (id: string, value: JsonValue) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [{ ...action, profileId: 'saved-profile' }] };
+                if (triageBoundaryActionId(id) === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
+                if (id === 'sessions.spawn.profiles.list') return { items: [{ id: 'saved-profile', name: 'Saved defaults',
+                    preferredAgentTargetKey: targetKey, placement: { fixed: { serverId: 'server-a', machineId: 'machine-a' },
+                        directoryIntent: { kind: 'managed' } }, checkout: 'reuse_workspace' }], coverage: 'complete' };
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'agents.backends.list') return { items: [{ targetKey, agentTarget, enabled: true }] };
+                return invoker.execute(id as Parameters<typeof invoker.execute>[0], value as Parameters<typeof invoker.execute>[1]);
+            },
+        };
+        // Only host RPC is replaced; catalog/profile reads and all launch owners stay real.
+        const input = parseEntryExecutionInput({ v: 1, actionId: action.actionId, destination: 'single', entries: [
+            { entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId },
+        ] });
+        const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
+            input.handoff, { entries: [entry], signal: new AbortController().signal });
+        expect(result.handoff).toMatchObject({ kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'saved-no-folder' } });
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
+            executionTarget: { serverId: 'server-a', machineId: 'machine-a' }, agentTarget,
+            directory: { kind: 'managed' }, profileId: 'saved-profile',
+        });
+        expect(invoker.callsFor('session.message.send')).toHaveLength(1);
+    });
+
     it.each(['project', 'managed', 'ambiguous', 'offline', 'noController', 'noAgent', 'spawnUnavailable', 'spawnDenied', 'spawnRuntimeReload', 'bindingsUnsettled', 'spawnAgentTransport'] as const)(
         'resolves receipt placement and Account agent at the handoff owner (%s)', async state => {
         const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'cmvx1tgtc002fmc8mtjxkne1x', deploymentId: 'cmvxxre5g002tmckmlx5bfap7' } as const;
@@ -218,7 +251,10 @@ describe('configured action execution through the shared Session owner', () => {
             input.handoff, { entries: [], signal: new AbortController().signal });
         expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
         expect(seeds).toHaveLength(1);
-        expect(seeds[0]).toMatchObject({ placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'chosen' } });
+        expect(seeds[0]).toMatchObject({
+            placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'chosen' },
+            actionDefault: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: 'investigate', label: action.label, launchMode: 'review' },
+        });
         expect(JSON.stringify(seeds[0]).match(/deployments\.receipts\.get/g)).toHaveLength(1);
         expect(JSON.stringify(seeds[0])).toContain('receipt');
     });
@@ -743,7 +779,7 @@ describe('configured action execution through the shared Session owner', () => {
         const sent: ReturnType<typeof PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send']['parse']>[] = [];
         const sendOptions: unknown[] = [];
         const configured = { ...action, actionId: 'fix', workspaceMode: 'repository',
-            target: { ...action.target, seededFallbackInstruction: 'Fix this entry.', delivery } };
+            target: { ...action.target, seededFallbackInstruction: 'Fix this.', delivery } };
         const host = {
             version: () => ({ methods: ['openNewSession'] }),
             context: async () => ({ targetedContributions: null }),
@@ -798,7 +834,7 @@ describe('configured action execution through the shared Session owner', () => {
             expect(JSON.stringify(composed)).toContain('operation-a');
             expect(JSON.stringify(composed)).toContain('gaps');
         }
-        expect(JSON.stringify(composed)).not.toContain('Fix this entry.');
+        expect(JSON.stringify(composed)).not.toContain('Fix this.');
         const attachments = delivery === 'compose' ? seeds[0]?.attachments
             : sent[0] !== undefined && 'attachments' in sent[0] ? sent[0].attachments : [];
         const { collections } = createTestkitCorpusCollections();

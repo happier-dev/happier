@@ -1,0 +1,8 @@
+{
+  "plugins.appContext.annotation.title": "Anmerkung",
+  "plugins.appContext.annotation.note": "Deine Notiz",
+  "plugins.appContext.annotation.save": "Notiz speichern",
+  "plugins.appContext.annotation.saved": "Notiz gespeichert",
+  "plugins.appContext.annotation.refused": "Die Notiz kann gerade nicht gespeichert werden – sie bleibt hier erhalten. Wenn du eine wartende Nachricht bearbeitest, schließ das zuerst ab.",
+  "plugins.appContext.annotation.unavailable": "Diese Anmerkung ist nicht verfügbar."
+}

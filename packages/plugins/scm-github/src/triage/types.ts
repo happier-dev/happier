@@ -116,6 +116,8 @@ export type GithubTriagePresentObservationV1 = Readonly<{
   viewer: GithubTriageViewerFactsV1;
   /** Exact-read-only values; the scan/observation mapper never copies these. */
   taskFields?: TriageTaskFieldsV1;
+  /** The repository directory for the task fields, on the exact read that asked. */
+  taskFieldChoices?: import('@happier-dev/triage-protocol/v1').TriageTaskFieldChoicesV1;
   /** Transient native detail facts from this exact read; never projected into scans. */
   detailData?: import('./detail/contracts.js').GithubIssueOpeningDetailV1;
 }>;

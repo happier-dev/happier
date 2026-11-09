@@ -78,6 +78,7 @@ export const FlyAcquireOperationV1Schema = defineProtocolObject({
   ]) }, closed).optional(),
 }, closed);
 export const FlyPendingAcquireV1Schema = defineProtocolObject({ operation: FlyAcquireOperationV1Schema, launch: FlyLaunchV1Schema }, closed);
+export const FlyNativeOperationV1Schema = defineProtocolUnion([FlyPendingAcquireV1Schema, FlyResourceV1Schema]);
 export const FlyGuestBootSchema = z.strictObject({
   // Native guest placement is descriptive; installation remains host-owned.
   homeDir: absolutePath,

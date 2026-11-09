@@ -50,6 +50,11 @@ export function createOpenCodeExecutionRunConversation(params: Readonly<{
       publish({ kind: 'turn-progress', turnId: event.turnId, emittedAtMs: event.emittedAtMs });
       return;
     }
+    if (event.kind === 'turn-progress') {
+      publish({ kind: 'turn-progress', turnId: event.turnId, emittedAtMs: event.emittedAtMs,
+        ...(event.retry ? { retry: event.retry } : {}) });
+      return;
+    }
     if (event.kind === 'transcript-agent-message-committed') {
       const body = asRecord(event.body);
       const text = typeof body?.message === 'string' ? body.message : '';

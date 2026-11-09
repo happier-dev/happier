@@ -1,6 +1,7 @@
 {
-  "machineLima.presentation.kind": "虚拟机",
-  "machineLima.presentation.description": "用于代码、脚本和开发服务器的轻量 Linux 虚拟机。",
+  "machineLima.presentation.customSize": "自定义规格",
+  "machineLima.presentation.kind": "机器",
+  "machineLima.presentation.description": "用于代码、脚本和开发服务器的轻量 Linux 机器。",
   "machineLima.presentation.ready": "已安装",
   "machineLima.presentation.unavailable": "未安装",
   "machineLima.presentation.lima_2_required": "需要 Lima 2",

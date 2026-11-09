@@ -1,9 +1,10 @@
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   isClaudeUltracodeSupportedModelId,
-  resolveClaudeEffectiveEffortForModel,
+  resolveClaudeEffortForModel,
 } from '../../reasoningEffort.js';
 import type { ClaudeProviderConfigurationOutcome } from '../../providerOperations.js';
+import { readClaudeRuntimeConfigModelUpdate } from '../../shared/runtimeHelpers.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 import type {
   ClaudeDesiredRuntimeConfig,
@@ -65,6 +66,9 @@ export function mapRuntimeConfigUpdateToDesired(
     providerModel?: AgentSessionProviderBinding['model'];
     /** Installed Claude CLI exposes the effort control surface. */
     supportsEffort: boolean;
+    /** Current selection from the terminal's existing launch configuration owner. */
+    selectedEffort?: string | null;
+    selectedUltracode?: boolean;
   }>,
 ): ClaudeUnifiedDesiredUpdateResolution {
   const desired: {
@@ -79,10 +83,10 @@ export function mapRuntimeConfigUpdateToDesired(
     const value = update[key];
     if (value === undefined || value === null) continue;
     if (key === 'modelId') {
-      const modelId = readNonEmptyString(value);
-      if (modelId === null) continue;
-      if (modelId === 'default') {
-        // "default" = reset-to-no-override; `/model` cannot prove what default resolves to.
+      const modelId = readClaudeRuntimeConfigModelUpdate(value, context.providerModel);
+      if (modelId === undefined) continue;
+      if (modelId === null || modelId === 'default') {
+        // `/model default` cannot prove native reset or an opaque Provider model named default.
         return { kind: 'not_controllable', reason: 'model_default_reset_not_controllable' };
       }
       desired.model = modelId;
@@ -126,7 +130,7 @@ export function mapRuntimeConfigUpdateToDesired(
         }
         const effort = readNonEmptyString(option.value);
         if (effort === null) return { kind: 'not_controllable', reason: 'malformed_config_option' };
-        const effectiveEffort = resolveClaudeEffectiveEffortForModel({
+        const effectiveEffort = resolveClaudeEffortForModel({
           modelId: desired.model ?? context.effectiveModelId,
           effort,
           ...(context.providerModel ? { providerModel: context.providerModel } : {}),
@@ -158,6 +162,23 @@ export function mapRuntimeConfigUpdateToDesired(
     }
     // Unknown directive: never partially honor an update we do not fully understand.
     return { kind: 'not_controllable', reason: `unknown_directive:${key}` };
+  }
+
+  const modelId = desired.model ?? context.effectiveModelId;
+  if (context.supportsEffort && (desired.model !== undefined || desired.ultracode === false)) {
+    const effort = resolveClaudeEffortForModel({
+      modelId,
+      effort: context.selectedEffort,
+      ...(context.providerModel ? { providerModel: context.providerModel } : {}),
+    });
+    if (desired.reasoningEffort === undefined && effort) desired.reasoningEffort = effort;
+  }
+  // `/model` and regular `/effort` can replace ultracode; restore an enabled selection last.
+  if (context.supportsEffort && context.selectedUltracode === true
+    && desired.ultracode === undefined
+    && (desired.model !== undefined || desired.reasoningEffort !== undefined)
+    && isClaudeUltracodeSupportedModelId(modelId, context.providerModel)) {
+    desired.ultracode = true;
   }
 
   if (

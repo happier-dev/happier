@@ -28,6 +28,18 @@ function createJsonResponse(params: Readonly<{
 }
 
 describe('exchangeCodexAuthorizationCodeForTokens', () => {
+  it('uses the access-token expiry when the PKCE response omits expires_in', async () => {
+    const now = 1_700_000_000_000;
+    const tokens = await exchangeCodexAuthorizationCodeForTokens({
+      code: 'synthetic-code', verifier: 'synthetic-verifier', redirectUri: 'http://localhost:1455/auth/callback', now,
+      runtimeFetch: { async request() { return createJsonResponse({ json: {
+        access_token: encodeJwtPayload({ exp: (now + 900_000) / 1000 }),
+        id_token: encodeJwtPayload({ exp: 1 }), refresh_token: 'synthetic-refresh',
+      } }); } },
+    });
+    expect(tokens.expiresAt).toBe(now + 900_000);
+  });
+
   it('builds the OpenAI Codex PKCE authorization URL', () => {
     const authorizationUrl = new URL(buildCodexAuthorizationUrl({
       redirectUri: 'http://localhost:1455/auth/callback',

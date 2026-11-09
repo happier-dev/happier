@@ -220,3 +220,31 @@ describe('Claude Unified provider input outcomes', () => {
     }
   });
 });
+
+
+it.each(['host', 'native'] as const)('captures %s terminal request identity at issuance', async (origin) => {
+  const terminalHost = createTerminalHostFixture();
+  const base = createPluginContextFixture(terminalHost.service, createEventsFixture().service);
+  let accountId = 'terminal-issued';
+  const readFiles = vi.fn(async (_fileIds: readonly string[]) => ({
+    '.claude.json': new TextEncoder().encode(JSON.stringify({oauthAccount: {accountUuid: accountId, organizationUuid: 'terminal-org'}})),
+    '.happier-claude-connected-service-home.json': new TextEncoder().encode(JSON.stringify({v: 1, serviceId: 'claude-subscription', credentialProfileId: 'terminal-profile', credentialCreatedAt: 1, groupId: 'pool', generation: 8, credentialRevision: 'csr_abcdefghijklmnopqrstuv'})),
+  }));
+  const refreshRuntimeAuth = vi.fn(async () => ({}));
+  const ctx = {...base, agentRuntime: {...base.agentRuntime, nativeHome: {readFiles}},
+    sessions: {...base.sessions, current: {...base.sessions.current, auth: {services: {refreshRuntimeAuth}}}}};
+  const launchEnv = {HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{kind: 'group', serviceId: 'claude-subscription', groupId: 'pool', activeProfileId: 'launch-profile', fallbackProfileId: 'launch-profile', generation: 7, credentialRevision: 'csr_abcdefghijklmnopqrstuv'}])};
+  const runtime = createClaudeUnifiedTerminalTurnOperations({ctx, directory: '/tmp/terminal-issued-test', happierSessionId: 'terminal-issued-session', hostPreference: 'zellij', launchEnv, permissionMode: 'default', nativeOperationsOnly: true});
+  try {
+    await runtime.startProviderSession();
+    const hooks = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]![0];
+    await hooks.onSessionHook!('native-issued', {hook_event_name: 'SessionStart', session_id: 'native-issued', transcript_path: '/tmp/terminal-issued-test.jsonl', source: 'startup'});
+    expect(readFiles.mock.calls.filter(([files]) => files.includes('.happier-claude-connected-service-home.json'))).toHaveLength(0);
+    if (origin === 'host') await runtime.sendTurnPrompt('prompt', {localId: 'terminal-input'});
+    await hooks.onSessionHook!('native-issued', {hook_event_name: 'UserPromptSubmit', session_id: 'native-issued', prompt: 'prompt', prompt_id: 'native-prompt'});
+    expect(readFiles.mock.calls.filter(([files]) => files.includes('.happier-claude-connected-service-home.json'))).toHaveLength(1);
+    accountId = 'terminal-later';
+    await hooks.onSessionHook!('native-issued', {hook_event_name: 'StopFailure', session_id: 'native-issued', error: 'OAuth token has expired', error_details: 'OAuth token has expired'});
+    await vi.waitFor(() => expect(refreshRuntimeAuth).toHaveBeenCalledWith(expect.objectContaining({classification: expect.objectContaining({sourceProviderAccountId: 'terminal-issued', sourceProviderOrganizationId: 'terminal-org', profileId: 'terminal-profile', groupGeneration: 8})})));
+  } finally {await runtime.resetOrDisposeRuntime();}
+});

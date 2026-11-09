@@ -76,7 +76,6 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
       logger,
       isCanonicalTurnActive: () => canonicalActive,
       nowMs: () => now,
-      minPublishIntervalMs: 0,
     });
 
     publisher.publish({ available: false, reason: 'unsafe_window' });
@@ -123,30 +122,32 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     publisher.dispose();
   });
 
-  it('rate-limits flapping snapshots with a trailing converging write', () => {
+  it('publishes changed availability immediately and schedules no work for unchanged observations', () => {
     vi.useFakeTimers();
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
       publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
-      minPublishIntervalMs: 1000,
     });
 
     publisher.publish({ available: true, reason: null });
-    publisher.publish({ available: false, reason: 'unsafe_window' });
     publisher.publish({ available: true, reason: null });
-    publisher.publish({ available: false, reason: 'unsafe_window' });
-
-    // First write immediate; the flapping follow-ups coalesce into ONE trailing write that
-    // converges on the LATEST state.
     expect(captured.writes).toBe(1);
-    expect(captured.current().steerAvailable).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
 
-    vi.advanceTimersByTime(1000);
+    publisher.publish({ available: false, reason: 'unsafe_window' });
+    publisher.publish({ available: false, reason: 'unsafe_window' });
     expect(captured.writes).toBe(2);
     expect(captured.current().steerAvailable).toBe(false);
     expect(captured.current().steerUnavailableReason).toBe('unsafe_window');
+    expect(vi.getTimerCount()).toBe(0);
+
+    publisher.publishPendingInputInterruptAndRunLocalId('pending-input');
+    expect(captured.current()).toMatchObject({
+      steerAvailable: false,
+      pendingInputInterruptAndRunLocalId: 'pending-input',
+    });
     publisher.dispose();
   });
 
@@ -157,7 +158,6 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
       logger,
       isCanonicalTurnActive: () => true,
       nowMs: () => 1234,
-      minPublishIntervalMs: 1000,
       inFlightConfigApplySupported: true,
     });
 
@@ -165,7 +165,7 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     expect(captured.writes).toBe(1);
     expect(captured.current().inFlightConfigurationApplySupported).toBe(true);
 
-    // The static write must not consume the snapshot dedup/rate-limit budget: the first
+    // The static write must not consume the snapshot dedup state: the first
     // steer snapshot still writes immediately and carries the static capability along.
     publisher.publish({ available: false, reason: 'unsafe_window' });
     expect(captured.writes).toBe(2);
@@ -190,19 +190,18 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
     publisher.dispose();
   });
 
-  it('dispose cancels a scheduled trailing publication', () => {
+  it('publishes nothing after disposal', () => {
     vi.useFakeTimers();
     const captured = capture();
     const publisher = createClaudeUnifiedSteerCapabilityPublisher({
       publishStatus: captured.publishStatus,
       logger,
       isCanonicalTurnActive: () => true,
-      minPublishIntervalMs: 1000,
     });
 
     publisher.publish({ available: true, reason: null });
-    publisher.publish({ available: false, reason: 'unsafe_window' });
     publisher.dispose();
+    publisher.publish({ available: false, reason: 'unsafe_window' });
     vi.advanceTimersByTime(2000);
     expect(captured.writes).toBe(1);
 

@@ -17,17 +17,10 @@ function failedInjection(
   };
 }
 
-const policyOptions = {
-  retryAttempt: 1,
-  retryLimit: 3,
-  retryBaseDelayMs: 250,
-};
-
 describe('classifyClaudeUnifiedInjectionFailure', () => {
   it('retries recoverable failures that happened before any possible terminal write', () => {
-    expect(classifyClaudeUnifiedInjectionFailure(failedInjection({}), policyOptions)).toEqual({
+    expect(classifyClaudeUnifiedInjectionFailure(failedInjection({}))).toEqual({
       kind: 'retry',
-      retryAfterMs: 500,
     });
   });
 
@@ -36,26 +29,17 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
       phase: 'after_enter_unknown',
       duplicateRisk: 'likely',
       reason: 'timeout',
-    }), policyOptions)).toEqual({
+    }))).toEqual({
       kind: 'await_provider_confirmation',
     });
   });
 
-  it('terminalizes non-recoverable host failures even when retry attempts remain', () => {
+  it('terminalizes non-recoverable host failures', () => {
     expect(classifyClaudeUnifiedInjectionFailure(failedInjection({
       recoverable: false,
       reason: 'pane_dead',
       phase: 'liveness',
-    }), policyOptions)).toEqual({
-      kind: 'terminal_failure',
-    });
-  });
-
-  it('terminalizes recoverable no-write failures after the retry budget is exhausted', () => {
-    expect(classifyClaudeUnifiedInjectionFailure(failedInjection({}), {
-      ...policyOptions,
-      retryAttempt: 3,
-    })).toEqual({
+    }))).toEqual({
       kind: 'terminal_failure',
     });
   });
@@ -64,11 +48,7 @@ describe('classifyClaudeUnifiedInjectionFailure', () => {
     expect(classifyClaudeUnifiedInjectionFailure(failedInjection({
       phase: 'after_write_before_enter',
       duplicateRisk: 'possible',
-    }), {
-      retryAttempt: 0,
-      retryLimit: 3,
-      retryBaseDelayMs: -1,
-    })).toEqual({
+    }))).toEqual({
       kind: 'handoff_ambiguous_failure',
     });
   });

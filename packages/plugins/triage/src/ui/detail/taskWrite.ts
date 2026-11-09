@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isPluginError, type JsonValue, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
@@ -14,6 +14,7 @@ import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageSetTaskOriginErrorResultV1Schema } from '../../actions/taskOriginProtocol.js';
 import type { TriageCreateTaskActionInputV1 } from '../../actions/tasksProtocol.js';
+import { triageTaskWriteInvocationFailureV1 } from '../../actions/taskWriteFailure.js';
 
 type TaskAction = typeof TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 | typeof TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1
   | typeof TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1;
@@ -89,8 +90,7 @@ function createTaskWriteOperation() {
         else result = TriageTaskWriteResultV1Schema.parse(raw);
       }
       catch (error) {
-        result = isPluginError(error) && (error.code === 'denied' || error.code === 'cancelled')
-          ? { kind: 'refused', reason: error.code } : { kind: 'uncertain' };
+        result = triageTaskWriteInvocationFailureV1(error);
       }
       if (retired) return;
       active = null;
@@ -118,7 +118,7 @@ function createTaskWriteOperation() {
         }, { signal: controller.signal }));
         originErrorLink = answer.status === 'linked' ? 'linked' : 'failed';
       } catch (error) {
-        originErrorLink = isPluginError(error) && (error.code === 'denied' || error.code === 'cancelled') ? 'failed' : 'unknown';
+        originErrorLink = triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' : 'unknown';
       }
       if (retired) return false;
       active = null;

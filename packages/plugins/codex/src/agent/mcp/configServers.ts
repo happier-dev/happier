@@ -10,7 +10,7 @@ export type ReadCodexMcpConfigServersResult = Readonly<{
     warnings: ReadonlyArray<McpDiscoveryWarningV1>;
 }>;
 
-export function resolveCodexHome(env: NodeJS.ProcessEnv): string {
+export function resolveCodexHome(env: Readonly<Record<string, string | undefined>>): string {
     const codexHome = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
     const home = resolveHomeDirFromEnvironment(env);
     return codexHome ? expandHomePath(codexHome, home) : join(home, '.codex');
@@ -20,7 +20,7 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }
 
-function readCodexMcpConfig(env: NodeJS.ProcessEnv, path = join(resolveCodexHome(env), 'config.toml')): Readonly<{
+function readCodexMcpConfig(env: Readonly<Record<string, string | undefined>>, path = join(resolveCodexHome(env), 'config.toml')): Readonly<{
     path: string;
     entries: Readonly<Record<string, unknown>>;
     warnings: ReadonlyArray<McpDiscoveryWarningV1>;
@@ -39,14 +39,14 @@ function readCodexMcpConfig(env: NodeJS.ProcessEnv, path = join(resolveCodexHome
     }
 }
 
-export function readCodexMcpServerKeysFromConfigToml(env: NodeJS.ProcessEnv): string[] {
+export function readCodexMcpServerKeysFromConfigToml(env: Readonly<Record<string, string | undefined>>): string[] {
     return Object.keys(readCodexMcpConfig(env).entries).sort().map((name) => (
         /^[A-Za-z0-9_-]+$/u.test(name) ? name : JSON.stringify(name)
     ));
 }
 
 export async function readCodexMcpConfigServers(
-    params: Readonly<{ env?: NodeJS.ProcessEnv; directory?: string | null }>,
+    params: Readonly<{ env?: Readonly<Record<string, string | undefined>>; directory?: string | null }>,
 ): Promise<ReadCodexMcpConfigServersResult> {
     const env = params.env ?? process.env;
     const directory = params.directory?.trim() ? expandHomePath(params.directory, resolveHomeDirFromEnvironment(env)) : null;

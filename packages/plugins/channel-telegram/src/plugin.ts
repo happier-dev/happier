@@ -39,7 +39,7 @@ import {
   TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA,
   TELEGRAM_SETUP_GUIDANCE,
 } from './channelActions.js';
-import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 
 const providers = ConversationProvidersContributionProtocolV1;
 
@@ -58,8 +58,6 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   version: '0.0.0',
   displayName: 'Telegram Channels',
   description: 'Connects Telegram bot conversations to Happier Channels.',
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   brand: { iconResourceId: TELEGRAM_BRAND_RESOURCE_ID },
   hostAccess: {
@@ -92,9 +90,34 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       path: 'assets/brand.png',
       contentType: 'image/png',
     },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   ui: {
-    translations: TELEGRAM_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   connectedAccountDescriptors: {
     [TELEGRAM_BOT_CONNECTED_ACCOUNT_ID]: {
@@ -107,6 +130,12 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
             {
               id: 'bot-token',
               kind: 'manual',
+              setup: {
+                url: 'https://t.me/BotFather',
+                checklist: ['Open Telegram BotFather and send /newbot to create a bot, or select an existing bot.', 'Copy the bot API token issued by BotFather and paste it here.'],
+                createKeyTitle: 'Open Telegram BotFather',
+              },
+              credentialOrigin: 'authentication',
               directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
               title: 'Bot token',
               outcomeReconciliation: 'none',
@@ -273,7 +302,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
     [TELEGRAM_AUTOMATION_MESSAGE_SETUP_ACTION_ID]: {
       title: 'Choose a Telegram chat to watch',
-      description: 'Resolves a Telegram chat to immutable source facts for an Automation Event.',
+      description: 'Resolves a Telegram chat to immutable source facts for a Workflow Event.',
       surfaces: ['plugin'],
       inputSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
       resultSchema: TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
@@ -286,8 +315,8 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       run: setupTelegramChatEventSource,
     },
     [TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {
-      title: 'Admit Telegram Automation Event',
-      description: 'Admits one frozen Telegram Automation Event obligation through the current source definitions.',
+      title: 'Admit Telegram Workflow Event',
+      description: 'Admits one frozen Telegram Workflow Event obligation through the current source definitions.',
       surfaces: providers.operations.automationEventAdmit.declaration.surfaces,
       dangerLevel: providers.operations.automationEventAdmit.declaration.dangerLevel,
       inputSchema: providers.operations.automationEventAdmit.declaration.input.schema.jsonSchema,

@@ -1,11 +1,14 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.openrouter/openrouter",
-  "reviewedAt": "2026-07-12",
+  "reviewedAt": "2026-10-28",
   "sources": [
     { "id": "api-overview", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/reference/overview", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
     { "id": "responses", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/reference/responses/overview", "accessedAt": "2026-07-12", "revision": "beta-current-2026-07-12" },
-    { "id": "models", "kind": "official-doc", "url": "https://openrouter.ai/docs/guides/overview/models", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" }
+    { "id": "models", "kind": "official-doc", "url": "https://openrouter.ai/docs/guides/overview/models", "accessedAt": "2026-07-12", "revision": "current-2026-07-12" },
+    { "id": "key-limits", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/reference/limits", "accessedAt": "2026-10-28", "revision": "current-2026-10-28" },
+    { "id": "credits-api", "kind": "official-doc", "url": "https://openrouter.ai/docs/api/api-reference/credits/get-credits", "accessedAt": "2026-10-28", "revision": "current-2026-10-28" },
+    { "id": "usage-accounting", "kind": "official-doc", "url": "https://openrouter.ai/docs/use-cases/usage-accounting", "accessedAt": "2026-10-28", "revision": "current-2026-10-28" }
   ],
   "facts": [
     { "path": "catalog.probes.openrouter-openai-responses.openai-models", "sourceIds": ["models"], "status": "verified" },
@@ -27,6 +30,9 @@
     { "path": "endpointTemplates.openrouter-openai-responses.capabilities.toolRoundTrips", "sourceIds": ["responses"], "status": "verified" },
     { "path": "endpointTemplates.openrouter-openai-responses.protocol", "sourceIds": ["responses"], "status": "verified" },
     { "path": "kind", "sourceIds": ["api-overview"], "status": "verified" },
-    { "path": "websiteUrl", "sourceIds": ["api-overview"], "status": "verified" }
+    { "path": "websiteUrl", "sourceIds": ["api-overview"], "status": "verified" },
+    { "path": "usageSources.key-usage", "sourceIds": ["key-limits", "api-overview"], "status": "verified" },
+    { "path": "usageSources.account-credits", "sourceIds": ["credits-api"], "status": "verified" },
+    { "path": "requestCost.openrouter-openai-chat", "sourceIds": ["usage-accounting"], "status": "experimental" }
   ]
 }

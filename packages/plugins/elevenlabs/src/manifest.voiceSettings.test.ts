@@ -1,5 +1,6 @@
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 import {
@@ -108,16 +109,16 @@ describe('ElevenLabs public Voice settings declaration', () => {
     expect(translations.map((translation) => translation.locale).sort())
       .toEqual([...SUPPORTED_UI_LOCALES].sort());
 
-    const missing = translations.flatMap((translation) => {
-      const value = translation.messages[ELEVENLABS_PROCESSING_DISCLOSURE_KEY];
+    const packaged = readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST);
+    const missing = Object.entries(packaged).flatMap(([locale, messages]) => {
+      const value = messages[ELEVENLABS_PROCESSING_DISCLOSURE_KEY];
       return typeof value === 'string' && value.trim().length > 0
         ? []
-        : [`${translation.locale}: ${ELEVENLABS_PROCESSING_DISCLOSURE_KEY}`];
+        : [`${locale}: ${ELEVENLABS_PROCESSING_DISCLOSURE_KEY}`];
     });
     expect(missing).toEqual([]);
 
-    const english = translations.find((translation) => translation.locale === 'en');
-    expect(english?.messages[ELEVENLABS_PROCESSING_DISCLOSURE_KEY])
+    expect(packaged.en[ELEVENLABS_PROCESSING_DISCLOSURE_KEY])
       .toBe(ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK);
   });
 

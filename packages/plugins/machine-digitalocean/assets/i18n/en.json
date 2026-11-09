@@ -1,6 +1,7 @@
 {
-  "machineDigitalOcean.presentation.kind": "droplet",
-  "machineDigitalOcean.presentation.description": "A cloud Droplet with your chosen size, image and region.",
+  "machineDigitalOcean.account.tokenHint": "Use a DigitalOcean personal access token. Create one in the control panel under Account → API → Tokens.",
+  "machineDigitalOcean.presentation.kind": "Machine",
+  "machineDigitalOcean.presentation.description": "A cloud machine with your chosen size, image and region.",
   "machineDigitalOcean.presentation.ready": "Account connected",
   "machineDigitalOcean.presentation.unavailable": "Account unavailable",
   "machineDigitalOcean.network.ipv4": "IPv4 only",

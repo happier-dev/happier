@@ -23,5 +23,6 @@
   "machineCrabbox.presentation.description": "Máquinas de desenvolvimento de um coordenador ou contêiner local.",
   "machineCrabbox.presentation.ready": "Pronto",
   "machineCrabbox.presentation.unavailable": "Conta indisponível",
-  "machineCrabbox.presentation.provider_unavailable": "Crabbox indisponível neste computador"
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox indisponível neste computador",
+  "machineCrabbox.presentation.coordinatorDescription": "Servidores de um coordenador Crabbox que você conecta."
 }

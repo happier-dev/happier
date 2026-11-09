@@ -39,7 +39,8 @@ describe('Claude external-session metadata', () => {
         try {
             const filePath = join(root, 'session-one.jsonl');
             const transcript = [
-                jsonlLine({ type: 'user', message: { content: 'Native user body' } }),
+                jsonlLine({ type: 'progress', cwd: '   ' }),
+                jsonlLine({ type: 'user', cwd: '  /repo/my project  ', message: { content: 'Native user body' } }),
                 ...Array.from({ length: 2_500 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(1_024) })),
             ].join('');
             await writeFile(filePath, transcript);
@@ -64,6 +65,7 @@ describe('Claude external-session metadata', () => {
             };
             const request = { filePath, remoteSessionId: 'session-one' };
             const single = await readClaudeJsonlSessionTitleWithIndex(request);
+            expect(single).toMatchObject({ cwd: '/repo/my project', indexState: { cwd: '/repo/my project' } });
             const singleBytes = await bytesRead();
             expect(singleBytes).toBeGreaterThanOrEqual(Buffer.byteLength(transcript));
             const concurrent = await Promise.all(['Context A title', 'Context B title'].map(title => (
@@ -75,10 +77,33 @@ describe('Claude external-session metadata', () => {
 
             const beforeWarm = await bytesRead();
             await expect(readClaudeJsonlSessionTitleWithIndex({ ...request, previousState: single.indexState }))
-                .resolves.toMatchObject({ title: 'Native user body' });
+                .resolves.toMatchObject({ title: 'Native user body', cwd: '/repo/my project' });
             expect(await bytesRead()).toBe(beforeWarm);
-            await appendFile(filePath, jsonlLine({ type: 'custom-title', sessionId: 'session-one', customTitle: 'Appended title' }));
-            await expect(readClaudeJsonlSessionTitleWithIndex(request)).resolves.toMatchObject({ title: 'Appended title' });
+            await appendFile(filePath, jsonlLine({ type: 'custom-title', sessionId: 'session-one', customTitle: 'Appended title', cwd: '/later/directory' }));
+            await expect(readClaudeJsonlSessionTitleWithIndex({ ...request, previousState: single.indexState }))
+                .resolves.toMatchObject({ title: 'Appended title', cwd: '/repo/my project' });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('re-derives cwd from an older checkpoint and learns it from appended native records', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-cwd-index-'));
+        try {
+            const filePath = join(root, 'session-one.jsonl');
+            const request = { filePath, remoteSessionId: 'session-one' };
+            await writeFile(filePath, jsonlLine({ type: 'user', message: { content: 'Native task' } }));
+            const noCwd = await readClaudeJsonlSessionTitleWithIndex(request);
+            expect(noCwd).toMatchObject({ cwd: null, indexState: { cwd: null } });
+            await appendFile(filePath, jsonlLine({ type: 'progress', cwd: '  C:\\work\\my project  ' }));
+            const appended = await readClaudeJsonlSessionTitleWithIndex({ ...request, previousState: noCwd.indexState });
+            expect(appended).toMatchObject({ title: 'Native task', cwd: 'C:\\work\\my project' });
+            // Actual predecessor checkpoints have all title fields but no cwd knowledge.
+            const previousState = Object.fromEntries(Object.entries(appended.indexState).filter(([key]) => key !== 'cwd'));
+            openMock.mockClear();
+            await expect(readClaudeJsonlSessionTitleWithIndex({ ...request, previousState }))
+                .resolves.toMatchObject({ title: 'Native task', cwd: 'C:\\work\\my project' });
+            expect(openMock).toHaveBeenCalled();
         } finally {
             await rm(root, { recursive: true, force: true });
         }

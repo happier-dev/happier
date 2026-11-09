@@ -119,9 +119,9 @@ describe('createClaudeNativeAgentSdkContext', () => {
   });
 
   it('delegates tool proposals to the host Session interception service', async () => {
-    const before = vi.fn(async (request) => ({
+    const before = vi.fn(async () => ({
       status: 'continue' as const,
-      input: request.input,
+      input: { path: 'host-selected.md' },
     }));
     const context = {
       services: {
@@ -138,9 +138,13 @@ describe('createClaudeNativeAgentSdkContext', () => {
       input: { path: 'README.md' },
     })).resolves.toEqual({
       status: 'continue',
-      input: { path: 'README.md' },
+      input: { path: 'host-selected.md' },
     });
-    expect(before).toHaveBeenCalledOnce();
+    const refusal = new Error('Host tool interception unavailable');
+    before.mockRejectedValueOnce(refusal);
+    await expect(native.agentRuntime.toolExecution.before({
+      callId: 'execution-run-call-2', name: 'Read', input: { path: 'README.md' },
+    })).rejects.toBe(refusal);
   });
 
   it('does not discover workflow records outside a private native-session invocation', async () => {
@@ -251,7 +255,12 @@ describe('createClaudeNativeAgentSdkContext', () => {
   });
 
   it('awaits the native host durable transcript publisher for typed Session events', async () => {
-    const publishSessionEvent = vi.fn(async () => ({ status: 'custodied' as const }));
+    let releasePublication!: () => void;
+    const publication = new Promise<void>(resolve => { releasePublication = resolve; });
+    const publishSessionEvent = vi.fn(async () => {
+      await publication;
+      return { status: 'custodied' as const };
+    });
     const context = {
       services: {
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -274,10 +283,22 @@ describe('createClaudeNativeAgentSdkContext', () => {
       message: 'Clear the terminal draft.',
     };
 
-    await expect(
-      native.agentRuntime.transcripts.publishSessionEvent(event),
-    ).resolves.toEqual({ status: 'custodied' });
+    let settled = false;
+    const pendingPublication = native.agentRuntime.transcripts.publishSessionEvent(event).then(result => {
+      settled = true;
+      return result;
+    });
+    try {
+      await vi.waitFor(() => expect(publishSessionEvent).toHaveBeenCalledWith(event));
+      expect(settled).toBe(false);
+    } finally {
+      releasePublication();
+    }
+    await expect(pendingPublication).resolves.toEqual({ status: 'custodied' });
     expect(publishSessionEvent).toHaveBeenCalledWith(event);
+    const refusal = new Error('Host transcript custody unavailable');
+    publishSessionEvent.mockRejectedValueOnce(refusal);
+    await expect(native.agentRuntime.transcripts.publishSessionEvent(event)).rejects.toBe(refusal);
   });
 
   it('uses the bound public SessionHandle for host-owned workflow records', async () => {
@@ -366,6 +387,9 @@ describe('createClaudeNativeAgentSdkContext', () => {
         updatedAt: 1,
       },
     });
-    expect(publishHeadline).toHaveBeenCalledOnce();
+    expect(publishHeadline).toHaveBeenCalledWith({
+      workflow: { v: 1, backendId: 'claude', activeRuns: [], updatedAt: 1 },
+      agentActivity: { v: 1, backendId: 'claude', activeEntries: [], updatedAt: 1 },
+    });
   });
 });

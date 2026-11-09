@@ -31,6 +31,7 @@ import {
   claudeHandbackQueuedAttachment,
   claudeHandbackUserRow,
 } from '../../../transcripts/peerMessage.testkit.js';
+import { CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID } from './tuiControls/types.js';
 
 const RESUME_CHOICE_DIALOG = [
   'This session is 18h 2m old and 560.4k tokens.',
@@ -1042,7 +1043,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     const transcripts = createManualTranscriptFollowFixture();
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { transcripts: transcripts.service });
     const operations = createClaudeUnifiedTerminalProviderOperations({ ctx, directory: '/tmp/claude-project', happierSessionId: 'happy-sidechain-usage',
-      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default', initialModelId: 'claude-sonnet-4-6',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default', initialModelId: 'claude-haiku-4-5',
       knownProviderSession: { providerSessionId: 'native-session', transcriptPath: '/tmp/claude-sidechain-usage.jsonl' } });
     const observations: Array<Readonly<{ source: string; modelId: string | null }>> = [];
     const effectiveModels: string[] = [];
@@ -1058,16 +1059,17 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await transcripts.emitRow({ type: 'assistant', uuid: 'unknown-child-record', sessionId: 'native-session', isSidechain: true, parent_tool_use_id: 'task-tool',
         message: { id: 'unknown-child-request', usage: { input_tokens: 5, output_tokens: 1 } } });
       await transcripts.emitRow({ type: 'result', subtype: 'error_max_turns', uuid: 'failed-summary', session_id: 'native-session', total_cost_usd: 0.2,
-        usage: { input_tokens: 1 }, modelUsage: {
-          'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
-          'claude-haiku-4-5': { inputTokens: 20, outputTokens: 3, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+        usage: { input_tokens: 1, iterations: [{ type: 'message', input_tokens: 10, output_tokens: 2 }] }, modelUsage: {
+          'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 200_000 },
+          'claude-haiku-4-5': { inputTokens: 20, outputTokens: 3, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 100_000 },
         } });
       expect(observations).toEqual([
         expect.objectContaining({ nativeRecordId: 'main-record', modelId: 'claude-sonnet-4-6', turnId: 'host-paid-turn' }),
         expect.objectContaining({ nativeRecordId: 'child-record', inferenceId: 'child-request', modelId: 'claude-haiku-4-5', tokens: expect.objectContaining({ total: 23 }) }),
         expect.objectContaining({ nativeRecordId: 'unknown-child-record', modelId: null }),
         expect.objectContaining({ source: 'claude-sdk-result', nativeRecordId: 'failed-summary', modelId: null, tokens: expect.objectContaining({ total: 35 }),
-          cost: expect.objectContaining({ reportedUsd: 0.2, costSource: 'provider_reported_api_equivalent' }) }),
+          cost: expect.objectContaining({ reportedUsd: 0.2, costSource: 'provider_reported_api_equivalent' }),
+          contextWindowTokens: null, contextSnapshot: expect.objectContaining({ modelId: null, windowTokens: null }) }),
       ]);
       // Sidechain rows have no proven foreground-turn ownership; whole-Session
       // summaries cannot allocate their residual cost to the current turn.
@@ -1284,6 +1286,87 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       expect((afterLaunch as { status: string }).status).not.toBe('applied');
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it.each([
+    { initialUltracode: false, deferredEffort: false },
+    { initialUltracode: true, deferredEffort: false },
+    { initialUltracode: true, deferredEffort: true },
+  ])('restores the selected regular effort when disabling ultracode after resume (launch ultracode=$initialUltracode, deferred effort=$deferredEffort)', async ({ initialUltracode, deferredEffort }) => {
+    const configDir = await mkdtemp(join(tmpdir(), 'claude-resume-effort-'));
+    const idle = ['╭─────╮', '│ >   │', '╰─────╯', '  ? for shortcuts'].join('\n');
+    const confirmation = ['Set reasoning effort to medium', idle].join('\n');
+    const generating = ['● working', '✶ Forging… (10s · esc to interrupt)', '  ⏸ manual'].join('\n');
+    const controlPort = createFakeControlPort({ captures: [
+      ...(deferredEffort ? [generating, generating] : []), idle, idle, confirmation,
+    ] });
+    const terminalHost = createTerminalHostFixture();
+    terminalHost.service.controlPort = vi.fn(async () => controlPort);
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      enabledFeatures: [CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID],
+      publishSessionEvent: vi.fn(async () => ({ status: 'custodied' as const })),
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'terminal-resume-effort', hostPreference: 'zellij',
+      launchEnv: { CLAUDE_CONFIG_DIR: configDir }, permissionMode: 'default', initialModelId: 'claude-opus-5-5',
+      initialEffort: deferredEffort ? 'high' : 'medium', initialUltracode,
+      knownProviderSession: { providerSessionId: 'native-resume-effort', transcriptPath: '/tmp/native-resume-effort.jsonl' },
+      launchIntent: { kind: 'resume_native', providerSessionId: 'native-resume-effort' },
+      tuiControl: { timings: { commandSettleMs: 0, verifyPollTimeoutMs: 0 } },
+    });
+    try {
+      await operations.startProviderSession();
+      if (deferredEffort) {
+        await expect(operations.updateProviderConfiguration({ configOption: { id: 'reasoning_effort', value: 'medium' } }))
+          .resolves.toMatchObject({ status: 'applied', timing: 'next_idle' });
+        expect(controlPort.sentLiteral).toEqual([]);
+      }
+      await expect(operations.updateProviderConfiguration({ configOption: { id: 'ultracode', value: false } }))
+        .resolves.toMatchObject({ status: 'applied' });
+      expect(controlPort.sentLiteral).toEqual(['/effort medium']);
+      const sends = controlPort.sentLiteral.length;
+      await operations.updateProviderConfiguration({ configOption: { id: 'ultracode', value: false } });
+      expect(controlPort.sentLiteral).toHaveLength(sends);
+    } finally {
+      await operations.disposeProviderSession();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refines verified terminal effort only after an actual model observation', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'claude-effort-proof-'));
+    const idle = ['╭─────╮', '│ >   │', '╰─────╯', '  ? for shortcuts'].join('\n');
+    const confirmation = (effort: string) => [`Set reasoning effort to ${effort}`, '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
+    const controlPort = createFakeControlPort({ captures: [idle, idle, confirmation('high'), idle, idle, confirmation('medium')] });
+    const terminalHost = createTerminalHostFixture();
+    terminalHost.service.controlPort = vi.fn(async () => controlPort);
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
+      transcripts: transcripts.service, enabledFeatures: [CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID],
+      publishSessionEvent: vi.fn(async () => ({ status: 'custodied' as const })),
+    });
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'terminal-effort-proof', hostPreference: 'zellij',
+      launchEnv: { CLAUDE_CONFIG_DIR: configDir }, permissionMode: 'default', initialModelId: 'sonnet',
+      knownProviderSession: { providerSessionId: 'native-effort-proof', transcriptPath: '/tmp/native-effort-proof.jsonl' },
+      tuiControl: { timings: { commandSettleMs: 0 } },
+    });
+    const observedModels: unknown[] = [];
+    operations.subscribeEffectiveModel(evidence => observedModels.push(evidence));
+    try {
+      await operations.startProviderSession();
+      await expect(operations.updateProviderConfiguration({ configOption: { id: 'reasoning_effort', value: 'high' } }))
+        .resolves.toMatchObject({ status: 'applied' });
+      expect(observedModels).toEqual([]);
+      await transcripts.emitRow({ type: 'assistant', uuid: 'actual-main', session_id: 'native-effort-proof',
+        message: { model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'ready' }] } });
+      await expect(operations.updateProviderConfiguration({ configOption: { id: 'reasoning_effort', value: 'medium' } }))
+        .resolves.toMatchObject({ status: 'applied' });
+      expect(observedModels.at(-1)).toMatchObject({ modelId: 'claude-sonnet-4-6', reasoningEffort: 'medium' });
+    } finally {
+      await operations.disposeProviderSession();
+      await rm(configDir, { recursive: true, force: true });
     }
   });
 
@@ -1578,6 +1661,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       return {
         startServerOptions,
         service: {
+          ...createSessionHooksFixture().service,
           startServer: vi.fn(async (options: Record<string, unknown>) => {
             startServerOptions.push(options);
             return {
@@ -2040,6 +2124,24 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
           publishedSessionId: 'claude-first-session',
           nativeSessionLogPath: provenTranscriptPath,
         }));
+
+        // Native /clear JSONL wraps a new conversation around SDK messages that
+        // can still carry the old session_id. The JSONL sessionId owns the row.
+        await writeFile(unreadableTranscriptPath, `${JSON.stringify({
+          type: 'assistant', uuid: 'second-session-reply',
+          sessionId: 'claude-second-session', session_id: 'claude-first-session',
+          timestamp: new Date().toISOString(),
+          message: { role: 'assistant', content: [{ type: 'text', text: 'second reply' }], stop_reason: 'end_turn' },
+        })}\n`, 'utf8');
+        await options.onSessionHook?.('claude-second-session', {
+          session_id: 'claude-second-session',
+          transcript_path: unreadableTranscriptPath,
+          hook_event_name: 'SessionStart',
+        });
+        await vi.waitFor(() => expect(publishes().at(-1)).toEqual(expect.objectContaining({
+          publishedSessionId: 'claude-second-session',
+          nativeSessionLogPath: unreadableTranscriptPath,
+        })));
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
         await rm(tempDir, { recursive: true, force: true });
@@ -2514,7 +2616,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('clears a provider-unavailable durable blocker when the screen becomes writable again', async () => {
+  it('retains a chooser-blocked Pending head until the screen becomes writable again', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
     const terminalHost = createTerminalHostFixture();
@@ -2568,15 +2670,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       });
       expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
 
-      const completion = runtime.waitForTurnCompletion();
       await vi.advanceTimersByTimeAsync(20);
 
-      await expect(completion).resolves.toBeUndefined();
-      expect(rejected).toEqual([{
-        localIds: ['local-provider-unavailable-screen'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'provider_unavailable_before_acceptance',
-      }]);
+      expect(rejected).toEqual([]);
       expect(cleared).toEqual([]);
 
       terminalHost.service.captureInputState = vi.fn(async () => ({
@@ -2587,9 +2683,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
       await runtime.startProviderSession();
 
-      expect(cleared).toEqual([{
-        deliveryBlockedReason: 'provider_unavailable_before_acceptance',
-      }]);
+      expect(cleared).toEqual([]);
       expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
       expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledWith(
         expect.anything(),
@@ -2646,6 +2740,55 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
 
+  });
+
+  it.each([false, true])('settles terminal failure independently of held account-usage delivery (sidechain=%s)', async sidechain => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const observations: unknown[] = [];
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, { accountUsage: {
+      async resolveSourceContext() { return null; },
+      async recordSnapshot(input: unknown) { observations.push(input); await held; return { status: 'recorded' }; },
+    } });
+    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: 'terminal-quota-held',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    }));
+    const runtime = envelope.operations;
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      observeTerminalLifecycle(observation: unknown): Promise<void>;
+    }>;
+    const runtimeEvents: unknown[] = [];
+    runtime.subscribeRuntimeEvents(event => { runtimeEvents.push(event); });
+    let observed: Promise<void> | undefined;
+    let settled = false;
+    try {
+      await runtime.sendTurnPrompt('first prompt');
+      await nativeRuntime.observeTerminalLifecycle({ agentId: 'claude', type: 'prompt_submitted',
+        promptText: 'first prompt', source: 'hook', observedAtMs: Date.now() });
+      observed = nativeRuntime.observeTerminalLifecycle({ agentId: 'claude', type: 'turn_failed',
+        reason: 'stop_failure_hook', source: 'hook', detail: 'Usage limit reached',
+        evidence: { hook_event_name: 'StopFailure', error: 'rate_limit', last_assistant_message: 'Usage limit reached' },
+        ...(sidechain ? { sidechainAgentId: 'quota-child' } : {}),
+      }).then(() => { settled = true; });
+      await vi.waitFor(() => expect(observations).toHaveLength(1));
+      await vi.waitFor(() => expect(settled).toBe(true));
+      if (sidechain) {
+        expect(observations[0]).not.toHaveProperty('policyDisposition');
+        expect(runtimeEvents).not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'turn-failed' })]));
+        await nativeRuntime.observeTerminalLifecycle({ agentId: 'claude', type: 'completion_candidate' });
+        await expect(runtime.waitForTurnCompletion()).resolves.toBeUndefined();
+      } else {
+        expect(observations[0]).toHaveProperty('policyDisposition', 'evidence_only');
+        expect(runtimeEvents).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'turn-failed' })]));
+        await expect(runtime.waitForTurnCompletion()).rejects.toThrow();
+      }
+    } finally {
+      release(); await observed;
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
   });
 
   it('does not fail the parent turn on a sidechain-attributed StopFailure (ported R-11 / HF-3)', async () => {
@@ -2919,7 +3062,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     const recordInstant = '2026-01-02T03:04:05.000Z';
     const transcripts = createManualTranscriptFollowFixture([{
       type: 'assistant', uuid: 'historical-workflow', session_id: 'claude-provider-session-1', timestamp: recordInstant,
-      message: { content: [{ type: 'tool_use', id: 'wf_historical', name: 'Workflow', input: { script: "export const meta = { name: 'Historical workflow' }" } }] },
+      message: { model: 'old-model', content: [{ type: 'tool_use', id: 'wf_historical', name: 'Workflow', input: { script: "export const meta = { name: 'Historical workflow' }" } }] },
     }, {
       type: 'system', uuid: 'historical-task-start', session_id: 'claude-provider-session-1',
       subtype: 'task_started', task_id: 'workflow-task-1', tool_use_id: 'wf_historical', task_type: 'local_workflow',
@@ -2934,7 +3077,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
     });
     const activityEvents: AgentSessionRuntimeEvent[] = [];
+    const observedModels: string[] = [];
     operations.subscribeCanonicalAgentSessionEvents((event) => activityEvents.push(event));
+    operations.subscribeEffectiveModel(evidence => observedModels.push(evidence.modelId));
     try {
       await operations.startProviderSession();
       const options = (ctx.agentRuntime.sessionHooks.startServer as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
@@ -2948,6 +3093,17 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         hook_event_name: 'SessionStart', session_id: 'claude-provider-session-1', source: 'startup',
         transcript_path: '/tmp/claude-provider-session-1.jsonl',
       });
+      expect(observedModels).toEqual([]);
+      await transcripts.emitRow({
+        type: 'assistant', uuid: 'replayed-model', session_id: 'claude-provider-session-1', isReplay: true,
+        message: { model: 'replayed-model', content: [{ type: 'text', text: 'historical' }] },
+      });
+      expect(observedModels).toEqual([]);
+      await transcripts.emitRow({
+        type: 'assistant', uuid: 'live-model', session_id: 'claude-provider-session-1',
+        message: { model: 'actual-model', content: [{ type: 'text', text: 'ready' }] },
+      });
+      expect(observedModels).toEqual(['actual-model']);
       expect(activityEvents.some((event) => event.kind === 'runtime-activity-snapshot' && event.state === 'active')).toBe(false);
       await transcripts.emitRow({
         type: 'system', uuid: 'live-task-start', session_id: 'claude-provider-session-1',
@@ -3060,7 +3216,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
   it.each(['hook', 'known-resume', 'statusline'] as const)('publishes unknown when required ordered history fails and preserves the admission error (%s)', async (ingress) => {
     const terminalHost = createTerminalHostFixture();
-    const baselineFailure = new Error('required history unavailable');
+    const baselineFailure = Object.assign(new Error('required history unavailable'), {
+      code: 'native_agent_terminal_transcript_follow_admission_failed',
+    });
     const transcripts = createManualTranscriptFollowFixture();
     const followSource = vi.fn(async () => { throw baselineFailure; });
     const ctx = createPluginContextFixture(terminalHost.service, createEventsFixture().service, {
@@ -3101,6 +3259,8 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await vi.waitFor(() => expect(activityEvents.at(-1)).toMatchObject({
         kind: 'runtime-activity-snapshot', state: 'unknown', activeCount: 0,
       }));
+      await expect(runtime.sendProviderTurnPrompt('later input must settle without readmission')).rejects.toBe(baselineFailure);
+      expect(followSource).toHaveBeenCalledTimes(1);
     } finally { await runtime.disposeProviderSession(); }
   });
 
@@ -4463,6 +4623,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       observedAt: 101,
     }));
     const sessionHooks = {
+      ...createSessionHooksFixture().service,
       startServer: vi.fn(async () => ({
         port: 43123,
         stop: vi.fn(),
@@ -4746,7 +4907,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       observedAt: Date.now(),
     }));
     const fakePort = createFakeControlPort({
-      captures: [SAFEGUARD_PAUSE_DIALOG, IDLE_COMPOSER],
+      captures: [IDLE_COMPOSER, SAFEGUARD_PAUSE_DIALOG, IDLE_COMPOSER],
     });
     terminalHost.service.controlPort = vi.fn(async () => fakePort);
     const requestDecision = vi.fn(async () => ({
@@ -5710,12 +5871,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('reports already-effective convergence when a post-launch update matches the launch config (L5d)', async () => {
-    // Anti-hot-loop convergence: a pending override whose requested values equal the
-    // launch-effective config can never be "applied harder" — without this short-circuit the
-    // host override-synchronizer keeps it pending and re-attempts it at every metadata event /
-    // turn boundary forever. A request that genuinely differs stays pending
-    // (requires_interactive_control) because live TUI control is gated off.
+  it('keeps unverified launch effort pending when native controls are unavailable (L5d)', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
@@ -5733,15 +5889,15 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await runtime.updateSessionRuntimeConfig({ configOption: { id: 'reasoning_effort', value: 'high' } });
       await runtime.startProviderSession();
 
-      // Same model as launch → converged, not pending.
+      // Matching model intent still needs its selected effort verified after a native resume.
       await expect(runtime.updateSessionRuntimeConfig({ modelId: 'claude-opus-4-8' })).resolves.toEqual(
-        expect.objectContaining({ status: 'applied', timing: 'skipped_already_effective' }),
+        expect.objectContaining({ status: 'requires_interactive_control' }),
       );
-      // Same effort as launch (case-insensitive) → converged.
+      // A launch flag alone cannot settle the same effort request.
       await expect(runtime.updateSessionRuntimeConfig({
         configOption: { id: 'reasoning_effort', value: 'High' },
       })).resolves.toEqual(
-        expect.objectContaining({ status: 'applied', timing: 'skipped_already_effective' }),
+        expect.objectContaining({ status: 'requires_interactive_control' }),
       );
       // Different model → genuinely pending.
       await expect(runtime.updateSessionRuntimeConfig({ modelId: 'claude-sonnet-4-6' })).resolves.toEqual(
@@ -5769,7 +5925,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('reports already-effective convergence for ultracode and fallback-model post-launch matches (L5d)', async () => {
+  it('keeps matching launch ultracode and fallback settings deferred (L5d)', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
@@ -5790,16 +5946,16 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await expect(runtime.updateSessionRuntimeConfig({
         configOption: { id: 'ultracode', value: 'true' },
       })).resolves.toEqual(
-        expect.objectContaining({ status: 'applied', timing: 'skipped_already_effective' }),
+        expect.objectContaining({ status: 'applied', timing: 'before_next_prompt' }),
       );
       await expect(runtime.updateSessionRuntimeConfig({
         configOption: { id: 'ultracode', value: 'false' },
       })).resolves.toEqual(
         expect.objectContaining({ status: 'requires_interactive_control' }),
       );
-      // No fallback model was set at launch; requesting a cleared fallback is already effective.
+      // The fallback remains a launch setting even when unchanged.
       await expect(runtime.updateSessionRuntimeConfig({ fallbackModel: null })).resolves.toEqual(
-        expect.objectContaining({ status: 'applied', timing: 'skipped_already_effective' }),
+        expect.objectContaining({ status: 'applied', timing: 'before_next_prompt' }),
       );
       await expect(runtime.updateSessionRuntimeConfig({ fallbackModel: 'claude-sonnet-4-6' })).resolves.toEqual(
         expect.objectContaining({ status: 'requires_interactive_control' }),

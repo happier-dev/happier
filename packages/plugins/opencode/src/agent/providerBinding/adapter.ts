@@ -131,8 +131,12 @@ function resolveCredentialOptions(input: AgentProviderBindingMaterializeInput): 
   }
 
   const envReference = `{env:${OPENCODE_PROVIDER_SECRET_ENV_KEY}}`;
-  if (transport.destination.name.toLowerCase() === 'authorization'
-    && transport.destination.format === 'bearer') {
+  const bearer = transport.destination.name.toLowerCase() === 'authorization'
+    && transport.destination.format === 'bearer';
+  if (input.binding.endpoint.protocol === 'openai-responses' && !bearer) {
+    throw new Error('OpenCode Responses requires Authorization bearer authentication');
+  }
+  if (bearer) {
     return { secretValue: value, apiKey: envReference };
   }
   const renderedReference = transport.destination.format === 'bearer'
@@ -162,6 +166,18 @@ async function materializeOpenCodeProviderBindingV1(
   const protocol = input.binding.endpoint.protocol;
   if (!isSupportedProtocol(protocol)) {
     throw new Error('OpenCode provider binding does not support this wire protocol');
+  }
+  // Native config expands environment/file references before consuming model
+  // and header strings. Provider catalog data is literal, not native config.
+  // Only this adapter may author the credential reference below.
+  const literalData = JSON.stringify([
+    input.binding.selection.model.id,
+    input.binding.selection.model.name,
+    input.binding.endpoint.normalizedUrl,
+    input.binding.endpoint.publicHeaders,
+  ]);
+  if (/\{(?:env|file):[^}]*\}/u.test(literalData)) {
+    throw new Error('OpenCode Provider data cannot contain native config substitutions');
   }
   const credential = resolveCredentialOptions(input);
   const headers = sortHeaders(input.binding.endpoint.publicHeaders);

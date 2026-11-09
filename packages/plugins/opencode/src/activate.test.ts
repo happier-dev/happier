@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
@@ -120,6 +120,11 @@ describe('activate', () => {
 
   it('registers the OpenCode config MCP discovery source through the plugin API', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-plugin-mcp-'));
+    let activation: PluginTestkit | undefined;
+    onTestFinished(async () => {
+      try { await activation?.dispose(); }
+      finally { await rm(root, { recursive: true, force: true }); }
+    });
     const opencodeDir = join(root, '.config', 'opencode');
     const configPath = join(opencodeDir, 'opencode.json');
     await mkdir(opencodeDir, { recursive: true });
@@ -141,7 +146,7 @@ describe('activate', () => {
     vi.stubEnv('OPENCODE_CONFIG', '');
     vi.stubEnv('OPENCODE_CONFIG_DIR', '');
 
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const agent = activation.registration('agents', 'opencode');
 
     expect(agent).toEqual(expect.objectContaining({
@@ -213,7 +218,6 @@ describe('activate', () => {
       }],
       warnings: [],
     });
-    await activation.dispose();
   });
 
   it.each([
@@ -285,7 +289,7 @@ describe('activate', () => {
     await activation.dispose();
   });
 
-  it('opens detached ACP execution through the run facet without inventing a Session', async () => {
+  it.each([undefined, 'deny'] as const)('opens detached ACP execution or refuses an unenforceable workspace ceiling (%s)', async workspaceWrites => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = activation.registration('agents', 'opencode')?.factory;
     if (!factory) throw new Error('Expected OpenCode Agent factory');
@@ -307,6 +311,8 @@ describe('activate', () => {
       cwd: '/workspace',
       input: { text: 'Implement the change' },
       profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+      configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 0 }, options: {}, ...(workspaceWrites ? { workspaceWrites } : {}) },
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
         unset: [],
@@ -320,6 +326,13 @@ describe('activate', () => {
     } as unknown as AgentExecutionRunRuntimeContextV1;
 
     expect(context).not.toHaveProperty('session');
+    if (workspaceWrites === 'deny') {
+      await expect(runtime.sessions.executionRunContextV1?.open(request, context))
+        .rejects.toMatchObject({ code: 'role_policy_unenforceable' });
+      expect(openExecutionRunV1).not.toHaveBeenCalled();
+      await activation.dispose();
+      return;
+    }
     const opened = await runtime.sessions.executionRunContextV1?.open(request, context);
 
     expect(opened).toMatchObject({

@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "Observa un canal de Discord",
-  "discord.automation.messageSource.setup.description": "Tria el bot de Discord i el canal els missatges del qual han d’iniciar aquesta automatització.",
+  "discord.automation.messageSource.setup.description": "Tria el bot de Discord i el canal els missatges del qual han d’iniciar aquest flux de treball.",
   "discord.automation.messageSource.setup.submit": "Observa el canal",
   "discord.automation.messageSource.setup.credential": "Compte del bot de Discord",
   "discord.automation.messageSource.setup.credential.description": "Tria el compte connectat existent del bot de Discord; els tokens del bot no s’introdueixen mai aquí.",

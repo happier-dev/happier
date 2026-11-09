@@ -104,6 +104,7 @@
               "fork"
             ],
             "startupInstructions": {
+              "revisionChanges": "resume",
               "versions": [
                 1
               ]
@@ -496,10 +497,11 @@
     ],
     "atmospherePictures": [],
     "backgroundServices": [],
+    "backupDestinations": [],
+    "botTemplates": [],
     "browserActions": [],
     "browserTargets": [],
     "captureSources": [],
-    "commands": [],
     "composerAttachments": [],
     "composerControls": [],
     "composerReferences": [],
@@ -507,6 +509,10 @@
     "connectedAccountDescriptors": [
       {
         "authentication": {
+          "account": {
+            "artifactId": "connected-account-authentication",
+            "exportName": "activate"
+          },
           "defaultModeId": "oauth",
           "modes": [
             {
@@ -520,7 +526,8 @@
                 "profile",
                 "email",
                 "offline_access"
-              ]
+              ],
+              "title": "Sign in with ChatGPT"
             },
             {
               "id": "device",
@@ -534,6 +541,7 @@
               ]
             },
             {
+              "credentialOrigin": "native_import",
               "fields": [
                 {
                   "default": "native",
@@ -562,18 +570,41 @@
               "kind": "manual",
               "outcomeReconciliation": "none",
               "setup": {
-                "url": "https://developers.openai.com/codex/auth",
                 "checklist": [
                   "On the computer you will import from, run codex login and complete the ChatGPT sign-in.",
                   "Choose that computer in Happier to import its saved Codex login."
                 ],
-                "createKeyTitle": "Read Codex login instructions"
+                "createKeyTitle": "Read Codex login instructions",
+                "url": "https://developers.openai.com/codex/auth"
               },
               "title": "Import native login"
             }
           ]
         },
         "id": "openai-codex",
+        "metadata": {
+          "planLabels": {
+            "business": "ChatGPT Business",
+            "edu": "ChatGPT Edu",
+            "edu_plus": "ChatGPT Edu Plus",
+            "edu_pro": "ChatGPT Edu Pro",
+            "education": "ChatGPT Edu",
+            "ent26": "ChatGPT Enterprise",
+            "enterprise": "ChatGPT Enterprise",
+            "enterprise_cbp_automation": "ChatGPT Enterprise (Automation)",
+            "enterprise_cbp_usage_based": "ChatGPT Enterprise CBP Usage Based",
+            "free": "ChatGPT Free",
+            "go": "ChatGPT Go",
+            "hc": "ChatGPT Enterprise",
+            "plus": "ChatGPT Plus",
+            "pro": "ChatGPT Pro (More)",
+            "prolite": "ChatGPT Pro",
+            "promax": "ChatGPT Pro (Max)",
+            "self_serve_business_prolite": "ChatGPT Self Serve Business ProLite",
+            "self_serve_business_usage_based": "ChatGPT Self Serve Business Usage Based",
+            "team": "ChatGPT Team"
+          }
+        },
         "recoveryCredits": {
           "supported": true
         },
@@ -597,7 +628,6 @@
         "filters": {
           "agentId": "codex"
         },
-        "hookApiVersion": 1,
         "id": "resolve-prerequisites",
         "on": "agent.resolvePrerequisites",
         "scope": "agent"
@@ -608,7 +638,6 @@
         "filters": {
           "agentId": "codex"
         },
-        "hookApiVersion": 1,
         "id": "augment-spawn-env",
         "on": "agent.spawnEnv.augment",
         "scope": "daemon"
@@ -675,7 +704,80 @@
     "providers": [],
     "registrySources": [],
     "requestInterceptors": [],
-    "resources": [],
+    "resources": [
+      {
+        "contentType": "application/json",
+        "id": "i18n-en",
+        "kind": "asset",
+        "path": "assets/i18n/en.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-de",
+        "kind": "asset",
+        "path": "assets/i18n/de.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ru",
+        "kind": "asset",
+        "path": "assets/i18n/ru.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pl",
+        "kind": "asset",
+        "path": "assets/i18n/pl.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-es",
+        "kind": "asset",
+        "path": "assets/i18n/es.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-fr",
+        "kind": "asset",
+        "path": "assets/i18n/fr.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-it",
+        "kind": "asset",
+        "path": "assets/i18n/it.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-pt",
+        "kind": "asset",
+        "path": "assets/i18n/pt.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ca",
+        "kind": "asset",
+        "path": "assets/i18n/ca.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hans",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hans.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-zh-hant",
+        "kind": "asset",
+        "path": "assets/i18n/zh-Hant.json"
+      },
+      {
+        "contentType": "application/json",
+        "id": "i18n-ja",
+        "kind": "asset",
+        "path": "assets/i18n/ja.json"
+      }
+    ],
     "roles": [],
     "scmBackends": [],
     "scmHostingProviders": [],
@@ -784,6 +886,7 @@
       }
     ],
     "skills": [],
+    "storeKinds": [],
     "systemTools": [
       {
         "executableNames": [
@@ -794,7 +897,6 @@
       }
     ],
     "targetedPluginContributions": [],
-    "tools": [],
     "transcriptActivities": [],
     "ui": {
       "renderers": [],
@@ -803,99 +905,51 @@
       "translations": [
         {
           "locale": "en",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
-          }
+          "resourceId": "i18n-en"
         },
         {
           "locale": "de",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Sprich direkt mit der aktiven Codex-Agentensitzung."
-          }
+          "resourceId": "i18n-de"
         },
         {
           "locale": "ru",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Говорите напрямую с активной сессией агента Codex."
-          }
+          "resourceId": "i18n-ru"
         },
         {
           "locale": "pl",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Rozmawiaj bezpośrednio z aktywną sesją agenta Codex."
-          }
+          "resourceId": "i18n-pl"
         },
         {
           "locale": "es",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Habla directamente con la sesión activa del agente Codex."
-          }
+          "resourceId": "i18n-es"
         },
         {
           "locale": "fr",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Parle directement avec la session active de l’agent Codex."
-          }
+          "resourceId": "i18n-fr"
         },
         {
           "locale": "it",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Parla direttamente con la sessione attiva dell’agente Codex."
-          }
+          "resourceId": "i18n-it"
         },
         {
           "locale": "pt",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Fale diretamente com a sessão ativa do agente Codex."
-          }
+          "resourceId": "i18n-pt"
         },
         {
           "locale": "ca",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "Parla directament amb la sessió activa de l’agent Codex."
-          }
+          "resourceId": "i18n-ca"
         },
         {
           "locale": "zh-Hans",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "直接与当前 Codex 智能体会话交谈。"
-          }
+          "resourceId": "i18n-zh-hans"
         },
         {
           "locale": "zh-Hant",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "直接與目前的 Codex 代理程式工作階段交談。"
-          }
+          "resourceId": "i18n-zh-hant"
         },
         {
           "locale": "ja",
-          "messages": {
-            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
-            "settingsVoice.mode.codexRealtime": "Codex Live",
-            "settingsVoice.mode.codexRealtimeSubtitle": "アクティブな Codex エージェントセッションと直接会話します。"
-          }
+          "resourceId": "i18n-ja"
         }
       ],
       "views": []
@@ -975,9 +1029,6 @@
   },
   "description": "OpenAI Codex coding agent.",
   "displayName": "Codex",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },

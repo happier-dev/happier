@@ -12,6 +12,7 @@ import { createPluginClientTestkit, type PluginClientTestkit } from '@happier-de
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { activate } from '../../actions/mountedUi.js';
 import { checkTriageTaskWrite } from './taskWrite.js';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -19,6 +20,72 @@ const clients: PluginClientTestkit[] = [];
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
   for (const client of clients.splice(0)) await client.dispose();
+});
+
+it.each([
+  ['tasks/create-v1', 'unavailable'], ['tasks/edit-v1', 'unavailable'], ['tasks/transition-v1', 'unavailable'],
+  ['tasks/create-v1', 'cancelled'], ['tasks/create-v1', 'denied'],
+] as const)(
+  'keeps a typed %s refusal distinct from a %s response lost after dispatch', async (action, responseCode) => {
+    let write!: ReturnType<typeof useTriageTaskCommit>;
+    let notStarted = true;
+    let attempts = 0;
+    await act(async () => {
+      mounted.push(await createPluginUiTestkit({
+        identity: { instanceId: `refused-${action}`, mountNonce: 'one' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          write = useTriageTaskCommit(async () => undefined);
+          return <Text value={write.result?.kind ?? 'idle'} />;
+        }),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { executeAction: () => {
+          attempts++;
+          if (notStarted) return { kind: 'refused', reason: 'plugin_action_current_intent_unavailable' };
+          throw new PluginError({ code: responseCode, retryable: false });
+        } },
+      }));
+    });
+    await act(async () => { await write.commit(action, {}); });
+    expect(write.result).toEqual({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
+    // A deliberate retry is available after a proven refusal; no automatic replay occurs.
+    expect(attempts).toBe(1);
+    notStarted = false;
+    await act(async () => { await write.commit(action, {}); });
+    expect(write.result).toEqual({ kind: 'uncertain', failure: { class: 'unknown', code: responseCode } });
+    await act(async () => { await write.commit(action, {}); });
+    expect(attempts).toBe(2);
+  },
+);
+
+it('retains uncertainty when the mounted host cannot transmit pre-handler dispatch evidence', async () => {
+  let write!: ReturnType<typeof useTriageTaskCommit>;
+  let attempts = 0;
+  await act(async () => {
+    mounted.push(await createPluginUiTestkit({
+      identity: { instanceId: 'untransmitted-dispatch-evidence', mountNonce: 'one' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => {
+        write = useTriageTaskCommit(async () => undefined);
+        return <Text value={write.result?.kind ?? 'idle'} />;
+      }),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: () => {
+        attempts++;
+        const error = new PluginError({ code: 'plugin_action_current_intent_unavailable', retryable: false });
+        // Genuine host boundary shape: cli-common/registration/actionHandlerInvocation.ts.
+        // The current hostApiWire V1 error schema does not carry this advisory.
+        throw Object.assign(error, { actionHandlerInvocation: 'notStarted',
+          data: { ...error.data, actionHandlerInvocation: 'notStarted' } });
+      } },
+    }));
+  });
+  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  expect(write.result).toEqual({ kind: 'uncertain', failure: { class: 'unknown', code: 'plugin_action_current_intent_unavailable' } });
+  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  expect(attempts).toBe(1);
 });
 
 it('holds a lost create response across remounts of the same scoped draft without replaying the write', async () => {

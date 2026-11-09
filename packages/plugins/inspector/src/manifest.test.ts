@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 
 import * as inspectorManifest from './manifest';
 import {
@@ -82,11 +83,13 @@ describe('Plugin Inspector manifest', () => {
 
   it('rejects duplicate translation locales', () => {
     const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
-      contributes: { ui: { translations: unknown[] } };
+      contributes: { ui?: { translations?: unknown[] } };
     };
-    const duplicateIndex = manifest.contributes.ui.translations.length;
-    manifest.contributes.ui.translations.push(
-      JSON.parse(JSON.stringify(manifest.contributes.ui.translations[0])),
+    const translations = manifest.contributes.ui?.translations;
+    if (!translations?.length) throw new Error('Expected a declared translation locale to duplicate.');
+    const duplicateIndex = translations.length;
+    translations.push(
+      JSON.parse(JSON.stringify(translations[0])),
     );
 
     expect(ingestPluginManifestV2(manifest)).toMatchObject({
@@ -108,7 +111,7 @@ describe('Plugin Inspector manifest', () => {
       expect.objectContaining({
         id: 'self-check',
         execution: { target: 'daemon' },
-        surfaces: ['ui', 'agent', 'mcp'],
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
       }),
     ]);
     expect(INSPECTOR_SETTINGS).toMatchObject({
@@ -156,15 +159,13 @@ describe('Plugin Inspector manifest', () => {
         artifact: INSPECTOR_NATIVE_BUNDLE_ID,
         requiredHostMethods: ['executeAction'],
       }],
-      translations: expect.arrayContaining([{
-        locale: 'en',
-        messages: expect.objectContaining({
-          'plugins.inspector.title': 'Plugin Inspector',
-          'plugins.inspector.settings.showDiagnostics': 'Show diagnostics in Plugin Inspector',
-        }),
-      }]),
+      translations: expect.arrayContaining([{ locale: 'en', resourceId: 'i18n-en' }]),
     });
     expect(PLUGIN_MANIFEST.contributes.ui).toEqual(INSPECTOR_UI);
+    expect(readPluginTranslationResources(new URL('../', import.meta.url), PLUGIN_MANIFEST).en).toMatchObject({
+      'plugins.inspector.title': 'Plugin Inspector',
+      'plugins.inspector.settings.showDiagnostics': 'Show diagnostics in Plugin Inspector',
+    });
     for (const view of INSPECTOR_UI.views.slice(2)) {
       expect(view).not.toHaveProperty('placement');
     }

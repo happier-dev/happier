@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "Отслеживать канал Discord",
-  "discord.automation.messageSource.setup.description": "Выберите бота Discord и канал, сообщения которого должны запускать эту автоматизацию.",
+  "discord.automation.messageSource.setup.description": "Выберите бота Discord и канал, сообщения которого должны запускать этот рабочий процесс.",
   "discord.automation.messageSource.setup.submit": "Отслеживать канал",
   "discord.automation.messageSource.setup.credential": "Учётная запись бота Discord",
   "discord.automation.messageSource.setup.credential.description": "Выберите существующую подключённую учётную запись бота Discord; токены бота здесь не вводятся.",

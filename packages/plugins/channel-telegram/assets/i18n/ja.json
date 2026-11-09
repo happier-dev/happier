@@ -10,7 +10,7 @@
   "channels.telegram.remediation.credential": "Telegram Bot アカウント",
   "channels.telegram.remediation.credential.description": "既存の Telegram Bot 接続済みアカウントを選択してください。Bot トークンをここで入力することはありません。",
   "channels.telegram.automation.setup.title": "監視する Telegram チャットを選択",
-  "channels.telegram.automation.setup.description": "このオートメーションを開始するメッセージが届く Telegram Bot とチャットを選択してください。",
+  "channels.telegram.automation.setup.description": "このワークフローを開始するメッセージが届く Telegram Bot とチャットを選択してください。",
   "channels.telegram.automation.setup.submit": "このチャットを使用",
   "channels.telegram.automation.setup.credential": "Telegram Bot アカウント",
   "channels.telegram.automation.setup.chat": "チャット ID",

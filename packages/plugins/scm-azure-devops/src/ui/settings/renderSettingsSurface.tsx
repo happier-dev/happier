@@ -18,10 +18,11 @@ import { createTriageSourceSettingsSurface } from '@happier-dev/triage-sources/u
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from '../../triage/actions.js';
-import { AZURE_DEVOPS_CONNECTED_ACCOUNT_ID, AZURE_DEVOPS_TRIAGE_DESCRIPTOR, AZURE_DEVOPS_TRIAGE_PURPOSE } from '../../triage/descriptor.js';
+import { AZURE_DEVOPS_CONNECTED_ACCOUNT_ID, AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID, AZURE_DEVOPS_TRIAGE_DESCRIPTOR, AZURE_DEVOPS_TRIAGE_PURPOSE } from '../../triage/descriptor.js';
 
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: AZURE_DEVOPS_PLUGIN_ID,
+  sourceLocalId: AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID,
   listInstancesLocalActionId: AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances,
   connectedAccountServiceLocalId: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
   connectedAccountPurpose: AZURE_DEVOPS_TRIAGE_PURPOSE,

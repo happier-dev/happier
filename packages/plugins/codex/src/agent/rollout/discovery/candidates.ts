@@ -16,10 +16,7 @@ import {
   parseCodexRolloutFilename,
   readCodexSessionMetaFromRollout,
 } from './indexData.js';
-import {
-  CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
-  readCodexRolloutHead,
-} from './rolloutTitle.js';
+import { readCodexRolloutHead } from './rolloutTitle.js';
 import type { CodexSessionThread } from './sessionThread.js';
 
 export type CodexRolloutCandidateGroup = Readonly<{
@@ -674,7 +671,6 @@ async function withRolloutCandidateTitles(params: Readonly<{
       const { title, thread, cwd } = await readCodexRolloutHead(
         entry.group.earliestFilePath,
         params,
-        CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
       );
       return {
         ...entry,

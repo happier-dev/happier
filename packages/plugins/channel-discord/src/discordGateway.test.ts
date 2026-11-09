@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DISCORD_DEFAULT_RECONNECT_DELAY_BOUNDS,
-  DISCORD_IDENTIFY_LIMIT_PER_24_HOURS,
   calculateDiscordReconnectDelayMs,
   createDiscordGatewaySession,
   normalizeDiscordGatewayUrl,
@@ -18,8 +17,8 @@ function gatewayBotLimit(overrides: Partial<Readonly<{
   observedAtMs: number;
 }>> = {}) {
   return {
-    total: DISCORD_IDENTIFY_LIMIT_PER_24_HOURS,
-    remaining: DISCORD_IDENTIFY_LIMIT_PER_24_HOURS,
+    total: 1_000,
+    remaining: 1_000,
     resetAfterMs: 24 * 60 * 60 * 1_000,
     maxConcurrency: 1,
     observedAtMs: NOW,
@@ -115,19 +114,6 @@ describe('Discord Gateway receive-progress owner', () => {
         d: { token: 'bot-token', session_id: 'session-a', seq: 73 },
       },
     });
-  });
-
-  it('reports an explicit history gap and closes when a received Dispatch cannot enter durable admission', () => {
-    const session = createDiscordGatewaySession({
-      token: 'bot-token',
-      intents: 4_608,
-      sessionStartLimit: gatewayBotLimit(),
-    });
-
-    expect(session.markAdmissionLost()).toEqual([
-      { kind: 'historyGap', reason: 'applicationAdmissionLost' },
-      { kind: 'disconnect', reason: 'applicationAdmissionLost' },
-    ]);
   });
 
   it('turns an invalid non-resumable session into a history gap rather than a false liveness claim', () => {

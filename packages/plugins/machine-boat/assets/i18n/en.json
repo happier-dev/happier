@@ -1,6 +1,6 @@
 {
   "machineBoat.presentation.kind": "sandbox",
-  "machineBoat.presentation.description": "EU-only Boat sandboxes. Running time is billed per second; stopping pauses compute billing. Plans start at $20/month and include the same amount of usage.",
+  "machineBoat.presentation.description": "EU-only sandboxes billed per second of running time.",
   "machineBoat.presentation.ready": "Account connected",
   "machineBoat.presentation.unavailable": "Account unavailable",
   "machineBoat.presentation.compute": "Running compute"

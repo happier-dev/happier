@@ -25,7 +25,7 @@ import {
 } from './agent/launchEnvironment.js';
 import { createPiAgentRuntime } from './agent/runtime/engine.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import { PI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 
 export {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
@@ -43,7 +43,6 @@ export const PI_PLUGIN = definePlugin({
   id: 'happier.agent.pi',
   version: '0.0.0',
   displayName: 'Pi',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -208,7 +207,34 @@ export const PI_PLUGIN = definePlugin({
   settings: {
     [PI_AGENT_SETTINGS_CONTRIBUTION_ID]: PI_AGENT_SETTINGS_DECLARATION,
   },
-  ui: { translations: PI_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
 });
 
 export const PLUGIN_MANIFEST = PI_PLUGIN.manifest;

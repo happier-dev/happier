@@ -21,7 +21,7 @@ describe('Telegram brand mark', () => {
   // Without a packaged mark the host draws a lettered tile, and marks never sit on tiles.
   it('declares the Telegram logo through the generic Resource owner', () => {
     expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: TELEGRAM_BRAND_RESOURCE_ID });
-    expect(PLUGIN_MANIFEST.contributes.resources).toEqual([{
+    expect(PLUGIN_MANIFEST.contributes.resources?.filter(({ id }) => id === TELEGRAM_BRAND_RESOURCE_ID)).toEqual([{
       id: TELEGRAM_BRAND_RESOURCE_ID,
       kind: 'asset',
       path: 'assets/brand.png',

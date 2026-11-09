@@ -1,6 +1,6 @@
 {
   "discord.automation.messageSource.setup.title": "Watch a Discord channel",
-  "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Automation.",
+  "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Workflow.",
   "discord.automation.messageSource.setup.submit": "Watch channel",
   "discord.automation.messageSource.setup.credential": "Discord bot account",
   "discord.automation.messageSource.setup.credential.description": "Choose the existing Discord bot Connected Account; bot tokens are never entered here.",

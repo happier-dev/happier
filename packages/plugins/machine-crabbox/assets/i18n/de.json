@@ -23,5 +23,6 @@
   "machineCrabbox.presentation.description": "Entwicklungsmaschinen über einen Koordinator oder lokalen Container.",
   "machineCrabbox.presentation.ready": "Bereit",
   "machineCrabbox.presentation.unavailable": "Konto nicht verfügbar",
-  "machineCrabbox.presentation.provider_unavailable": "Crabbox ist auf diesem Computer nicht verfügbar"
+  "machineCrabbox.presentation.provider_unavailable": "Crabbox ist auf diesem Computer nicht verfügbar",
+  "machineCrabbox.presentation.coordinatorDescription": "Server von einem Crabbox-Koordinator, den du verbindest."
 }

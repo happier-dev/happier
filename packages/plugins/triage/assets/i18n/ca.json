@@ -134,6 +134,8 @@
   "plugins.triage.surface.actions.subject.other": "Tota la resta",
   "plugins.triage.surface.actions.subject.deploymentReceipt": "Desplegaments",
   "plugins.triage.surface.actions.subject.deploymentEnvironment": "Entorns",
+  "plugins.triage.surface.actions.subject.workflowRun": "Execucions de fluxos de treball",
+  "plugins.triage.surface.actions.investigateRun": "Investiga aquesta execució",
   "plugins.triage.surface.actions.workspace.referenceOnly": "Sense còpia de treball",
   "plugins.triage.surface.actions.workspace.repository": "El projecte que triï",
   "plugins.triage.surface.actions.workspace.pullRequest": "Un worktree de revisió preparat",
@@ -959,5 +961,8 @@
   "plugins.triage.tasks.firstRun.own.rowDescription": "Enllaça-les a sessions, bloqueja-les amb una pull request, divideix-les en subtasques.",
   "plugins.triage.tasks.firstRun.trackers.title": "Porta tasques d’un tracker",
   "plugins.triage.tasks.firstRun.trackers.description": "Es queden al seu tracker. Happier les llegeix i les edita allà.",
-  "plugins.triage.tasks.firstRun.trust": "Els trackers es llegeixen en directe a la màquina que triïs. Les seves tasques mai es copien al teu compte."
+  "plugins.triage.tasks.firstRun.trust": "Els trackers es llegeixen en directe a la màquina que triïs. Les seves tasques mai es copien al teu compte.",
+  "plugins.triage.surface.sources.permanent": "Tornar-ho a provar no ho arreglarà. A Detalls hi ha el que necessita el suport.",
+  "plugins.triage.surface.sources.supportCode": "Per al suport",
+  "plugins.triage.surface.failure.unreachableSuffix": "no s’ha pogut contactar"
 }

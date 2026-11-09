@@ -5,6 +5,7 @@ import type {
   TriageConfiguredSourceInstanceV1,
   TriageEntryLocatorV1,
   TriageEntryRefV1,
+  TriageTaskFieldChoicesV1,
   TriageTaskFieldsV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -35,10 +36,11 @@ export type TriageReobserveEntryInputV1 = Readonly<{
   sourceInstanceId: string;
   lastKnownLocator?: TriageEntryLocatorV1;
   includeTaskFields?: true;
+  includeTaskFieldChoices?: true;
 }>;
 
 export type TriageReobserveEntryResultV1 =
-  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; detailData?: JsonValue }>
+  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
@@ -107,6 +109,7 @@ export async function reobserveTriageEntry(
       ...(input.lastKnownLocator === undefined
         ? {}
         : { lastKnownLocator: input.lastKnownLocator }),
+      ...(input.includeTaskFieldChoices === true ? { includeTaskFieldChoices: true as const } : {}),
     }, options);
     const qualified = qualifySourceObservation({
       source: input.entryRef.source,
@@ -120,6 +123,8 @@ export async function reobserveTriageEntry(
       ? { kind: 'observed', observation: qualified.observation,
           ...(input.includeTaskFields === true && observed.kind === 'present' && observed.taskFields !== undefined
             ? { taskFields: observed.taskFields } : {}),
+          ...(input.includeTaskFieldChoices === true && observed.kind === 'present' && observed.taskFieldChoices !== undefined
+            ? { taskFieldChoices: observed.taskFieldChoices } : {}),
           ...(observed.kind === 'present' && observed.detailData !== undefined ? { detailData: observed.detailData } : {}) }
       : { kind: 'rejected', reason: qualified.reason };
   })();

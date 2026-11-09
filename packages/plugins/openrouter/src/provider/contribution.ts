@@ -47,4 +47,11 @@ export const OPENROUTER_PROVIDER_CONTRIBUTION = {
     manualModelPolicy: 'allowed',
     probes: [{ endpointTemplateId: 'openrouter-openai-responses', path: '/api/v1/models', parser: 'openai-models' }],
   },
+  usageSources: [
+    { id: 'key-usage', endpointTemplateId: 'openrouter-openai-chat', path: '/api/v1/key', parser: 'openrouter-key-usage' },
+    { id: 'account-credits', endpointTemplateId: 'openrouter-openai-chat', path: '/api/v1/credits', parser: 'openrouter-account-credits',
+      billingCredential: { slotId: 'managementKey', title: 'Management key', keyUrl: 'https://openrouter.ai/settings/management-keys',
+        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
+  ],
+  requestCost: { endpointTemplateIds: ['openrouter-openai-chat'] },
 } satisfies ProviderContributionV1;

@@ -8,8 +8,7 @@ const targets = [{ architecture: 'amd64', format: 'x86_64' }, { architecture: 'a
 /** Cold data. Native package availability and exact requested execution decide support. */
 export const binfmtQemu: Omit<MachineRecipeV1, 'id'> = {
     revision: '1', title: 'Build emulation',
-    description: 'Prepare this build Machine for the requested foreign Linux architectures. Emulated builds are slower. '
-        + 'Native or already-working support changes nothing. Missing distro packages are unsupported until a persistent pinned installer is available.',
+    description: 'Build for other Linux architectures on this Machine. Emulated builds are slower.',
     inputSchema: { type: 'object', properties: {
         manager: { type: 'string', enum: ['apt', 'dnf'] },
         architectures: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)?$' } },

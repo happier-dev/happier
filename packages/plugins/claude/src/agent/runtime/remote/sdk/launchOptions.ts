@@ -3,7 +3,7 @@ import type { QueryOptions } from '../../../sdk/types.js';
 import { buildClaudeHookSettingsOverlay } from '../../../hooks/settings.js';
 import { buildClaudeMcpConfigArgs } from '../../../mcp/materializeConfigArgs.js';
 import { resolveClaudeLaunchSettingsOverlayArgs } from '../../launchSettings.js';
-import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
+import { resolveClaudePermissionModeFromRuntimeMode, shouldAllowClaudePermissionBypass } from '../../permissionMode.js';
 import { buildClaudePluginDirArgs } from '../../pluginDirArgs.js';
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
 import type { ClaudeAgentSdkTurnOperationsParams } from './session.js';
@@ -32,6 +32,8 @@ export function buildClaudeSdkQueryLaunchOptions(params: ClaudeAgentSdkTurnOpera
     const args = resolveClaudeLaunchSettingsOverlayArgs({
         args: [], interactionKind: 'noninteractive_sdk', permissionMode: state.permissionMode,
         launchSettings, workspaceWrites: state.workspaceWrites,
+        launchEnv: params.launchEnv,
+        cwd: params.directory,
         skillOverrides: state.skillOverrides,
         mcpToolPolicy: params.mcpToolPolicy, helperModelEnv: params.helperModelEnv,
         allowedTools: params.allowedTools, unlistedTools: params.unlistedTools,
@@ -42,7 +44,7 @@ export function buildClaudeSdkQueryLaunchOptions(params: ClaudeAgentSdkTurnOpera
         launchEffort: launchSettings.ultracode ? 'xhigh' : state.effort,
         options: {
             cwd: params.directory, env: params.launchEnv, skills: state.skills, abort: params.abortSignal,
-            allowDangerouslySkipPermissions: true,
+            allowDangerouslySkipPermissions: shouldAllowClaudePermissionBypass(params.launchEnv),
             permissionMode: resolveClaudePermissionModeFromRuntimeMode({ permissionMode: state.permissionMode }),
             ...(state.modelId ? { model: state.modelId } : {}),
             ...(state.fallbackModel ? { fallbackModel: state.fallbackModel } : {}),
@@ -52,7 +54,6 @@ export function buildClaudeSdkQueryLaunchOptions(params: ClaudeAgentSdkTurnOpera
                     ? ['--include-partial-messages'] : []),
                 ...(params.supportsSystemPromptSnapshotOff === true ? ['--system-prompt-snapshot', 'off'] : []),
                 ...buildClaudePluginDirArgs({ hookPluginDir: state.hookPluginDir, skills: state.skills }),
-                ...(state.hookPluginDir ? ['--include-hook-events'] : []),
                 ...buildClaudeMcpConfigArgs(state.mcpServers),
             ],
             ...(settingsJson ? { settingsJson } : {}),

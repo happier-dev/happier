@@ -9,7 +9,7 @@ import type { ClaudeRuntimeLogger } from './dependencies.js';
 
 import { resolveClaudeConfigDirOverride } from '../environment.js';
 import {
-  mapClaudeRateLimitEventToUsageDetails,
+  mapClaudeProviderFailureToUsageDetails,
   mapClaudeRuntimeRateLimitsToUsageObservation,
 } from '../auth/services/runtime/usage.js';
 import { resolveClaudeUsageSubjectRef } from '../auth/services/usage/identity.js';
@@ -43,6 +43,7 @@ export type ClaudeRuntimeAccountUsageService = Readonly<{
   recordSnapshot?(input: Readonly<{
     sessionId?: string | null;
     snapshot: AgentAccountUsageSnapshot;
+    policyDisposition?: 'evidence_only';
     source?: AgentAccountUsageSourceContextInput | null;
     credentialProof?: Readonly<{ providerAccountId: string; credentialFingerprint: string }>;
   }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<
@@ -56,7 +57,7 @@ export type ClaudeRuntimeAccountUsageContext = Readonly<{
     accountUsage: ClaudeRuntimeAccountUsageService;
     nativeHome?: AgentSessionNativeHomeService;
   }>;
-  logger: Pick<ClaudeRuntimeLogger, 'debug'>;
+  logger: Pick<ClaudeRuntimeLogger, 'debug' | 'warn'>;
 }>;
 
 type ClaudeRuntimeAccountUsageParams = Readonly<{
@@ -65,6 +66,7 @@ type ClaudeRuntimeAccountUsageParams = Readonly<{
   sessionId: string;
   launchEnv?: Readonly<Record<string, string>> | null;
   observedAtMs?: number;
+  policyDisposition?: 'evidence_only';
 }>;
 
 function readString(value: unknown): string | null {
@@ -132,7 +134,8 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
   params: ClaudeRuntimeAccountUsageParams,
 ): Promise<void> {
   const service = params.ctx.agentRuntime.accountUsage;
-  if (!service || typeof service.recordSnapshot !== 'function') return;
+  const recordSnapshot = service?.recordSnapshot;
+  if (typeof recordSnapshot !== 'function') return;
 
   const observedAtMs = params.observedAtMs ?? Date.now();
   const identity = buildRuntimeIdentity({
@@ -206,7 +209,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
       accountLabel: liveAccountIdentity?.accountLabel ?? null,
     })
     : (() => {
-      const details = mapClaudeRateLimitEventToUsageDetails(params.evidence);
+      const details = mapClaudeProviderFailureToUsageDetails(params.evidence);
       if (!details) return null;
       return mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot({
         subject,
@@ -219,24 +222,29 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
 
   if (!snapshot) return;
 
-  try {
-    const result = await service.recordSnapshot({
-      sessionId: params.sessionId,
-      snapshot,
-      ...(sourceContext && credentialProof ? { credentialProof } : {}),
-      ...(sourceContext && (subject.kind === 'providerSubject' || credentialProof)
-        ? { source: sourceAddress }
-        : {}),
-    });
-    if (result.status !== 'recorded') {
-      params.ctx.logger.debug('Claude runtime provider-account usage snapshot was not recorded', {
-        status: result.status,
-        reason: 'reason' in result ? result.reason : null,
+  // Account identity and source qualification above belong to this observation.
+  // The host owns best-effort delivery/retries once the qualified snapshot is submitted.
+  void (async () => {
+    try {
+      const result = await recordSnapshot.call(service, {
+        sessionId: params.sessionId,
+        snapshot,
+        ...(params.policyDisposition ? { policyDisposition: params.policyDisposition } : {}),
+        ...(sourceContext && credentialProof ? { credentialProof } : {}),
+        ...(sourceContext && (subject.kind === 'providerSubject' || credentialProof)
+          ? { source: sourceAddress }
+          : {}),
+      });
+      if (result.status !== 'recorded') {
+        params.ctx.logger.warn('Claude runtime provider-account usage snapshot was not recorded', {
+          status: result.status,
+          reason: 'reason' in result ? result.reason : null,
+        });
+      }
+    } catch (error) {
+      params.ctx.logger.warn('Claude runtime provider-account usage recording failed (ignored)', {
+        errorName: error instanceof Error ? error.name : typeof error,
       });
     }
-  } catch (error) {
-    params.ctx.logger.debug('Claude runtime provider-account usage recording failed (ignored)', {
-      errorName: error instanceof Error ? error.name : typeof error,
-    });
-  }
+  })();
 }

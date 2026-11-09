@@ -32,6 +32,15 @@ function binding(overrides: Partial<ConversationBindingStateV1> = {}): Conversat
 }
 
 describe('Conversation binding transition', () => {
+  it.each([
+    { inboundDebounceMs: 1_500 },
+    { linkPreviewPolicy: 'providerDefault' as const },
+    { senderFeedback: 'off' as const, endpoint: { kind: 'direct' as const, audience: 'direct' as const, id: 'endpoint-1', label: 'Renamed' } },
+  ])('preserves input authority for presentation and batching edits: %j', patch => {
+    const current = binding();
+    expect(transitionConversationBinding({ current, requested: { ...current, ...patch } }))
+      .toMatchObject({ kind: 'updated',  binding: { authorityEpoch: 7 } });
+  });
   it('rejects host attestation in every authored Session recipe, including unchanged retained targets', () => {
     const base = binding();
     if (base.target.kind !== 'session') throw new Error('Expected Session target');
@@ -81,6 +90,40 @@ describe('Conversation binding transition', () => {
     })).toEqual({ kind: 'unchanged', binding: current });
   });
 
+  it.each(['mode', 'progress'] as const)('retains a PR Watch %s change and advances authority only for policy changes', (change) => {
+    const target = {
+      kind: 'session',
+      sessionId: 'session-1',
+      pullRequestLink: { repository: 'org/repo', number: 42 },
+      policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'safe-yolo', approvals: { kind: 'off' }, newSession: { kind: 'off' } },
+      pullRequestWatch: {
+        policy: { mode: 'address', archiveAfterMerge: false },
+        progress: { roundsStarted: 1, continuationRounds: 0 },
+      },
+    } satisfies ConversationBindingStateV1['target'];
+    const current = binding({
+      endpoint: { kind: 'githubPullRequest', audience: 'shared', id: 'org/repo#42', pullRequest: { repository: 'org/repo', number: 42 } },
+      target,
+    });
+    const requestedTarget = {
+      ...target,
+      pullRequestWatch: change === 'mode'
+        ? { ...target.pullRequestWatch, policy: { ...target.pullRequestWatch.policy, mode: 'autoFix' as const } }
+        : { ...target.pullRequestWatch, progress: { ...target.pullRequestWatch.progress, roundsStarted: 2 } },
+    };
+
+    expect(transitionConversationBinding({ current, requested: { ...current, target: requestedTarget } })).toEqual({
+      kind: 'updated',
+
+
+      binding: { ...current, target: requestedTarget, authorityEpoch: change === 'mode' ? 8 : 7 },
+    });
+    expect(transitionConversationBinding({
+      current,
+      requested: { ...current, target: structuredClone(target) },
+    })).toEqual({ kind: 'unchanged', binding: current });
+  });
+
   it('treats a change from direct-only to addressed shared-message input as an authority change', () => {
     const current = binding();
 
@@ -89,8 +132,8 @@ describe('Conversation binding transition', () => {
       requested: { ...current, inputMode: 'addressedMessages' },
     })).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: false,
+
+
       binding: {
         inputMode: 'addressedMessages',
         authorityEpoch: 8,
@@ -98,7 +141,7 @@ describe('Conversation binding transition', () => {
     });
   });
 
-  it('clamps the Session permission policy in the same authority update when an audience expands', () => {
+  it('preserves the chosen Session permission ceiling when an audience expands', () => {
     const current = binding();
     const result = transitionConversationBinding({
       current,
@@ -110,8 +153,8 @@ describe('Conversation binding transition', () => {
 
     expect(result).toEqual({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: true,
+
+
       binding: {
         ...current,
         allowedPrincipalIds: ['principal-ada', 'principal-grace'],
@@ -120,7 +163,7 @@ describe('Conversation binding transition', () => {
           sessionId: 'session-1',
           policy: {
             deliveryMode: 'repliesOnly',
-            permissionCeiling: 'read-only',
+            permissionCeiling: 'yolo',
             approvals: { kind: 'off' },
             newSession: { kind: 'off' },
           },
@@ -176,8 +219,8 @@ describe('Conversation binding transition', () => {
       },
     })).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: false,
+
+
       binding: { authorityEpoch: 8 },
     });
   });
@@ -238,8 +281,8 @@ describe('Conversation binding transition', () => {
 
     expect(result).toEqual({
       kind: 'updated',
-      authorityChanged: false,
-      policyClamped: false,
+
+
       binding: {
         ...current,
         endpoint: { ...current.endpoint, label: 'Ada Lovelace' },
@@ -248,7 +291,7 @@ describe('Conversation binding transition', () => {
     });
   });
 
-  it('preserves an owner-requested broader ceiling for a narrowing edit but clamps an endpoint identity change', () => {
+  it('preserves an owner-requested ceiling for both narrowing and endpoint identity changes', () => {
     const current = binding({
       allowedPrincipalIds: ['principal-ada', 'principal-grace'],
       authorityEpoch: 3,
@@ -270,8 +313,8 @@ describe('Conversation binding transition', () => {
 
     expect(narrowing).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: false,
+
+
       binding: {
         authorityEpoch: 4,
         target: { kind: 'session', policy: { permissionCeiling: 'yolo' } },
@@ -279,11 +322,11 @@ describe('Conversation binding transition', () => {
     });
     expect(endpointChange).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: true,
+
+
       binding: {
         authorityEpoch: 4,
-        target: { kind: 'session', policy: { permissionCeiling: 'read-only', approvals: { kind: 'off' } } },
+        target: { kind: 'session', policy: { permissionCeiling: 'yolo', approvals: { kind: 'off' } } },
       },
     });
   });
@@ -305,12 +348,12 @@ describe('Conversation binding transition', () => {
       },
     })).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: true,
+
+
       binding: {
         authorityEpoch: 4,
         endpoint: { kind: 'thread', audience: 'shared', id: 'thread-1' },
-        target: { kind: 'session', policy: { permissionCeiling: 'read-only' } },
+        target: { kind: 'session', policy: { permissionCeiling: 'yolo' } },
       },
     });
   });
@@ -338,8 +381,8 @@ describe('Conversation binding transition', () => {
       },
     })).toMatchObject({
       kind: 'updated',
-      authorityChanged: true,
-      policyClamped: false,
+
+
       binding: {
         authorityEpoch: 8,
         target: {

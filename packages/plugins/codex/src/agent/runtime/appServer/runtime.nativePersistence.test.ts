@@ -5,14 +5,90 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentExecutionRunConversationEventV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createCodexNativeAppServerClient } from './client.js';
 import { createCodexAppServerRuntime, startCodexAppServerRuntime, waitForCodexAppServerRuntimeTurnCompletion } from './runtime.js';
+import { createCodexNativeAppServerExecutionRunConversationRuntime } from './native.js';
 
 // Opt-in real-provider boundary: no Account credentials or external model calls.
 // Use the exact supported binary via HAPPIER_CODEX_NATIVE_TEST_BIN.
 const nativeBinary = process.env.HAPPIER_CODEX_NATIVE_TEST_BIN;
 describe.skipIf(!nativeBinary || process.platform === 'win32')('native Codex rollout persistence', () => {
+  it('settles fresh and resumed Runs against a closed custom Provider through native terminal evidence', async () => {
+    const root = await mkdtemp('/tmp/cr-');
+    const env = { PATH: process.env.PATH ?? '', HOME: root, CODEX_HOME: root, CODEX_SQLITE_HOME: join(root, 'sqlite') };
+    const listener = createServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('Missing closed Provider address');
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+    const socketPath = join(root, 'native.sock');
+    // A process-level true value proves that each thread's Run policy wins.
+    const child = spawn(nativeBinary!, ['-c', 'features.unbounded_connection_retries=true',
+      'app-server', '--listen', `unix://${socketPath}`], { cwd: root, env, stdio: ['ignore', 'ignore', 'ignore'] });
+    const exited = once(child, 'exit');
+    const exec = { systemTools: { resolve: async () => ({
+      executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: nativeBinary,
+    }) } } as unknown as ExecService;
+    const modelProvider = 'happier_0123456789abcdef0123456789abcdef';
+    const providerInfo = { name: 'Happier provider' as const, base_url: `http://127.0.0.1:${address.port}/v1`,
+      wire_api: 'responses' as const, requires_openai_auth: false as const, supports_websockets: false as const };
+    const opened: Array<ReturnType<typeof createCodexNativeAppServerExecutionRunConversationRuntime>> = [];
+    let threadId: string | undefined;
+    try {
+      await expect.poll(async () => {
+        if (child.exitCode !== null) throw new Error('Native retry fixture exited before socket readiness');
+        return await stat(socketPath).then(() => true, () => false);
+      }).toBe(true);
+      for (const kind of ['create', 'resume'] as const) {
+        const requests: Array<{ method: string; params: unknown }> = [];
+        const runtime = createCodexAppServerRuntime({
+          executionRunId: `closed-provider-${kind}`, directory: root, initialModelId: 'gpt-5',
+          initialPermissionMode: 'read-only', processEnv: env,
+          initialProviderBinding: { v: 1, modelProvider, config: { [`model_providers.${modelProvider}`]: providerInfo } },
+          host: { baseProcessEnv: env, logger: { debug() {}, warn() {} }, createClient: async () => {
+            const client = await createCodexNativeAppServerClient({ exec, processEnv: env,
+              transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: false } });
+            return { ...client, request: async (method, params, options) => {
+              if (method === 'thread/start' || method === 'thread/resume') requests.push({ method, params });
+              return await client.request(method, params, options);
+            } };
+          } },
+        });
+        const run = createCodexNativeAppServerExecutionRunConversationRuntime(runtime, `closed-provider-${kind}`);
+        opened.push(run);
+        const events: AgentExecutionRunConversationEventV1[] = [];
+        let settle!: () => void;
+        const terminal = new Promise<void>(resolve => { settle = resolve; });
+        run.watch(event => {
+          events.push(event);
+          if (event.kind === 'turn-failed') settle();
+        });
+        threadId = await startCodexAppServerRuntime(runtime, kind === 'resume'
+          ? { resumeId: threadId, preserveRequestedThreadId: true, strictNativeResumeIdentity: true } : undefined);
+        expect(requests.at(-1)).toMatchObject({ method: kind === 'create' ? 'thread/start' : 'thread/resume',
+          params: { modelProvider, config: { [`model_providers.${modelProvider}`]: providerInfo,
+            'features.unbounded_connection_retries': false } } });
+        await expect(run.send({ inputIds: [`input-${kind}`], input: { text: 'Reply OK.' },
+          delivery: { kind: 'newTurn', turnId: `turn-${kind}` } })).resolves.toMatchObject({ status: 'admitted' });
+        await terminal;
+        expect(events.filter(event => event.kind === 'turn-failed')).toMatchObject([{
+          turnId: `turn-${kind}`, diagnostic: { code: 'codex_app_server_turn_failed',
+            details: { failureCause: { phase: 'turn', providerErrorCode: 'HttpConnectionFailed' } } },
+        }]);
+        expect(events.filter(event => event.kind === 'turn-complete' || event.kind === 'turn-cancelled')).toEqual([]);
+        await run.dispose();
+      }
+    } finally {
+      for (const run of opened) await run.dispose();
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      await exited;
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('resumes captured conversation after replacing the native process and private SQLite home', async () => {
     const root = await mkdtemp('/tmp/r77-');
     const home = join(root, 'home');
