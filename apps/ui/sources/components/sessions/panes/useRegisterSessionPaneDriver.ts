@@ -28,6 +28,9 @@ import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projec
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
+import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/useBrowserSurfaceHostProps';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 
 type SessionPaneScopedProps = Readonly<{ sessionId: string; scopeId: string }>;
 
@@ -126,6 +129,21 @@ export function useRegisterSessionPaneDriver(
         serverId,
         platform: pluginProjection.platform,
     } satisfies SessionPluginRuntimeState;
+
+    const browserPlatform = resolveBrowserSurfacePlatform(pluginRuntime.platform);
+    useOpenBrowserTargetInWorkspace({
+        scopeId, scope: 'sessionDetails', accountLifetime: pluginRuntime.accountLifetime,
+        platform: browserPlatform, openDetailsTab: openDetailsTab ?? (() => {}),
+        readOpenFacts: () => {
+            // Read detailed workspace facts only for an admitted open, never while Details is closed.
+            const workspace = serverId ? resolveWorkspaceTargetForSession({ sessionId, serverId }) : null;
+            return { scope: 'sessionDetails', platform: browserPlatform,
+                localServiceAddressScope: pluginRuntime.machineId ? {
+                    machineId: pluginRuntime.machineId, sessionId,
+                    ...(workspace?.rootPath ? { scope: 'workspace', workspaceRoot: workspace.rootPath } : {}),
+                } : undefined };
+        },
+    }, { register: canRegister && openDetailsTab !== null });
 
     React.useEffect(() => {
         if (!canRegister) return;

@@ -83,7 +83,7 @@ export function useServicesOpenInBrowser(
         localServicePreviewState,
         localServiceAddressScope: input.machineId ? { machineId: input.machineId,
             ...(input.sessionId ? { sessionId: input.sessionId } : {}) } : undefined,
-    });
+    }, { register: input.scope !== 'sessionDetails' });
     const currentOpener = React.useRef(onOpenTarget);
     currentOpener.current = onOpenTarget;
 

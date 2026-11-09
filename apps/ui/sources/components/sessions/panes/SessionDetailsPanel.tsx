@@ -295,7 +295,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
             machineId: pluginRuntime.machineId, sessionId: props.sessionId,
             ...(fileWriteScope?.rootPath ? { scope: 'workspace', workspaceRoot: fileWriteScope.rootPath } : {}),
         } : undefined,
-    });
+    }, { register: false });
     const detailsSurfaceRenderers = React.useMemo(() => session ? createSessionDetailsSurfaceRenderers({
             onOpenTarget: openBrowserViewTarget,
             sessionId: props.sessionId,
