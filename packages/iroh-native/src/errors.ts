@@ -153,30 +153,30 @@ function failClosed(failureClass: IrohHomeCarrierFailureClass): IrohHomeCarrierF
 
 const IROH_ERROR_CLASSIFICATIONS: Readonly<Record<IrohErrorCode, IrohHomeCarrierFailureClassification>> = {
   unavailable: FALLBACK_ALLOWED,
-  transport: failClosed('carrier-unavailable'),
-  home_unreachable: failClosed('carrier-unavailable'),
-  transport_timeout: failClosed('carrier-unavailable'),
-  transport_closed: failClosed('carrier-unavailable'),
+  transport: FALLBACK_ALLOWED,
+  home_unreachable: FALLBACK_ALLOWED,
+  transport_timeout: FALLBACK_ALLOWED,
+  transport_closed: FALLBACK_ALLOWED,
   invalid_descriptor: failClosed('descriptor-integrity'),
   endpoint_identity_invalid: failClosed('descriptor-integrity'),
   identity_mismatch: failClosed('identity-auth'),
-  endpoint_key_unavailable: failClosed('endpoint-config'),
+  endpoint_key_unavailable: FALLBACK_ALLOWED,
   relay_auth_failed: failClosed('identity-auth'),
-  invalid_preamble: failClosed('protocol'),
-  unsupported_alpn: failClosed('protocol'),
-  endpoint_config_conflict: failClosed('endpoint-config'),
-  loopback_bind_failed: failClosed('endpoint-config'),
-  resource_limit: failClosed('endpoint-config'),
+  invalid_preamble: FALLBACK_ALLOWED,
+  unsupported_alpn: FALLBACK_ALLOWED,
+  endpoint_config_conflict: FALLBACK_ALLOWED,
+  loopback_bind_failed: FALLBACK_ALLOWED,
+  resource_limit: FALLBACK_ALLOWED,
   cancelled: failClosed('unclassified'),
-  unknown: failClosed('unclassified'),
+  unknown: FALLBACK_ALLOWED,
 };
 
 const PROBE_REASON_CLASSIFICATIONS: Readonly<Record<string, IrohHomeCarrierFailureClassification>> = {
-  'health-unavailable': failClosed('verification-incomplete'),
-  'probe-timeout': failClosed('verification-incomplete'),
+  'health-unavailable': FALLBACK_ALLOWED,
+  'probe-timeout': FALLBACK_ALLOWED,
   'auth-failed': failClosed('identity-auth'),
   'identity-mismatch': failClosed('identity-auth'),
-  'features-unavailable': failClosed('verification-incomplete'),
+  'features-unavailable': FALLBACK_ALLOWED,
 };
 
 function readIrohErrorCode(error: unknown): IrohErrorCode | null {
@@ -192,26 +192,26 @@ function readIrohErrorCode(error: unknown): IrohErrorCode | null {
 }
 
 /**
- * Classifies one Home Iroh acquisition failure. An independently trusted HTTPS
- * origin may remain usable only when the Iroh host/native capability is
- * unavailable before acquisition. Once Iroh was selected, reachability,
- * probing, identity, authorization, descriptor integrity, protocol, endpoint
- * configuration, cancellation, and unknown failures fail closed. Callers
- * remain responsible for independently validating HTTPS trust.
+ * Classifies Home Iroh failure independently of the selected carrier's lifetime.
+ * Non-security failures permit another descriptor-declared carrier, whose Home
+ * identity the caller must verify independently. Identity/auth and descriptor
+ * integrity refusals fail closed. Cancelled or retired operations do not acquire
+ * another carrier.
  */
 export function classifyIrohHomeCarrierFailure(error: unknown): IrohHomeCarrierFailureClassification {
   const code = readIrohErrorCode(error);
   if (code !== null) return IROH_ERROR_CLASSIFICATIONS[code];
 
   const message = error instanceof Error ? error.message : '';
+  if (error instanceof Error && error.name === 'AbortError') return failClosed('unclassified');
   if (message === IROH_HOME_TUNNEL_SUSPENDED_ERROR) return FALLBACK_ALLOWED;
   if (message.startsWith(`${IROH_HOME_TUNNEL_PROBE_FAILED_ERROR}:`)) {
     const reason = message.slice(IROH_HOME_TUNNEL_PROBE_FAILED_ERROR.length + 1);
-    return PROBE_REASON_CLASSIFICATIONS[reason] ?? failClosed('unclassified');
+    return PROBE_REASON_CLASSIFICATIONS[reason] ?? { fallbackAllowed: true, failureClass: 'unclassified' };
   }
   if (message === IROH_HOME_TUNNEL_STALE_GENERATION_ERROR || message === IROH_HOME_TUNNEL_STALE_FOCUS_ERROR) {
     return failClosed('stale-target');
   }
   if (message === IROH_HOME_TUNNEL_INVALID_ENDPOINT_ERROR) return failClosed('descriptor-integrity');
-  return failClosed('unclassified');
+  return { fallbackAllowed: true, failureClass: 'unclassified' };
 }

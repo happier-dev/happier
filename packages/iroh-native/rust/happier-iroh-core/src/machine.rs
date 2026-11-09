@@ -51,6 +51,13 @@ pub enum MachineFailureCode {
     AdmissionRejected,
     EndpointIdentityMismatch,
     Transport,
+    AdmissionTimeout,
+    LocalHttpHeadTimeout,
+    LocalCapabilityTimeout,
+    LocalCapabilityRejected,
+    StreamDecisionTimeout,
+    StreamDecisionClosed,
+    NoApplicationStream,
 }
 
 impl MachineFailureCode {
@@ -61,6 +68,13 @@ impl MachineFailureCode {
             Self::AdmissionRejected => "machine-admission-rejected",
             Self::EndpointIdentityMismatch => "endpoint-identity-mismatch",
             Self::Transport => "transport-unavailable",
+            Self::AdmissionTimeout => "machine-admission-timeout",
+            Self::LocalHttpHeadTimeout => "local-http-head-timeout",
+            Self::LocalCapabilityTimeout => "local-capability-timeout",
+            Self::LocalCapabilityRejected => "local-capability-rejected",
+            Self::StreamDecisionTimeout => "machine-stream-decision-timeout",
+            Self::StreamDecisionClosed => "machine-stream-decision-closed",
+            Self::NoApplicationStream => "no-application-stream",
         }
     }
 }
@@ -90,12 +104,40 @@ struct AcceptorState {
     last_failure: Mutex<Option<MachineFailureCode>>,
 }
 
+struct ActiveStreamGuard<'a>(&'a AtomicU64);
+impl Drop for ActiveStreamGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub struct MachineAcceptor {
     task: JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     state: Arc<AcceptorState>,
     slot: Arc<ConsumerSlot>,
     _registration: ConsumerRegistration,
+    endpoint_id: String,
+    config: MachineAcceptorConfig,
+}
+
+/// A local stream uses the active acceptor's exact target and lifetime. It
+/// cannot select an application port or outlive withdrawal of that acceptor.
+#[derive(Clone)]
+pub struct MachineLocalAdmission {
+    endpoint_id: String,
+    config: MachineAcceptorConfig,
+    shutdown: watch::Receiver<bool>,
+    state: Arc<AcceptorState>,
+}
+
+async fn local_admission_closed(admission: &mut Option<MachineLocalAdmission>) {
+    let Some(admission) = admission else {
+        return std::future::pending().await;
+    };
+    if !*admission.shutdown.borrow() {
+        let _ = admission.shutdown.changed().await;
+    }
 }
 
 impl MachineAcceptor {
@@ -128,7 +170,18 @@ impl MachineAcceptor {
             state,
             slot,
             _registration: registration,
+            endpoint_id: endpoint.id().to_string(),
+            config,
         })
+    }
+
+    pub fn local_admission(&self) -> MachineLocalAdmission {
+        MachineLocalAdmission {
+            endpoint_id: self.endpoint_id.clone(),
+            config: self.config,
+            shutdown: self.shutdown.subscribe(),
+            state: Arc::clone(&self.state),
+        }
     }
 
     pub fn status(&self) -> MachineAcceptorStatus {
@@ -285,7 +338,7 @@ async fn admit_stream(
         _ => {
             let failure = match admitted {
                 Ok(Err(failure)) => failure,
-                _ => MachineFailureCode::Transport,
+                _ => MachineFailureCode::AdmissionTimeout,
             };
             if let Ok(mut last) = state.last_failure.lock() {
                 *last = Some(failure);
@@ -331,12 +384,6 @@ async fn pump_admitted_stream(
         mut app,
     } = stream;
     state.streams_active.fetch_add(1, Ordering::Relaxed);
-    struct ActiveStreamGuard<'a>(&'a AtomicU64);
-    impl Drop for ActiveStreamGuard<'_> {
-        fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
     let _active_stream = ActiveStreamGuard(&state.streams_active);
     let (mut app_read, mut app_write) = app.split();
     pump_bidirectional(&mut app_read, &mut app_write, &mut recv, &mut send).await;
@@ -565,12 +612,33 @@ struct TunnelState {
 
 pub struct MachineTunnel {
     local_addr: SocketAddr,
-    connection: Arc<MachineTunnelConnection>,
+    carrier: MachineTunnelCarrier,
     remote_endpoint_id: String,
     local_capability: Option<String>,
     task: JoinHandle<()>,
     shutdown: watch::Sender<bool>,
     state: Arc<TunnelState>,
+}
+
+#[derive(Clone)]
+enum MachineTunnelCarrier {
+    Remote(Arc<MachineTunnelConnection>),
+    Local(MachineLocalAdmission),
+}
+
+impl MachineTunnelCarrier {
+    fn local_admission(&self) -> Option<MachineLocalAdmission> {
+        match self {
+            Self::Local(admission) => Some(admission.clone()),
+            Self::Remote(_) => None,
+        }
+    }
+
+    fn close(&self) {
+        if let Self::Remote(connection) = self {
+            connection.close();
+        }
+    }
 }
 
 /// One authenticated connection owner for every local stream of a tunnel.
@@ -1020,7 +1088,7 @@ impl MachineHttpTunnel {
         endpoint: &crate::IrohEndpoint,
         config: MachineTunnelConfig,
     ) -> Result<Self> {
-        Self::start_inner(endpoint, config, None).await
+        Self::start_inner(endpoint, config, None, None).await
     }
 
     pub async fn start_with_handshake_provider(
@@ -1028,13 +1096,30 @@ impl MachineHttpTunnel {
         config: MachineTunnelConfig,
         handshake_provider: MachineHandshakeProvider,
     ) -> Result<Self> {
-        Self::start_inner(endpoint, config, Some(handshake_provider)).await
+        Self::start_inner(endpoint, config, Some(handshake_provider), None).await
+    }
+
+    pub async fn start_with_local_admission(
+        endpoint: &crate::IrohEndpoint,
+        config: MachineTunnelConfig,
+        admission: MachineLocalAdmission,
+        handshake_provider: Option<MachineHandshakeProvider>,
+    ) -> Result<Self> {
+        if validate_handshake(&config.handshake_json)? != MachineTunnelPurpose::ProviderBroker
+            || config.endpoint_id != endpoint.id().to_string()
+            || admission.endpoint_id != config.endpoint_id
+            || *admission.shutdown.borrow()
+        {
+            return Err(IrohError::InvalidDescriptor);
+        }
+        Self::start_inner(endpoint, config, handshake_provider, Some(admission)).await
     }
 
     async fn start_inner(
         endpoint: &crate::IrohEndpoint,
         config: MachineTunnelConfig,
         handshake_provider: Option<MachineHandshakeProvider>,
+        local_admission: Option<MachineLocalAdmission>,
     ) -> Result<Self> {
         let purpose = validate_handshake(&config.handshake_json)?;
         if !matches!(purpose,
@@ -1052,7 +1137,7 @@ impl MachineHttpTunnel {
         let local_addr = listener
             .local_addr()
             .map_err(|_| IrohError::LoopbackBindFailed)?;
-        let tunnel = MachineTunnel::start_inner(endpoint, config, handshake_provider).await?;
+        let tunnel = MachineTunnel::start_inner(endpoint, config, handshake_provider, local_admission).await?;
         let private_addr = tunnel.local_addr;
         let allow_websocket = purpose == MachineTunnelPurpose::TcpTunnel;
         let local_capability = tunnel
@@ -1060,18 +1145,22 @@ impl MachineHttpTunnel {
             .clone()
             .expect("provider-broker tunnels always require a local capability");
         let capability = Arc::<[u8]>::from(local_capability.as_bytes());
+        let tunnel_state = Arc::clone(&tunnel.state);
+        let mut local_admission = tunnel.carrier.local_admission();
         let (shutdown, mut shutdown_rx) = watch::channel(false);
         let task = tokio::spawn(async move {
             let mut streams = JoinSet::new();
             loop {
                 tokio::select! {
                     _ = shutdown_rx.changed() => { break; }
+                    _ = local_admission_closed(&mut local_admission) => { break; }
                     accepted = listener.accept() => {
                         let Ok((mut application, _)) = accepted else { break };
                         let capability = Arc::clone(&capability);
+                        let state = Arc::clone(&tunnel_state);
                         streams.spawn(async move {
                             let mut buffered = Vec::with_capacity(1024);
-                            let Ok(Ok(Some(initial_request))) = tokio::time::timeout(
+                            let initial = tokio::time::timeout(
                                 MACHINE_CONTROL_TIMEOUT,
                                 read_capability_gated_http_request_head(
                                     &mut application,
@@ -1079,7 +1168,17 @@ impl MachineHttpTunnel {
                                     &capability,
                                     allow_websocket,
                                 ),
-                            ).await else { return };
+                            ).await;
+                            let initial_request = match initial {
+                                Ok(Ok(Some(request))) => request,
+                                Err(_) => {
+                                    if let Ok(mut last) = state.last_failure.lock() {
+                                        *last = Some(MachineFailureCode::LocalHttpHeadTimeout);
+                                    }
+                                    return;
+                                }
+                                _ => return,
+                            };
                             let Ok(mut secured) = TcpStream::connect(private_addr).await else { return };
                             if secured.write_all(&capability).await.is_err() { return; }
                             let (mut application_read, mut application_write) = application.split();
@@ -1163,13 +1262,14 @@ impl MachineTunnel {
         endpoint: &crate::IrohEndpoint,
         config: MachineTunnelConfig,
     ) -> Result<Self> {
-        Self::start_inner(endpoint, config, None).await
+        Self::start_inner(endpoint, config, None, None).await
     }
 
     async fn start_inner(
         endpoint: &crate::IrohEndpoint,
         config: MachineTunnelConfig,
         handshake_provider: Option<MachineHandshakeProvider>,
+        local_admission: Option<MachineLocalAdmission>,
     ) -> Result<Self> {
         validate_loopback_bind_addr(config.bind_addr)?;
         let purpose = validate_handshake(&config.handshake_json)?;
@@ -1186,23 +1286,28 @@ impl MachineTunnel {
         for addr in config.direct_addresses {
             remote = remote.with_ip_addr(addr);
         }
-        let connection = dial_machine_connection(
-            &endpoint.endpoint(), remote.clone(), endpoint_id, config.cap_profile,
-        ).await?;
+        let carrier = match local_admission {
+            Some(admission) => MachineTunnelCarrier::Local(admission),
+            None => {
+                let connection = dial_machine_connection(
+                    &endpoint.endpoint(), remote.clone(), endpoint_id, config.cap_profile,
+                ).await?;
+                MachineTunnelCarrier::Remote(Arc::new(MachineTunnelConnection {
+                    endpoint: endpoint.endpoint(), remote, remote_id: endpoint_id,
+                    cap_profile: config.cap_profile, current: Mutex::new(connection),
+                    dial: tokio::sync::Mutex::new(()),
+                }))
+            }
+        };
         // The authenticated transport identity — not the requested descriptor
         // copy — is the only honest remote identity this tunnel reports. A
         // mismatch fails the start closed with the shared
         // endpoint-identity-mismatch classification before any loopback
         // listener is published.
-        let remote_endpoint_id = connection.remote_id().to_string();
-        let connection = Arc::new(MachineTunnelConnection {
-            endpoint: endpoint.endpoint(),
-            remote,
-            remote_id: endpoint_id,
-            cap_profile: config.cap_profile,
-            current: Mutex::new(connection),
-            dial: tokio::sync::Mutex::new(()),
-        });
+        let remote_endpoint_id = match &carrier {
+            MachineTunnelCarrier::Remote(connection) => connection.current().remote_id().to_string(),
+            MachineTunnelCarrier::Local(admission) => admission.endpoint_id.clone(),
+        };
         let listener = TcpListener::bind(config.bind_addr)
             .await
             .map_err(|_| IrohError::LoopbackBindFailed)?;
@@ -1230,7 +1335,8 @@ impl MachineTunnel {
             local_stream_claimed: AtomicBool::new(false),
             last_failure: Mutex::new(None),
         });
-        let loop_connection = connection.clone();
+        let loop_carrier = carrier.clone();
+        let mut loop_admission = carrier.local_admission();
         let loop_state = Arc::clone(&state);
         let (shutdown, mut shutdown_rx) = watch::channel(false);
         let task = tokio::spawn(async move {
@@ -1238,11 +1344,12 @@ impl MachineTunnel {
             loop {
                 tokio::select! {
                     _ = shutdown_rx.changed() => { break; }
+                    _ = local_admission_closed(&mut loop_admission) => { break; }
                     accepted = listener.accept() => {
                         let Ok((socket, _)) = accepted else { break };
                         loop_state.streams_active.fetch_add(1, Ordering::AcqRel);
                         streams.spawn(pump_local(
-                            loop_connection.clone(),
+                            loop_carrier.clone(),
                             socket,
                             Arc::clone(&handshake),
                             handshake_provider.clone(),
@@ -1254,11 +1361,11 @@ impl MachineTunnel {
                 }
             }
             streams.shutdown().await;
-            loop_connection.close();
+            loop_carrier.close();
         });
         Ok(Self {
             local_addr,
-            connection,
+            carrier,
             remote_endpoint_id,
             local_capability,
             task,
@@ -1276,30 +1383,42 @@ impl MachineTunnel {
         self.local_capability.as_deref()
     }
     pub fn status(&self) -> MachineTunnelStatus {
-        let connection = self.connection.current();
+        let connection = match &self.carrier {
+            MachineTunnelCarrier::Remote(connection) => Some(connection.current()),
+            MachineTunnelCarrier::Local(_) => None,
+        };
+        let last_failure = self.state.last_failure.lock().ok().and_then(|value| *value)
+            .or_else(|| match connection.as_ref().and_then(|connection| connection.close_reason()) {
+                Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+                    if close.reason.as_ref() == b"no_application_stream" => Some(MachineFailureCode::NoApplicationStream),
+                _ => None,
+            });
         MachineTunnelStatus {
             local_port: self.local_addr.port(),
-            connection_active: connection.close_reason().is_none(),
+            connection_active: !self.task.is_finished() && connection.as_ref().map_or_else(
+                || self.carrier.local_admission().is_some_and(|admission| !*admission.shutdown.borrow()),
+                |connection| connection.close_reason().is_none()),
             streams_opened: self.state.streams_opened.load(Ordering::Relaxed),
             remote_endpoint_id: self.remote_endpoint_id.clone(),
-            observed_path: snapshot_for_connection(&connection),
-            last_failure: self.state.last_failure.lock().ok().and_then(|value| *value),
+            observed_path: connection.as_ref().map(snapshot_for_connection).unwrap_or_else(||
+                IrohPathSnapshot::new(crate::IrohObservedPath::Unknown, &self.remote_endpoint_id, crate::unix_ms())),
+            last_failure,
         }
     }
     pub fn stop(self) {
         let _ = self.shutdown.send(true);
-        self.connection.close();
+        self.carrier.close();
     }
 
     pub async fn stop_and_wait(self) {
         let _ = self.shutdown.send(true);
-        self.connection.close();
+        self.carrier.close();
         let _ = self.task.await;
     }
 }
 
 async fn pump_local(
-    connection: Arc<MachineTunnelConnection>,
+    carrier: MachineTunnelCarrier,
     mut socket: TcpStream,
     handshake: Arc<[u8]>,
     handshake_provider: Option<MachineHandshakeProvider>,
@@ -1323,6 +1442,11 @@ async fn pump_local(
         if !matches!(capability_result, Ok(Ok(_)))
             || !capabilities_equal(&supplied_capability, &local_capability)
         {
+            if let Ok(mut last) = _active.0.last_failure.lock() {
+                *last = Some(if capability_result.is_err() {
+                    MachineFailureCode::LocalCapabilityTimeout
+                } else { MachineFailureCode::LocalCapabilityRejected });
+            }
             return;
         }
     }
@@ -1384,6 +1508,32 @@ async fn pump_local(
     } else {
         handshake
     };
+    if let MachineTunnelCarrier::Local(admission) = &carrier {
+        _active.0.streams_opened.fetch_add(1, Ordering::Relaxed);
+        let target = tokio::time::timeout(MACHINE_CONTROL_TIMEOUT, authorize(
+            admission.config.admission_target, &admission.endpoint_id, &handshake, true,
+        )).await;
+        let target = match target {
+            Ok(Ok(target)) => target,
+            failure => {
+                let failure = match failure { Ok(Err(failure)) => failure, _ => MachineFailureCode::AdmissionTimeout };
+                admission.state.streams_rejected.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut last) = _active.0.last_failure.lock() { *last = Some(failure); }
+                return;
+            }
+        };
+        if *admission.shutdown.borrow() { return; }
+        let Ok(mut application) = TcpStream::connect((Ipv4Addr::LOCALHOST, target.port)).await else { return };
+        if let Some(capability) = target.local_capability {
+            if application.write_all(capability.as_bytes()).await.is_err() { return; }
+        }
+        admission.state.streams_accepted.fetch_add(1, Ordering::Relaxed);
+        admission.state.streams_active.fetch_add(1, Ordering::Relaxed);
+        let _active_stream = ActiveStreamGuard(&admission.state.streams_active);
+        tokio::io::copy_bidirectional(&mut socket, &mut application).await.ok();
+        return;
+    }
+    let MachineTunnelCarrier::Remote(connection) = carrier else { return };
     let Ok(connection) = connection.for_local_stream().await else {
         if let Ok(mut last) = _active.0.last_failure.lock() {
             *last = Some(MachineFailureCode::Transport);
@@ -1414,7 +1564,9 @@ async fn pump_local(
         tokio::time::timeout(MACHINE_CONTROL_TIMEOUT, recv.read_exact(&mut decision)).await;
     if !matches!(decision_result, Ok(Ok(()))) {
         if let Ok(mut last) = _active.0.last_failure.lock() {
-            *last = Some(MachineFailureCode::Transport);
+            *last = Some(if decision_result.is_err() {
+                MachineFailureCode::StreamDecisionTimeout
+            } else { MachineFailureCode::StreamDecisionClosed });
         }
         return;
     }

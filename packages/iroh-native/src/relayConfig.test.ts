@@ -46,11 +46,11 @@ describe('readIrohRelayConfigFromEnv', () => {
     { HAPPIER_IROH_RELAY_URLS: 'not-a-url' },
     { HAPPIER_IROH_RELAY_URLS: 'https://relay.example, ' },
     { HAPPIER_IROH_RELAY_POLICY: 'disabled', HAPPIER_IROH_RELAY_URLS: 'https://relay.example' },
-  ])('preserves configuration refusal at the carrier classifier for %j', env => {
+  ])('rejects invalid Iroh configuration while allowing an independent application carrier for %j', env => {
     let failure: unknown;
     try { readIrohRelayConfigFromEnv(env); } catch (error) { failure = error; }
     expect(failure).toMatchObject({ code: 'endpoint_config_conflict' });
-    expect(classifyIrohHomeCarrierFailure(failure)).toMatchObject({ fallbackAllowed: false, failureClass: 'endpoint-config' });
+    expect(classifyIrohHomeCarrierFailure(failure)).toMatchObject({ fallbackAllowed: true, failureClass: 'carrier-unavailable' });
   });
 
   it('fails closed for credential-bearing or unsupported relay descriptors', () => {

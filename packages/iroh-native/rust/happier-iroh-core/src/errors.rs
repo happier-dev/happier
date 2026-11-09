@@ -13,6 +13,7 @@ pub enum IrohFailureReason {
     TransportClosed,
     EndpointIdentityMismatch,
     TransportTimeout,
+    TransportUnreachable,
 }
 
 #[derive(Debug)]
@@ -38,6 +39,8 @@ pub enum IrohError {
     /// already reports, so a start-path mismatch fails closed with one code.
     EndpointIdentityMismatch,
     TransportTimeout,
+    /// Initial dial has no addressing information; no peer identity was proven.
+    TransportUnreachable,
 }
 impl PartialEq for IrohError {
     fn eq(&self, other: &Self) -> bool {
@@ -60,6 +63,7 @@ impl IrohError {
             Self::TransportClosed => IrohFailureReason::TransportClosed,
             Self::EndpointIdentityMismatch => IrohFailureReason::EndpointIdentityMismatch,
             Self::TransportTimeout => IrohFailureReason::TransportTimeout,
+            Self::TransportUnreachable => IrohFailureReason::TransportUnreachable,
         }
     }
 }
@@ -79,6 +83,7 @@ impl From<iroh::endpoint::ConnectWithOptsError> for IrohError {
     fn from(error: iroh::endpoint::ConnectWithOptsError) -> Self {
         match error {
             iroh::endpoint::ConnectWithOptsError::InvalidAlpn { .. } => Self::UnsupportedAlpn,
+            iroh::endpoint::ConnectWithOptsError::NoAddress { .. } => Self::TransportUnreachable,
             _ => Self::TransportClosed,
         }
     }
@@ -94,6 +99,10 @@ impl From<iroh::endpoint::ConnectingError> for IrohError {
         // peer's CONNECTION_CLOSE. Never classify by diagnostic message text.
         let unsupported_alpn = TransportErrorCode::crypto(120);
         match error {
+            ConnectingError::ConnectionError {
+                source: ConnectionError::TimedOut,
+                ..
+            } => Self::TransportTimeout,
             ConnectingError::ConnectionError {
                 source: ConnectionError::ConnectionClosed(close),
                 ..
@@ -111,3 +120,14 @@ impl From<iroh::endpoint::ConnectingError> for IrohError {
     }
 }
 pub type Result<T> = std::result::Result<T, IrohError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connecting_timeout_preserves_the_pre_acquisition_reason() {
+        let error = iroh::endpoint::ConnectingError::from(iroh::endpoint::ConnectionError::TimedOut);
+        assert_eq!(IrohError::from(error), IrohError::TransportTimeout);
+    }
+}

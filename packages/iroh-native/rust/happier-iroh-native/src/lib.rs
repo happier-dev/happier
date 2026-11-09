@@ -786,6 +786,9 @@ fn tunnel_start_error(error: happier_iroh_core::IrohError) -> Value {
         IrohError::TransportTimeout => {
             error_response("transport_timeout", "Home tunnel transport timed out")
         }
+        IrohError::TransportUnreachable => {
+            error_response("home_unreachable", "Home tunnel has no reachable address")
+        }
         IrohError::TransportClosed => {
             error_response("transport_closed", "Home tunnel transport closed")
         }
@@ -1366,6 +1369,16 @@ fn start_machine_http_tunnel_input(
     let Some((config, endpoint)) = state().manager.get(&identity) else {
         return error_response("not-found", "endpoint is shut down");
     };
+    // Iroh rejects self dials. Reuse this endpoint's active acceptor rather
+    // than a caller-supplied port; its signed admission and withdrawal lifetime
+    // remain the same authority for local and remote broker streams.
+    let local_admission = if input.endpoint_id == endpoint.id().to_string() {
+        let acceptors = state().machine_acceptors.lock().expect("machine acceptor lock poisoned");
+        let Some(acceptor) = acceptors.get(&input.endpoint_handle) else {
+            return error_response("transport-unavailable", "local machine acceptor is unavailable");
+        };
+        Some(acceptor.acceptor.local_admission())
+    } else { None };
     let cap_profile = match parse_cap_profile(&input.cap_profile) {
         Ok(IrohCapProfile::MachineBulk) => IrohCapProfile::MachineBulk,
         _ => {
@@ -1398,14 +1411,18 @@ fn start_machine_http_tunnel_input(
                     handshake_json: input.handshake_json,
                     cap_profile,
                 };
-                match handshake_provider {
+                if let Some(local_admission) = local_admission {
+                    MachineHttpTunnel::start_with_local_admission(
+                        &endpoint, tunnel_config, local_admission, handshake_provider,
+                    ).await
+                } else { match handshake_provider {
                     Some(provider) => MachineHttpTunnel::start_with_handshake_provider(
                         &endpoint,
                         tunnel_config,
                         provider,
                     ).await,
                     None => MachineHttpTunnel::start(&endpoint, tunnel_config).await,
-                }
+                } }
             } => result,
             _ = admission.cancelled() => Err(happier_iroh_core::IrohError::Cancelled),
         }
@@ -2274,6 +2291,94 @@ mod tests {
     }
 
     #[test]
+    fn same_endpoint_broker_http_uses_current_admission_and_fresh_authority() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let key = temp_key_path("same-endpoint-broker");
+        let (handle, endpoint_id, _) = create_disabled_endpoint(&key);
+        let request_json = json!({ "endpointHandle": handle, "endpointId": endpoint_id,
+            "handshakeJson": "{\"v\":1,\"kind\":\"provider_broker\"}", "capProfile": "machineBulk" }).to_string();
+        let absent = start_machine_http_tunnel_json(&request_json);
+        assert_eq!(absent["error"]["code"], "transport-unavailable", "self open needs the active acceptor");
+        let app = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let app_port = app.local_addr().unwrap().port();
+        let app_task = std::thread::spawn(move || {
+            let (mut socket, _) = app.accept().unwrap();
+            let mut capability = [0; 64];
+            socket.read_exact(&mut capability).unwrap();
+            assert_eq!(capability, [b'e'; 64]);
+            let mut request = Vec::new();
+            let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            assert!(!String::from_utf8_lossy(&request).contains("X-Happier-Machine-Local-Capability"));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nanswer").unwrap();
+        });
+        let admission = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let admission_port = admission.local_addr().unwrap().port();
+        let expected_endpoint = endpoint_id.clone();
+        let admission_task = std::thread::spawn(move || {
+            let (mut socket, _) = admission.accept().unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0];
+            while !head.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                head.push(byte[0]);
+            }
+            let head = String::from_utf8(head).unwrap();
+            assert!(head.contains(&format!("X-Happier-Iroh-Remote-Endpoint-Id: {expected_endpoint}")));
+            let length: usize = head.lines().find_map(|line| line.strip_prefix("Content-Length: ")).unwrap().parse().unwrap();
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["witness"], 1);
+            write!(socket, "HTTP/1.1 204 No Content\r\nX-Happier-Iroh-Remote-Endpoint-Id: {expected_endpoint}\r\nX-Happier-Iroh-Application-Port: {app_port}\r\nX-Happier-Iroh-Application-Capability: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", "e".repeat(64)).unwrap();
+        });
+        let accepted = call_op(json!({ "endpointHandle": handle, "admissionHost": "127.0.0.1", "admissionPort": admission_port }).to_string(), happier_iroh_native_start_machine_acceptor_json);
+        assert_eq!(accepted["ok"], true, "{accepted}");
+        let witnesses = Arc::new(AtomicUsize::new(0));
+        let provider: MachineHandshakeProvider = Arc::new({
+            let witnesses = Arc::clone(&witnesses);
+            move || {
+                let witness = witnesses.fetch_add(1, Ordering::SeqCst) + 1;
+                Box::pin(async move { Ok(if witness == 1 {
+                    json!({"v":1,"kind":"provider_broker","witness":witness}).to_string()
+                } else {
+                    json!({"kind":"http_refusal","responseBody":"{\"error\":{\"code\":\"resource_forbidden\"}}"}).to_string()
+                }) })
+            }
+        });
+        let opened = start_machine_http_tunnel_with_handshake_provider_json(&json!({
+            "endpointHandle": handle, "endpointId": endpoint_id,
+            "handshakeJson": "{\"v\":1,\"kind\":\"provider_broker\"}", "capProfile": "machineBulk"
+        }).to_string(), provider);
+        assert_eq!(opened["ok"], true, "same endpoint must use the active admission owner: {opened}");
+        let port = opened["result"]["localPort"].as_u64().unwrap();
+        let capability = opened["result"]["localCapability"].as_str().unwrap();
+        let request = |capability: &str| {
+            let mut socket = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            write!(socket, "GET / HTTP/1.1\r\nHost: localhost\r\nX-Happier-Machine-Local-Capability: {capability}\r\nConnection: close\r\n\r\n").unwrap();
+            socket.shutdown(std::net::Shutdown::Write).unwrap();
+            let mut response = String::new();
+            socket.read_to_string(&mut response).unwrap();
+            response
+        };
+        assert!(request(&"0".repeat(64)).is_empty());
+        assert_eq!(witnesses.load(Ordering::SeqCst), 0, "an unauthenticated local request performs no Home work");
+        assert!(request(capability).ends_with("answer"));
+        assert!(request(capability).contains("resource_forbidden"));
+        assert_eq!(witnesses.load(Ordering::SeqCst), 2, "one fresh admission per application connection, no retry");
+        app_task.join().unwrap();
+        admission_task.join().unwrap();
+        let stopped = shutdown_endpoint_json(&json!({"endpointHandle":handle}).to_string());
+        assert_eq!(stopped["ok"], true);
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port as u16)).is_err());
+        remove_temp_key(&key);
+    }
+
+    #[test]
     fn machine_tunnel_identity_mismatch_surfaces_the_existing_failure_code() {
         let response = machine_start_error(happier_iroh_core::IrohError::EndpointIdentityMismatch);
         assert_eq!(
@@ -2292,6 +2397,24 @@ mod tests {
         );
         add_optional_local_capability(&mut result, Some("qualified-capability".to_owned()));
         assert_eq!(result["localCapability"], "qualified-capability");
+    }
+
+    #[test]
+    fn home_dial_without_addressing_reports_unreachable_before_acquisition() {
+        let remote_key = temp_key_path("no-hints-remote");
+        let (remote_handle, remote_endpoint_id, _) = create_disabled_endpoint(&remote_key);
+        let client_key = temp_key_path("no-hints-client");
+        let (client_handle, _, _) = create_disabled_endpoint(&client_key);
+        let result = ensure_home_tunnel_json(&json!({
+            "endpointHandle": client_handle,
+            "homeServerIdentityId": "srv_no_hints",
+            "endpointId": remote_endpoint_id
+        }).to_string());
+        let _ = shutdown_endpoint_json(&json!({ "endpointHandle": client_handle }).to_string());
+        let _ = shutdown_endpoint_json(&json!({ "endpointHandle": remote_handle }).to_string());
+        remove_temp_key(&client_key);
+        remove_temp_key(&remote_key);
+        assert_eq!(result["error"]["code"], "home_unreachable", "{result}");
     }
 
     #[test]

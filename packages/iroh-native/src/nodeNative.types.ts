@@ -158,7 +158,15 @@ export type IrohNodeMachineFailureCode =
   | 'machine-control-invalid'
   | 'machine-admission-rejected'
   | 'endpoint-identity-mismatch'
-  | 'transport-unavailable';
+  | 'transport-unavailable'
+  // Host-private status categories. These never change the stream decision byte.
+  | 'machine-admission-timeout'
+  | 'local-http-head-timeout'
+  | 'local-capability-timeout'
+  | 'local-capability-rejected'
+  | 'machine-stream-decision-timeout'
+  | 'machine-stream-decision-closed'
+  | 'no-application-stream';
 
 export type IrohNodeAcceptorStarted = Readonly<{
   endpointHandle: string;

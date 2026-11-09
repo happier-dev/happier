@@ -1254,6 +1254,45 @@ async fn machine_raw_tunnels_reconnect_after_unused_custody_without_changing_str
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn machine_discovery_status_identifies_control_timeout_owner() {
+    let server = endpoint(IrohCapProfile::MachineBulk).await;
+    let client = endpoint(IrohCapProfile::MachineBulk).await;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let admission_target = listener.local_addr().unwrap();
+    let stalled_admission = tokio::spawn(async move {
+        let (mut socket, _request) = accept_admission_request(&listener).await;
+        let mut remaining = Vec::new();
+        let _ = socket.read_to_end(&mut remaining).await;
+    });
+    let acceptor = MachineAcceptor::start(&server, MachineAcceptorConfig { admission_target }).unwrap();
+    let tunnel = MachineHttpTunnel::start(&client, MachineTunnelConfig {
+        endpoint_id: server.id().to_string(),
+        bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        direct_addresses: vec![direct_addr(&server).await], relay_urls: vec![],
+        handshake_json: r#"{"v":1,"kind":"provider_broker"}"#.to_owned(),
+        cap_profile: IrohCapProfile::MachineBulk,
+    }).await.unwrap();
+    let request = format!("GET /endpoint HTTP/1.1\r\nHost: localhost\r\n{}: {}\r\nConnection: close\r\n\r\n",
+        IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER, tunnel.local_capability());
+    let received = exchange_echo(tunnel.local_addr().unwrap(), request.as_bytes()).await;
+    // Observe the real control bound, without changing it or imposing a
+    // shorter competing cutoff on the HTTP application request.
+    // Wait for the target's admission socket to close too: the initiator's
+    // independent decision timer can settle a few microseconds earlier.
+    stalled_admission.await.unwrap();
+    let target_failure = acceptor.status().last_failure.map(|failure| failure.as_str());
+    let local_failure = tunnel.status().last_failure.map(|failure| failure.as_str());
+    tunnel.stop_and_wait().await;
+    acceptor.stop_and_wait().await;
+    client.shutdown().await;
+    server.shutdown().await;
+    assert!(received.is_empty());
+    assert_eq!(target_failure, Some("machine-admission-timeout"));
+    assert!(matches!(local_failure,
+        Some("machine-stream-decision-timeout" | "machine-admission-rejected")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn machine_http_tunnel_keeps_http_source_reads_alive_beyond_control_window() {
     let server = endpoint(IrohCapProfile::MachineBulk).await;
     let client = endpoint(IrohCapProfile::MachineBulk).await;
@@ -1511,7 +1550,7 @@ async fn machine_http_tunnel_provider_failure_closes_only_that_connection() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn stopping_machine_http_tunnel_cancels_a_pending_handshake_provider() {
+async fn stopping_machine_http_tunnel_or_local_acceptor_cancels_a_pending_handshake_provider() {
     struct DropWitness(Arc<AtomicUsize>);
     impl Drop for DropWitness {
         fn drop(&mut self) {
@@ -1519,71 +1558,90 @@ async fn stopping_machine_http_tunnel_cancels_a_pending_handshake_provider() {
         }
     }
 
-    let server = endpoint(IrohCapProfile::MachineBulk).await;
-    let client = endpoint(IrohCapProfile::MachineBulk).await;
-    let admission_target = admission_server(
-        client.id().to_string(),
-        Arc::new(Mutex::new(VecDeque::new())),
-        Arc::new(AtomicUsize::new(0)),
-    )
-    .await;
-    let acceptor = MachineAcceptor::start(&server, MachineAcceptorConfig { admission_target })
-        .expect("machine acceptor");
-    let started = Arc::new(AtomicUsize::new(0));
-    let dropped = Arc::new(AtomicUsize::new(0));
-    let provider: MachineHandshakeProvider = Arc::new({
-        let started = Arc::clone(&started);
-        let dropped = Arc::clone(&dropped);
-        move || {
-            started.fetch_add(1, Ordering::SeqCst);
-            let witness = DropWitness(Arc::clone(&dropped));
-            Box::pin(async move {
-                let _witness = witness;
-                std::future::pending::<()>().await;
-                unreachable!()
-            })
-        }
-    });
-    let tunnel = MachineHttpTunnel::start_with_handshake_provider(
-        &client,
-        MachineTunnelConfig {
+    for local in [false, true] {
+        let server = endpoint(IrohCapProfile::MachineBulk).await;
+        let client = endpoint(IrohCapProfile::MachineBulk).await;
+        let admission_target = admission_server(
+            client.id().to_string(),
+            Arc::new(Mutex::new(VecDeque::new())),
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .await;
+        let acceptor = MachineAcceptor::start(&server, MachineAcceptorConfig { admission_target })
+            .expect("machine acceptor");
+        let started = Arc::new(AtomicUsize::new(0));
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let provider: MachineHandshakeProvider = Arc::new({
+            let started = Arc::clone(&started);
+            let dropped = Arc::clone(&dropped);
+            move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                let witness = DropWitness(Arc::clone(&dropped));
+                Box::pin(async move {
+                    let _witness = witness;
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                })
+            }
+        });
+        let config = MachineTunnelConfig {
             endpoint_id: server.id().to_string(),
             bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             direct_addresses: vec![direct_addr(&server).await],
             relay_urls: vec![],
             handshake_json: r#"{"v":1,"kind":"provider_broker"}"#.to_owned(),
             cap_profile: IrohCapProfile::MachineBulk,
-        },
-        provider,
-    )
-    .await
-    .expect("machine HTTP tunnel");
-    let mut application = TcpStream::connect(tunnel.local_addr().expect("HTTP addr"))
-        .await
-        .expect("connect");
-    application
-        .write_all(
-            format!(
-                "POST / HTTP/1.1\r\n{}: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER,
-                tunnel.local_capability(),
+        };
+        let tunnel = if local {
+            MachineHttpTunnel::start_with_local_admission(
+                &server,
+                config,
+                acceptor.local_admission(),
+                Some(provider),
             )
-            .as_bytes(),
-        )
-        .await
-        .expect("write request");
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while started.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
+            .await
+        } else {
+            MachineHttpTunnel::start_with_handshake_provider(&client, config, provider).await
         }
-    })
-    .await
-    .expect("provider starts");
-    tunnel.stop_and_wait().await;
-    assert_eq!(dropped.load(Ordering::SeqCst), 1);
-    acceptor.stop_and_wait().await;
-    client.shutdown().await;
-    server.shutdown().await;
+        .expect("machine HTTP tunnel");
+        let mut application = TcpStream::connect(tunnel.local_addr().expect("HTTP addr"))
+            .await
+            .expect("connect");
+        application
+            .write_all(
+                format!(
+                    "POST / HTTP/1.1\r\n{}: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER,
+                    tunnel.local_capability(),
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("write request");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while started.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("provider starts");
+        if local {
+            acceptor.stop_and_wait().await;
+            let mut byte = [0];
+            let closed = tokio::time::timeout(Duration::from_secs(5), application.read(&mut byte))
+                .await
+                .expect("local stream closes with acceptor");
+            assert!(!matches!(closed, Ok(length) if length > 0));
+            assert!(!tunnel.status().connection_active);
+            tunnel.stop_and_wait().await;
+        } else {
+            tunnel.stop_and_wait().await;
+            acceptor.stop_and_wait().await;
+        }
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+        client.shutdown().await;
+        server.shutdown().await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
