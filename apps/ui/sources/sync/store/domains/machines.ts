@@ -26,14 +26,13 @@ import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
-import { retainMachineRecord, hasMachineContributionRegistryProjectionChanged, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
+import { retainMachineRecord, readMachineContributionRegistryProjectionInvalidation, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineActivity, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 
 import type { StoreGet, StoreSet } from './_shared';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { indexMachineInventory, mergeMachineInventory } from './machines/machineInventory';
 
 export { resolveMachineSessionListIndexImpact } from './machineSessionListIndexImpact';
@@ -144,10 +143,12 @@ export type MachinePresence = Readonly<{
     active: boolean;
     activeAt: number;
     updatedAt: number;
+    presenceProtocolVersion?: 1;
 }>;
 
 function readMachinePresence(machine: MachinePresence): MachinePresence {
-    return { active: machine.active, activeAt: machine.activeAt, updatedAt: machine.updatedAt };
+    return { active: machine.active, activeAt: machine.activeAt, updatedAt: machine.updatedAt,
+        ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}) };
 }
 
 function retainMachinePresence(
@@ -155,10 +156,10 @@ function retainMachinePresence(
     next: MachinePresence,
     contentUnchanged: boolean,
 ): MachinePresence {
-    const nowMs = Date.now();
-    if (previous && contentUnchanged && previous.active === next.active
-        && isMachineOnline(previous, nowMs) === isMachineOnline(next, nowMs)) return previous;
-    return previous?.active === next.active && previous.activeAt === next.activeAt
+    // A retained record's live activity is published below through its slice.
+    if (previous && contentUnchanged
+        && previous.presenceProtocolVersion === next.presenceProtocolVersion) return previous;
+    return previous?.active === next.active && previous.presenceProtocolVersion === next.presenceProtocolVersion && previous.activeAt === next.activeAt
         && previous.updatedAt === next.updatedAt ? previous : next;
 }
 
@@ -256,15 +257,16 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             // Timeout retains the last observation's clock. A held active
             // row at that same clock cannot undo its inactive transition.
             if (update.activeAt === newestActiveAt && update.active && !activity.active) continue;
-            if (machine.active !== update.active || (display && display.active !== update.active)
-                || !isMachineOnline(activePresence ?? presence ?? machine) && isMachineOnline(update)) {
-                changedRows.push({ ...machine, active: update.active, activeAt: update.activeAt });
-                continue;
-            }
-            if (update.activeAt === activity.activeAt) continue;
+            // Known rows retain immutable content snapshots. Reapplying their
+            // raw active field would retain the same row and recurse forever.
+            const projections = [activeMachine, display, presence, activePresence];
+            if ([machine, ...projections].every(projection => {
+                const current = projection ? readMachineActivity(projection) : null;
+                return !current || (current.active === update.active && current.activeAt === update.activeAt);
+            })) continue;
             // The bulk publisher commits each yield before requesting the next,
             // so repeated ids reconcile against the preceding admitted clock.
-            yield { machine, activity: update, projections: [activeMachine, display, presence, activePresence] };
+            yield { machine, activity: update, projections };
             changedMachineIds.push(update.id);
         }
     }
@@ -429,11 +431,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const previous = Array.isArray(currentScopedMachines)
                         ? currentMachineById[machine.id]
                         : shouldUpdateActiveProjection ? state.machines[machine.id] : undefined;
-                    if (sourceServerId && hasMachineContributionRegistryProjectionChanged(previous, machine)) {
+                    const projectionInvalidation = sourceServerId
+                        ? readMachineContributionRegistryProjectionInvalidation(previous, machine) : null;
+                    if (sourceServerId && projectionInvalidation) {
                         publishMachineContributionRegistryProjectionInvalidation({
                             serverId: sourceServerId,
                             machineId: machine.id,
-                        });
+                        }, projectionInvalidation);
                     }
                     applyWorkspaceSyncRuntimeEvent({
                         serverId: sourceServerId,

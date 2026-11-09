@@ -1,6 +1,7 @@
-import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { Machine } from '../../domains/state/storageTypes';
+import type { MachineContributionRegistryProjectionInvalidationReason } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { hasCurrentMachineContent } from '../../domains/machines/resolveServerScopedMachines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
@@ -24,28 +25,34 @@ function readContributionRegistryProjectionRevision(state: Readonly<Record<strin
 }
 
 /** The machine writer owns projection currentness for every Home's readers. */
-export function hasMachineContributionRegistryProjectionChanged(
+/**
+ * Why an advanced daemon state invalidates the Machine projection, or null.
+ * A changed registry revision on the same daemon is a `refresh`; a replaced
+ * daemon identity/endpoint (or an observation without the explicit revision)
+ * is an `authority` change.
+ */
+export function readMachineContributionRegistryProjectionInvalidation(
     previous: Machine | null | undefined,
     next: Machine,
-): boolean {
+): MachineContributionRegistryProjectionInvalidationReason | null {
     // The first inventory observation reports the endpoint an early reader
     // already asked; it is not itself a replacement or registry adoption.
-    if (!previous || !hasMachineDaemonStateAdvanced(previous, next)) return false;
+    if (!previous || !hasMachineDaemonStateAdvanced(previous, next)) return null;
     const previousState = readDaemonState(previous.daemonState);
     const nextState = readDaemonState(next.daemonState);
     // A version-zero socket placeholder has no daemon observation yet.
     // A positive version still carries the legacy invalidation signal even
     // when its content is unavailable or predates the explicit revision.
-    if (!previousState && (previous.daemonStateVersion ?? 0) === 0) return false;
+    if (!previousState && (previous.daemonStateVersion ?? 0) === 0) return null;
     const previousRevision = readContributionRegistryProjectionRevision(previousState);
     const nextRevision = readContributionRegistryProjectionRevision(nextState);
     // Older daemon publications have only the broad version signal. Retain
     // that behavior until both observations carry the explicit revision.
-    if (previousRevision === null || nextRevision === null) return true;
-    return previousRevision !== nextRevision
-        || ['runtimeId', 'pid', 'startedAt', 'httpPort', 'status'].some((field) => (
-            previousState?.[field] !== nextState?.[field]
-        ));
+    if (previousRevision === null || nextRevision === null) return 'authority';
+    if (['runtimeId', 'pid', 'startedAt', 'httpPort', 'status'].some((field) => previousState?.[field] !== nextState?.[field])) {
+        return 'authority';
+    }
+    return previousRevision !== nextRevision ? 'refresh' : null;
 }
 
 export function areStoredMachinesEqual(
@@ -55,7 +62,7 @@ export function areStoredMachinesEqual(
     return areStoredMachineValuesEqual(previous, next, true);
 }
 
-/** Heartbeat timestamps are published through the machine-presence slice, not semantic inventory. */
+/** Live activity is published through the machine-presence slice, not semantic inventory. */
 export function areStoredMachineSemanticsEqual(
     previous: Machine | null | undefined,
     next: Machine | null | undefined,
@@ -113,6 +120,11 @@ export function areMachineLaunchInputsEqual(previous: Machine, next: Machine): b
         && hasCurrentMachineContent(previous) === hasCurrentMachineContent(next);
 }
 
+/**
+ * Machine facts without the live daemon resource channel: heartbeat clocks and every content field still count,
+ * while a publication that advances only `daemonStateVersion`/`seq`, `daemonState.resources` or
+ * `daemonState.managedActivity` (resource samples, guard and managed activity) is equal.
+ */
 export function areMachineFactsEqual(previous: Machine, next: Machine): boolean {
     return areStoredMachineValuesEqual(previous, next, true, false)
         && hasCurrentMachineContent(previous) === hasCurrentMachineContent(next);
@@ -157,6 +169,8 @@ function areStoredMachineValuesEqual(
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)
         && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
         && previous.metadataVersion === next.metadataVersion
+        // A daemon revision is currentness authority even when opened bytes match.
+        // Heartbeat timestamps alone remain outside semantic inventory equality.
         && (!includeResources || previous.daemonStateVersion === next.daemonStateVersion)
         && (previous.replacedByMachineId ?? null) === (next.replacedByMachineId ?? null)
         && (previous.replacedAt ?? null) === (next.replacedAt ?? null)
