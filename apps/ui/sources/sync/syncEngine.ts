@@ -7240,7 +7240,7 @@ class Sync {
             focusedSessionId,
             routeSessionId,
             ...surfaceVisibility.visibleSessionIds.filter(sessionId => isSessionSurfaceVisible(sessionId, activeServerId)),
-            ...getVisibleSessionListSurfaces()
+            ...getVisibleSessionListSurfaces('session')
                 .filter(address => areServerProfileIdentifiersEquivalent(address.serverId, activeServerId))
                 .map(address => address.sessionId),
             ...Object.keys(storage.getState().sessions)
@@ -7256,7 +7256,7 @@ class Sync {
 
     private isSessionHydrationDemanded = (sessionId: string, serverId?: string | null): boolean => {
         const route = getRouteAnchorSessionAddress();
-        return isSessionListRowVisible(sessionId, serverId)
+        return isSessionListRowVisible(sessionId, serverId, 'session')
             || resolveSessionLiveConsumption(sessionId, serverId).isFullContentConsumer
             || (route?.sessionId === sessionId && areServerProfileIdentifiersEquivalent(route.serverId, serverId));
     };
@@ -7264,10 +7264,43 @@ class Sync {
     /** A virtualized list batches its newly visible rows; exact reads share route acquisition. */
     public hydrateSessionListRows = async (
         addresses: readonly SessionAddress[],
-        options?: Readonly<{ resultTurnId?: string }>,
+        options?: Readonly<{ resultTurnId?: string; contentDemand?: 'session' | 'list-display' }>,
     ): Promise<void> => {
         if (!await this.awaitBootstrapForegroundAcquisition()) return;
         const unique = new Map(addresses.map(address => [sessionAddressKey(address), address]));
+        if (options?.contentDemand === 'list-display' && !options.resultTurnId) {
+            const byServer = new Map<string, SessionAddress[]>();
+            for (const address of unique.values()) {
+                if (!isSessionListRowVisible(address.sessionId, address.serverId)) continue;
+                const group = byServer.get(address.serverId) ?? [];
+                group.push(address);
+                byServer.set(address.serverId, group);
+            }
+            await Promise.all([...byServer].map(async ([serverId, demanded]) => {
+                const authority = await captureServerRequestAuthorityForServerAccountScope({
+                    serverId, activeRequest: this.requestViaConfiguredSocket,
+                });
+                // Capturing Account authority owns credential acquisition for this Home.
+                const credentials = authority.context.credentials!;
+                const currentness = createOperationAccountCurrentnessSource({ credentials, request: authority.request, serverId });
+                try {
+                    // Register the whole logical demand before awaiting. The existing parts
+                    // reader owns bounded physical batches and chunk-level row publication.
+                    const outcomes = await Promise.allSettled(demanded.map(({ sessionId }) => refreshSessionListProjection({
+                        serverId, sessionId, accountId: authority.scope.accountId, contentDemand: 'list-display',
+                        read: { authority, activeCredentials: credentials, activeEncryption: authority.context.encryption,
+                            activeRequest: authority.request, sessionDataKeys: this.sessionDataKeys,
+                            sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes, applySessions: this.applySessions },
+                        pendingReads: this.sessionByIdHydrationInFlight, currentnessSource: currentness,
+                        isScopeCurrent: () => isSessionListRowVisible(sessionId, serverId),
+                        retireSession: () => this.retireLocalSession(sessionId, serverId),
+                        deferHydration: () => this.markSessionStateHydrationDeferred(sessionId),
+                    })));
+                    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
+                } finally { currentness.dispose(); await authority.release(); }
+            }));
+            return;
+        }
         await runTasksWithLimit([...unique.values()].map(address => async () => {
             if (!isSessionListRowVisible(address.sessionId, address.serverId)) return;
             const result = await this.ensureSessionVisibleForMessageRoute(address.sessionId, {

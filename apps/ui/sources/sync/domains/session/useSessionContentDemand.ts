@@ -3,7 +3,7 @@ import * as React from 'react';
 import { isSessionContentUnsettled as isSessionRowContentUnsettled } from '@/sync/domains/session/encryptedContentAvailability';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { retainVisibleSessionListSurfaces, type SessionListContentDemand } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -35,6 +35,8 @@ export function useSessionContentDemand(
     options: Readonly<{
         tag: string;
         hydrate: 'viewport' | 'unsettled';
+        /** Naming chrome needs the admitted display row, without a full Session carrier. */
+        contentDemand?: SessionListContentDemand;
         /** The surface is not showing its Sessions (inactive pane): nothing is demanded. */
         active?: boolean;
         /** A server-scope reset releases every retained row; re-entry then hydrates again. */
@@ -46,9 +48,10 @@ export function useSessionContentDemand(
     }>,
 ): void {
     const { tag, hydrate, active = true, resetVersion = 0, onSettled, resultTurnId } = options;
+    const contentDemand = resultTurnId ? 'session' : options.contentDemand ?? 'session';
     const previous = React.useRef<Readonly<{ keys: ReadonlySet<string>; resetVersion: number }>>({ keys: new Set(), resetVersion });
     // Callers rebuild their arrays freely; the demand follows the Sessions, not the array identity.
-    const demandKey = (address: SessionAddress) => JSON.stringify([sessionAddressKey(address), resultTurnId]);
+    const demandKey = (address: SessionAddress) => JSON.stringify([sessionAddressKey(address), resultTurnId, contentDemand]);
     const identity = addresses.map(demandKey).join('\u0000');
     React.useEffect(() => {
         const demanded = active ? addresses : [];
@@ -56,16 +59,18 @@ export function useSessionContentDemand(
         previous.current = { keys: new Set(demanded.map(demandKey)), resetVersion };
         if (demanded.length === 0) return;
         const entered = demanded.filter(address => !earlier.has(demandKey(address)));
-        const release = retainVisibleSessionListSurfaces(demanded);
+        const release = retainVisibleSessionListSurfaces(demanded, contentDemand);
         const toHydrate = hydrate === 'unsettled' && !resultTurnId ? entered.filter(isSessionContentUnsettled) : entered;
         let current = true;
         const settled = () => { if (current) onSettled?.(); };
         if (toHydrate.length > 0) fireAndForget((resultTurnId
             ? sync.hydrateSessionListRows(toHydrate, { resultTurnId })
-            : sync.hydrateSessionListRows(toHydrate)).finally(settled), { tag });
+            : contentDemand === 'list-display'
+                ? sync.hydrateSessionListRows(toHydrate, { contentDemand })
+                : sync.hydrateSessionListRows(toHydrate)).finally(settled), { tag });
         else settled();
         return () => { current = false; release(); };
         // The addresses are fully described by their identity key.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [identity, active, resetVersion, hydrate, tag, onSettled]);
+    }, [identity, active, resetVersion, hydrate, contentDemand, tag, onSettled]);
 }

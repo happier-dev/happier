@@ -16,6 +16,8 @@ export type SessionSurfaceVisibilitySnapshot = Readonly<{
     visibleSessionIds: ReadonlyArray<string>;
 }>;
 
+export type SessionListContentDemand = 'session' | 'list-display';
+
 type MutableSessionSurfaceVisibilityState = {
     listeners: Set<() => void>;
     resetListeners: Set<() => void>;
@@ -31,7 +33,7 @@ type MutableSessionSurfaceVisibilityState = {
     routeAnchorSessionAddress: SessionAddress | null;
     snapshot: SessionSurfaceVisibilitySnapshot;
     visibleSurfaces: readonly SessionAddress[];
-    visibleListRows: Map<string, { address: SessionAddress; count: number }>;
+    visibleListRows: Map<string, { address: SessionAddress; count: number; sessionCount?: number }>;
     visibleListSurfaces: readonly SessionAddress[];
 };
 
@@ -211,57 +213,77 @@ export function getVisibleSessionSurfaces(): readonly SessionAddress[] {
 }
 
 /** Visible list rows demand metadata hydration, never transcript consumption or human presence. */
-export function getVisibleSessionListSurfaces(): readonly SessionAddress[] {
+export function getVisibleSessionListSurfaces(contentDemand?: 'session'): readonly SessionAddress[] {
+    if (contentDemand === 'session') return Array.from(sessionSurfaceVisibilityState.visibleListRows.values())
+        .filter(row => (row.sessionCount ?? row.count) > 0).map(row => row.address)
+        .sort((a, b) => a.serverId.localeCompare(b.serverId) || a.sessionId.localeCompare(b.sessionId));
     return sessionSurfaceVisibilityState.visibleListSurfaces;
 }
 
-function refreshVisibleSessionListSurfaces(): void {
+function refreshVisibleSessionListSurfaces(sessionDemandChanged = false): void {
     const next = Array.from(sessionSurfaceVisibilityState.visibleListRows.values(), value => value.address)
         .sort((a, b) => a.serverId.localeCompare(b.serverId) || a.sessionId.localeCompare(b.sessionId));
     const previous = sessionSurfaceVisibilityState.visibleListSurfaces;
     if (next.length === previous.length && next.every((address, index) => (
         address.serverId === previous[index].serverId && address.sessionId === previous[index].sessionId
-    ))) return;
+    ))) { if (sessionDemandChanged) emitChange(); return; }
     sessionSurfaceVisibilityState.visibleListSurfaces = next;
     emitChange();
 }
 
 /** Each mounted pane retains its own viewport; releasing one pane cannot hide another's rows. */
-export function retainVisibleSessionListSurfaces(addresses: readonly SessionAddress[]): () => void {
+export function retainVisibleSessionListSurfaces(addresses: readonly SessionAddress[], contentDemand: SessionListContentDemand = 'session'): () => void {
     const keys = new Set<string>();
+    let sessionDemandChanged = false;
     for (const address of addresses) {
         const identity = resolveVisibleSessionIdentity(address.sessionId, address.serverId);
         if (!identity.serverId || !identity.sessionId || !identity.sessionKey || keys.has(identity.sessionKey)) continue;
         keys.add(identity.sessionKey);
         const current = sessionSurfaceVisibilityState.visibleListRows.get(identity.sessionKey);
+        // The optional field also reads an already-retained pre-refresh runtime entry.
+        const sessionCount = current?.sessionCount ?? current?.count ?? 0;
+        const nextSessionCount = sessionCount + (contentDemand === 'session' ? 1 : 0);
+        if ((sessionCount > 0) !== (nextSessionCount > 0)) sessionDemandChanged = true;
         sessionSurfaceVisibilityState.visibleListRows.set(identity.sessionKey, {
             address: current?.address ?? { serverId: identity.serverId, sessionId: identity.sessionId },
             count: (current?.count ?? 0) + 1,
+            sessionCount: nextSessionCount,
         });
     }
-    refreshVisibleSessionListSurfaces();
+    refreshVisibleSessionListSurfaces(sessionDemandChanged);
     const resetVersion = sessionSurfaceVisibilityState.resetVersion;
     let released = false;
     return () => {
         if (released) return;
         released = true;
         if (resetVersion !== sessionSurfaceVisibilityState.resetVersion) return;
+        let sessionDemandChanged = false;
         for (const key of keys) {
             const current = sessionSurfaceVisibilityState.visibleListRows.get(key);
+            const sessionCount = current?.sessionCount ?? current?.count ?? 0;
+            const nextSessionCount = sessionCount - (contentDemand === 'session' ? 1 : 0);
+            if ((sessionCount > 0) !== (nextSessionCount > 0)) sessionDemandChanged = true;
             if (!current || current.count <= 1) sessionSurfaceVisibilityState.visibleListRows.delete(key);
-            else sessionSurfaceVisibilityState.visibleListRows.set(key, { ...current, count: current.count - 1 });
+            else sessionSurfaceVisibilityState.visibleListRows.set(key, { ...current, count: current.count - 1, sessionCount: nextSessionCount });
         }
-        refreshVisibleSessionListSurfaces();
+        refreshVisibleSessionListSurfaces(sessionDemandChanged);
     };
 }
 
-export function isSessionListRowVisible(sessionId: string, serverId?: string | null): boolean {
+export function isSessionListRowVisible(sessionId: string, serverId?: string | null, contentDemand?: 'session'): boolean {
     const normalizedSessionId = normalizeNullableSessionId(sessionId);
     if (!normalizedSessionId) return false;
     const normalizedServerId = normalizeNullableServerId(serverId);
-    return getVisibleSessionListSurfaces().some(address => address.sessionId === normalizedSessionId && (
+    const matches = (address: SessionAddress) => address.sessionId === normalizedSessionId && (
         !normalizedServerId || areServerProfileIdentifiersEquivalent(address.serverId, normalizedServerId)
-    ));
+    );
+    if (contentDemand === 'session') {
+        for (const row of sessionSurfaceVisibilityState.visibleListRows.values()) {
+            if ((row.sessionCount ?? row.count) > 0 && matches(row.address)) return true;
+        }
+        return false;
+    }
+    return getVisibleSessionListSurfaces().some(matches);
 }
 
 export function getSessionSurfaceVisibilitySnapshot(): SessionSurfaceVisibilitySnapshot {

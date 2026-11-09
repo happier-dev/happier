@@ -1569,7 +1569,7 @@ export function useDestinationInstanceTitleSources(
         const demanded = normalizeSessionAddress(address.serverId ?? activeServerId, address.sessionId);
         return demanded ? [demanded] : [];
     }), [addresses, activeServerId]);
-    useSessionContentDemand(demandedSessions, { tag: 'workspace.hydrateSessionTabs', hydrate: 'unsettled' });
+    useSessionContentDemand(demandedSessions, { tag: 'workspace.hydrateSessionTabs', hydrate: 'unsettled', contentDemand: 'list-display' });
     const discussionEntries = React.useMemo(() => entries.flatMap(entry => {
         if (entry.ref.kind === DISCUSSIONS_DESTINATION_ID && entry.ref.params.discussionId) {
             return [{ key: entry.key, serverId: entry.ref.params.serverId ?? null, discussionId: entry.ref.params.discussionId }];

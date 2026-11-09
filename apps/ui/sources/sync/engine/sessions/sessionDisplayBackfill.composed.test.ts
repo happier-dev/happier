@@ -4,7 +4,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderHook } from '@/dev/testkit';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { openSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1, sealSessionOwnerDisplayEnvelopeV1,
@@ -14,6 +15,8 @@ import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/me
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
@@ -24,6 +27,91 @@ const { loadSyncTuning } = await import('@/sync/runtime/syncTuning');
 const initialState = storage.getState();
 let homes: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { await homes?.dispose(); homes = undefined; storage.setState(initialState, true); });
+
+it('acquires the 204 cold restored tab titles as one display demand without publishing full Sessions', async () => {
+    const { sync } = await import('@/sync/syncEngine');
+    const { resolveCompactAppDestinations, resolveDestinationRefFromHref, useDestinationInstanceTitles } =
+        await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+    const { isSessionListRowVisible, retainVisibleSessionListSurfaces } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+    const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
+    const records = Array.from({ length: 204 }, (_, index) => createPlainSessionCurrentProjectionRecordFixture({
+        id: `restored-title-${index}`, metadataVersion: 7,
+        metadata: { name: `Restored ${index}`, path: `/restored/${index}`, host: 'owner-host' },
+    }));
+    const persisted = createSessionMetadataHttpBoundary(() => ({}));
+    for (const record of records) persisted.replaceSession(record.id, record);
+    let listRestored = false;
+    const transport = createSessionReadBatchHttpBoundary(request => {
+        if (request.path === '/v2/sessions' && !listRestored) return Response.json({ sessions: [], hasNext: false, nextCursor: null });
+        return persisted.handle(request.url, { method: request.method, headers: request.headers,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+            ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+    });
+    homes = await serveAccountHomes({ homes: [{ key: 'owner', serverUrl: 'https://restored-title-demand.test',
+        accountId: 'restored-title-demand', currentAccount: true }], route: request => transport.handle(request) });
+    await homes.restoreActiveConnection();
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    const serverId = homes.homes.owner!.id;
+    const warmRows = Array.from({ length: 27 }, (_, index) => createSessionListRenderableSessionFixture({
+        id: `warm-title-${index}`, metadata: { name: `Warm ${index}`, path: `/warm/${index}`, host: 'owner-host' },
+    }));
+    storage.getState().applyServerScopedSessionListRows(serverId, warmRows, { source: 'rowOnly', mode: 'append' });
+    const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+    const entries = [...records, ...warmRows].map(record => {
+        const ref = resolveDestinationRefFromHref(catalog, `/session/${record.id}?serverId=${encodeURIComponent(serverId)}`);
+        if (!ref) throw new Error('Expected the registered Session destination');
+        return { key: record.id, ref };
+    });
+    let fullPublications = 0;
+    let rowPublications = 0;
+    const unsubscribe = storage.subscribe((state, previous) => {
+        if (state.sessions !== previous.sessions) fullPublications++;
+        if (state.sessionListRowsByServerId !== previous.sessionListRowsByServerId) rowPublications++;
+    });
+    const batches = () => homes!.httpRequests.filter(request => request.path === '/v2/sessions/read-batch');
+    const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+    try {
+        expect(isSessionListRowVisible(records[0]!.id, serverId)).toBe(true);
+        await vi.waitFor(() => expect(hook.getCurrent()[records[203]!.id]).toBe('Restored 203'), { timeout: 20_000 });
+        for (const [index, record] of records.entries()) expect(hook.getCurrent()[record.id]).toBe(`Restored ${index}`);
+        expect(hook.getCurrent()['warm-title-26']).toBe('Warm 26');
+        expect(fullPublications).toBe(0);
+        expect(rowPublications).toBe(1);
+        expect(persisted.writes).toEqual([]);
+        expect(Object.keys(storage.getState().sessions)).toEqual([]);
+        expect(batches()).toHaveLength(1);
+        expect(batches()[0]!.body).toMatchObject({ sessionIds: records.map(record => record.id), includeTurns: false, includeMessages: false });
+        const settledRows = storage.getState().sessionListRowsByServerId[serverId];
+        await hook.rerender();
+        expect(batches()).toHaveLength(1);
+        expect(storage.getState().sessionListRowsByServerId[serverId]).toBe(settledRows);
+        expect(rowPublications).toBe(1);
+        listRestored = true;
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(fullPublications).toBe(0);
+        expect(Object.keys(storage.getState().sessions)).toEqual([]);
+        expect(batches()).toHaveLength(1);
+        persisted.replaceSession(records[0]!.id, createPlainSessionCurrentProjectionRecordFixture({
+            id: records[0]!.id, metadataVersion: 8,
+            metadata: { name: 'Renamed restored title', path: '/restored/0', host: 'owner-host' },
+        }));
+        await sync.hydrateSessionListRows([{ serverId, sessionId: records[0]!.id }], { contentDemand: 'list-display' });
+        await vi.waitFor(() => expect(hook.getCurrent()[records[0]!.id]).toBe('Renamed restored title'));
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[records[1]!.id]).toBe(settledRows?.[records[1]!.id]);
+        expect(fullPublications).toBe(0);
+        expect(rowPublications).toBe(2);
+        expect(batches()).toHaveLength(2);
+        expect(batches()[1]!.body).toMatchObject({ sessionIds: [records[0]!.id] });
+        const releaseFull = retainVisibleSessionListSurfaces([{ serverId, sessionId: records[0]!.id }]);
+        try {
+            await sync.refreshSessions({ awaitSessionListHydration: true });
+            expect(Object.keys(storage.getState().sessions)).toEqual([records[0]!.id]);
+            expect(storage.getState().sessions[records[0]!.id]).toMatchObject({ id: records[0]!.id, serverId });
+        } finally { releaseFull(); }
+        expect(isSessionListRowVisible(records[0]!.id, serverId)).toBe(true);
+    } finally { unsubscribe(); await hook.unmount(); }
+    expect(isSessionListRowVisible(records[0]!.id, serverId)).toBe(false);
+});
 
 it('reads no idle Session bodies in a 3,391-Session Home and backfills a newly displayed row on demand', async () => {
     const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');

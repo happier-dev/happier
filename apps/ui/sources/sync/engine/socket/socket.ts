@@ -713,7 +713,7 @@ function requestTargetedSessionHydration(params: Readonly<{
 
 function isCacheOnlySessionHydrationAnchorActive(sessionId: string, sourceServerId?: string | null): boolean {
     if (isSessionFullContentConsumerActiveForRealtime(sessionId, sourceServerId)) return true;
-    if (isSessionListRowVisible(sessionId, sourceServerId)) return true;
+    if (isSessionListRowVisible(sessionId, sourceServerId, 'session')) return true;
     const routeAnchor = getRouteAnchorSessionAddress();
     if (routeAnchor?.sessionId === sessionId && areServerProfileIdentifiersEquivalent(
         routeAnchor.serverId,
@@ -1861,7 +1861,7 @@ export async function handleUpdateContainer(params: {
                 fullContentConsumerActive
                 // Visible metadata/awareness consumers need request identities and settlements,
                 // even when the public counters stay zero. This does not consume a transcript.
-                || isSessionListRowVisible(updateData.body.id, sourceServerId)
+                || isSessionListRowVisible(updateData.body.id, sourceServerId, 'session')
                 || shouldHydrateAgentStateForHiddenSession({
                     session,
                     updateBody: updateData.body,

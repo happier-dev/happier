@@ -12,6 +12,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 const initialState = storage.getState();
 afterEach(() => { vi.restoreAllMocks(); storage.setState(initialState, true); });
@@ -354,22 +355,26 @@ it('batches missing ordinary display documents even when no full Session hydrati
     const body = V2SessionListResponseSchema.parse({ sessions: [{ ...scalars, documents: 'omitted',
         metadataAudience: 'owner', agentStateDocument: 'omitted' }] });
     let bodyReads = 0;
-    await fetchAndApplySessions({ serverId, credentials: { token: 'cold-ordinary-account' },
-        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), encryption: null, sessionDataKeys: new Map(),
-        request: async (path) => path === '/v2/sessions/read-batch' ? (bodyReads++, Response.json({ results: [{ sessionId: full.id,
-            detail: { status: 200, body: { session: full } } }] })) : Response.json(body),
-        sessionListBackgroundHydrationMaxRows: 0,
-        getExistingSession: () => null,
-        getCurrentSessionListRenderable: id => storage.getState().sessionListRowsByServerId[serverId]?.[id],
-        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'replace' }),
-        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
-        applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
-    });
-    expect(bodyReads).toBe(1);
-    expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.metadata?.name).toBe('Cold ordinary label');
-    expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.imageInputAvailability)
-        .toEqual({ available: false, reason: 'image_input_unsupported' });
-    expect(storage.getState().sessions[full.id]).toBeUndefined();
+    // A missing display document is not demand: this fixture represents a displayed label.
+    const release = retainVisibleSessionListSurfaces([{ serverId, sessionId: full.id }], 'list-display');
+    try {
+        await fetchAndApplySessions({ serverId, credentials: { token: 'cold-ordinary-account' },
+            accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), encryption: null, sessionDataKeys: new Map(),
+            request: async (path) => path === '/v2/sessions/read-batch' ? (bodyReads++, Response.json({ results: [{ sessionId: full.id,
+                detail: { status: 200, body: { session: full } } }] })) : Response.json(body),
+            sessionListBackgroundHydrationMaxRows: 0,
+            getExistingSession: () => null,
+            getCurrentSessionListRenderable: id => storage.getState().sessionListRowsByServerId[serverId]?.[id],
+            applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'replace' }),
+            applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+            applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
+        });
+        expect(bodyReads).toBe(1);
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.metadata?.name).toBe('Cold ordinary label');
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.imageInputAvailability)
+            .toEqual({ available: false, reason: 'image_input_unsupported' });
+        expect(storage.getState().sessions[full.id]).toBeUndefined();
+    } finally { release(); }
 });
 
 it('withdraws retained owner display at the real store when a compact row changes key', () => {
