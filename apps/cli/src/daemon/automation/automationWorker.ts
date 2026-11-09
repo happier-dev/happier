@@ -99,7 +99,7 @@ export function startAutomationWorker(params: {
     credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
   }>) => ReturnType<ReturnType<typeof createProductionWorkflowRunCoordinator>>;
   /** Existing custody reader, woken by control invalidation or release of a Workflow claim. */
-  recoverWorkflowRuns?: (runId?: string, requester?: Readonly<{ credentials: StoredCredentials; attribution: RequesterWorkAttributionV1 }>) => Promise<void>;
+  recoverWorkflowRuns?: (runId?: string, requester?: Readonly<{ credentials: StoredCredentials; attribution: RequesterWorkAttributionV1 }>, signal?: AbortSignal) => Promise<void>;
 }): AutomationWorkerHandle {
   const env = params.env ?? process.env;
   const workerDecision = getAutomationWorkerFeatureDecision(env);
@@ -144,6 +144,7 @@ export function startAutomationWorker(params: {
       serverHttpBaseUrl: resolveServerHttpBaseUrl(), onError: error =>
         logAutomationWarn('Workflow requester custody observation failed', error, { machineId: params.machineId }) });
   };
+  const workerCancellation = new AbortController();
   const managedTargetBackfillCancellation = new AbortController();
   let paused = false;
   // These values govern only the one claim request loop. A per-Run executor
@@ -373,6 +374,7 @@ export function startAutomationWorker(params: {
     if (stopped) return;
     stopped = true;
     cancelAssignmentRead();
+    workerCancellation.abort();
     managedTargetBackfillCancellation.abort();
     unsubscribeAdmission?.();
     sourceObservers.clear();
@@ -402,13 +404,13 @@ export function startAutomationWorker(params: {
       const host = params.requesterWorkAttributionV1;
       const requester = scopeId && host && params.requesterHomeServerIdentityId ? await acquireWorkflowRequesterCredentials({ scopeId,
         happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
-        installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+        installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
         ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) }) : null;
       if (scopeId && !requester) {
         await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId });
         return;
       }
-      try { await params.recoverWorkflowRuns?.(runId, requester ?? undefined); }
+      try { await params.recoverWorkflowRuns?.(runId, requester ?? undefined, workerCancellation.signal); }
       finally { await requester?.release(); }
     })().catch((error) => {
       logAutomationWarn('Workflow custody recovery failed; pending custody retained', error, {
@@ -540,7 +542,7 @@ export function startAutomationWorker(params: {
         const host = params.requesterWorkAttributionV1;
         requester = await acquireWorkflowRequesterCredentials({ scopeId: requesterWake.scopeId,
           happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
-          installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
         if (!requester) {
           requesterWakes.delete(requesterWake.scopeId);
@@ -583,7 +585,7 @@ export function startAutomationWorker(params: {
         const claimedRequester = await acquireWorkflowRequesterCredentials({ scopeId: claimedScopeId,
           accountId: requester.attribution.accountId, happyHomeDir: configuration.happyHomeDir,
           serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
-          serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
         if (!claimedRequester) {
           await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: claimed.run.id });
@@ -637,6 +639,7 @@ export function startAutomationWorker(params: {
             leaseDurationMs: scheduler.leaseDurationMs,
             ...(params.coordinateWorkflowRun
               ? { coordinateWorkflowRun: (claim: Parameters<NonNullable<typeof params.coordinateWorkflowRun>>[0]) => params.coordinateWorkflowRun!({ ...claim,
+                storageSignal: workerCancellation.signal,
                 registerLiveWorkProducer: producer => {
                   const active = activeExecutions.get(claimed.run.id);
                   if (active?.controller !== executionController) return () => {};
@@ -708,7 +711,7 @@ export function startAutomationWorker(params: {
               if (admittedRequester) {
                 // Preserve the admitted credential while recovery joins any
                 // still-running Session start, including a disabled trigger.
-                try { await params.recoverWorkflowRuns?.(claimed.run.id, admittedRequester); }
+                try { await params.recoverWorkflowRuns?.(claimed.run.id, admittedRequester, workerCancellation.signal); }
                 finally { await releaseClaimedScope?.(); }
               } else recoverWorkflowCustody(claimed.run.id);
             }
@@ -777,7 +780,7 @@ export function startAutomationWorker(params: {
       for (const scope of scopes.bindings) if (scope.attribution.accountId !== host.accountId) {
         await reconcileWorkflowRequesterCredentialScope({ happyHomeDir: configuration.happyHomeDir,
           serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
-          scopeId: scope.sessionId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          scopeId: scope.sessionId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
         requesterWakes.set(scope.sessionId, { scopeId: scope.sessionId, nextClaimAt: Date.now() });
       }
@@ -889,7 +892,7 @@ export function startAutomationWorker(params: {
         const scopeId = scope && typeof scope === 'object' && 'id' in scope && typeof scope.id === 'string' ? scope.id : body.runId;
         const retire = body.automationId === null ? retireWorkflowRequesterCredentials : settleWorkflowRequesterCredentialRetirement;
         void retire({ scopeId, happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId }).catch(error =>
+          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId, signal: workerCancellation.signal }).catch(error =>
           logAutomationWarn('Workflow requester custody retirement failed', error, { runId: body.runId }));
       }
 

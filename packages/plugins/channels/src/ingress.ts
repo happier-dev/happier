@@ -4861,6 +4861,9 @@ async function* readPlacedConversationIngressDueWork(
   input: Readonly<{ upper?: number; limit?: number }> = {},
 ) {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  // Selection shares one placement observation per connection. First-effect
+  // admission still rereads its authority before dispatch.
+  const placedConnections = new Map<string, ReturnType<typeof asConnection>>();
   let cursor: string | undefined;
   let selected = 0;
   do {
@@ -4878,12 +4881,15 @@ async function* readPlacedConversationIngressDueWork(
       if (obligation === undefined || obligation.value.terminal
         || obligation.value.payload.lifecycle.dueAt === null
         || (input.upper !== undefined && obligation.value.payload.lifecycle.dueAt > input.upper)) continue;
-      const connection = asConnection(readStateRow(await collection.get(
-        obligation.value['connection-id'],
-        { signal: context.signal },
-      )) ?? null);
-      if (connection === undefined
-        || !await hasCurrentConversationExecutionPlacement(context, connection.value.payload.transportOrigin)) continue;
+      const connectionId = obligation.value['connection-id'];
+      if (!placedConnections.has(connectionId)) {
+        const connection = asConnection(readStateRow(await collection.get(connectionId, { signal: context.signal })) ?? null);
+        placedConnections.set(connectionId, connection !== undefined
+          && await hasCurrentConversationExecutionPlacement(context, connection.value.payload.transportOrigin)
+          ? connection : undefined);
+      }
+      const connection = placedConnections.get(connectionId);
+      if (connection === undefined) continue;
       // A pending native continuation owns only this row. Scheduling must
       // skip it too, or its immediately due timestamp would spin the pump.
       if (activeIngressAttempts.has(ingressAttemptKey(connection.value.payload.routingIdentityKey, obligation.row.rowId))) continue;

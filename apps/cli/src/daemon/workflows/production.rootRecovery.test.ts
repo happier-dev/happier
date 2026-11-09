@@ -8,6 +8,8 @@ import {
   sealWorkflowProgressStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1,
   WorkflowDefinitionV1Schema,
+  WorkflowAcceptedSnapshotV1Schema,
+  WorkflowProgressEnvelopeV1Schema,
 } from '@happier-dev/protocol';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { createProductionWorkflowRunCoordinator, DurableWorkflowCoordinatorStore } from './production';
@@ -15,7 +17,7 @@ import { workflowInvocationKey } from './coordinator';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
-import { WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON, WORKFLOW_CANCEL_REQUESTED_ABORT_REASON } from './coordinator';
+import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON } from './coordinator';
 
 const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const accountId = 'account-1';
@@ -66,10 +68,10 @@ async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attenti
   const readRoot = async () => WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(await reader.execute({
     actionId: 'workflow.run.invocations.get', input: { runId, invocationId: rootId }, context: {},
   })).invocation;
-  return { acceptedEnvelope, storage, store, rootKey, readRoot, reader };
+  return { acceptedEnvelope, storage, store, rootKey, readRoot, reader, checkpoint };
 }
 
-function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorageTestkit>, isAcceptedAuthorizationCurrent = async () => true) {
+function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorageTestkit>) {
   return createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
     execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
       machineAdmissionTransport: async () => { throw new Error('unexpected_session_input'); },
@@ -79,7 +81,7 @@ function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorag
     onCommittedTransition: async () => {},
     resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
     resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
-    isAcceptedAuthorizationCurrent,
+    isAcceptedAuthorizationCurrent: async () => true,
   });
 }
 
@@ -91,8 +93,6 @@ async function heldHeartbeatRun(options: { holdAfterOpen?: boolean; delayedClaim
   const delayedRead = new Promise<void>(resolve => { releaseRead = resolve; });
   let held = false;
   let signal: AbortSignal | undefined;
-  let authorizationCurrent = true;
-  let authorizationFailure: Error | undefined;
   const worker = new AbortController();
   const coordinate = recoveredCoordinator({ ...h.storage, execute: async (operation, request) => {
     signal ??= request?.signal;
@@ -105,10 +105,7 @@ async function heldHeartbeatRun(options: { holdAfterOpen?: boolean; delayedClaim
       signal?.throwIfAborted();
     }
     return await h.storage.execute(operation, request);
-  } }, async () => {
-    if (authorizationFailure) throw authorizationFailure;
-    return authorizationCurrent;
-  });
+  } });
   const claimClient = createAutomationClaimClient({ token: 'test-token', createPublisherHeader: async () => null });
   const run = { id: runId, attempt: options.delayedClaimOrigin ? 1 : 0, revision: h.storage.run().revision,
     leaseExpiresAt: Date.now() + 30_000, workflowAcceptedSnapshotEnvelope: h.acceptedEnvelope, triggerId: null };
@@ -137,9 +134,7 @@ async function heldHeartbeatRun(options: { holdAfterOpen?: boolean; delayedClaim
     claimed,
   });
   await Promise.race([reading, execution]);
-  return { ...h, execution, releaseRead, worker, signal: () => signal,
-    failAuthorizationRead: () => { authorizationFailure = heartbeatHttpFailure(503); },
-    revokeAuthorization: () => { authorizationCurrent = false; } };
+  return { ...h, execution, releaseRead, worker, signal: () => signal };
 }
 
 function heartbeatHttpFailure(status?: number) {
@@ -149,6 +144,138 @@ function heartbeatHttpFailure(status?: number) {
 }
 
 describe('Workflow root recovery', () => {
+  it('commits the frontier through one content-free control read', async () => {
+    const h = await interruptedRoot('pending');
+    const reads: { request: Parameters<typeof h.storage.execute>[0]; response: unknown }[] = [];
+    const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: rootId, checkpoint: h.checkpoint, encryption, revision: h.storage.run().revision,
+      storage: { execute: async (request, options) => {
+        const response = await h.storage.execute(request, options);
+        if (request.operation === 'get') reads.push({ request, response });
+        return response;
+      } } });
+    await store.commitFrontier({ nextBlockOrdinal: 1 });
+    expect(store.checkpoint.frontier.nextBlockOrdinal).toBe(1);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.request).toMatchObject({ operation: 'get', projection: 'control' });
+    expect(reads[0]?.response).toMatchObject({ run: { state: h.storage.run().state, revision: expect.any(Number) } });
+    for (const field of ['acceptedEnvelope', 'checkpointEnvelope', 'resultEnvelope', 'keyCensus']) {
+      expect(reads[0]?.response).not.toHaveProperty(field);
+    }
+  });
+
+  it('confirms review rows through one revision-only read without reopening Run content', async () => {
+    const h = await interruptedRoot('pending');
+    const reads: { request: Parameters<typeof h.storage.execute>[0]; response: unknown }[] = [];
+    const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: rootId, checkpoint: h.checkpoint, encryption, revision: h.storage.run().revision,
+      storage: { execute: async (request, options) => {
+        const response = await h.storage.execute(request, options);
+        if (request.operation === 'get') reads.push({ request, response });
+        return response;
+      } } });
+    const revision = h.storage.run().revision;
+    await expect(store.confirmReviewHolds({ recordIds: [rootId] })).resolves.toMatchObject({
+      revision, control: 'running', rows: [{ recordId: rootId, lifecycle: 'pending' }],
+    });
+    expect(reads).toEqual([{ request: { operation: 'get', runId, projection: 'revision' },
+      response: { run: { state: h.storage.run().state, revision } } }]);
+  });
+
+  it.each(['get', 'invocations.get'] as const)('cancels pending %s storage when the containing worker stops', async operation => {
+    const h = await interruptedRoot('pending');
+    const controller = new AbortController();
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    let receivedSignal: AbortSignal | undefined;
+    const cancellation = Object.assign(new Error('cancelled'), { code: 'ERR_CANCELED' });
+    const coordinate = recoveredCoordinator({ ...h.storage, execute: async (request, options) => {
+      if (request.operation === operation) return await new Promise((_resolve, reject) => {
+        receivedSignal = options?.signal;
+        release = () => reject(cancellation);
+        receivedSignal?.addEventListener('abort', release, { once: true });
+        entered();
+      });
+      return await h.storage.execute(request, options);
+    } });
+    const running = expect(coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness, storageSignal: controller.signal }))
+      .rejects.toMatchObject({ code: 'ERR_CANCELED' });
+    await sending;
+    try {
+      expect.soft(receivedSignal).toBe(controller.signal);
+      controller.abort();
+    } finally { release(); }
+    await running;
+  });
+
+  it('keeps terminal storage alive after Stop cancels leaf execution', async () => {
+    const h = await interruptedRoot('pending');
+    const worker = new AbortController();
+    const execution = new AbortController();
+    let stopped = false;
+    const postStopSignals: Array<AbortSignal | undefined> = [];
+    const coordinate = recoveredCoordinator({ ...h.storage, execute: async (operation, options) => {
+      if (!stopped && operation.operation === 'get' && operation.projection === 'control') {
+        stopped = true;
+        h.storage.requestControl('cancel_requested');
+        execution.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+      }
+      if (stopped) {
+        postStopSignals.push(options?.signal);
+        options?.signal?.throwIfAborted();
+      }
+      return await h.storage.execute(operation, options);
+    } });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness,
+      signal: execution.signal, storageSignal: worker.signal })).resolves.toMatchObject({ state: 'cancelled' });
+    expect(h.storage.run().state).toBe('cancelled');
+    expect(postStopSignals.length).toBeGreaterThan(0);
+    expect(postStopSignals.every(signal => signal === worker.signal && !signal.aborted)).toBe(true);
+  });
+
+  it('trusts semantically admitted content when loading durable rows and the accepted program', async () => {
+    const h = await interruptedRoot('pending');
+    // Observe the real schemas; the stored-content openers still perform their
+    // purpose-bound validation beneath this production consumer.
+    const progressParses = vi.spyOn(WorkflowProgressEnvelopeV1Schema, 'parse');
+    try {
+      const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+        rootRecordId: rootId, checkpoint: h.checkpoint, encryption, storage: h.storage,
+        revision: h.storage.run().revision });
+      expect(await store.readByLogicalInvocation(rootId)).toMatchObject({ blockKind: 'root', lifecycle: 'pending' });
+      expect(progressParses).not.toHaveBeenCalled();
+    } finally { progressParses.mockRestore(); }
+    const acceptedParses = vi.spyOn(WorkflowAcceptedSnapshotV1Schema, 'parse');
+    try {
+      await expect(recoveredCoordinator(h.storage)({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
+        acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness }))
+        .resolves.toMatchObject({ state: 'succeeded' });
+      expect(acceptedParses).not.toHaveBeenCalled();
+    } finally { acceptedParses.mockRestore(); }
+  });
+
+  it('publishes running before continuing a reclaimed running root', async () => {
+    const h = await interruptedRoot('running');
+    await h.storage.execute({ operation: 'transition', runId,
+      expectedRevision: h.storage.run().revision, state: 'claimed',
+      checkpointEnvelope: h.storage.checkpointEnvelope() });
+    let stateAtNextStep: ReturnType<typeof h.storage.run>['state'] | undefined;
+    const coordinate = recoveredCoordinator({ ...h.storage, execute: async (operation, request) => {
+      if (operation.operation === 'invocations.admit') stateAtNextStep = h.storage.run().state;
+      return h.storage.execute(operation, request);
+    } });
+
+    await expect(coordinate({ runId, attempt: 1, expectedRevision: h.storage.run().revision,
+      acceptedEnvelope: h.acceptedEnvelope, accountCurrentness: encryption.witness }))
+      .resolves.toMatchObject({ state: 'succeeded' });
+    expect(stateAtNextStep).toBe('running');
+    expect(h.storage.rows().filter(row => row.index.parentRecordId === null).map(row => row.index.id))
+      .toEqual([rootId]);
+  });
+
   it.each([false, true])('rejoins producer-replaced roots and inherits current members through repeated recovery (legacy checkpoint=%s)', async legacyCheckpoint => {
     const h = await interruptedRoot('pending');
     const child = await h.store.ensureIntent({ key: workflowInvocationKey({ runId, blockId: 'check', scope: [], attempt: 0 }),
@@ -340,32 +467,16 @@ describe('Workflow root recovery', () => {
     }
   });
 
-  it.each(['worker', 'authorization', 'cancel'] as const)('lease heartbeat preserves %s aborts', async cause => {
+  it.each(['worker', 'cancel'] as const)('lease heartbeat preserves local %s aborts', async cause => {
     vi.useFakeTimers();
     const post = vi.spyOn(axios, 'post').mockImplementation(async () => ({ data: { ok: true, leaseExpiresAt: Date.now() + 30_000 } }));
     const h = await heldHeartbeatRun({ holdAfterOpen: cause !== 'worker' });
     try {
       if (cause === 'worker') h.worker.abort('worker-retired');
-      if (cause === 'authorization') h.revokeAuthorization();
-      if (cause === 'cancel') h.storage.requestControl('cancel_requested');
+      if (cause === 'cancel') h.worker.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(h.signal()?.aborted).toBe(true);
-      expect(h.signal()?.reason).toBe(cause === 'worker' ? 'worker-retired'
-        : cause === 'authorization' ? WORKFLOW_AUTHORIZATION_NOT_CURRENT_ABORT_REASON : WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
-    } finally {
-      h.worker.abort(); h.releaseRead(); await h.execution;
-      post.mockRestore(); vi.useRealTimers();
-    }
-  });
-
-  it('lease heartbeat retains fail-closed authorization reads after a successful renewal', async () => {
-    vi.useFakeTimers();
-    const post = vi.spyOn(axios, 'post').mockImplementation(async () => ({ data: { ok: true, leaseExpiresAt: Date.now() + 30_000 } }));
-    const h = await heldHeartbeatRun({ holdAfterOpen: true });
-    try {
-      h.failAuthorizationRead();
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(h.signal()?.aborted).toBe(true);
+      expect(h.signal()?.reason).toBe(cause === 'worker' ? 'worker-retired' : WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
     } finally {
       h.worker.abort(); h.releaseRead(); await h.execution;
       post.mockRestore(); vi.useRealTimers();

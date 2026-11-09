@@ -887,6 +887,20 @@ export function workflowRunIdentityWhere(params: Readonly<{ accountId: string; r
     return { id: params.runId, accountId: params.accountId, workflowCustodyState: { not: null }, workflowAcceptedSnapshotEnvelope: { not: null } };
 }
 
+/** Control observes only the Run token and, when requested, the original root. */
+export async function getWorkflowRunControl(params: Readonly<{ accountId: string; runId: string; projection: 'control' | 'revision' }>) {
+    return inTx(async tx => {
+        const census = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
+        const run = await tx.automationRun.findFirst({ where: workflowRunIdentityWhere({ accountId: census.ownerAccountId, runId: params.runId }),
+            select: { state: true, revision: true } });
+        if (!run) throw new WorkflowRunServiceError('run_not_found');
+        if (params.projection === 'revision') return { run };
+        const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
+            parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
+        return { run, rootProgress: projectWorkflowRootProgress(root, census) };
+    }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-get-run-control' });
+}
+
 export async function getWorkflowRun(params: Readonly<{ accountId: string; runId: string }>) {
     return await inTx(async (tx) => {
         const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));

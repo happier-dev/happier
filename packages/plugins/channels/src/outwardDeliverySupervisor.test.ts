@@ -863,12 +863,21 @@ describe('Channels outward-delivery supervisor', () => {
     expect([...deliveries.rows]).toEqual(before);
     const placed = backgroundContext({ state, deliveries, execute: vi.fn(), executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() });
     await expect(resolveConversationDeliveryForInvocation(request, placed)).resolves.toMatchObject({ kind: 'resolved' });
+    const sibling = await store.ensure(retireableControlOutwardObligation('same-connection-retention'));
+    if (sibling.kind !== 'created') throw new Error('Expected sibling custody');
+    await store.compareAndSwap({ custodyId: sibling.record.custodyId, expectedRevision: sibling.record.revision,
+      custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['sibling-receipt'] } });
     const settled = structuredClone([...deliveries.rows]);
     const expiry = Date.now() + 30 * 24 * 60 * 60 * 1_000;
+    const connectionReads = vi.spyOn(state, 'get');
     await runConversationOutwardDeliveryCycle({ context: foreign, now: () => expiry });
     expect([...deliveries.rows]).toEqual(settled);
+    expect(connectionReads.mock.calls.filter(([id]) => id === 'connection-1')).toHaveLength(1);
+    connectionReads.mockClear();
     await runConversationOutwardDeliveryCycle({ context: placed, now: () => expiry });
+    expect(connectionReads.mock.calls.filter(([id]) => id === 'connection-1')).toHaveLength(1);
     expect(await deliveries.get(created.record.custodyId)).toBeNull();
+    expect(await deliveries.get(sibling.record.custodyId)).toBeNull();
   });
   it.each(['final', 'permission'] as const)('routes an external plugin %s through the public host stamp and real Channels journey exactly once', async output => {
     const pluginId = 'acme.installed.conversation';

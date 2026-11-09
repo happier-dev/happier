@@ -447,7 +447,7 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                         } else {
                             await retireWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
                                 happyHomeDir: boundary.happyHomeDir, ...admitted.attribution,
-                                serverHttpBaseUrl: boundary.serverHttpBaseUrl,
+                                serverHttpBaseUrl: boundary.serverHttpBaseUrl, signal: context.signal,
                                 homeServerIdentityId: admitted.homeServerIdentityId });
                         }
                         return { ok: true };

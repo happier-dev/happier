@@ -2,8 +2,8 @@ import * as React from 'react';
 import { useExplicitFreshRereadAfterUnknownOutcome } from './useExplicitFreshRereadAfterUnknownOutcome.js';
 import { useConversationProviderDisplayName, useConversationProviderDisplayNameResolver } from './providerDisplayName.js';
 import { useDiscussionCandidatePages, useSessionCandidatePages, type SessionCandidate as BindingCreateSessionCandidate } from './useSessionCandidatePages.js';
-import { BindingTargetCandidateList, BindingDiscussionTargetControls,
-  type BindingCreateAutomationCandidate, type BindingCreateAutomationExecution } from './bindingTargetCandidates.js';
+import { BindingTargetCandidateList, BindingDiscussionTargetControls, BindingAutomationTargetControls,
+  useBindingAutomationTargetPages, type BindingCreateAutomationExecution } from './bindingTargetCandidates.js';
 import {
   hostRefusalDescription,
   hostRefusalDetails,
@@ -3435,10 +3435,6 @@ type BindingCreateTarget =
     label: string;
     execution: BindingCreateAutomationExecution;
   }>;
-type BindingCreateAutomationPage = Readonly<{
-  candidates: readonly BindingCreateAutomationCandidate[];
-  nextCursor?: string;
-}>;
 type BindingCreatePairingContext = Readonly<{
   generationId: string;
   challengeId: string;
@@ -4707,17 +4703,6 @@ function bindingCreatePrincipalSelection(
   };
 }
 
-function parseBindingCreateAutomationExecution(value: unknown): BindingCreateAutomationExecution | undefined {
-  if (!isRecord(value) || typeof value.enabled !== 'boolean') return undefined;
-  if (value.targetType !== null
-    && value.targetType !== 'new_session'
-    && value.targetType !== 'existing_session'
-    && value.targetType !== 'execution_run') {
-    return undefined;
-  }
-  return { targetType: value.targetType, enabled: value.enabled };
-}
-
 function bindingCreateAutomationEffectLabel(
   execution: BindingCreateAutomationExecution,
   t: Translate,
@@ -4746,34 +4731,6 @@ function bindingCreateAutomationEffectLabel(
   );
 }
 
-function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomationPage | undefined {
-  if (!isRecord(value) || !Array.isArray(value.items) || value.items.length > 100) return undefined;
-  if (value.nextCursor !== null && !isNonEmptyString(value.nextCursor)) return undefined;
-  const seen = new Set<string>();
-  const candidates: BindingCreateAutomationCandidate[] = [];
-  for (const entry of value.items) {
-    if (!isRecord(entry)
-      || !isNonEmptyString(entry.automationId)
-      || !isNonEmptyString(entry.label)
-      || seen.has(entry.automationId)) {
-      continue;
-    }
-    // The delegated-authority disclosure is part of the target contract, so a
-    // candidate without it is not offered rather than shown without it.
-    const execution = parseBindingCreateAutomationExecution(entry.execution);
-    if (execution === undefined) continue;
-    seen.add(entry.automationId);
-    candidates.push({
-      automationId: entry.automationId,
-      label: entry.label,
-      execution,
-    });
-  }
-  return {
-    candidates,
-    ...(value.nextCursor === null ? {} : { nextCursor: value.nextCursor }),
-  };
-}
 
 /**
  * A step's one action row: Back leads, Cancel and the step's primary close it. A step whose
@@ -5564,7 +5521,12 @@ function BindingCreateJourney(props: Readonly<{
     onStarted: () => setFeedback(undefined),
     onUnavailable: () => setFeedback('sessionUnavailable'),
   });
-  const automationAction = useExecutePluginAction('automation.conversation.targets.list');
+  const automationPages = useBindingAutomationTargetPages({
+    signal: props.signal,
+    isLocked: () => actionLocked,
+    onStarted: () => setFeedback(undefined),
+    onUnavailable: () => setFeedback('automationUnavailable'),
+  });
   const [stage, setStage] = React.useState<BindingCreateStage>('closed');
   const stageFocusTarget = usePluginUiFocusTarget();
   const openerFocusTarget = usePluginUiFocusTarget();
@@ -5595,8 +5557,7 @@ function BindingCreateJourney(props: Readonly<{
     load: loadSessions,
     reset: resetSessionPages,
   } = sessionsAction;
-  const [automationCandidates, setAutomationCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
-  const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
+  const { candidates: automationCandidates, reset: resetAutomationPages } = automationPages;
   const [target, setTarget] = React.useState<BindingCreateTarget | undefined>();
   // A router's groups and routes, edited by the same owner the router editor uses.
   const [routerDraft, setRouterDraft] = React.useState<ConversationThreadRouterBindingTargetV1 | undefined>();
@@ -5701,7 +5662,7 @@ function BindingCreateJourney(props: Readonly<{
     || pairingAction.execution.status === 'pending'
     || sessionsAction.execution.status === 'pending'
     || discussionPages.loading
-    || automationAction.execution.status === 'pending'
+    || automationPages.loading
     || newSessionRecipeSelection.pending;
 
   React.useEffect(() => {
@@ -5750,8 +5711,7 @@ function BindingCreateJourney(props: Readonly<{
     setProofThreadCandidates(undefined);
     resetSessionPages();
     resetDiscussionPages();
-    setAutomationCandidates([]);
-    setAutomationNextCursor(undefined);
+    resetAutomationPages();
     setTarget(undefined);
     setRouterDraft(undefined);
     setNewSessionDraft(undefined);
@@ -5764,7 +5724,7 @@ function BindingCreateJourney(props: Readonly<{
     setLinkPreviewPolicy('suppress');
     setSenderFeedback('off');
     setFeedback(undefined);
-  }, [resetDiscussionPages, resetSessionPages]);
+  }, [resetAutomationPages, resetDiscussionPages, resetSessionPages]);
 
   const cancelJourney = React.useCallback(() => {
     restoreOpenerFocusRef.current = true;
@@ -5872,15 +5832,14 @@ function BindingCreateJourney(props: Readonly<{
     setProofLocationKind('destination');
     setProofThreadQuery('');
     setProofThreadCandidates(undefined);
-    setAutomationCandidates([]);
-    setAutomationNextCursor(undefined);
+    resetAutomationPages();
     setTarget(undefined);
     setRouterDraft(undefined);
     setNewSessionDraft(undefined);
     setInputModeOverride(undefined);
     setFeedback(undefined);
     setStage('endpoint');
-  }, [availableConnections, pairingContext]);
+  }, [availableConnections, pairingContext, resetAutomationPages]);
 
   const searchEndpoints = React.useCallback(async () => {
     if (currentConnection === undefined || actionLocked || props.signal.aborted) return;
@@ -6011,34 +5970,6 @@ function BindingCreateJourney(props: Readonly<{
     }
   }, [actionLocked, currentConnection, endpointSelection, proofThreadQuery, props.signal, resolveAction, showResolverNotReady]);
 
-  const loadAutomationTargets = React.useCallback(async (cursor?: string) => {
-    if (actionLocked || props.signal.aborted) return;
-    setFeedback(undefined);
-    const settled = await automationAction.execute({
-      limit: 100,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    if (!mountedRef.current || props.signal.aborted) return;
-    if (settled.status !== 'success') {
-      setFeedback('automationUnavailable');
-      return;
-    }
-    const page = parseBindingCreateAutomationPage(settled.result);
-    if (page === undefined || (cursor === undefined && page.candidates.length === 0)) {
-      setFeedback('automationUnavailable');
-      return;
-    }
-    setAutomationCandidates((previous) => {
-      if (cursor === undefined) return page.candidates;
-      const seen = new Set(previous.map((candidate) => candidate.automationId));
-      return [...previous, ...page.candidates.filter((candidate) => {
-        if (seen.has(candidate.automationId)) return false;
-        seen.add(candidate.automationId);
-        return true;
-      })];
-    });
-    setAutomationNextCursor(page.nextCursor);
-  }, [actionLocked, automationAction, props.signal]);
 
   const continueFromPrincipal = React.useCallback(() => {
     if (principalSelection === undefined || actionLocked) return;
@@ -6446,8 +6377,7 @@ function BindingCreateJourney(props: Readonly<{
     setProofLocationKind('destination');
     setProofThreadQuery('');
     setProofThreadCandidates(undefined);
-                        setAutomationCandidates([]);
-                        setAutomationNextCursor(undefined);
+                        resetAutomationPages();
                         setInputModeOverride(undefined);
                         setFeedback(undefined);
                         setStage('principal');
@@ -6634,24 +6564,7 @@ function BindingCreateJourney(props: Readonly<{
                     onPress={() => { void loadSessions(sessionNextCursor); }}
                   />
                 )}
-                {automationCandidates.length === 0 ? (
-                  <Button
-                    title={props.t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Workflows')}
-                    variant="secondary"
-                    busy={automationAction.execution.status === 'pending'}
-                    disabled={actionLocked}
-                    onPress={() => { void loadAutomationTargets(); }}
-                  />
-                ) : null}
-                {automationNextCursor === undefined ? null : (
-                  <Button
-                    title={props.t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Workflows')}
-                    variant="plain"
-                    busy={automationAction.execution.status === 'pending'}
-                    disabled={actionLocked}
-                    onPress={() => { void loadAutomationTargets(automationNextCursor); }}
-                  />
-                )}
+                <BindingAutomationTargetControls pages={automationPages} disabled={actionLocked} t={props.t} />
               </Row>
               <BindingCreateStepActions
                 disabled={actionLocked}
@@ -7382,7 +7295,12 @@ function BindingEditJourney(props: Readonly<{
     onStarted: () => setFeedback(undefined),
     onUnavailable: () => setFeedback('sessionUnavailable'),
   });
-  const automationAction = useExecutePluginAction('automation.conversation.targets.list');
+  const automationPages = useBindingAutomationTargetPages({
+    signal: props.signal,
+    isLocked: () => actionLocked,
+    onStarted: () => setFeedback(undefined),
+    onUnavailable: () => setFeedback('automationUnavailable'),
+  });
   const stageFocusTarget = usePluginUiFocusTarget();
   const feedbackFocusTarget = usePluginUiFocusTarget();
   const [detail, setDetail] = React.useState<BindingEditorDetail | undefined>();
@@ -7412,8 +7330,7 @@ function BindingEditJourney(props: Readonly<{
     nextCursor: sessionNextCursor,
     load: loadSessions,
   } = sessionsAction;
-  const [automationCandidates, setAutomationCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
-  const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
+  const { candidates: automationCandidates } = automationPages;
   const mountedRef = React.useRef(true);
   const initialReadStartedRef = React.useRef(false);
   const submittingRef = React.useRef(false);
@@ -7465,7 +7382,7 @@ function BindingEditJourney(props: Readonly<{
     || resolveAction.execution.status === 'pending'
     || sessionsAction.execution.status === 'pending'
     || discussionPages.loading
-    || automationAction.execution.status === 'pending'
+    || automationPages.loading
     || newSessionRecipeSelection.pending;
   const saveLocked = actionLocked
     || detail === undefined
@@ -7581,7 +7498,7 @@ function BindingEditJourney(props: Readonly<{
       || resolveAction.execution.status === 'pending'
       || sessionsAction.execution.status === 'pending'
       || discussionPages.loading
-      || automationAction.execution.status === 'pending'
+      || automationPages.loading
       || newSessionRecipeSelection.pending
       || props.signal.aborted) {
       return;
@@ -7589,7 +7506,7 @@ function BindingEditJourney(props: Readonly<{
     props.onRefreshConnection();
     requestSummaryReread();
   }, [
-    automationAction.execution.status,
+    automationPages.loading,
     detailPending,
     newSessionRecipeSelection.pending,
     props.onRefreshConnection,
@@ -7759,34 +7676,6 @@ function BindingEditJourney(props: Readonly<{
     void loadSessions();
   }, [detail, finalizingDelete, loadSessions, props.initialStage, providerControlsAvailable]);
 
-  const loadAutomationTargets = React.useCallback(async (cursor?: string) => {
-    if (actionLocked || props.signal.aborted) return;
-    setFeedback(undefined);
-    const settled = await automationAction.execute({
-      limit: 100,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    if (!mountedRef.current || props.signal.aborted) return;
-    if (settled.status !== 'success') {
-      setFeedback('automationUnavailable');
-      return;
-    }
-    const page = parseBindingCreateAutomationPage(settled.result);
-    if (page === undefined || (cursor === undefined && page.candidates.length === 0)) {
-      setFeedback('automationUnavailable');
-      return;
-    }
-    setAutomationCandidates((previous) => {
-      if (cursor === undefined) return page.candidates;
-      const seen = new Set(previous.map((candidate) => candidate.automationId));
-      return [...previous, ...page.candidates.filter((candidate) => {
-        if (seen.has(candidate.automationId)) return false;
-        seen.add(candidate.automationId);
-        return true;
-      })];
-    });
-    setAutomationNextCursor(page.nextCursor);
-  }, [actionLocked, automationAction, props.signal]);
 
   const selectNewSessionRecipe = newSessionRecipeSelection.select;
 
@@ -8357,24 +8246,7 @@ function BindingEditJourney(props: Readonly<{
                 onPress={() => { void loadSessions(sessionNextCursor); }}
               />
             )}
-            {automationCandidates.length === 0 ? (
-              <Button
-                title={props.t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Workflows')}
-                variant="secondary"
-                busy={automationAction.execution.status === 'pending'}
-                disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-                onPress={() => { void loadAutomationTargets(); }}
-              />
-            ) : null}
-            {automationNextCursor === undefined ? null : (
-              <Button
-                title={props.t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Workflows')}
-                variant="plain"
-                busy={automationAction.execution.status === 'pending'}
-                disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-                onPress={() => { void loadAutomationTargets(automationNextCursor); }}
-              />
-            )}
+            <BindingAutomationTargetControls pages={automationPages} disabled={actionLocked || !providerControlsAvailable || finalizingDelete} t={props.t} />
           </Stack>
           <Stack gap="small">
             <Button title={props.t('plugins.channels.surface.bindingCreateBack', 'Back')} variant="plain" disabled={actionLocked} onPress={() => setStage('policies')} />

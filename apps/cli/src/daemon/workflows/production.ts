@@ -201,6 +201,15 @@ function parseRunSnapshot(value: unknown): RunStorageSnapshot {
   };
 }
 
+function parseRunControl(value: unknown) {
+  const record = asRecord(value);
+  const run = asRecord(record.run);
+  return { run: {
+    state: WorkflowRunSummaryV1Schema.shape.state.parse(run.state),
+    revision: WorkflowRunSummaryV1Schema.shape.revision.parse(run.revision),
+  }, rootProgress: record.rootProgress };
+}
+
 function sealMode(encryption: WorkflowRunEncryptionV1): SealMode {
   return encryption.runCrypto.mode === 'plain' ? encryption.runCrypto : { ...encryption.runCrypto, randomBytes: getRandomBytes };
 }
@@ -300,7 +309,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     if (index.parentRecordId && !this.recordsById.has(index.parentRecordId)) {
       await this.loadInvocation(index.parentRecordId);
     }
-    this.remember(index, WorkflowProgressEnvelopeV1Schema.parse(opened.content));
+    this.remember(index, opened.content);
     if (invocation.parentRevision !== undefined) {
       this.params.revision = Math.max(this.params.revision, WorkflowRunSummaryV1Schema.shape.revision.parse(invocation.parentRevision));
     }
@@ -332,7 +341,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         envelope: parseWorkflowStoredContentEnvelopeV1(contentEnvelope),
       });
       if (opened.kind !== 'available') throw new Error('workflow_invocation_content_unavailable');
-      this.remember(index, WorkflowProgressEnvelopeV1Schema.parse(opened.content));
+      this.remember(index, opened.content);
     }
     // An exact empty read is reusable for the lifetime of this claimed store:
     // admission remains CAS-owned by the server and this process records every
@@ -1161,7 +1170,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
           envelope,
         });
         if (opened.kind !== 'available') throw error;
-        const current = WorkflowCheckpointEnvelopeV1Schema.parse(opened.content);
+        const current = opened.content;
         this.params.revision = Math.max(this.params.revision, snapshot.run.revision);
         this.params.checkpoint = current;
         if (current.frontier.nextBlockOrdinal >= nextBlockOrdinal) return;
@@ -1184,7 +1193,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   };
 
   readControl = async () => {
-    const snapshot = parseRunSnapshot(await this.params.storage.execute({ operation: 'get', runId: this.params.runId }));
+    const snapshot = parseRunControl(await this.params.storage.execute({ operation: 'get', runId: this.params.runId, projection: 'control' }));
     this.params.revision = Math.max(this.params.revision, snapshot.run.revision);
     // The Run snapshot projects the original root for list progress. Recovery
     // selects its current physical root through the authenticated checkpoint.
@@ -1213,7 +1222,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   confirmReviewHolds: WorkflowCoordinatorStore['confirmReviewHolds'] = async ({ recordIds }) => {
     // The parent token precedes every exact row read. Never replace this token
     // with the mutable store revision after confirming the holds.
-    const snapshot = parseRunSnapshot(await this.params.storage.execute({ operation: 'get', runId: this.params.runId }));
+    const snapshot = parseRunControl(await this.params.storage.execute({ operation: 'get', runId: this.params.runId, projection: 'revision' }));
     const revision = snapshot.run.revision;
     this.params.revision = Math.max(this.params.revision, revision);
     const selected: WorkflowCoordinatorInvocation[] = [];
@@ -1423,7 +1432,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void> | void;
   storage?: StorageClient;
 }>): (claim: WorkflowClaimForCoordination) => Promise<WorkflowClaimCoordinationResult> {
-  const storage = params.storage ?? createWorkflowRunStorageClient({ token: params.token, machineId: params.machineId });
+  const baseStorage = params.storage ?? createWorkflowRunStorageClient({ token: params.token, machineId: params.machineId });
   const readRunReportPolicy = createSessionRunReportPolicyReader({
     serverId: params.execution.serverId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), accountId: params.accountId,
     readCredentials: async () => params.execution.credentials,
@@ -1441,6 +1450,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     expoPushSender: createWorkflowRunPushNotificationClient(params.token),
   });
   return async (claim) => {
+    // Stop cancels leaf execution; the worker lifetime keeps storage available
+    // until the coordinator has recorded the Run's terminal outcome.
+    const storage: StorageClient = { ...baseStorage, execute: (operation, options = {}) => baseStorage.execute(operation, {
+      ...options,
+      ...(claim.storageSignal ? { signal: options.signal
+        ? AbortSignal.any([claim.storageSignal, options.signal]) : claim.storageSignal } : {}),
+    }) };
     const accountEncryption = await params.resolveAccountEncryption(claim.signal);
     // The claim owns this Run/attempt, not the Account-wide change cursor.
     // Unrelated publications can advance that cursor before we open content;
@@ -1773,7 +1789,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         runId: claim.runId, attempt: claim.attempt, stage: 'accepted_snapshot', reason: openedAccepted.kind });
       return { state: 'failed', reason: 'content_unavailable' };
     }
-    const accepted = WorkflowAcceptedSnapshotV1Schema.parse(openedAccepted.content);
+    const accepted = openedAccepted.content;
     const inputs = accepted.inputs;
     if (initial.run.machineId !== params.machineId
       || accepted.machineId !== params.machineId
@@ -1850,7 +1866,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         ...openMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId }, envelope,
       });
       if (opened.kind !== 'available') return { state: 'failed', reason: 'content_unavailable' };
-      checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse(opened.content);
+      checkpoint = opened.content;
       rootRecordId = checkpoint.rootRecordId;
     }
 

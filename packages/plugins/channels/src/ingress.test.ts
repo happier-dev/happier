@@ -2441,8 +2441,16 @@ describe('Conversation provider observation ingress', () => {
         harness.rows.set(row.rowId, row);
       }
       vi.setSystemTime(1_500);
+      const connectionReads = vi.spyOn(harness.context.services.storage.account!.collection(CHANNEL_STATE_COLLECTION), 'get');
+      const placementReads = vi.spyOn(harness.context.services.actions!, 'getCurrentExecutionRouting');
       await expect(readNextConversationIngressDueAtForInvocation(harness.context)).resolves.toBe(1_750);
+      expect(connectionReads.mock.calls.filter(([id]) => id === 'connection-1' || id === foreignConnection.id)).toHaveLength(2);
+      expect(placementReads).toHaveBeenCalledTimes(2);
+      connectionReads.mockClear();
+      placementReads.mockClear();
       await expect(runConversationIngressDueWorkForInvocation({ limit: 1 }, harness.context)).resolves.toBe(0);
+      expect(connectionReads.mock.calls.filter(([id]) => id === foreignConnection.id)).toHaveLength(1);
+      expect(placementReads).toHaveBeenCalledTimes(1);
       vi.setSystemTime(1_750);
       await expect(runConversationIngressDueWorkForInvocation({ limit: 1 }, harness.context)).resolves.toBe(1);
       expect(harness.send).toHaveBeenCalledOnce();
@@ -2451,6 +2459,16 @@ describe('Conversation provider observation ingress', () => {
       await expect(readNextConversationIngressDueAtForInvocation(harness.context)).resolves.toBeUndefined();
       await expect(runConversationIngressDueWorkForInvocation({}, harness.context)).resolves.toBe(0);
       for (const row of foreignRows) expect(harness.rows.get(row.rowId)).toEqual(row);
+      // A new selection observes a real placement transfer; reuse never leaves
+      // the selection pass or replaces the first-effect authority check.
+      harness.rows.set(foreignConnection.id, stateRow({ ...foreignConnection,
+        payload: { ...foreignConnection.payload, transportOrigin: telegramConnectionAuthority.transportOrigin },
+      }));
+      connectionReads.mockClear();
+      placementReads.mockClear();
+      await expect(readNextConversationIngressDueAtForInvocation(harness.context)).resolves.toBe(1_100);
+      expect(connectionReads.mock.calls.filter(([id]) => id === foreignConnection.id)).toHaveLength(1);
+      expect(placementReads).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
 

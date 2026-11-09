@@ -840,14 +840,19 @@ export async function runConversationOutwardDeliveryCycle(
       }
       if (scanned.records.length > 0) {
         const retirementRecords: ConversationOutwardDeliveryRecord[] = [];
+        const connectionPlacement = new Map<string, boolean>();
         for (const record of scanned.records) {
-          const connection = await stateCollection.get(record.obligation.connectionId, { signal: context.signal });
           // The scanner has already proved terminal eligibility and the
           // thirty-day cutoff. Deleted connections leave that retention duty
           // here; live connections still require their current placement.
-          if (connection === null || await isConversationConnectionPlacedForInvocation(context, record.obligation.connectionId)) {
-            retirementRecords.push(record);
+          const connectionId = record.obligation.connectionId;
+          let placed = connectionPlacement.get(connectionId);
+          if (placed === undefined) {
+            const connection = await stateCollection.get(connectionId, { signal: context.signal });
+            placed = connection === null || await isConversationConnectionPlacedForInvocation(context, connectionId, connection);
+            connectionPlacement.set(connectionId, placed);
           }
+          if (placed) retirementRecords.push(record);
         }
         const retired = await deliveryStore.retireSelected({
           records: retirementRecords.map((record) => ({

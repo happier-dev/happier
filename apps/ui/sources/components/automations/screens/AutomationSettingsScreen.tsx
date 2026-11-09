@@ -93,24 +93,29 @@ export function AutomationSettingsScreen(): React.ReactElement {
         };
     }, [accountLifetime, refresh]);
 
-    const applySetting = React.useCallback(async (anchor: string, value: number | AutomationV3Settings['runRetention']) => {
-        if (saving) return;
+    const applySetting = React.useCallback(async (field: keyof AutomationV3Settings, value: number | AutomationV3Settings['runRetention']) => {
+        if (saving) return false;
         const requestAccountLifetime = accountLifetime;
         const requestEpoch = requestEpochRef.current + 1;
         requestEpochRef.current = requestEpoch;
         setSaving(true);
         try {
-            SettingsDeclarationActionOutputSchemasV1['settings.set'].parse(await executeAction('settings.set', { anchor, value }));
-            const updated = await sync.getAutomationSettings();
-            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
-            setSettings(updated);
+            const updated = SettingsDeclarationActionOutputSchemasV1['settings.set'].parse(await executeAction('settings.set', {
+                anchor: WORKFLOW_RUN_SETTINGS.settings[field].anchor,
+                value,
+            }));
+            const accepted = AutomationV3SettingsSchema.shape[field].parse('value' in updated ? updated.value : undefined);
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return false;
+            setSettings(current => current === null ? current : { ...current, [field]: accepted });
+            return true;
         } catch (error) {
-            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return;
-            if (error instanceof HappyError && isActionApprovalDeclinedErrorCode(error.code)) return;
+            if (requestEpoch !== requestEpochRef.current || requestAccountLifetime?.isCurrent() === false) return false;
+            if (error instanceof HappyError && isActionApprovalDeclinedErrorCode(error.code)) return false;
             await Modal.alert(
                 t('workflows.destination.runSettingsPage.saveFailed'),
                 formatAutomationErrorMessage(error, t('automations.settings.updateFailed')),
             );
+            return false;
         } finally {
             if (requestEpoch === requestEpochRef.current && requestAccountLifetime?.isCurrent() !== false) {
                 setSaving(false);
@@ -127,23 +132,23 @@ export function AutomationSettingsScreen(): React.ReactElement {
     }, [savedMaxActiveRuns]);
     const clearMaxActiveRunsRefusal = React.useCallback(() => setMaxActiveRunsInvalid(false), []);
 
-    const commitMaxActiveRuns = React.useCallback((draft: string) => {
-        if (settings === null || saving) return;
+    const commitMaxActiveRuns = React.useCallback(async (draft: string) => {
+        if (settings === null || saving) return false;
         const candidate = AutomationV3SettingsSchema.safeParse({
             ...settings,
             maxActiveRunsPerMachine: Number(draft),
         });
         if (!candidate.success) {
             setMaxActiveRunsInvalid(true);
-            return;
+            return false;
         }
         setMaxActiveRunsInvalid(false);
-        void applySetting(WORKFLOW_RUN_SETTINGS.settings.maxActiveRunsPerMachine.anchor, candidate.data.maxActiveRunsPerMachine);
+        return applySetting('maxActiveRunsPerMachine', candidate.data.maxActiveRunsPerMachine);
     }, [applySetting, saving, settings]);
 
     const handleRetentionChange = React.useCallback((keepForever: boolean) => {
         if (settings === null || saving) return;
-        void applySetting(WORKFLOW_RUN_SETTINGS.settings.runRetention.anchor, keepForever ? 'keepForever' : 'thirtyDays');
+        void applySetting('runRetention', keepForever ? 'keepForever' : 'thirtyDays');
     }, [applySetting, saving, settings]);
 
     // The page keeps its header through loading and failure, so nothing above the settings moves

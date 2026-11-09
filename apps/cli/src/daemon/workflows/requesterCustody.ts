@@ -15,7 +15,7 @@ import { CustodyStoredReadSchema } from '../sessionEncryption/requesterSessionCu
 import { createRequesterSessionCredentialCustody, listRequesterSessionCredentialBindings, requesterSessionCredentialPath, resolveRequesterSessionCredentials, retireRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
 
 type ScopeBinding = Readonly<{ happyHomeDir: string; serverId: string; machineId: string; installationId: string; scopeId: string;
-  accountId?: string; homeServerIdentityId?: string; serverHttpBaseUrl?: string }>;
+  accountId?: string; homeServerIdentityId?: string; serverHttpBaseUrl?: string; signal?: AbortSignal }>;
 const activeScopes = new Map<string, { count: number; retire: boolean }>();
 const custodyChanges = new Set<() => void>();
 const notifyCustodyChange = () => { for (const listener of custodyChanges) listener(); };
@@ -61,9 +61,9 @@ export function createWorkflowRequesterCustody(input: Omit<Parameters<typeof ret
     retain: async ({ scopeId, machineId, automationId }: Readonly<{ scopeId: string; machineId: string; automationId?: string }>) => {
       if (machineId === input.attribution.machineId) await retainWorkflowRequesterCredentials({ ...input, scopeId, automationId });
     },
-    retire: async ({ scopeId, machineId }: Readonly<{ scopeId: string; machineId: string }>) => {
+    retire: async ({ scopeId, machineId }: Readonly<{ scopeId: string; machineId: string }>, options?: Readonly<{ signal?: AbortSignal }>) => {
       if (machineId === input.attribution.machineId) await retireWorkflowRequesterCredentials({ ...input,
-        ...input.attribution, scopeId });
+        ...input.attribution, scopeId, signal: options?.signal });
     },
   };
 }
@@ -124,7 +124,7 @@ export async function reconcileWorkflowRequesterCredentialScope(input: ScopeBind
   if (stored.stored.retireWhenIdle) return await settleWorkflowRequesterCredentialRetirement(input);
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const credentials = await resolveRequesterSessionCredentials({ ...stored.value, serverHttpBaseUrl,
-    verifyMachineAdmissionCurrent: async () => true });
+    verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
   if (!credentials) return;
   const automationId = stored.stored.automationId;
   if (automationId) {
@@ -143,7 +143,7 @@ export async function reconcileWorkflowRequesterCredentialScope(input: ScopeBind
   do {
     const page = RunPageSchema.parse(await storage.execute({ operation: 'list', request: {
       runId: input.scopeId, machineId: input.machineId, ...(cursor ? { cursor } : {}),
-    }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }));
+    }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, { signal: input.signal }));
     if (page.runs.some(run => run.id === input.scopeId && isTerminalAutomationRunStateV3(run.state)
       && run.workflowCustodyState !== 'pending')) {
       await retireWorkflowRequesterCredentials(input);
@@ -162,7 +162,7 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
   if (!active.retire || active.count) return;
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const credentials = await resolveRequesterSessionCredentials({ ...stored.value, serverHttpBaseUrl,
-    verifyMachineAdmissionCurrent: async () => true });
+    verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
   if (!credentials) { activeScopes.delete(stored.path); return; }
   const storage = createWorkflowRunStorageClient({ token: credentials.token, serverHttpBaseUrl });
   let cursor: string | undefined;
@@ -170,7 +170,7 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
     const page = RunPageSchema.parse(await storage.execute({ operation: 'list', request: {
       ...(stored.stored.automationId ? { triggerId: input.scopeId } : { runId: input.scopeId }),
       machineId: input.machineId, ...(cursor ? { cursor } : {}),
-    }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }));
+    }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, { signal: input.signal }));
     if (page.runs.some(run => !isTerminalAutomationRunStateV3(run.state) || run.workflowCustodyState === 'pending')) return;
     cursor = page.nextCursor;
   } while (cursor);
@@ -217,7 +217,7 @@ export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBindi
           for (const scope of scopes) {
             const stored = await readBinding({ ...input, accountId, scopeId: scope.sessionId });
             if (stored) credentials = await resolveRequesterSessionCredentials({ ...stored.value,
-              serverHttpBaseUrl: input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), verifyMachineAdmissionCurrent: async () => true });
+              serverHttpBaseUrl: input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
             if (credentials || disposed) break;
           }
           if (disposed) break;
@@ -230,22 +230,23 @@ export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBindi
           const existing = observations.get(accountId);
           if (existing) { existing.updateScopes(scopes); continue; }
           let running = false;
+          const cancellation = new AbortController();
           let accountScopes = new Map(scopes.map(scope => [scope.sessionId, scope]));
           const pending = new Set<string>();
           const enqueue = (targets: Iterable<Scope>) => {
             for (const scope of targets) pending.add(scope.sessionId);
-            if (!pending.size || running || disposed) return;
+            if (!pending.size || running || cancellation.signal.aborted) return;
             running = true;
             void (async () => {
-              while (pending.size && !disposed) {
+              while (pending.size && !cancellation.signal.aborted) {
                 const scopeId = pending.values().next().value!;
                 pending.delete(scopeId);
                 if (accountScopes.has(scopeId))
-                  await reconcileWorkflowRequesterCredentialScope({ ...input, accountId, scopeId });
+                  await reconcileWorkflowRequesterCredentialScope({ ...input, accountId, scopeId, signal: cancellation.signal });
               }
-            })().catch(input.onError).finally(() => {
+            })().catch(error => { if (!cancellation.signal.aborted) input.onError(error); }).finally(() => {
               running = false;
-              if (pending.size && !disposed) enqueue([]);
+              if (pending.size && !cancellation.signal.aborted) enqueue([]);
             });
           };
           const invalidate = (change?: AccountChangeNotification) => {
@@ -266,7 +267,10 @@ export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBindi
           const observation = observeAccountChanges({ token: credentials.token, serverUrl: input.serverHttpBaseUrl },
             { onChange: invalidate, onError: input.onError });
           if (disposed) { await observation.dispose(); break; }
-          observations.set(accountId, { token: credentials.token, dispose: observation.dispose, updateScopes: next => {
+          observations.set(accountId, { token: credentials.token, dispose: async () => {
+            cancellation.abort();
+            await observation.dispose();
+          }, updateScopes: next => {
             const added = next.filter(scope => !accountScopes.has(scope.sessionId)
               || accountScopes.get(scope.sessionId)?.automationId !== scope.automationId);
             accountScopes = new Map(next.map(scope => [scope.sessionId, scope]));
@@ -293,7 +297,7 @@ export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & 
   const credentials = await resolveRequesterSessionCredentials({ ...stored.value, serverHttpBaseUrl: input.serverHttpBaseUrl,
     // Admission was decided for this occurrence by Home. Recovery binds the
     // private file to the installed daemon; it does not re-evaluate grants.
-    verifyMachineAdmissionCurrent: async () => true });
+    verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
   if (!credentials) return null;
   return { credentials, attribution: stored.value.attribution, release: holdExecutionScope(input, stored.value, stored.stored.retireWhenIdle) };
 }

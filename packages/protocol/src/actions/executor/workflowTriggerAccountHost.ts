@@ -365,27 +365,27 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   const retainRequesterScopes = async (scopes: ReturnType<typeof requesterScopes>) => {
     for (const scope of scopes) await params.workflowRequesterCustody?.retain(scope);
   };
-  const retireRequesterScopes = async (previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>) => {
+  const retireRequesterScopes = async (previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>, signal?: AbortSignal) => {
     const active = new Set(next.map(({ scopeId, machineId }) => JSON.stringify([scopeId, machineId])));
     for (const scope of previous) {
       if (!active.has(JSON.stringify([scope.scopeId, scope.machineId]))) {
-        await params.workflowRequesterCustody?.retire(scope);
+        await params.workflowRequesterCustody?.retire(scope, { signal });
       }
     }
   };
   const commitRequesterScopes = async (
     previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>,
-    write: () => Promise<AutomationDefinitionDetail>, beforeWrite?: () => Promise<void>,
+    write: () => Promise<AutomationDefinitionDetail>, beforeWrite?: () => Promise<void>, signal?: AbortSignal,
   ) => {
     try { await retainRequesterScopes(next); await beforeWrite?.(); }
-    catch (error) { await retireRequesterScopes(next, previous); throw error; }
+    catch (error) { await retireRequesterScopes(next, previous, signal); throw error; }
     let committed: AutomationDefinitionDetail;
     try { committed = await write(); }
     catch (error) {
-      if (isConfirmedActionWriteRefusal(error)) await retireRequesterScopes(next, previous);
+      if (isConfirmedActionWriteRefusal(error)) await retireRequesterScopes(next, previous, signal);
       throw error;
     }
-    await retireRequesterScopes(previous, requesterScopes(committed));
+    await retireRequesterScopes(previous, requesterScopes(committed), signal);
     return committed;
   };
   return createWorkflowTriggerActions({
@@ -393,7 +393,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       list: (input) => params.automations.list(input),
       listDetails: (input) => params.automations.listDetails(input),
       get: (automationId) => params.automations.get(automationId),
-      create: async (input, beforeWrite) => {
+      create: async (input, beforeWrite, signal) => {
         const current = input.triggers.some((item) => isPrivateTrigger(item.trigger)) ? await params.resolveEncryption() : null;
         const environment = input.observationOnly?.deploymentEnvironment;
         const requested = input.triggers.length === 1 ? input.triggers[0]!.trigger : undefined;
@@ -422,16 +422,16 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
               enabled: true, assignments: [], removedTriggers: [], triggers: existing.triggers.map(trigger => ({
                 kind: 'existing' as const, triggerId: trigger.id, expectedRevision: trigger.revision,
               })),
-            }, existing), beforeWrite);
+            }, existing), beforeWrite, signal);
           }
         }
         const triggers = input.triggers.map((item) => current ? { ...item,
           trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current) } : item);
         const nextScopes = requesterScopes({ ...input, id: input.automationId,
           triggers: input.triggers.map(item => ({ id: item.triggerId, enabled: item.trigger.enabled })) });
-        return commitRequesterScopes([], nextScopes, () => params.automations.create({ ...input, triggers }), beforeWrite);
+        return commitRequesterScopes([], nextScopes, () => params.automations.create({ ...input, triggers }), beforeWrite, signal);
       },
-      reconcile: async (automationId, input, row, beforeWrite) => {
+      reconcile: async (automationId, input, row, beforeWrite, signal) => {
         if (!row || row.id !== automationId || row.templateVersion !== input.expectedTemplateVersion) unavailable('currentness_conflict');
         const needsPrivateWrite = input.triggers.some((item) => item.kind === 'new'
           ? isPrivateTrigger(item.trigger)
@@ -483,13 +483,13 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
           triggers: input.triggers.map(item => ({ id: item.triggerId,
             enabled: item.kind === 'new' ? item.trigger.enabled : item.enabled ?? row.triggers.find(trigger => trigger.id === item.triggerId)!.enabled })) });
         return commitRequesterScopes(requesterScopes(row), nextScopes,
-          () => params.automations.reconcile(automationId, { ...input, triggers }, row), beforeWrite);
+          () => params.automations.reconcile(automationId, { ...input, triggers }, row), beforeWrite, signal);
       },
-      delete: async (automationId, current) => {
+      delete: async (automationId, current, signal) => {
         if (!params.workflowRequesterCustody) return params.automations.delete(automationId);
         const previous = current ?? await params.automations.get(automationId);
         const result = await params.automations.delete(automationId);
-        if (previous) await retireRequesterScopes(requesterScopes(previous), []);
+        if (previous) await retireRequesterScopes(requesterScopes(previous), [], signal);
         return result;
       },
       ...(params.automations.runNow ? { runNow: params.automations.runNow } : {}),

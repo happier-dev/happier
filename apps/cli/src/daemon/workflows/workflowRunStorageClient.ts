@@ -77,9 +77,9 @@ export function createWorkflowRunStorageClient(params: Readonly<{
             'Content-Type': 'application/json',
             ...(publisherHeader ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader } : {}),
           },
-          // The wait owner carries the authored observation deadline and abort.
-          // Its exact snapshot read must not impose a competing fixed cutoff.
-          timeout: operation.operation === 'wait' ? 0 : 30_000,
+          // The containing Action, worker or recovery lifetime owns cancellation;
+          // storage does not impose a shorter competing deadline.
+          timeout: 0,
           ...(options.signal ? { signal: options.signal } : {}),
         });
         const response = await request().catch(async (error: unknown) => {

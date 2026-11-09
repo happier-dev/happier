@@ -4,7 +4,7 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting } from '@happier-dev/plugin-sdk/actions';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionQuery, type PluginCollectionRow } from '@happier-dev/plugin-sdk/collections';
 import type {
   ConversationEndpointAudienceV1,
   ConversationProviderConnectionReadInputV1,
@@ -123,12 +123,13 @@ export async function hasCurrentConversationExecutionPlacement(
   );
 }
 
-/** Reread placement before claiming or mutating Account-wide background work. */
+/** Resolve placement from this boundary's connection read before background work. */
 export async function isConversationConnectionPlacedForInvocation(
   context: Pick<PluginInvocationContext, 'services' | 'signal'>,
   connectionId: string,
+  storedConnection?: PluginCollectionRow,
 ): Promise<boolean> {
-  const stored = await requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION)
+  const stored = storedConnection ?? await requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION)
     .get(connectionId, { signal: context.signal });
   const row = asChannelStateRow(stored);
   if (row === undefined) return false;

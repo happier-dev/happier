@@ -42,5 +42,7 @@ export type WorkflowClaimForCoordination = Readonly<{
   registerLiveWorkProducer?: (producer: LiveWorkProducerV1) => () => void;
   /** Reserve the incumbent machine budget after private materialization. */
   acquireMachineStartCapacity?: (signal?: AbortSignal) => Promise<void>;
+  /** Worker lifetime; unlike Stop, shutdown also cancels terminal storage. */
+  storageSignal?: AbortSignal;
   signal?: AbortSignal;
 }>;

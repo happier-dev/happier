@@ -22,6 +22,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const modalPromptSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+const modalConfirmSpy = vi.hoisted(() => vi.fn());
 
 installAutomationScreensCommonModuleMocks({
     modal: async () => {
@@ -30,6 +31,7 @@ installAutomationScreensCommonModuleMocks({
             spies: {
                 prompt: modalPromptSpy,
                 alert: modalAlertSpy,
+                confirm: modalConfirmSpy,
             },
         }).module;
     },
@@ -74,7 +76,7 @@ describe('AutomationSettingsScreen', () => {
         record = { maxActiveRunsPerMachine: 4, runRetention: 'thirtyDays' };
         harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
         const features = createRootLayoutFeaturesResponse();
         tryWriteServerEnabledBitInPlace(features, 'automations', true);
         harness.answer(serverId, '/v1/features', { body: features });
@@ -89,6 +91,8 @@ describe('AutomationSettingsScreen', () => {
         modalPromptSpy.mockReset();
         modalPromptSpy.mockResolvedValue('2');
         modalAlertSpy.mockReset();
+        modalConfirmSpy.mockReset();
+        modalConfirmSpy.mockResolvedValue(false);
     });
 
     afterEach(async () => {
@@ -121,6 +125,7 @@ describe('AutomationSettingsScreen', () => {
 
         await waitForHomeGovernance(() => {
             expect(record.maxActiveRunsPerMachine).toBe(2);
+            expect(field().props.value).toBe('2');
             expect(field().props.editable).not.toBe(false);
         });
 
@@ -138,13 +143,44 @@ describe('AutomationSettingsScreen', () => {
             await Promise.resolve();
         });
 
-        await waitForHomeGovernance(() => expect(record.runRetention).toBe('keepForever'));
+        await waitForHomeGovernance(() => {
+            expect(record.runRetention).toBe('keepForever');
+            const retentionRow = screen.root.findAll((node) => node.props?.testID === 'automation-settings-run-retention' && node.props?.rightElement)[0]!;
+            expect((retentionRow.props.rightElement as React.ReactElement<{ value: boolean }>).props.value).toBe(true);
+        });
 
         expect(record).toEqual({
             maxActiveRunsPerMachine: 2,
             runRetention: 'keepForever',
         });
         expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(2);
+    });
+
+    it('shows the accepted field and keeps sibling settings when reads fail after the save acknowledgement', async () => {
+        record = AutomationV3SettingsSchema.parse({ maxActiveRunsPerMachine: 4, runRetention: 'keepForever' });
+        harness.answer(serverId, 'PUT /v3/automations/settings', { select: (input) => {
+            record = AutomationV3SettingsSchema.parse({ ...AutomationV3SettingsSchema.parse(input), maxActiveRunsPerMachine: 3 });
+            harness.answer(serverId, '/v3/automations/settings', { status: 503, body: { error: 'unavailable' } });
+            return { body: record };
+        } });
+        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
+        const screen = await renderScreen(<AutomationSettingsScreen />);
+        await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
+
+        await act(async () => { maxActiveRunsField(screen).props.onChangeText('2'); });
+        await act(async () => { maxActiveRunsField(screen).props.onBlur(); });
+        await waitForHomeGovernance(() => {
+            expect(maxActiveRunsField(screen).props.editable).not.toBe(false);
+            expect(record.maxActiveRunsPerMachine).toBe(3);
+            expect(maxActiveRunsField(screen).props.value).toBe('3');
+        });
+
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        const retentionItem = screen.root.findAll((node) => node.props?.testID === 'automation-settings-run-retention' && node.props?.rightElement)[0]!;
+        expect((retentionItem.props.rightElement as React.ReactElement<{ value: boolean }>).props.value).toBe(true);
+        // One initial GET, one Action-owned read and one write; no post-acknowledgement GET.
+        expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input === null)).toHaveLength(2);
+        expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(1);
     });
 
     it('refuses a limit the settings contract rejects, says why in place, and keeps the saved value', async () => {
@@ -174,6 +210,20 @@ describe('AutomationSettingsScreen', () => {
         expect(field().props.error).toBeNull();
     });
 
+    it('recovers an initial load failure through the explicit retry without writing settings', async () => {
+        harness.answer(serverId, '/v3/automations/settings', { status: 503, body: { error: 'unavailable' } });
+        const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
+        const screen = await renderScreen(<AutomationSettingsScreen />);
+        await waitForHomeGovernance(() => expect(screen.root.findAllByProps({ testID: 'automation-settings-load-error' }).length).toBeGreaterThan(0));
+
+        harness.answer(serverId, '/v3/automations/settings', { body: AutomationV3SettingsSchema.parse(record) });
+        const errorCard = screen.root.findAllByProps({ testID: 'automation-settings-load-error' })[0]!;
+        await act(async () => { errorCard.props.action.onPress(); });
+        await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
+        expect(screen.root.findAllByProps({ testID: 'automation-settings-load-error' })).toHaveLength(0);
+        expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(0);
+    });
+
     it('honors settings Action refusal without bypassing it through the Sync writer', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
@@ -197,21 +247,28 @@ describe('AutomationSettingsScreen', () => {
         expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(0);
     });
 
-    it('retains a required approval without reporting a failed save, then resumes the original write once', async () => {
+    it('waits for native confirmation without reporting a failed save, then applies the original write once', async () => {
         await harness.requireUiApproval(serverId, 'settings.set');
+        const confirmation = createDeferred<boolean>();
+        modalConfirmSpy.mockReturnValue(confirmation.promise);
         const { AutomationSettingsScreen } = await import('./AutomationSettingsScreen');
         const screen = await renderScreen(<AutomationSettingsScreen />);
         await waitForHomeGovernance(() => expect(maxActiveRunsField(screen).props.value).toBe('4'));
         await act(async () => { maxActiveRunsField(screen).props.onChangeText('2'); });
         await act(async () => { maxActiveRunsField(screen).props.onBlur(); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(modalConfirmSpy).toHaveBeenCalled());
         expect(record.maxActiveRunsPerMachine).toBe(4);
+        expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(0);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
         expect(modalAlertSpy).not.toHaveBeenCalled();
-        const artifactId = harness.artifacts(serverId).list()[0]!.id;
-        const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
-        expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true });
-        await waitForHomeGovernance(() => expect(record.maxActiveRunsPerMachine).toBe(2));
+        await act(async () => { confirmation.resolve(true); });
+        await waitForHomeGovernance(() => {
+            expect(record.maxActiveRunsPerMachine).toBe(2);
+            expect(maxActiveRunsField(screen).props.value).toBe('2');
+            expect(maxActiveRunsField(screen).props.editable).not.toBe(false);
+        });
         expect(harness.requestsFor('/v3/automations/settings').filter(request => request.input !== null)).toHaveLength(1);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
         expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 

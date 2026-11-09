@@ -1,5 +1,5 @@
-import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
 import type { ApiClient } from '@/api/api';
+import { randomUUID } from 'node:crypto';
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import type {
   ApiMachineClient,
@@ -53,23 +53,22 @@ import type { DirectRouteGrantTrustRoot } from '../peer/mediation/verifyDirectRo
 import type { ManagedActivityRpcOwner } from '@/api/machine/rpcHandlers.managedActivity';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
 /** The installed host's passive source Action composition; it never reads a remote OS path. */
 export function createProjectFiniteSourceManifestInspector(params: Readonly<{
-  api: Pick<ApiClient, 'getMachine'>;
   credentials: StoredCredentials;
   serverId: string;
   serverHttpBaseUrl: string;
   accountId: string;
   ingress: RpcHandlerContext;
-  isCurrent(): Promise<boolean>;
 }>): NonNullable<ProjectFiniteActionRuntime['inspectSourceProjectManifest']> {
-  return async ({ source, signal }) => {
+  return async ({ source, signal, command }) => {
     const phase = async <T>(name: string, read: () => T | Promise<T>): Promise<T> => {
       const startedAt = performance.now();
       let status: 'completed' | 'failed' = 'failed';
@@ -83,72 +82,51 @@ export function createProjectFiniteSourceManifestInspector(params: Readonly<{
       { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId },
       { ProjectDefinitionInspectOutputSchema },
       { buildActionExecutorContextForRpc },
+      { dispatchOriginalAccountAction, readExternalActionRequesterInvocation },
     ] = await Promise.all([
       import('@/server/serverProfiles'),
       import('@happier-dev/protocol/actions/projectDefinitionActionFamily'),
       import('@/rpc/handlers/_actionDispatchAdapter'),
+      import('@/api/externalActionExecutionAuthorization'),
     ]);
     const sourceSignal = AbortSignal.any([params.ingress.signal, signal]);
-    const assertSourceCurrent = async () => {
-      if (sourceSignal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-      if (!await params.isCurrent()) throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
+    const assertNotCancelled = () => {
       if (sourceSignal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
     };
     if (!await isServerProfileHomeIdentity(params.serverId, source.serverId)) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
-    const assertSourceCustody = async () => {
-      await assertSourceCurrent();
-      let machine: Awaited<ReturnType<ApiClient['getMachine']>>;
-      try {
-        machine = await runWithServerHttpBaseUrl(params.serverHttpBaseUrl,
-          () => params.api.getMachine(source.machineId, { signal: sourceSignal }));
-      } catch {
-        await assertSourceCurrent();
-        throw Object.assign(new Error('project_source_declaration_unavailable'), { code: 'project_source_declaration_unavailable' });
-      }
-      await assertSourceCurrent();
-      if (machine?.id !== source.machineId || machine.access?.custodian.accountId !== params.accountId) {
-        throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
-      }
-    };
-    await phase('custody_before', assertSourceCustody);
     const serverIdentityId = await resolveServerProfileHomeIdentityId(params.serverId);
-    const { createCliActionExecutorFromCredentials } = await import('@/session/actions/createCliActionExecutorFromCredentials');
-    const executor = createCliActionExecutorFromCredentials({
-      credentials: params.credentials, serverId: params.serverId,
-      serverApiUrl: params.serverHttpBaseUrl, machineId: source.machineId,
-      ...(serverIdentityId ? { serverIdentityId } : {}),
-      pluginActionExecutionOwner: 'current_process',
-      readCredentials: async () => { await assertSourceCurrent(); return params.credentials; },
-    });
     const context = buildActionExecutorContextForRpc({
       serverId: params.serverId, signal: sourceSignal,
       callerAuthority: params.ingress.callerAuthority, sessionActionOrigin: params.ingress.sessionActionOrigin,
       localActionContext: params.ingress.localActionContext, runtimeAccountId: params.accountId,
+      callerInputAuthorization: params.ingress.callerInputAuthorization,
     });
-    let result: Awaited<ReturnType<typeof executor.execute>>;
+    let result: Awaited<ReturnType<typeof dispatchOriginalAccountAction>>;
     try {
       result = await phase('source_action', () => runTracedExternalActionStage('projects.inspect',
         params.ingress.callerInputAuthorization?.binding.requestId ?? params.ingress.transportRequestId,
-        'source_inspection', () => executor.execute('projects.inspect', { workspace: {
+        'source_inspection', () => dispatchOriginalAccountAction({ actionId: 'projects.inspect', input: { workspace: {
         serverId: source.serverId, workspaceId: source.id,
         machineId: source.machineId, rootPath: source.rootPath,
-      } }, { ...context,
-        ...(!params.ingress.localActionContext?.surface && !params.ingress.sessionActionOrigin ? { surface: 'api' as const } : {}),
-        externalActionTarget: { kind: 'machine', machineId: source.machineId },
+      }, read: { kind: 'execution', ...(command ? { command } : {}) } }, requestId: randomUUID(),
+        target: { kind: 'machine', machineId: source.machineId }, credentials: params.credentials,
+        serverHttpBaseUrl: params.serverHttpBaseUrl, ...(serverIdentityId ? { serverIdentityId } : {}),
+        authority: context.authority ?? 'account_automation', invocation: readExternalActionRequesterInvocation(context),
+        signal: sourceSignal,
       })));
     } catch (error) {
-      await assertSourceCurrent();
+      assertNotCancelled();
       const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
         ? error.code : 'project_source_declaration_unavailable';
       throw Object.assign(new Error(code), { code });
     }
-    await assertSourceCurrent();
+    assertNotCancelled();
+    if (!result) throw Object.assign(new Error('project_source_declaration_unavailable'), { code: 'project_source_declaration_unavailable' });
     if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
     const output = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
-    if (!output.success) throw Object.assign(new Error('project_source_declaration_unavailable'), { code: 'project_source_declaration_unavailable' });
-    await phase('custody_after', assertSourceCustody);
+    if (!output.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
     return { ...output.data.definition, commands: output.data.commands,
-      environmentExecutionInputs: output.data.environmentExecutionInputs };
+      toolchainExecutionInputs: output.data.toolchainExecutionInputs };
   };
 }
 
@@ -175,6 +153,7 @@ export function createDaemonMachineBootstrapRuntime(
     controlPort: number;
     onMachineControlReadinessChange?: ApiMachineClientLifecycleDependencies['onMachineControlReadinessChange'];
     credentials: StoredCredentials;
+    providerAccountSettings?: BootstrapRuntime['providerAccountSettings'];
     secretSources?: BootstrapRuntime['secretSources'];
     savedSecretOperationContext?: BootstrapRuntime['savedSecretOperationContext'];
     requesterServerId?: BootstrapRuntime['requesterServerId'];
@@ -229,11 +208,13 @@ export function createDaemonMachineBootstrapRuntime(
     prepareServerTransportForReconnect?: BootstrapRuntime['prepareServerTransportForReconnect'];
     acquireWorkspaceSyncMachineIngress?: BootstrapRuntime['acquireWorkspaceSyncMachineIngress'];
     acquireLocalServicePreviewApplication?: BootstrapRuntime['acquireLocalServicePreviewApplication'];
+    resolveLocalServicePreviewApplication?: BootstrapRuntime['resolveLocalServicePreviewApplication'];
     directTransferRegistryHost: BootstrapRuntime['directTransferRegistryHost'];
     daemonServerWorkScheduler: BootstrapRuntime['daemonServerWorkScheduler'];
     publicProfileRefreshHandle?: BootstrapRuntime['publicProfileRefreshHandle'];
     cancelConnectedServiceRuntimeAuthRecovery?: BootstrapRuntime['cancelConnectedServiceRuntimeAuthRecovery'];
     checkRuntimeAuthUsageLimitRecovery?: BootstrapRuntime['checkRuntimeAuthUsageLimitRecovery'];
+    wakeRuntimeAuthRecoveryPresentation?: BootstrapRuntime['wakeRuntimeAuthRecoveryPresentation'];
     retryTemporaryThrottleNow?: BootstrapRuntime['retryTemporaryThrottleNow'];
     readTemporaryThrottleRecovery?: BootstrapRuntime['readTemporaryThrottleRecovery'];
     cancelTemporaryThrottleRecovery?: BootstrapRuntime['cancelTemporaryThrottleRecovery'];
@@ -249,6 +230,7 @@ export function createDaemonMachineBootstrapRuntime(
     isPublicationQuiescing?: () => boolean;
     readSpawnFailureLimits?: ApiMachineClientLifecycleDependencies['readSpawnFailureLimits'];
     ownerRemainder?: ApiMachineClientLifecycleDependencies['ownerRemainder'];
+    agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
     getServerFeaturesSnapshot?: BootstrapRuntime['getServerFeaturesSnapshot'];
     resolvePeerMediationTrustRoots?: () => readonly DirectRouteGrantTrustRoot[];
     refreshServerFeaturesSnapshot?: ApiMachineClientLifecycleDependencies['resolveServerFeaturesSnapshot'];
@@ -319,20 +301,18 @@ export function createDaemonMachineBootstrapRuntime(
         DaemonProviderBrokerRuntime['checkRunnerCredentialSelectionCurrentness'];
       close(): Promise<void>;
     }>>;
-
-agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
-}>,
+  }>,
 ): BootstrapRuntime & Pick<ApiMachineClient, 'retireProjectFiniteExecution'> {
   // The same authenticated constructor facts used by Machine work-summary
   // composition. A later claim cannot choose its Account, Home or installation.
   const automationHomeId = params.requesterServerId ?? configuration.activeServerId;
-  const machineSkillHomeUrl = resolveServerHttpBaseUrl();
+  const readMachineSkillHomeUrl = captureServerHttpBaseUrl();
   const automationAccountId = readAccountIdFromToken(params.credentials.token);
   const automationInstallationId = readInstallationIdentityIfExistsSync()?.installationId;
   const runnerBrokerReadinessApplication = createRunnerBrokerReadinessApplicationLifecycle({
     authorize: async (request, signal) => await params.api.authorizeRunnerBrokerReadiness(request, signal),
     checkLocalCurrentness: async (currentness, signal) => await providerBrokerApplication
-      ?.checkRunnerCredentialSelectionCurrentness(currentness, signal) ?? 'update_required',
+      ?.checkRunnerCredentialSelectionCurrentness(currentness, signal) ?? { kind: 'update_required' },
   });
   let connectedApiMachine: ApiMachineClient | null = null;
   let unsubscribeLocalServiceSummary: (() => void) | null = null;
@@ -344,6 +324,7 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
   let providerBrokerApplicationMachineId: string | null = null;
   let providerBrokerApplicationApiMachine: ApiMachineClient | null = null;
   let workflowRecovery: ((trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>) | null = null;
+  const workflowRecoveryCancellation = new AbortController();
   let workspaceSyncReadiness: WorkspaceSyncRuntimeReadinessV1 | null = null;
   let workspaceSyncPublicationTail = Promise.resolve();
   const publishWorkspaceSyncEvent = (): void => {
@@ -385,9 +366,10 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
       onChange,
       onError: (error) => logger.warn('[DAEMON RUN] Stopped watching the CLI update record; the next daemon start republishes it', error),
     }),
-    savedSecretOperationContext: params.savedSecretOperationContext,
     credentials: params.credentials,
+    providerAccountSettings: params.providerAccountSettings,
     secretSources: params.secretSources,
+    savedSecretOperationContext: params.savedSecretOperationContext,
     publicProfileRefreshHandle: params.publicProfileRefreshHandle,
     ...(params.requesterServerId ? { requesterServerId: params.requesterServerId } : {}),
     ...(params.resolveCurrentMachineExecutionOriginContext
@@ -437,6 +419,9 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
     ...(params.acquireLocalServicePreviewApplication
       ? { acquireLocalServicePreviewApplication: params.acquireLocalServicePreviewApplication }
       : {}),
+    ...(params.resolveLocalServicePreviewApplication
+      ? { resolveLocalServicePreviewApplication: params.resolveLocalServicePreviewApplication }
+      : {}),
     ...(params.getServerFeaturesSnapshot
       ? { getServerFeaturesSnapshot: params.getServerFeaturesSnapshot }
       : {}),
@@ -459,12 +444,12 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
       // Optional Skills demand is bound before connection; unavailable Home identity
       // does not prevent unrelated daemon startup. The next existing bootstrap may recover it.
       const machineSkillTarget = await resolveMachineSkillInstallTarget({ serverId: automationHomeId,
-        serverHttpBaseUrl: machineSkillHomeUrl, machineId: registeredMachine.id }).catch(error => {
+        serverHttpBaseUrl: readMachineSkillHomeUrl(), machineId: registeredMachine.id }).catch(error => {
           logger.debug('[DAEMON RUN] Machine Skill install Home unavailable', { message: String(error) });
           return null;
         });
       if (!machineSkillTarget) logger.debug('[DAEMON RUN] Machine Skill installs require the current Home identity');
-      const apiMachine = params.api.machineSyncClient(registeredMachine, {
+      const apiMachine = await params.api.machineSyncClient(registeredMachine, {
             runtimeId: params.runtimeId,
             cliVersion: packageJson.version,
             publicReleaseChannel: params.publicReleaseChannel,
@@ -472,12 +457,12 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
             serviceManaged: params.startupSource === 'background-service',
             ...(params.serviceLabel ? { serviceLabel: params.serviceLabel } : null),
           }, {
-agentIsolation: params.agentIsolation,
-
             controlPort: params.controlPort,
             onMachineControlReadinessChange: params.onMachineControlReadinessChange,
+            ...(params.resolveCurrentServerIdentityId ? { resolveCurrentServerIdentityId: params.resolveCurrentServerIdentityId } : {}),
             isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
             readSpawnFailureLimits: params.readSpawnFailureLimits,
+            agentIsolation: params.agentIsolation,
             ownerRemainder: params.ownerRemainder,
             ...(machineSkillTarget ? { machineSkillInstalls: {
               target: machineSkillTarget, libraryServerIdentityId: machineSkillTarget.serverIdentityId,
@@ -488,10 +473,10 @@ agentIsolation: params.agentIsolation,
                   await readStoredCredentialsForServerId(automationHomeId))) return;
                 signal.throwIfAborted();
                 const currentTarget = await resolveMachineSkillInstallTarget({ serverId: automationHomeId,
-                  serverHttpBaseUrl: machineSkillHomeUrl, machineId: registeredMachine.id, signal });
+                  serverHttpBaseUrl: readMachineSkillHomeUrl(), machineId: registeredMachine.id, signal });
                 if (!currentTarget || currentTarget.serverIdentityId !== machineSkillTarget.serverIdentityId) return;
                 const service = createMachineSkillHostService({ credentials: params.credentials, serverId: automationHomeId,
-                  serverHttpBaseUrl: machineSkillHomeUrl, target: currentTarget });
+                  serverHttpBaseUrl: readMachineSkillHomeUrl(), target: currentTarget });
                 const outcome = await service.refresh({ signal, ...(artifactIds ? { artifactIds } : {}) });
                 if (outcome.row.status === 'conflict' || outcome.row.status === 'unavailable') {
                   logger.warn('[DAEMON RUN] Machine Skill refresh receipt unavailable', { status: outcome.row.status });
@@ -506,6 +491,10 @@ agentIsolation: params.agentIsolation,
             ...(params.managedActivity ? { managedActivity: params.managedActivity } : {}),
             ...(params.machineReboot ? { machineReboot: params.machineReboot } : {}),
             ...(params.onMachineMetadataChanged ? { onMachineMetadataChanged: params.onMachineMetadataChanged } : {}),
+            onWorkflowReplyReturned: async workflowRunId => {
+              if (connectedApiMachine !== apiMachine || (params.isPublicationQuiescing ?? params.isShuttingDown)()) return;
+              await workflowRecovery?.('control', undefined, workflowRunId);
+            },
             ...(params.onProjectOperationInspection ? { onProjectOperationInspection: params.onProjectOperationInspection } : {}),
             ...(params.directPeerServerLifecycle ? { directPeerServerLifecycle: params.directPeerServerLifecycle } : {}),
             ...(params.liveStreamCaptureRegistry ? { liveStreamCaptureRegistry: params.liveStreamCaptureRegistry } : {}),
@@ -573,7 +562,8 @@ agentIsolation: params.agentIsolation,
                 invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
               },
             });
-            await recoverWorkflowRuns(trigger, signal, workflowRunId);
+            await recoverWorkflowRuns(trigger, signal
+              ? AbortSignal.any([workflowRecoveryCancellation.signal, signal]) : workflowRecoveryCancellation.signal, workflowRunId);
           }
         : null;
       publishWorkspaceSyncEvent();
@@ -641,7 +631,7 @@ agentIsolation: params.agentIsolation,
             && !claim.signal?.aborted);
           const requesterTransport = createWorkflowRunMachineTransport({ runId: claim.runId,
             credentials: selectedCredentials, requesterWorkAttributionV1: selectedAttribution, isCurrent,
-            boundary: { serverId: automationHomeId, serverHttpBaseUrl: machineSkillHomeUrl,
+            boundary: { serverId: automationHomeId, serverHttpBaseUrl: readMachineSkillHomeUrl(),
               happyHomeDir: configuration.happyHomeDir,
               getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },
             ...(claim.signal ? { signal: claim.signal } : {}),
@@ -682,15 +672,15 @@ agentIsolation: params.agentIsolation,
               },
             }
           : {}),
-        recoverWorkflowRuns: async (runId, requester) => {
-          if (!requester) { await workflowRecovery?.('control', undefined, runId); return; }
+        recoverWorkflowRuns: async (runId, requester, signal) => {
+          if (!requester) { await workflowRecovery?.('control', signal, runId); return; }
           if (!automationApiMachine || !params.createWorkflowRecoveryForMachine || !runId) return;
           const transport = createWorkflowRunMachineTransport({ runId, credentials: requester.credentials,
             requesterWorkAttributionV1: requester.attribution,
             isCurrent: async () => connectedApiMachine === automationApiMachine && !params.isShuttingDown()
               && configuration.activeServerId === automationHomeId
               && readInstallationIdentityIfExistsSync()?.installationId === automationInstallationId,
-            boundary: { serverId: automationHomeId, serverHttpBaseUrl: machineSkillHomeUrl,
+            boundary: { serverId: automationHomeId, serverHttpBaseUrl: readMachineSkillHomeUrl(),
               happyHomeDir: configuration.happyHomeDir,
               getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },
             transport: { machineId: runtimeMachineId,
@@ -702,7 +692,8 @@ agentIsolation: params.agentIsolation,
               requesterCredentials: requester.credentials, requesterWorkAttributionV1: requester.attribution,
               machineAdmissionTransport: (request, options) => automationApiMachine.enqueueSessionPendingByMachine(request, options),
               machineActionDirectTargetTransport: transport.transport });
-            await recover('control', undefined, runId);
+            await recover('control', signal
+              ? AbortSignal.any([workflowRecoveryCancellation.signal, signal]) : workflowRecoveryCancellation.signal, runId);
           } finally { await transport.dispose(); }
         },
         ...(connectedApiMachine
@@ -768,6 +759,7 @@ agentIsolation: params.agentIsolation,
     isSessionAlreadyRunning: params.isSessionAlreadyRunning,
     loadLocalSessionMetadataForHandoff: params.loadLocalSessionMetadataForHandoff,
     beforeShutdown: async () => {
+      workflowRecoveryCancellation.abort();
       params.onPublicVoiceModelPackRuntimeReady?.(null);
       unsubscribeResourcePublication?.();
       unsubscribeResourcePublication = null;
@@ -796,6 +788,9 @@ agentIsolation: params.agentIsolation,
       : {}),
     ...(params.checkRuntimeAuthUsageLimitRecovery
       ? { checkRuntimeAuthUsageLimitRecovery: params.checkRuntimeAuthUsageLimitRecovery }
+      : {}),
+    ...(params.wakeRuntimeAuthRecoveryPresentation
+      ? { wakeRuntimeAuthRecoveryPresentation: params.wakeRuntimeAuthRecoveryPresentation }
       : {}),
     ...(params.retryTemporaryThrottleNow
       ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }

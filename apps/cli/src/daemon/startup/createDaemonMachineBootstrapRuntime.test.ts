@@ -918,6 +918,37 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     expect({ constructions, assignmentReads }).toEqual({ constructions: 1, assignmentReads: 2 });
   });
 
+  it('cancels a pending recovery storage request when the daemon shuts down', async () => {
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    let receivedSignal: AbortSignal | undefined;
+    const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
+      api: { machineSyncClient: () => ({ enqueueSessionPendingByMachine: async () => {} }) } as never,
+      isWorkflowFeatureEnabled: () => true,
+      createWorkflowRecoveryForMachine: ({ machineId }) => createWorkflowRunRecoveryReader({ accountId: 'account', machineId,
+        resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        reconcileInvocation: async () => { throw new Error('No invocation was loaded'); },
+        storage: { execute: async (_operation, options) => await new Promise((_resolve, reject) => {
+          receivedSignal = options?.signal;
+          release = () => reject(Object.assign(new Error('cancelled'), { code: 'ERR_CANCELED' }));
+          receivedSignal?.addEventListener('abort', release, { once: true });
+          entered();
+        }) },
+      }),
+    }));
+    await runtime.createConnectedApiMachine({ id: 'machine_1', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    const recovery = runtime.recoverWorkflowRuns!('startup');
+    recovery.catch(() => {});
+    await sending;
+    try {
+      expect.soft(receivedSignal).toBeInstanceOf(AbortSignal);
+      await runtime.beforeShutdown();
+      expect.soft(receivedSignal?.aborted).toBe(true);
+    } finally { release(); await recovery.catch(() => {}); }
+  });
+
   it('constructs one workflow recovery reader for the connected machine and forwards lifecycle triggers', async () => {
     const recover = vi.fn(async () => {});
     const createWorkflowRecoveryForMachine = vi.fn(() => recover);
@@ -946,7 +977,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       machineId: machine.id,
       machineAdmissionTransport: expect.any(Function),
     }));
-    expect(recover).toHaveBeenCalledWith('startup', undefined, undefined);
+    expect(recover).toHaveBeenCalledWith('startup', expect.any(AbortSignal), undefined);
   });
 
   it('retires cancelled publication custody after the last approved original returns without reconnecting', async () => {

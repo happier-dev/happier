@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Button, List, Stack, Text, type ListSectionData } from '@happier-dev/plugin-ui';
-import type { Translate } from './conversationRows.js';
+import { Button, List, Stack, Text, useExecutePluginAction, type ListSectionData } from '@happier-dev/plugin-ui';
+import { isNonEmptyString, isRecord, type Translate } from './conversationRows.js';
 import type { SessionCandidate, useDiscussionCandidatePages } from './useSessionCandidatePages.js';
 
 /** Facts projected by the Workflow target-list owner, never inferred here. */
@@ -13,6 +13,117 @@ export type BindingCreateAutomationCandidate = Readonly<{
   label: string;
   execution: BindingCreateAutomationExecution;
 }>;
+
+type BindingCreateAutomationPage = Readonly<{
+  candidates: readonly BindingCreateAutomationCandidate[];
+  nextCursor?: string;
+}>;
+
+function parseBindingCreateAutomationExecution(value: unknown): BindingCreateAutomationExecution | undefined {
+  if (!isRecord(value) || typeof value.enabled !== 'boolean') return undefined;
+  if (value.targetType !== null
+    && value.targetType !== 'new_session'
+    && value.targetType !== 'existing_session'
+    && value.targetType !== 'execution_run') {
+    return undefined;
+  }
+  return { targetType: value.targetType, enabled: value.enabled };
+}
+
+function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomationPage | undefined {
+  if (!isRecord(value) || !Array.isArray(value.items) || value.items.length > 100) return undefined;
+  if (value.nextCursor !== null && !isNonEmptyString(value.nextCursor)) return undefined;
+  const seen = new Set<string>();
+  const candidates: BindingCreateAutomationCandidate[] = [];
+  for (const entry of value.items) {
+    if (!isRecord(entry)
+      || !isNonEmptyString(entry.automationId)
+      || !isNonEmptyString(entry.label)
+      || seen.has(entry.automationId)) {
+      continue;
+    }
+    // The delegated-authority disclosure is part of the target contract, so a
+    // candidate without it is not offered rather than shown without it.
+    const execution = parseBindingCreateAutomationExecution(entry.execution);
+    if (execution === undefined) continue;
+    seen.add(entry.automationId);
+    candidates.push({ automationId: entry.automationId, label: entry.label, execution });
+  }
+  return { candidates, ...(value.nextCursor === null ? {} : { nextCursor: value.nextCursor }) };
+}
+
+/** Create and retarget share one Workflow target acquisition and cursor owner. */
+export function useBindingAutomationTargetPages(options: Readonly<{
+  signal: AbortSignal;
+  isLocked: () => boolean;
+  onStarted: () => void;
+  onUnavailable: () => void;
+}>) {
+  const action = useExecutePluginAction('automation.conversation.targets.list');
+  const optionsRef = React.useRef(options);
+  optionsRef.current = options;
+  const mountedRef = React.useRef(true);
+  const [candidates, setCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
+  const [nextCursor, setNextCursor] = React.useState<string | undefined>();
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const execute = action.execute;
+  const load = React.useCallback(async (cursor?: string) => {
+    const current = optionsRef.current;
+    if (current.isLocked() || current.signal.aborted) return;
+    current.onStarted();
+    const settled = await execute({ limit: 100, ...(cursor === undefined ? {} : { cursor }) });
+    if (!mountedRef.current || current.signal.aborted) return;
+    if (settled.status !== 'success') {
+      current.onUnavailable();
+      return;
+    }
+    const page = parseBindingCreateAutomationPage(settled.result);
+    if (page === undefined || (cursor === undefined && page.candidates.length === 0)) {
+      current.onUnavailable();
+      return;
+    }
+    setCandidates(previous => {
+      if (cursor === undefined) return page.candidates;
+      const seen = new Set(previous.map(candidate => candidate.automationId));
+      return [...previous, ...page.candidates.filter(candidate => {
+        if (seen.has(candidate.automationId)) return false;
+        seen.add(candidate.automationId);
+        return true;
+      })];
+    });
+    setNextCursor(page.nextCursor);
+  }, [execute]);
+  const reset = React.useCallback(() => { setCandidates([]); setNextCursor(undefined); }, []);
+  return { candidates, nextCursor, load, reset, loading: action.execution.status === 'pending' };
+}
+
+/** Keep Workflow load controls and their cursor identical in both journeys. */
+export function BindingAutomationTargetControls(props: Readonly<{
+  pages: ReturnType<typeof useBindingAutomationTargetPages>;
+  disabled: boolean;
+  t: Translate;
+}>): React.ReactElement {
+  const { pages, t } = props;
+  return <>
+    {pages.candidates.length === 0 ? <Button
+      title={t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Workflows')}
+      variant="secondary"
+      busy={pages.loading}
+      disabled={props.disabled}
+      onPress={() => { void pages.load(); }}
+    /> : null}
+    {pages.nextCursor === undefined ? null : <Button
+      title={t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Workflows')}
+      variant="plain"
+      busy={pages.loading}
+      disabled={props.disabled}
+      onPress={() => { void pages.load(pages.nextCursor); }}
+    />}
+  </>;
+}
 
 type TargetRow =
   | Readonly<{ kind: 'session' | 'discussion'; candidate: SessionCandidate }>

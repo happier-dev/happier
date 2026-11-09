@@ -235,9 +235,12 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           if (operation.prepareAdmission !== undefined) return { run: null, keyCensus };
           throw notFound();
         }
+        const run = summary();
+        if (operation.projection === 'revision') return { run: { state: run.state, revision: run.revision } };
         const rootProgress = ordered().find(row => row.index.parentRecordId === null
           && row.index.sequence === '0' && row.index.memberOrdinal === '0' && row.index.attempt === '0') ?? null;
-        return { run: summary(), acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress };
+        if (operation.projection === 'control') return { run: { state: run.state, revision: run.revision }, rootProgress };
+        return { run, acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress };
       }
       case 'list': {
         const root = ordered().find(row => row.index.parentRecordId === null);

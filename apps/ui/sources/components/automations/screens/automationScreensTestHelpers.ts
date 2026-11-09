@@ -94,10 +94,12 @@ export function installAutomationScreensCommonModuleMocks(
         );
 
         return {
+            ...textRuntime(),
             t: (...args: Parameters<ReturnType<typeof createTextModuleMock>['t']>) => textRuntime().t(...args),
             tLoose: (...args: Parameters<ReturnType<typeof createTextModuleMock>['tLoose']>) => textRuntime().tLoose(...args),
             getPreferredLanguage: () => textRuntime().getPreferredLanguage(),
             hasTranslation: (key: string) => textRuntime().hasTranslation(key),
+            getTranslationValue: (key: string) => textRuntime().getTranslationValue(key),
         };
     });
 }

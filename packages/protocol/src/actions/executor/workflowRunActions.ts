@@ -519,7 +519,7 @@ export type WorkflowAccountRunActionDeps = Readonly<{
       cleanupOnFailure: () => Promise<void>;
     }>>;
     /** The host defers retirement until already admitted Runs release this scope. */
-    retire: (input: Readonly<{ scopeId: string; machineId: string }>) => Promise<void>;
+    retire: (input: Readonly<{ scopeId: string; machineId: string }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<void>;
   }>;
   resolveAccountId: (signal?: AbortSignal) => Promise<string>;
   storage: Storage;
@@ -1445,14 +1445,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         // reopen the committed snapshot and compare semantic correspondence.
         const existing = await projectExisting();
         if (isTerminalAutomationRunStateV3(existing.run.state) && existing.run.workflowCustodyState !== 'pending') {
-          await deps.workflowRequesterCustody?.retire(requesterScope);
+          await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
         }
         return existing;
       }
       // A lost reply may already have queued the Run. Only a received client
       // refusal proves there is no new admitted work needing this custody.
       if (isConfirmedActionWriteRefusal(error)) {
-        await deps.workflowRequesterCustody?.retire(requesterScope);
+        await deps.workflowRequesterCustody?.retire(requesterScope, { signal: args.context.signal });
       }
       translateStorageError(error);
     }

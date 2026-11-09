@@ -6,7 +6,7 @@ import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/session
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
-import type { SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
+import type { ResolvedSessionPullRequestBindingInputV1 } from './createCliActionDeps';
 import type { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
@@ -89,7 +89,7 @@ export type CliWorkflowFamilyHost = Readonly<{
   readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
   resolveActionCallerSession: (context: ActionExecutorContext) => ReturnType<typeof resolveCliActionCallerSession>;
   resolveSessionAgentIdentity: (metadata: Record<string, unknown> | null | undefined, backendTarget?: PersistedBackendTargetRefV2 | null) => Promise<Extract<NonNullable<WorkflowIngressContextV1['agentTarget']>, { kind: 'agent' }>['identity'] | undefined>;
-  invokeSessionPullRequestBinding: (input: SessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => Promise<SessionPullRequestBindingResultV1>;
+  invokeSessionPullRequestBinding: (input: ResolvedSessionPullRequestBindingInputV1, caller?: ActionExecutorContext) => Promise<SessionPullRequestBindingResultV1>;
   resolveTransportForSession: (idOrPrefix: string, signal?: AbortSignal, caller?: Readonly<{ context: ActionExecutorContext; actionId: ActionId }>, expectedSessionAddress?: ActionExecutorContext['expectedSessionAddress']) => Promise<ResolvedSessionTransport | Readonly<{
     ok: false;
     code: string;
@@ -132,9 +132,9 @@ export function createCliWorkflowFamily(
         if (!resolveWorkflowMaterializer) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         return resolveWorkflowMaterializer(target);
       },
-      removeWorkflowTriggers: async (definitionId) => {
+      removeWorkflowTriggers: async (definitionId, signal) => {
         if (!workflowTriggers) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
-        await workflowTriggers.removeForWorkflow(definitionId);
+        await workflowTriggers.removeForWorkflow(definitionId, signal);
       } })
     : null;
 

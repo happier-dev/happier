@@ -5,14 +5,14 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, PluginInstallationMan
 import * as currentMachineInstallation from '@/daemon/identity/currentMachineInstallation';
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }));
-vi.mock('axios', () => ({ default: { post } }));
+vi.mock('axios', () => ({ default: { defaults: {}, post } }));
 
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 
 describe('workflow Run storage client', () => {
-  beforeEach(() => post.mockReset());
+  beforeEach(() => { post.mockReset(); });
 
   it('notifies Follow after storage commits a terminal, attention or progress Workflow revision', async () => {
     const transport = await import('../controlHttp');
@@ -41,6 +41,8 @@ describe('workflow Run storage client', () => {
         followOccurrence: { original: { source: { kind: 'workflow_run', runId: committed.id }, revision: 4 },
           event: { kind: 'needs_you', type: 'decision' } },
       }]);
+      expect(post).toHaveBeenCalledTimes(3);
+      expect(hint).toHaveBeenCalledTimes(1);
     } finally { hint.mockRestore(); }
   });
 
@@ -58,7 +60,7 @@ describe('workflow Run storage client', () => {
     expect(post.mock.calls[0]?.[2].headers).not.toHaveProperty('x-happier-plugin-installation-manifest-publisher');
   });
 
-  it('reads missing attention from the current source and preserves a committed transition if that read is unavailable', async () => {
+  it('leaves absent transition attention to Account-change delivery without a repair read or a guessed Follow hint', async () => {
     const transport = await import('../controlHttp');
     const hint = vi.spyOn(transport, 'daemonPost').mockResolvedValue({ ok: true });
     const boundary = createWorkflowRunStorageTestkit({ runId: 'workflow-follow', machineId: 'machine-1',
@@ -67,15 +69,9 @@ describe('workflow Run storage client', () => {
     const client = createWorkflowRunStorageClient({ token: 'token', machineId: 'machine-1', serverHttpBaseUrl: 'https://home.test',
       createPublisherHeader: async () => 'signed-publisher' });
     try {
-      post.mockResolvedValueOnce({ data: mutation }).mockResolvedValueOnce({ data: { run: { ...mutation, attentionRequired: true } } });
+      post.mockResolvedValue({ data: mutation });
       await expect(client.execute({ operation: 'transition', runId: mutation.id })).resolves.toEqual(mutation);
-      expect(hint.mock.calls).toContainEqual(['/session-activity-changed', { sessionId: null,
-        followOccurrence: { original: { source: { kind: 'workflow_run', runId: mutation.id }, revision: 4 },
-          event: { kind: 'needs_you', type: 'decision' } },
-      }]);
-      hint.mockClear();
-      post.mockResolvedValueOnce({ data: mutation }).mockRejectedValueOnce(new Error('source unavailable'));
-      await expect(client.execute({ operation: 'transition', runId: mutation.id })).resolves.toEqual(mutation);
+      expect(post).toHaveBeenCalledTimes(1);
       expect(hint).not.toHaveBeenCalled();
     } finally { hint.mockRestore(); }
   });
@@ -165,6 +161,52 @@ describe('workflow Run storage client', () => {
     );
     expect(post.mock.calls[0]?.[1]).not.toHaveProperty('publisherMachineId');
     expect(post.mock.calls[0]?.[2].headers).not.toHaveProperty('x-happier-plugin-installation-manifest-publisher');
+  });
+
+  it.each(['get', 'invocations.fact'] as const)('lets a valid slow %s request finish beyond thirty seconds', async operation => {
+    vi.useFakeTimers();
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    // HTTP is the boundary: model its response and configured transport deadline,
+    // rather than asserting a particular Axios option without exercising it.
+    post.mockImplementation((_url, _body, options: { timeout?: number }) => new Promise((resolve, reject) => {
+      const response = setTimeout(() => { clearTimeout(deadline); resolve({ data: { saved: true } }); }, 30_001);
+      const deadline = options.timeout ? setTimeout(() => {
+        clearTimeout(response);
+        reject(Object.assign(new Error('transport deadline'), { code: 'ECONNABORTED' }));
+      }, options.timeout) : undefined;
+      entered();
+    }));
+    try {
+      const client = createWorkflowRunStorageClient({ token: 'token', machineId: 'machine-1', serverHttpBaseUrl: 'https://home.test',
+        createPublisherHeader: async () => 'signed-publisher' });
+      const response = client.execute({ operation, runId: 'run-1' }).then(
+        value => ({ outcome: 'resolved', value }),
+        error => ({ outcome: 'rejected', error }),
+      );
+      await sending;
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(await response).toEqual({ outcome: 'resolved', value: { saved: true } });
+      expect(post).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['get', 'initialize'] as const)('cancels an in-flight %s without replaying the aborted request', async operation => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const sending = new Promise<void>(resolve => { entered = resolve; });
+    post.mockImplementation((_url, _body, options: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'ERR_CANCELED' })), { once: true });
+      entered();
+    }));
+    const client = createWorkflowRunStorageClient({ token: 'token', machineId: 'machine-1', serverHttpBaseUrl: 'https://home.test',
+      createPublisherHeader: async () => 'signed-publisher' });
+    const response = expect(client.execute({ operation, runId: 'run-1' }, { signal: controller.signal }))
+      .rejects.toMatchObject({ code: 'ERR_CANCELED' });
+    await sending;
+    controller.abort();
+    await response;
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it('rejoins an ambiguous initialize with the byte-identical request only', async () => {
