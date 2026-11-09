@@ -22,7 +22,7 @@ import { normalizeSessionAddress, type SessionAddress } from "@/sync/domains/ses
 import { resolveWorkspaceTargetForSession } from "@/sync/domains/session/resolveWorkspaceTargetForSession";
 import type { AgentInputSendOptions } from "@/components/sessions/agentInput";
 import { resolveSessionComposerSendActions } from '@/sync/domains/session/control/submitMode';
-import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput } from '@/components/sessions/pending/pendingMessageVisualState';
+import { canUseDirectPendingDeliveryActions, isLaunchOwnedPendingMessage, isNextTurnHostInput, resolvePendingMessageContentPresentation } from '@/components/sessions/pending/pendingMessageVisualState';
 import { isPendingMessageInDelivery } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
@@ -5300,6 +5300,12 @@ export function useSessionComposerController({
             () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message) && message.pendingLaunch?.state === 'starting'),
             [pendingMessages],
         );
+        // Its first message's row already says "Starting session…" (a Bot's quiet first-run seed does not).
+        const launchStartingShown = React.useMemo(
+            () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message) && message.pendingLaunch?.state === 'starting'
+                && !resolvePendingMessageContentPresentation(message).hostOnboarding),
+            [pendingMessages],
+        );
         // Only host updates in the queue (a worker's finish, told quietly): they wait for the next turn, not for a send.
         const queuedAreNextTurnUpdates = React.useMemo(
             () => mainQueuedMessages.length > 0 && mainQueuedMessages.every(isNextTurnHostInput),
@@ -5373,6 +5379,7 @@ export function useSessionComposerController({
             usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
             // The same owner SessionView renders its "Couldn't start" notice from.
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
+            launchStartingShown,
         }), [
             session.active,
             session.lastRuntimeIssue,
@@ -5387,6 +5394,7 @@ export function useSessionComposerController({
             connectedServicesRestartState,
             inactiveStatusText,
             launchStarting,
+            launchStartingShown,
             isSessionActive,
             isResumable,
             isMachineReachable,

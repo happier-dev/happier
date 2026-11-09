@@ -1262,7 +1262,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('says a launch-owned first message is starting, without Resume or a queued count, on a not-yet-active Session', async () => {
+    it('leaves a launch-owned first message to say it is starting: no second status line, Resume or queued count', async () => {
         setMachineOnline(true);
         updateSession({ active: false, presence: 0 });
         storage.getState().upsertPendingMessage('s1', {
@@ -1271,10 +1271,10 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } as never);
         const screen = await renderSessionView({ routeServerId: runtime.serverId });
         try {
-            await vi.waitFor(() => expect(queueLine(screen)?.text).toBe('newSession.startingSession'));
-            // No Resume: a second runner for the same creation. Other offers on the line are unrelated.
-            expect(JSON.stringify(queueLine(screen))).not.toMatch(/resume|inactiveResumable/i);
-            expect(JSON.stringify(queueLine(screen))).not.toContain('session.pendingMessages.indicator');
+            // QA-SESSION-1109 D18: the first message's row already says "Starting session…"; the line
+            // stays quiet. No Resume either: a second runner for the same creation.
+            await vi.waitFor(() => expect(findAgentInput(screen)).toBeTruthy());
+            expect(queueLine(screen)).toBeUndefined();
             expect(resumeCalls()).toHaveLength(0);
         } finally { await screen.unmount(); }
     });

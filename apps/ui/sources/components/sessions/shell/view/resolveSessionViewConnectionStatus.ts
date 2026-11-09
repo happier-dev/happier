@@ -83,6 +83,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     usageLimitRecoveryCardShown?: boolean;
     /** The Session's "Couldn't start" notice is on screen with its cause and its Retry. */
     startFailureNoticeShown?: boolean;
+    /** A new Session's first message is still starting and its row says so ("Starting session…"). */
+    launchStartingShown?: boolean;
 }>): SessionViewConnectionStatus | null {
     const guard = input.guard?.state ?? null;
     // A restart or a failed account switch is the more urgent fact; otherwise the guard's word leads.
@@ -120,8 +122,9 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
             ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
             : null;
     }
-    // The start-failure notice is the one place a refused start is said, with its Retry.
-    if (input.startFailureNoticeShown === true && !restartActive && !input.sessionStatusResuming) {
+    // The start-failure notice is the one place a refused start is said, with its Retry; a starting
+    // launch is said once, on its first message. Neither is an inactive Session to resume.
+    if ((input.startFailureNoticeShown === true || input.launchStartingShown === true) && !restartActive && !input.sessionStatusResuming) {
         return queueCountText
             ? { text: queueCountText, color: input.sessionStatusColor, dotColor: input.sessionStatusDotColor, isPulsing: false }
             : null;
