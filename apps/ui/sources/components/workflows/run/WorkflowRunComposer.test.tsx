@@ -84,6 +84,42 @@ async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['
 }
 
 describe('workflow composer admission', () => {
+    it('consumes held agent readiness and keeps a healthy draft connected account runnable', async () => {
+        const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+        const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { act } = await import('react-test-renderer');
+        const machineId = 'readiness-machine';
+        const scope = { serverId: appliedHome.serverId, accountId: 'account-a' };
+        getStorage().getState().applyMachines([createMachineFixture({ id: machineId, active: true, activeAt: Date.now() })], true,
+            { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+        const serviceId = 'happier.agent.claude/claude-subscription';
+        const onRun = vi.fn();
+        const definition = createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS });
+        const props = { inputs: [], values: {}, definition, serverId: scope.serverId, machineId,
+            onChangeValues: () => {}, onRun, onCancel: () => {} };
+        const screen = await renderScreen(<WorkflowRunComposer {...props} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await act(async () => machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machineId), {
+            status: 'ready', lastCheckedAt: 1, items: [{ agentId: 'claude', title: 'Claude', installed: true,
+                version: '1', latestVersion: '1', update: { supported: false, command: null },
+                signIn: { status: 'signedOut', loginSupport: 'login_terminal', required: true }, platform: { supported: true },
+                install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] }],
+            connectedServicesByAgentId: { claude: [{ serviceId, title: 'Claude subscription', connected: false, healthy: false,
+                profileLabel: null, profiles: [{ profileId: 'draft-account', healthy: true, profileLabel: 'Work' }] }] },
+        }));
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('session.collaboration.readiness.cause.agentSignIn');
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).not.toHaveBeenCalled();
+        await screen.update(<WorkflowRunComposer {...props} definition={{ ...definition, defaults: { ...definition.defaults,
+            connectedServices: { v: 2, bindingsByServiceId: { [serviceId]: {
+                source: 'connected', selection: 'profile', profileId: 'draft-account' } } } } }} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledOnce();
+        await screen.unmount();
+    });
     it.each([true, false])('starts from inside the composer card and keeps unconsumed text there (text input=%s)', async hasTextInput => {
         const onRun = vi.fn();
         const declaredInputs = hasTextInput ? [{ name: 'brief', valueType: 'string', required: true } as const] : [];

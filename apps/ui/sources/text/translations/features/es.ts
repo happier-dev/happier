@@ -1136,6 +1136,7 @@ const artifactsBrowserTranslations = { es: {
             someone: 'Alguien',
             askRedo: 'Pedir que lo rehaga',
             redoRequest: 'El documento cambió después de tu sugerencia. ¿Puedes sugerirla de nuevo sobre la versión actual?',
+            outsideSelection: 'También cambia texto fuera de la selección.',
         },
     } } satisfies Pick<Record<'en' | 'fr' | 'de' | 'es' | 'it' | 'pt' | 'ca' | 'ru' | 'pl' | 'ja' | 'zh-Hans' | 'zh-Hant', ArtifactsBrowserTranslations>, "es">;
 

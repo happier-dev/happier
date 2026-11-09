@@ -257,7 +257,7 @@ export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string
 
     const definitionValue = definition !== null && definition.key === contentKey ? definition.value : null;
     const projection = React.useMemo(
-        () => (definitionValue === null ? null : projectWorkflowFlow(definitionValue)),
+        () => (definitionValue === null ? null : projectWorkflowFlow(definitionValue, undefined, undefined, { presentation: 'run' })),
         [definitionValue],
     );
     return React.useMemo(() => {

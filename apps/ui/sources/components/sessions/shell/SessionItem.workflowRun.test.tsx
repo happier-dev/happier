@@ -37,14 +37,30 @@ const { SessionItem } = await import('./SessionItem');
 afterEach(async () => { await standardCleanup(); push.mockReset(); });
 
 describe('SessionItem workflow body', () => {
-    it('pairs the shared conversation row with the exact held occurrence rather than its first creation title', async () => {
+    it('keeps the saved step title while exact Run occurrence evidence is unavailable', async () => {
+        const previous = storage.getState();
+        try {
+            storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+            const session = createSessionFixture({ id: 'step-without-loaded-run',
+                origin: { kind: 'run_step', runId: 'unloaded-run' },
+                metadata: { name: '2 · Verify changes', path: '/repo', host: 'test', machineId: 'machine-1' } });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+                <SessionItem serverId="server-a" session={session} reportsDepth={1}
+                    rowViewModel={createSessionItemRowViewModel({ session, serverId: 'server-a', overrides: { identityDisplay: 'none' } })} />
+            </InjectedAuthProvider>);
+            expect(screen.findByTestId(`session-list-item-${session.id}`)?.props.accessibilityLabel)
+                .toContain('2 · Verify changes');
+        } finally { act(() => storage.setState(previous)); }
+    });
+
+    it.each([true, false])('pairs the shared conversation with its exact held occurrence and stable step label (named: %s)', async (named) => {
         const previous = storage.getState();
         const sessionId = 'shared-step-session';
         const runId = 'run-shared-items';
         const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'loop', id: 'items',
             repetition: { kind: 'items', items: { kind: 'literal', value: ['alpha', 'beta'] },
                 execution: 'parallel', failurePolicy: 'collect_outcomes' },
-            body: [{ kind: 'step', id: 'review', name: 'Review item', document: { text: 'Review', references: [], attachments: [] },
+            body: [{ kind: 'step', id: 'review', ...(named ? { name: 'Review item' } : {}), document: { text: 'Review', references: [], attachments: [] },
                 input: [], result: { kind: 'text' }, execution: { conversation: { kind: 'shared_run' } } }] }] });
         const run = createWorkflowRunSummaryFixture({ id: runId, state: 'running' });
         const detail = WorkflowRunGetResultV1Schema.parse({ run, definition, authoredDefinition: definition,
@@ -86,6 +102,7 @@ describe('SessionItem workflow body', () => {
                     rowViewModel={createSessionItemRowViewModel({ session, serverId: 'server-a', overrides: { identityDisplay: 'none' } })} />
             </InjectedAuthProvider>);
             const label = () => screen.findByTestId(`session-list-item-${sessionId}`)?.props.accessibilityLabel;
+            expect(label()).toContain(named ? '1 · Review item' : '1 · Review');
             expect(label()).toContain('beta');
             expect(label()).not.toContain('alpha');
             expect(label()).toContain('workflows.invocationState.waiting_for_review');

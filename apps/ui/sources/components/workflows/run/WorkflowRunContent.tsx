@@ -126,7 +126,7 @@ import {
     type WorkflowRunFailurePresentation,
     type WorkflowRecoveryContinuation,
 } from './workflowRunDetailPresentation';
-import { formatWorkflowRunFailureCauseLine, workflowRunOutcomeIsAttention } from './workflowRunDetailPresentation';
+import { formatWorkflowRunFailureCauseLine, resolveWorkflowRecoveryChoices, workflowRunOutcomeIsAttention } from './workflowRunDetailPresentation';
 
 /**
  * One managed Run's detail body, shared by the exact Run route, the Automation
@@ -945,7 +945,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         && (props.run.state === 'failed' || props.run.state === 'interrupted')
         && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);
     const failureRecoveryInstruction = failurePresentation?.recovery.usageLimitWait
-        ?? (failurePresentation !== null && primaryAction === 'stop' ? t('workflows.recovery.nextStop') : null);
+        ?? (failurePresentation !== null && primaryAction === 'stop' && resolveWorkflowRecoveryChoices(failurePresentation.recovery, props).noChoices
+            ? t('workflows.recovery.nextStop') : null);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
         workflowCustodyState: props.run.workflowCustodyState,

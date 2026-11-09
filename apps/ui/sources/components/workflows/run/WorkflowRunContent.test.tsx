@@ -922,6 +922,31 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain(usageLimit ? 'workflows.recovery.usageLimitWait' : 'workflows.recovery.nextStop');
   });
 
+  it('does not tell the person to stop and run again beside the recovery choice that keeps completed steps (RUN1109-1)', async () => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'session_input_target_update_required' } });
+    const notPrepared = { kind: 'unavailable', reason: 'recovery_not_prepared' } as const;
+    const open = {
+      run: createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' }),
+      invocations: [invocation], selectedInvocationId: invocation.id, selectedInvocationProgress: progress,
+      invocationProgressById: new Map([[invocation.id, progress]]), firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved' as const, onCancel: vi.fn(),
+      selectedInvocationRecoveryAvailability: {
+        reattach: { kind: 'unavailable', reason: 'invocation_not_recoverable' },
+        retry: { kind: 'available', causalInvocationIds: [invocation.id] }, continueSameConversation: notPrepared,
+        continueFreshAgent: { kind: 'available' }, restoreWorkspace: notPrepared,
+      } as never,
+    };
+    const offered = await renderContent({ ...open, onRetryFreshAgent: vi.fn() });
+    expect(offered.findByTestId('workflow-run-retry-fresh')).toBeTruthy();
+    expect(offered.findByTestId('workflow-run-failure-next')).toBeNull();
+    // The same attempt with no way to act on the choice has nothing to offer: the Run's Stop is still the way on.
+    const notOffered = await renderContent(open);
+    expect(notOffered.findByTestId('workflow-run-failure-next')?.props.children).toBe('workflows.recovery.nextStop');
+  });
+
   it('says Skipped on a completed Run map for a step it never ran, and only when the history is complete', async () => {
     const root = createWorkflowInvocationIndexFixture({ id: 'root', lifecycle: 'completed' });
     const taken = createWorkflowInvocationIndexFixture({ id: 'taken', parentRecordId: root.id, sequence: '1', lifecycle: 'completed' });

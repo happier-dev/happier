@@ -10,7 +10,6 @@ import { projectWorkflowFlow } from '@/components/workflows/flow/workflowFlowPro
 import { formatWorkflowOccurrenceLabel, projectWorkflowFlowRunStates, projectWorkflowInvocationStructure } from '@/components/workflows/run/workflowInvocationStructure';
 import { isTerminalWorkflowInvocationLifecycle } from '@/components/work/status/resolveWorkStatusTone';
 import { isWorkflowAttentionInvocation, isWorkflowRunStopPending } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 type Occurrence = Readonly<{ title: string; lifecycle?: WorkflowInvocationLifecycleV1; blockKind?: string; runStopPending?: boolean }>;
@@ -32,7 +31,7 @@ function projectConversationOccurrences(row: WorkflowRunRow, facts: Facts, langu
     const invocations = Object.values(facts);
     const evidence = new Map(invocations.flatMap(fact => fact.opened ? [[fact.id, fact.opened] as const] : []));
     const progress = new Map([...evidence].map(([id, opened]) => [id, opened.progress]));
-    const projection = projectWorkflowFlow(definition, acceptedContext.frozenChildren);
+    const projection = projectWorkflowFlow(definition, acceptedContext.frozenChildren, undefined, { presentation: 'run' });
     const structure = projectWorkflowInvocationStructure({ definition, frozenChildren: acceptedContext.frozenChildren,
         invocations, progressByInvocationId: progress, invocationEvidenceById: evidence });
     const states = projectWorkflowFlowRunStates({ invocations, structure, progressByInvocationId: progress, projection });
@@ -68,7 +67,7 @@ function projectConversationOccurrences(row: WorkflowRunRow, facts: Facts, langu
     return result;
 }
 
-/** A nested Workflow conversation previews the Map's exact occurrence, not its saved Session title. */
+/** A nested Workflow conversation previews the Map's exact occurrence when that evidence is available. */
 export function useWorkflowSessionOccurrence(params: Readonly<{
     sessionId: string; origin?: SessionAwarenessOriginV1; serverId?: string; enabled: boolean;
 }>): Occurrence | null {
@@ -81,9 +80,9 @@ export function useWorkflowSessionOccurrence(params: Readonly<{
     const facts = storage(state => runId ? state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.factsById ?? null : null);
     return React.useMemo(() => {
         if (!runId) return null;
-        // Without exact evidence, do not present the first Session title's item
-        // suffix as the identity of its current input. No row-level RPC is added.
+        // Without exact evidence, keep the canonical saved Session title. History
+        // must not replace the authored step name with a generic Workflow label.
         return (row && facts ? projectConversationOccurrences(row, facts, language).get(params.sessionId) : null)
-            ?? { title: t('message.provenanceWorkflow') };
+            ?? null;
     }, [facts, language, params.sessionId, row, runId]);
 }

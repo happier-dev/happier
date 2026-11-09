@@ -1,7 +1,8 @@
-import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexNodeId, isSessionListShortcutOccurrence, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
+import { areSessionListRowParentContextsEqual, type SessionListRowParentContextFacts } from './sessionListRowContext';
 
 type WorkItem = Exclude<SessionListIndexItem, { type: 'header' }>;
 
@@ -24,6 +25,7 @@ export function nestSessionListReports(
     let previousGroupKey: string | undefined;
     for (const item of items) {
         if (item.type === 'header') { group += 1; previousGroupKey = undefined; continue; }
+        if (isSessionListShortcutOccurrence(item)) continue;
         if (previousGroupKey !== item.groupKey) group += 1;
         previousGroupKey = item.groupKey;
         groups.set(item, group);
@@ -47,7 +49,9 @@ export function nestSessionListReports(
                 const candidate = lead ? byKey.get(sessionKey(item.serverId, lead)) : undefined;
                 if (candidate && candidate !== item) parent = candidate;
             }
-        } else {
+        } else if (item.groupKind !== 'attention') {
+            // Promoted Runs stay visible in Needs you rather than disappearing
+            // into their origin Session's ordinary group; their steps still nest.
             const origin = resolveRunOriginSession?.(item.serverId, item.runId);
             const candidate = origin ? byKey.get(sessionKey(item.serverId, origin)) : undefined;
             // A Run cannot be nested under one of its own steps.
@@ -95,27 +99,40 @@ export function nestSessionListReports(
         const parent = item.type === 'session' && (children.get(item)?.length ?? 0) > 0;
         const defaultCollapsed = parent && item.type === 'session'
             && resolveSessionRow(item.serverId ?? null, item.sessionId)?.metadata?.bot?.kind === 'bot';
+        const lead = depth > 0 ? parentByItem.get(item) : undefined;
+        const leadRow = item.type === 'session' && lead?.type === 'session'
+            ? resolveSessionRow(lead.serverId ?? null, lead.sessionId) : null;
+        const parentContext: SessionListRowParentContextFacts | undefined = lead?.type === 'session' && leadRow ? {
+            serverId: lead.serverId ?? null,
+            project: lead.projectKey ?? null,
+            fallbackGroupKey: lead.projectKey ? null : lead.fallbackGroupDisplay?.groupKey ?? null,
+            machineId: leadRow.metadata?.machineId ?? null,
+            workspaceId: leadRow.metadata?.workspaceId ?? null,
+        } : undefined;
         const { reportsDepth: _oldDepth, ...withDefault } = item;
         const rest = withDefault.type === 'session'
-            ? (({ reportsDefaultCollapsed: _oldDefault, reportsParent: _oldParent, reportsCollapsed: _oldCollapsed, ...fields }) => fields)(withDefault)
+            ? (({ reportsDefaultCollapsed: _oldDefault, reportsParent: _oldParent, reportsCollapsed: _oldCollapsed,
+                reportsParentContext: _oldParentContext, ...fields }) => fields)(withDefault)
             : withDefault;
         output.push(!movedGroup && (item.reportsDepth ?? 0) === depth
             && (item.type !== 'session' || ((item.reportsDefaultCollapsed === true) === defaultCollapsed
-                && (item.reportsParent === true) === parent && item.reportsCollapsed === undefined)) ? item : {
+                && (item.reportsParent === true) === parent && item.reportsCollapsed === undefined
+                && areSessionListRowParentContextsEqual(item.reportsParentContext, parentContext))) ? item : {
             ...rest,
             ...(depth > 0 ? { reportsDepth: depth } : {}),
+            ...(item.type === 'session' && parentContext ? { reportsParentContext: parentContext } : {}),
             ...(parent ? { reportsParent: true as const } : {}),
             ...(defaultCollapsed ? { reportsDefaultCollapsed: true as const } : {}),
             ...(movedGroup ? {
                 groupKey: groupOwner.groupKey, groupKind: groupOwner.groupKind,
-                workspace: groupOwner.workspace, section: groupOwner.section,
-                folderId: groupOwner.folderId, folderDepth: groupOwner.folderDepth,
+                section: groupOwner.section, folderDepth: groupOwner.folderDepth,
             } : {}),
         });
         for (const child of children.get(item) ?? []) emit(child, depth + 1, groupOwner);
     };
     for (const item of items) {
         if (item.type === 'header') output.push(item);
+        else if (isSessionListShortcutOccurrence(item)) output.push(item);
         else if (!parentByItem.has(item)) emit(item, 0);
     }
     return output.length === items.length && output.every((item, i) => item === items[i]) ? items : output;

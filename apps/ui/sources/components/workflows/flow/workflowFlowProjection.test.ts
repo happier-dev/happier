@@ -4,6 +4,7 @@ import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workf
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { t } from '@/text';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows/workflowStepLabel';
 
 import {
   indexWorkflowFlowRunStates,
@@ -40,6 +41,15 @@ function definition(blocks: WorkflowDefinitionV1['blocks']): WorkflowDefinitionV
 }
 
 describe('definition flow projection', () => {
+  it('names unnamed Run steps like their fresh conversations while keeping authoring placeholders', () => {
+    const unnamed = step('inspect', 'Inspect the change\nThen explain the result');
+    const source = definition([unnamed]);
+    const node = projectWorkflowFlow(source, {}, {}, { presentation: 'run' }).nodesById.get(unnamed.id)!;
+    expect(`${node.stepOrdinal} · ${node.label}`).toBe(formatWorkflowStepSessionTitle({ step: unnamed, stepOrdinal: '1' }));
+    expect(projectWorkflowFlow(source).nodesById.get(unnamed.id)?.label).toBe(t('workflows.editor.addStep'));
+    expect(projectWorkflowFlow(definition([{ ...unnamed, name: 'Inspect' }]), {}, {}, { presentation: 'run' })
+      .nodesById.get(unnamed.id)?.label).toBe('Inspect');
+  });
   it('keeps a Discussion outcomes read plain while retaining external Action final outputs', () => {
     const project = (actionId: string) => projectWorkflowFlow({ ...definition([
       { kind: 'action', id: 'outcomes', name: 'Answer outcomes', actionId, input: {} },

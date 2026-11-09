@@ -63,6 +63,19 @@ it.each(['discussion.invite', 'plugin:external/check'])('FIX250 presents each re
 });
 
 describe('managed workflow Run presentation', () => {
+    it.each(['agent_signed_out', 'agent_cli_missing'])('shows the typed %s start refusal and offers another agent', code => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+            blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+            invocationPath: { blockId: 'work', scope: [] }, reason: { code: 'spawn_failed',
+                failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: code, httpStatus: null } } });
+        const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
+        expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', headline: t(
+            code === 'agent_signed_out' ? 'session.collaboration.readiness.cause.agentSignIn' : 'session.collaboration.readiness.cause.agentNotInstalled',
+            { agent: t('newSession.wizardSection.agent') }) });
+        expect(recovery.canRunWithAnotherAgent).toBe(true);
+    });
     it('never assigns a failure cause from later Machine reachability (R5 03:42–04:58 / 10:28)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', finishedAt: '2026-10-19T04:58:00.000Z' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', createdAt: '2026-10-19T03:42:00.000Z',
@@ -389,7 +402,7 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, knownFailure: true } }))
             .toBe(t('workflows.runState.completed_with_failures'));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage }))
-            .toBe(t('workflows.runState.running'));
+            .toBe(t('workflows.run.runningSentence'));
     });
     it('says how far a stopped Run got rather than the bare state word (DESIGN-15 R9)', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
@@ -412,7 +425,7 @@ describe('managed workflow Run presentation', () => {
     it('describes a claimed continuation and an accepted Stop from their current facts', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'claimed' });
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.runState.running'));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.runningSentence'));
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
         expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage, cancelRequested: true })).toBe(t('workflows.run.stopping'));
     });
@@ -1193,16 +1206,31 @@ describe('managed workflow Run presentation', () => {
         })).toBe(formatWorkflowRunOutcomeSentence({ run: done, coverage }));
     });
 
-    it('uses the Wait detail sentence for the default step name without repeating the state', () => {
+    it('keeps an unloaded parked hold a full neutral sentence until its kind is known (07 §6.1)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review' });
         const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('This run is waiting for you.');
+    });
+
+    it('names exact running work and distinguishes parked result review from a Wait-for-you hold (07 §6.1)', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage,
+            runningStep: 'Write changelog · Item 2',
+        })).toBe('Write changelog · Item 2 is running.');
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
+            step: 'Check the release', waitForYou: false,
+        } })).toBe('Nothing else can run until you review.');
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
+            step: 'Check the release', waitForYou: false, reviewCount: 2,
+        } })).toBe('Nothing else can run until you review. 2 results need review.');
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
             step: t('workflows.page.blocks.waitTitle'), waitForYou: true,
         } })).toBe(t('workflows.review.waitBody'));
-        // The parked Run's word already says it waits ("Waiting for you —"), so the sentence only names the step.
+        // The held occurrence keeps a full sentence when all other work is parked.
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, attention: {
             step: 'Check the release', waitForYou: true,
-        } })).toBe(t('workflows.run.attentionParkedSentence', { step: 'Check the release' }));
+        } })).toBe(t('workflows.run.attentionWaitSentence', { step: 'Check the release' }));
         // A Run still working elsewhere leads with "Running", so the sentence says what waits (lab run-A).
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'running' }, coverage, attention: {
             step: 'Write changelog', waitForYou: false,
@@ -1223,8 +1251,10 @@ describe('managed workflow Run presentation', () => {
         const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
         const word = formatWorkflowRunOutcomeLabel({ state: run.state, coverage, inAttentionWindow: false });
         const line = formatWorkflowRunOutcomeLine({ word, sentence: formatWorkflowRunOutcomeSentence({ run, coverage, attention: null }) });
-        // One idea once, with no step to name yet: never "Waiting for your review — Needs you".
-        expect(line).toBe(t('workflows.review.waitTitle'));
+        // The kind of hold stays unknown, while the Run still has a full sentence.
+        expect(line).toBe(t('workflows.run.outcomeLine', {
+            word: t('workflows.review.waitTitle'), sentence: t('workflows.run.waitingSentence'),
+        }));
     });
 
     it('presents a claimed Run with a known hold through attention while preserving terminal parent authority', () => {
@@ -1236,7 +1266,7 @@ describe('managed workflow Run presentation', () => {
             .toBe(t('workflows.review.waitTitle'));
         expect(formatWorkflowRunOutcomeSentence({ run: createWorkflowRunSummaryFixture({ state: 'claimed' }),
             coverage, attention: { step: 'Check the release', waitForYou: true } }))
-            .toBe(t('workflows.run.attentionParkedSentence', { step: 'Check the release' }));
+            .toBe(t('workflows.run.attentionWaitSentence', { step: 'Check the release' }));
         expect(formatWorkflowRunOutcomeLabel({ state: 'claimed', coverage: {
             ...coverage, observedLeafCounts: { completed: 1, failed: 0, attention: 0 },
         } })).toBe(t('workflows.runState.running'));

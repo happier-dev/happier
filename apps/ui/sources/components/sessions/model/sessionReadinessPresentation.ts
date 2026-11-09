@@ -37,34 +37,35 @@ export function describeMachineReadinessCause(
   }
 }
 
+/** Shared wording for the Agent availability owner's verdict, including a recorded start refusal. */
+export function describeAgentReadinessCause(agent: Readonly<{
+  title: string;
+  state: NonNullable<SessionReadinessV1['agent']>['state'];
+}>): string {
+  const key = agent.state === 'unknown'
+    ? 'session.collaboration.readiness.cause.agentUnknown'
+    : agent.state === 'notInstalled'
+      ? 'session.collaboration.readiness.cause.agentNotInstalled'
+      : agent.state === 'unsupported'
+        ? 'session.collaboration.readiness.cause.agentUnsupported'
+        : 'session.collaboration.readiness.cause.agentSignIn';
+  return t(key, { agent: agent.title });
+}
+
 function describeCause(readiness: SessionReadinessV1): string | null {
   const agent = readiness.agent
     ? resolveAgentCatalogTitle(readiness.agent.agentId)
     : null;
   switch (readiness.cause) {
     case 'machine':
-      return readiness.status === 'unknown' &&
-        readiness.machine?.status === 'probing'
-        ? t('session.collaboration.readiness.cause.machineChecking')
-        : (describeMachineReadinessCause(readiness.machine) ??
+      return describeMachineReadinessCause(readiness.machine) ??
             (readiness.status === 'unknown'
               ? t('session.collaboration.readiness.cause.machineChecking')
-              : null));
+              : null);
     case 'agent':
-      if (!agent) return null;
-      if (readiness.status === 'unknown')
-        return t('session.collaboration.readiness.cause.agentUnknown', {
-          agent,
-        });
-      return readiness.agent?.state === 'notInstalled'
-        ? t('session.collaboration.readiness.cause.agentNotInstalled', {
-            agent,
-          })
-        : readiness.agent?.state === 'unsupported'
-          ? t('session.collaboration.readiness.cause.agentUnsupported', {
-              agent,
-            })
-          : t('session.collaboration.readiness.cause.agentSignIn', { agent });
+      if (!agent || !readiness.agent) return null;
+      return describeAgentReadinessCause({ title: agent,
+        state: readiness.status === 'unknown' ? 'unknown' : readiness.agent.state });
     case 'invocation':
       return readiness.status === 'unknown'
         ? t('session.collaboration.readiness.cause.invocationUnknown')

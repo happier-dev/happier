@@ -20,7 +20,7 @@ import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } fro
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery, readSessionAgentAvailabilityFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { hasSessionUsageLimitResetElapsed } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -330,7 +330,9 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         params.progress?.reason?.code, params.progress?.reason?.message]);
     const headline = failed && params.progress?.reason
         ? startupRecovery?.cause
-            ?? issue.summary ?? presentSessionStartupFailureCause(params.progress.reason.code)
+            ?? issue.summary
+            ?? presentSessionStartupFailureCause(params.progress.reason.failureCause?.errorCode)
+            ?? presentSessionStartupFailureCause(params.progress.reason.code)
             ?? describeRecordedTransportFailure(params.progress.reason.code)
             ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
             ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
@@ -384,8 +386,10 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         // input may still be running — no acknowledgement starts replacement
         // work while `workflow_outcome_unresolved` stands.
         canStartReviewedNewRun: workspaceUnavailable && !canRestoreWorkspace && !waitingForStop,
-        canRunWithAnotherAgent: params.progress?.reason?.code === 'target_unavailable'
-            && params.progress.blockKind === 'step'
+        canRunWithAnotherAgent: (params.progress?.reason?.code === 'target_unavailable'
+            || readSessionAgentAvailabilityFailure(params.progress?.reason?.failureCause?.errorCode
+                ?? params.progress?.reason?.code) !== null)
+            && params.progress?.blockKind === 'step'
             && invocation?.lifecycle === 'failed'
             && params.run.workflowCustodyState === 'settled',
         preparedRecovery: params.progress?.recovery ?? null,
@@ -438,6 +442,32 @@ function describeRunPublicationFailure(code: string): string | null {
 }
 
 /** The page and its exact failure inspector consume one cause/recovery projection. */
+/** The actions a host connects to the recovery choices; a choice exists only where its action does. */
+export type WorkflowRecoveryChoiceHandlers = Readonly<Partial<Record<'onContinuePrepared' | 'onReattach' | 'onRetrySameConversation'
+    | 'onRetryFreshAgent' | 'onRetry' | 'onRetryWithReplacement' | 'onRestoreWorkspace' | 'onStartReviewedNewRun' | 'onRunWithAnotherAgent', unknown>>>;
+
+/** The choices this attempt really has: the recovery projection's answer, joined with the host's wiring. */
+export function resolveWorkflowRecoveryChoices(recovery: WorkflowInvocationRecoveryPresentation, handlers: WorkflowRecoveryChoiceHandlers) {
+    const prepared = recovery.canContinuePrepared && recovery.preparedRecovery !== null && handlers.onContinuePrepared !== undefined;
+    const reattach = recovery.canReattach && handlers.onReattach !== undefined;
+    const retrySame = recovery.canRetrySameConversation && handlers.onRetrySameConversation !== undefined;
+    const retryFresh = recovery.canRetryFreshAgent && handlers.onRetryFreshAgent !== undefined;
+    const retry = recovery.canRetry && handlers.onRetry !== undefined;
+    const replacement = (recovery.canRetrySameConversation || recovery.canRetryFreshAgent) && handlers.onRetryWithReplacement !== undefined;
+    const restore = recovery.workspaceUnavailable && recovery.canRestoreWorkspace && handlers.onRestoreWorkspace !== undefined;
+    const reviewed = recovery.workspaceUnavailable && recovery.canStartReviewedNewRun && handlers.onStartReviewedNewRun !== undefined;
+    const another = recovery.canRunWithAnotherAgent && handlers.onRunWithAnotherAgent !== undefined;
+    // One primary: the first offered choice, in the order the lab ranks them; the rest stay secondary.
+    const offered = ([
+        ['prepared', prepared], ['reattach', reattach], ['same', retrySame], ['fresh', retryFresh], ['retry', retry],
+        ['restore', restore], ['reviewed', reviewed], ['another', another],
+    ] as const).filter(([, isOffered]) => isOffered).map(([choice]) => choice);
+    const choiceOffered = offered.length > 0 || replacement;
+    return { prepared, reattach, retrySame, retryFresh, retry, replacement, restore, reviewed, another, offered, choiceOffered,
+        noChoices: !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
+            || (recovery.remainingNotStartedSiblingCount ?? 0) > 0) };
+}
+
 export type WorkflowRunFailurePresentation = Readonly<{
     invocationId: string;
     invocationLifecycle: WorkflowRunInvocationIndexV1['lifecycle'];
@@ -531,7 +561,13 @@ export function formatWorkflowRunOriginLabel(origin: WorkflowRunSummaryV1['origi
  * review (07 §6.1, §6.2).
  */
 /** `waitsForApproval`: the step waits on a request the person decides (an invitation, an Action), not a result to review. */
-export type WorkflowRunAttentionLead = Readonly<{ step: string; waitForYou: boolean; waitsForApproval?: boolean }>;
+export type WorkflowRunAttentionLead = Readonly<{
+    step: string;
+    waitForYou: boolean;
+    waitsForApproval?: boolean;
+    /** Complete loaded result-review holds; absent while history is partial. */
+    reviewCount?: number;
+}>;
 
 /** The quiet second outcome line, derived from frozen structure and exact live rows. */
 export function formatWorkflowRunConsequenceSentence(params: Readonly<{
@@ -653,6 +689,8 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     coverage: WorkflowRunCoverage;
     historyComplete?: boolean;
     attention?: WorkflowRunAttentionLead | null;
+    /** A loaded running leaf, including its exact occurrence when repeated. */
+    runningStep?: string | null;
     cancelRequested?: boolean;
     /** Exact failed occurrence, named from the frozen definition rather than selection. */
     failure?: Readonly<{ step: string; lifecycle?: WorkflowRunInvocationIndexV1['lifecycle'] }> | null;
@@ -709,25 +747,30 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
                     : formatWorkflowRunStateLabel(run.state)
             : formatWorkflowRunStateLabel(run.state);
     }
-    // A parked Run whose held step is not known yet says only that it waits; the word already says it.
+    // Without the held step, name neither an occurrence nor a kind of decision.
     if (!params.attention && (run.state === 'waiting_for_review'
         || run.attentionRequired === true && (run.state === 'queued' || run.state === 'claimed'))) {
-        return t('workflows.review.waitTitle');
+        return t('workflows.run.waitingSentence');
     }
     if (params.attention && (run.state === 'queued' || run.state === 'claimed' || run.state === 'running' || run.state === 'waiting_for_review')) {
+        if (params.attention.waitsForApproval === true) {
+            return t('workflows.run.attentionApprovalSentence', { step: params.attention.step });
+        }
+        if (run.state === 'waiting_for_review' && !params.attention.waitForYou) {
+            const sentence = t('workflows.run.parkedReviewSentence');
+            return params.attention.reviewCount === undefined ? sentence
+                : `${sentence} ${t('workflows.run.parkedReviewCount', { count: params.attention.reviewCount })}`;
+        }
         if (params.attention.waitForYou && params.attention.step === t('workflows.page.blocks.waitTitle')) {
             return t('workflows.review.waitBody');
         }
-        // A parked Run leads with the word that already says it waits; the sentence then only names the step.
-        if (run.state === 'waiting_for_review' || run.state === 'queued' || run.state === 'claimed') {
-            return t('workflows.run.attentionParkedSentence', { step: params.attention.step });
-        }
         return params.attention.waitForYou
             ? t('workflows.run.attentionWaitSentence', { step: params.attention.step })
-            : params.attention.waitsForApproval === true
-                ? t('workflows.run.attentionApprovalSentence', { step: params.attention.step })
-                : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
+            : t('workflows.run.attentionReviewSentence', { step: params.attention.step });
     }
+    if (run.state === 'running') return params.runningStep
+        ? t('workflows.run.runningStepSentence', { step: params.runningStep })
+        : t('workflows.run.runningSentence');
     // A stopped Run says how far it got, from the server's authored progress the Run row also reads
     // (DESIGN-15 R9); unlike a success count it does not depend on the loaded history pages.
     if (run.state === 'cancelled' && run.stepProgress) {
@@ -743,7 +786,7 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     }
     if (run.state === 'pause_requested') return t('workflows.run.pausePending');
     if (run.state === 'paused') return t('workflows.run.paused');
-    if (run.state === 'claimed' && coverage.observedLeafCounts.completed > 0) return formatWorkflowRunStateLabel('running');
+    if (run.state === 'claimed' && coverage.observedLeafCounts.completed > 0) return t('workflows.run.runningSentence');
     return formatWorkflowRunStateLabel(run.state);
 }
 

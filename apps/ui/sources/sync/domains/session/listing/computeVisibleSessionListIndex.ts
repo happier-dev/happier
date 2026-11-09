@@ -1,5 +1,6 @@
 import type { SessionListBackgroundWorkAttentionMode } from './sessionListBackgroundWorkAttention';
 import { nestSessionListReports, resolveWorkflowRunParentSessionId } from './nestSessionListReports';
+import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { mergeWorkflowRunGroups, type WorkflowRunGroup } from './mergeWorkflowRunGroups';
 import { canSessionListFilterIncludeRunsV1, normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -10,8 +11,8 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { buildSessionListDateGroups } from './sessionListDateGroups';
 import { t } from '@/text';
-import { isTerminalWorkflowRunState, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
+import { isTerminalWorkflowRunState, isWorkStatusNeedsYou, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
@@ -31,6 +32,9 @@ export type { SessionListConditionValueCountRequest, SessionListConditionValueCo
 import { applySessionListIndexPresentation, restoreSessionListContextHeaders } from './sessionListIndexPresentation';
 import {
     buildSessionListGlobalPlacements,
+    ATTENTION_PLACEMENT_GROUP_KEY_V1,
+    readSessionListRowPlacementFacts,
+    readSessionListRowWorkStatus,
     type SessionListAttentionPlacementOptions,
     type SessionListWorkingPlacementOptions,
 } from './sessionListAttentionPlacement';
@@ -115,8 +119,14 @@ export type ComputeVisibleSessionListIndexParams = Readonly<{
     sessionFolderAssignmentsBySessionKey?: Readonly<Record<string, string | null>>;
     sessionTagIdsBySessionKey?: Readonly<Record<string, readonly string[]>>;
     /** Explicit privacy preference joined with current native recording and existing organization tags. */
+    recordingHiddenSessionKeys?: ReadonlySet<string>;
     querySectionIdsByServerId?: ReadonlyMap<string, readonly string[]>;
     previousMembership?: SessionListWorkMembershipProjection;
+    /**
+     * Session ids whose rows changed since `previousMembership` was projected, when every other input is
+     * the same. Membership then re-admits those entries alone; absent means a complete pass.
+     */
+    rowOnlyChangeSinceMembership?: ReadonlySet<string>;
     conditionValueCountRequest?: SessionListConditionValueCountRequest | null;
     /** Coverage of the admitted source window; a loaded page is not a complete corpus. */
     groupCoverage?: SessionListGroupSubject['coverage'];
@@ -193,14 +203,14 @@ function projectWorkMembership(params: ComputeVisibleSessionListIndexParams): Se
     const ordinaryKeys = new Set((params.source ?? []).flatMap(item => item.type === 'session'
         ? [JSON.stringify([item.serverId ?? '', item.sessionId])] : []));
     const heldSource = params.includeNeedsYouEverywhere ? [...params.source ?? [], ...params.attentionSource ?? []] : params.source ?? [];
-    for (const item of heldSource) {
-        if (item.type !== 'session') continue;
+    const admit = (item: SessionListIndexItem): void => {
+        if (item.type !== 'session') return;
         const key = JSON.stringify([item.serverId ?? '', item.sessionId]);
-        if (sessions.has(key)) continue;
+        if (sessions.has(key)) return;
         const serverId = item.serverId ?? '';
         const ordinary = ordinaryKeys.has(key);
         if (!ordinary && !filter.homeServerIds.some(home => (resolveServerProfileScopeIdForIdentifier(home) || home)
-            === (resolveServerProfileScopeIdForIdentifier(serverId) || serverId))) continue;
+            === (resolveServerProfileScopeIdForIdentifier(serverId) || serverId))) return;
         const row = params.resolveSessionRow(serverId, item.sessionId);
         const viewerAccountId = params.viewerAccountIdByServerId?.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
         const sectionId = params.sessionFolderAssignmentsBySessionKey?.[key];
@@ -234,11 +244,24 @@ function projectWorkMembership(params: ComputeVisibleSessionListIndexParams): Se
         });
         const status = params.includeNeedsYouEverywhere && row && sessionListRowMatchesCorpus(row, params.corpusStorage)
             ? old?.row === row && old.viewerAccountId === viewerAccountId && previous?.nowMs === nowMs && old.status
-                ? old.status : resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(row, nowMs) })
+                ? old.status : readSessionListRowWorkStatus(row, nowMs).status
             : undefined;
         sessions.set(key, unchanged && old.status === status && old.sourceKind === sourceKind ? old
             : { row, storageKind: item.storageKind, sourceKind, sectionId, tagIds, viewerAccountId, match, ordinary, status });
+    };
+    const changed = params.rowOnlyChangeSinceMembership;
+    if (changed && previous && sameFilter && sameProjects && previous.nowMs === nowMs
+        && previous.workflowRunUnderSessionId === params.workflowRunUnderSessionId) {
+        // Only rows changed since `previous`, every other input is the same: re-admit those entries alone,
+        // in source order, and keep every other entry, predicate and Run as they are.
+        for (const [serverId, predicate] of previous.sessionPredicates) sessionPredicates.set(serverId, predicate);
+        for (const [key, entry] of previous.sessions) sessions.set(key, entry);
+        const changedItems = heldSource.filter(item => item.type === 'session' && changed.has(item.sessionId));
+        for (const item of changedItems) if (item.type === 'session') sessions.delete(JSON.stringify([item.serverId ?? '', item.sessionId]));
+        for (const item of changedItems) admit(item);
+        return { ...previous, sessions, sessionPredicates };
     }
+    for (const item of heldSource) admit(item);
     const runPredicate = previous && sameFilter && previous.workflowRunUnderSessionId === params.workflowRunUnderSessionId ? previous.runPredicate : (() => {
         const refinement = compileWorkflowRunSessionListFilter(filter);
         const space = params.spaceMembership;
@@ -1274,6 +1297,20 @@ function resolveEachSessionRowOnce(
     };
 }
 
+// One projected row and group header per Run summary object and the Project inputs it was resolved with.
+const projectedRunRowBySummary = new WeakMap<WorkflowRunSummaryV1, Readonly<{
+    serverId: string;
+    resolver: SessionListWorkMembershipProjection['projectKeyResolver'];
+    workspaceRefs: readonly WorkspaceRefV1[] | undefined;
+    censusServerId: string | undefined;
+    viewerAccountId: string | undefined;
+    fallbackTitles: string;
+    attentionPlacement: boolean;
+    groupKey: string;
+    row: Extract<SessionListIndexItem, { type: 'workflow_run' }>;
+    header: WorkflowRunGroup['header'];
+}>>();
+
 function projectWorkflowRunRows(
     visible: SessionListIndexItem[],
     params: ComputeVisibleSessionListIndexParams,
@@ -1289,7 +1326,9 @@ function projectWorkflowRunRows(
         .filter((run) => membership.runs.get(JSON.stringify([run.serverId, run.summary.id]))?.match === 'match')
 ;
     const resolveRunProject = membership.projectKeyResolver;
-    const projectDisplay = buildProjectGroupDisplayIndex(params.workspaceRefs ?? []);
+    // Only a Run row reads Project titles; a Session-only list never builds them.
+    let projectDisplayIndex: ReturnType<typeof buildProjectGroupDisplayIndex> | undefined;
+    const projectDisplay = { get: (key: string) => (projectDisplayIndex ??= buildProjectGroupDisplayIndex(params.workspaceRefs ?? [])).get(key) };
     const sessionItems = visible.filter((item) => {
         if (item.type !== 'session') return item.type === 'header';
         const key = normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey;
@@ -1298,7 +1337,22 @@ function projectWorkflowRunRows(
     });
     const summaryByKey = new Map(runs.map((run) => [JSON.stringify([run.serverId, run.summary.id]), run.summary]));
     const runGroups = new Map<string, WorkflowRunGroup>();
+    // Header titles also read these localized fallbacks; a language change re-projects every Run.
+    const fallbackTitles = `${t('common.loading')}\u0000${t('workflows.title')}\u0000${describeWorkStatusBucket('needs_you')}`;
+    const attentionPlacement = params.sessionListAttentionPlacementV1 !== 'inPlace' && params.attentionPlacement?.mode === 'global';
+    const viewerAccountIdFor = (serverId: string) => params.viewerAccountIdByServerId?.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId);
     for (const { serverId, summary } of runs) {
+        // A Run whose summary and Project inputs are unchanged keeps its row and group header.
+        const retained = projectedRunRowBySummary.get(summary);
+        if (retained && retained.serverId === serverId && retained.resolver === resolveRunProject
+            && retained.workspaceRefs === params.workspaceRefs && retained.censusServerId === params.workspaceRefsServerId
+            && retained.viewerAccountId === viewerAccountIdFor(serverId) && retained.fallbackTitles === fallbackTitles
+            && retained.attentionPlacement === attentionPlacement) {
+            const group = runGroups.get(retained.groupKey);
+            if (group) group.rows.push(retained.row);
+            else runGroups.set(retained.groupKey, { rows: [retained.row], header: retained.header });
+            continue;
+        }
         const section = isTerminalWorkflowRunState(summary.state) ? 'inactive' : 'active';
         const where = summary.where;
         const scope = where ? normalizeSessionFolderWorkspaceRef({
@@ -1317,31 +1371,46 @@ function projectWorkflowRunRows(
             ...(where.workspaceRefId ? { workspaceId: where.workspaceRefId } : {}), machineId: where.machineId, path: where.directory,
         } : null, serverId);
         const project = resolved?.kind === 'resolved' ? resolved.projectKey : undefined;
-        const groupKey = project ? projectGroupIdentityKey(project) : sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(
+        const projectGroupKey = project ? projectGroupIdentityKey(project) : sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(
             serverId, resolveSessionProjectGroupingKeyParts(where ? { machineId: where.machineId, path: where.directory } : null),
         ));
-        const fallbackIdentity = project ? null : readSessionWorkspaceFallbackIdentity(groupKey);
+        const needsYou = attentionPlacement && isWorkStatusNeedsYou(resolveWorkStatusTone({
+            kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary),
+        }));
+        const groupKey = needsYou ? ATTENTION_PLACEMENT_GROUP_KEY_V1 : projectGroupKey;
+        const fallbackIdentity = project ? null : readSessionWorkspaceFallbackIdentity(projectGroupKey);
         const workspace = reference ?? scope;
-        const baseline = project ? projectDisplay.get(groupKey)?.baseline : null;
+        const baseline = project ? projectDisplay.get(projectGroupKey)?.baseline : null;
         const row: Extract<SessionListIndexItem, { type: 'workflow_run' }> = {
-            type: 'workflow_run', runId: summary.id, serverId, groupKey, groupKind: 'project', section,
+            type: 'workflow_run', runId: summary.id, serverId, groupKey, groupKind: needsYou ? 'attention' : 'project', section,
             ...(workspace ? { workspace } : {}),
         };
-        const group = runGroups.get(groupKey);
-        if (group) {
-            group.rows.push(row);
-            continue;
-        }
-        runGroups.set(groupKey, { rows: [row], header: { type: 'header', headerKind: 'project', groupKey,
+        const header: WorkflowRunGroup['header'] = needsYou ? {
+            type: 'header', headerKind: 'attention', groupKey, title: describeWorkStatusBucket('needs_you'),
+        } : { type: 'header', headerKind: 'project', groupKey,
             workspaceKey: fallbackIdentity ? buildSessionWorkspaceFallbackOrderKey(fallbackIdentity) : groupKey, serverId,
             title: project ? projectDisplay.get(groupKey)?.title ?? t('common.loading') : where?.directory ?? t('workflows.title'),
             ...(project ? { projectKey: project } : {}), ...(workspace ? { workspace } : {}),
             ...(project ? { workspaceScopeHint: baseline
                 ? { serverId, machineId: baseline.machineId, rootPath: baseline.rootPath } : null }
                 : where ? { workspaceScopeHint: { serverId, machineId: where.machineId, rootPath: where.directory } } : {}),
-        } });
+        };
+        projectedRunRowBySummary.set(summary, { serverId, resolver: resolveRunProject, workspaceRefs: params.workspaceRefs,
+            censusServerId: params.workspaceRefsServerId, viewerAccountId: viewerAccountIdFor(serverId), fallbackTitles,
+            attentionPlacement, groupKey, row, header });
+        const group = runGroups.get(groupKey);
+        if (group) group.rows.push(row);
+        else runGroups.set(groupKey, { rows: [row], header });
     }
-    const output = mergeWorkflowRunGroups(sessionItems, runGroups);
+    const attentionRuns = runGroups.get(ATTENTION_PLACEMENT_GROUP_KEY_V1);
+    let mergeItems = sessionItems;
+    if (attentionRuns) {
+        const headerIndex = sessionItems.findIndex(item => item.type === 'header' && item.headerKind === 'attention');
+        if (headerIndex < 0) mergeItems = [{ ...attentionRuns.header, eligibleCount: attentionRuns.rows.length }, ...sessionItems];
+        else mergeItems = sessionItems.map((item, index) => index === headerIndex && item.type === 'header'
+            ? { ...item, eligibleCount: (item.eligibleCount ?? 0) + attentionRuns.rows.length } : item);
+    }
+    const output = mergeWorkflowRunGroups(mergeItems, runGroups);
     // Placement has already assigned these bands through the canonical Session
     // owner. Adding Runs must not reclassify those rows into ordinary sections.
     const placed: SessionListIndexItem[] = [];
@@ -1354,9 +1423,18 @@ function projectWorkflowRunRows(
     }
     let arranged = output;
     if (params.sessionListLayoutChoice === 'recent_activity') {
-        const activity = (item: Exclude<SessionListIndexItem, { type: 'header' }>) => item.type === 'session'
-            ? readSessionListMeaningfulActivityAt(params.resolveSessionRow(item.serverId, item.sessionId))
-            : Date.parse(summaryByKey.get(JSON.stringify([item.serverId, item.runId]))?.updatedAt ?? '') || 0;
+        // Read each row's activity once per projection, not once per sort comparison.
+        const activityByItem = new Map<Exclude<SessionListIndexItem, { type: 'header' }>, number>();
+        const activity = (item: Exclude<SessionListIndexItem, { type: 'header' }>) => {
+            let value = activityByItem.get(item);
+            if (value === undefined) {
+                value = item.type === 'session'
+                    ? readSessionListMeaningfulActivityAt(params.resolveSessionRow(item.serverId, item.sessionId))
+                    : Date.parse(summaryByKey.get(JSON.stringify([item.serverId, item.runId]))?.updatedAt ?? '') || 0;
+                activityByItem.set(item, value);
+            }
+            return value;
+        };
         const loading = ordinary.filter((item) => item.type === 'header'
             ? item.headerKind === 'loading' : item.groupKind === 'loading');
         const work = ordinary.filter((item): item is Exclude<SessionListIndexItem, { type: 'header' }> => item.type !== 'header' && item.groupKind !== 'loading')
@@ -1422,11 +1500,32 @@ function admitSupplementalAttention(params: ComputeVisibleSessionListIndexParams
     return { ...params, source, supplementalNeedsYouSessionKeys: supplementalKeys };
 }
 
+/** Project group headers ranked by their first Run in the served window order. */
+function seedRunsOnlyProjectGroups(items: readonly SessionListIndexItem[],
+    runs: NonNullable<ComputeVisibleSessionListIndexParams['workflowRuns']>): SessionListIndexItem[] {
+    const rankByRun = new Map(runs.map((run, index) => [JSON.stringify([run.serverId, run.summary.id]), index]));
+    const groups: { header: SessionListIndexItem; rank: number }[] = [];
+    let current: { header: SessionListIndexItem; rank: number } | null = null;
+    for (const item of items) {
+        if (item.type === 'header') {
+            if (item.headerKind === 'folder') continue;
+            current = item.headerKind === 'project' ? { header: item, rank: Number.POSITIVE_INFINITY } : null;
+            if (current) groups.push(current);
+        } else if (current && item.type === 'workflow_run') {
+            current.rank = Math.min(current.rank, rankByRun.get(JSON.stringify([item.serverId, item.runId])) ?? Number.POSITIVE_INFINITY);
+        }
+    }
+    return groups.sort((left, right) => left.rank - right.rank).map(group => group.header);
+}
+
 function projectVisibleSessionListRows(visible: SessionListIndexItem[], params: ComputeVisibleSessionListIndexParams,
     membership: SessionListWorkMembershipProjection): SessionListIndexItem[] {
     const withRuns = projectWorkflowRunRows(visible, params, membership);
     const projected = (params.sessionListLayoutChoice ?? 'projects') === 'projects'
-        ? completeSessionProjectGroupOrder({ source: withRuns, creationSeed: params.source ?? [],
+        ? completeSessionProjectGroupOrder({ source: withRuns,
+            // Runs-only shows no Session: its folders are seeded by the Runs it shows, newest
+            // first (the window's server order), not by a Sessions corpus it does not present.
+            creationSeed: membership.filter.show === 'runs' ? seedRunsOnlyProjectGroups(withRuns, params.workflowRuns ?? []) : params.source ?? [],
             previousPresentedIndex: params.previousPresentedIndex, savedOrder: params.sessionWorkspaceOrderV1 ?? {} })
         : withRuns;
     if (params.sessionListAttentionPlacementV1 === 'top') {
@@ -1499,9 +1598,95 @@ function computeVisibleSessionListIndexWithMembership(
     return result ? projectVisibleSessionListRows(result, params, membership) : result;
 }
 
+/**
+ * Every fact the passes of this projection read from one Session row, with the projection's other
+ * inputs fixed: work status and awareness coverage (group rollups), global placement, ordering and
+ * date grouping, corpus and inactive filtering, report nesting, storage kind, and the facts accepted
+ * Project grouping resolves from. A pass that starts reading another row field adds it here.
+ */
+function readVisibleSessionListRowFacts(
+    item: Extract<SessionListIndexItem, { type: 'session' }>,
+    row: SessionListRenderableSession,
+    params: ComputeVisibleSessionListIndexParams,
+    nowMs: number,
+): readonly unknown[] {
+    const { facts, status } = readSessionListRowWorkStatus(row, nowMs);
+    const ordering = buildSessionListSessionOrderingKey({ item, row });
+    return [
+        JSON.stringify(status), isSessionAwarenessContentReadableV1(facts.awareness.encryption ?? 'unknown'),
+        ...readSessionListRowPlacementFacts({ session: row,
+            sessionKey: normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey ?? '',
+            standingPolicy: params.attentionPlacement?.standingPolicy, nowMs }),
+        ordering.updated.bucket, ordering.updated.createdAtSecondary, ordering.createdAt, readSessionListMeaningfulActivityAt(row),
+        row.active === true, row.keepVisibleWhenInactive === true, row.archivedAt != null, row.archiving === true,
+        row.metadata == null, row.origin?.kind ?? null, row.origin?.kind === 'run_step' ? row.origin.runId ?? null : null,
+        readSessionManagerSessionIdV1(row), getSessionStorageKind(row),
+        // Accepted Project grouping and storage kind resolve from these by identity.
+        row.metadata, row.metadataLayoutVersion, row.projectKey, row.ownerAccountId, row.access, row.accessLevel,
+    ];
+}
+
+function isSameSessionMembershipEntry(left: SessionMembership | undefined, right: SessionMembership | undefined): boolean {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    return left.match === right.match && left.sourceKind === right.sourceKind && left.ordinary === right.ordinary
+        && left.storageKind === right.storageKind && JSON.stringify(left.status ?? null) === JSON.stringify(right.status ?? null);
+}
+
+/**
+ * A known row-level change (only these Sessions' rows changed since `previous`, every other input is
+ * the same) keeps the previous arranged list when no changed listed row changed a fact this projection
+ * reads: it returns that projection with membership re-admitted for those rows alone. `null` means a
+ * fact changed, so the caller runs the complete projection. Condition value counts read more per-row
+ * facts and always take the complete projection.
+ */
+export function keepVisibleSessionListProjectionForRowChanges(input: Readonly<{
+    params: ComputeVisibleSessionListIndexParams;
+    previous: Pick<VisibleSessionListProjection, 'items' | 'membership' | 'filterResult' | 'matchedEntityIds' | 'attentionSupplementEntityIds' | 'conditionValueCounts'>;
+    changedSessionIds: ReadonlySet<string>;
+    resolvePreviousSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'];
+}>): VisibleSessionListProjection | null {
+    const { params, previous, changedSessionIds } = input;
+    if (params.conditionValueCountRequest || !previous.items) return null;
+    const nowMs = params.nowMs ?? Date.now();
+    if (previous.membership.nowMs !== nowMs) return null;
+    const membership = projectWorkMembership({ ...params, previousMembership: previous.membership,
+        rowOnlyChangeSinceMembership: changedSessionIds });
+    const seen = new Set<string>();
+    for (const item of [...params.source ?? [], ...params.attentionSource ?? []]) {
+        if (item.type !== 'session' || !changedSessionIds.has(item.sessionId)) continue;
+        const key = JSON.stringify([item.serverId ?? '', item.sessionId]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!isSameSessionMembershipEntry(previous.membership.sessions.get(key), membership.sessions.get(key))) return null;
+        const before = input.resolvePreviousSessionRow(item.serverId, item.sessionId);
+        const after = params.resolveSessionRow(item.serverId, item.sessionId);
+        if (before === after) continue;
+        if (!before || !after) return null;
+        const beforeFacts = readVisibleSessionListRowFacts(item, before, params, nowMs);
+        const afterFacts = readVisibleSessionListRowFacts(item, after, params, nowMs);
+        if (beforeFacts.some((fact, index) => !Object.is(fact, afterFacts[index]))) return null;
+    }
+    // Group subjects keep their previous answers: no changed row changed its status or coverage.
+    return { ...previous, items: previous.items, membership: { ...membership,
+        groupSubjects: previous.membership.groupSubjects, groupRollups: previous.membership.groupRollups,
+        conditionValueCountProjection: previous.membership.conditionValueCountProjection } };
+}
+
 /** Membership and distinct result truth accompany the same existing arranged list projection. */
 export function computeVisibleSessionListProjection(inputParams: ComputeVisibleSessionListIndexParams): VisibleSessionListProjection {
     let params: ComputeVisibleSessionListIndexParams = { ...inputParams, resolveSessionRow: resolveEachSessionRowOnce(inputParams.resolveSessionRow) };
+    const hidden = params.recordingHiddenSessionKeys;
+    if (hidden?.size) {
+        const excludeHidden = <T extends null | undefined>(items: readonly SessionListIndexItem[] | T): readonly SessionListIndexItem[] | T => items?.filter(item =>
+            item.type !== 'session' || !hidden.has(normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey ?? '')) ?? items;
+        // Admission precedes pins, retained attention and child nesting: none can reintroduce a private row.
+        params = { ...params, source: excludeHidden(params.source), attentionSource: excludeHidden(params.attentionSource),
+            previousPresentedIndex: excludeHidden(params.previousPresentedIndex),
+            pinnedSessionKeysV1: params.pinnedSessionKeysV1.filter(key => !hidden.has(key)),
+            supplementalNeedsYouSessionKeys: params.supplementalNeedsYouSessionKeys
+                ? new Set([...params.supplementalNeedsYouSessionKeys].filter(key => !hidden.has(key))) : undefined };
+    }
     let membership = projectWorkMembership(params);
     const conditionValueCountProjection = projectSessionListConditionValueCounts(params, membership);
     membership = { ...membership, conditionValueCountProjection };
@@ -1595,8 +1780,8 @@ export function computeVisibleSessionListProjection(inputParams: ComputeVisibleS
                 const row = membership.sessions.get(membershipKey)?.row;
                 if (!row) subject = { status: null, coverage: 'unavailable' };
                 else {
-                    const facts = readSessionWorkStatusFacts(row, membership.nowMs);
-                    subject = { status: membership.sessions.get(membershipKey)?.status ?? resolveWorkStatusTone({ kind: 'session', facts }),
+                    const { facts, status } = readSessionListRowWorkStatus(row, membership.nowMs);
+                    subject = { status: membership.sessions.get(membershipKey)?.status ?? status,
                         coverage: isSessionAwarenessContentReadableV1(facts.awareness.encryption ?? 'unknown') ? 'complete' : 'unavailable' };
                 }
             } else {

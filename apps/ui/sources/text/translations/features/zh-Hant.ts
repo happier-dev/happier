@@ -1136,6 +1136,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             someone: '某人',
             askRedo: '請求重做',
             redoRequest: '在你提出建議後文件已變更。能否根據目前版本重新提出建議？',
+            outsideSelection: '也會變更所選範圍之外的文字。',
         },
     } } satisfies Pick<Record<'en' | 'fr' | 'de' | 'es' | 'it' | 'pt' | 'ca' | 'ru' | 'pl' | 'ja' | 'zh-Hans' | 'zh-Hant', ArtifactsBrowserTranslations>, "zh-Hant">;
 

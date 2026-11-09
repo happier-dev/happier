@@ -72,6 +72,21 @@ async function materializeWithRenderCount(params: Parameters<typeof materializeW
 }
 
 describe('workflow input materialization', () => {
+  it.each([
+    { name: 'plain step', references: [], review: false },
+    { name: 'review instructions', references: [], review: true },
+    { name: 'structured context', references: [{ kind: 'input' as const, name: 'topic' }], review: false },
+    { name: 'review with structured context', references: [{ kind: 'input' as const, name: 'topic' }], review: true },
+  ])('displays only authored text for $name', async ({ references, review }) => {
+    const document = { text: 'Authored task', references: [], attachments: [] };
+    const result = await materializeWorkflowStepInput({ document, references, runtime,
+      ...(review ? { reviewContext: { runId: 'run', invocationRecordId: 'held', contentRevision: '0' } } : {}) });
+    expect(result.displayText === document.text).toBe(true);
+    expect(result.text.startsWith(document.text)).toBe(true);
+    expect(result.text.includes('<happier_discussion_context>')).toBe(references.length > 0);
+    expect(result.text.includes('workflow.run.invocations.publish_draft')).toBe(review);
+  });
+
   it('presents the item content separately from host reference metadata to a review Agent (FIN H2b)', async () => {
     const result = await materializeWorkflowStepInput({
       document: { text: 'Reply with the input item.', references: [], attachments: [] },
@@ -109,6 +124,7 @@ describe('workflow input materialization', () => {
           discussion: { serverId: 'home', discussionId: 'discussion' } }) } });
     expect(resolved.text).toContain('frozen-question');
     expect(resolved.text).toContain('addressing_message');
+    expect(resolved.displayText === 'Answer').toBe(true);
   });
   it('leaves required Session context defaults for canonical materialization and resolves qualified input paths', async () => {
     const definition = { inputs: [{ name: 'reviewSession', valueType: 'json' as const, required: true,
@@ -566,6 +582,7 @@ describe('workflow input materialization', () => {
     });
     expect(result.text).toBe(retainedInput.renderedText);
     expect(result.renderedText).toBe(retainedInput.renderedText);
+    expect(result.displayText === retainedInput.document.text).toBe(true);
     expect(result.values).toBe(retainedInput.input);
     expect(result.text).not.toContain('Later comment');
   });

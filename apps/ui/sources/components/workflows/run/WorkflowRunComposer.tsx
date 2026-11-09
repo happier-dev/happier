@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useWorkflowRunAgentReadiness } from './useWorkflowRunAgentReadiness';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useWindowDimensions, View } from 'react-native';
@@ -344,6 +345,13 @@ export function WorkflowRunComposer(
   const showsWorkflowAgent = React.useMemo(() => reviewedDefinition
     ? readWorkflowBlockShape(reviewedDefinition).showsWorkflowAgent : false, [reviewedDefinition]);
   const reviewedMachineId = retained?.project?.machineId ?? props.machineId;
+  const agentReadinessCause = useWorkflowRunAgentReadiness({
+    definition: definitionIssue === null ? reviewedDefinition : undefined,
+    materializedLeaves: props.materializedLeaves,
+    machineId: reviewedMachineId,
+    serverId: props.serverId,
+    enabled: retained === null,
+  });
   const suppliedMachineName = props.machineName ?? props.authoringControls?.machineName;
   const scopedMachineName = useServerScopedMachineLabel(props.serverId, suppliedMachineName ? null : reviewedMachineId);
   const reviewedProject = retained?.project ?? (reviewedMachineId && props.directory
@@ -461,6 +469,7 @@ export function WorkflowRunComposer(
     props.pending === true ||
     (retained === null &&
       (props.startDisabled === true ||
+        agentReadinessCause !== null ||
         blocked !== null ||
         definitionIssue !== null ||
         (!acceptedRepeat && roleDraft.status !== 'ready') ||
@@ -514,7 +523,7 @@ export function WorkflowRunComposer(
                 reason: 'definition_invalid',
                 blockingIssue: definitionIssue,
               })
-            : (props.startProblem?.message ?? null)
+            : (agentReadinessCause ?? props.startProblem?.message ?? null)
         : blocked.errorCode === 'missing_required_input'
           ? t('workflows.start.addToStart', {
               name: inputTitle(blocked.definition),
@@ -523,6 +532,7 @@ export function WorkflowRunComposer(
   // 07 §3: an untouched missing value is readiness, not an error. It never interrupts as an alert.
   const readinessOnly =
     retained !== null ||
+    agentReadinessCause !== null ||
     blocked?.errorCode === 'missing_required_input' ||
     (roleDraft.status === 'loading' && blocked === null);
   const visibilityHint =

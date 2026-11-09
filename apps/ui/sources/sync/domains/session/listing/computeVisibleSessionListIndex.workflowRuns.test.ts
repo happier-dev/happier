@@ -1,4 +1,3 @@
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { describe, expect, it } from 'vitest';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -54,6 +53,30 @@ function compute(show: 'sessions' | 'runs' | 'both' = 'both', startedBy: ('you' 
 }
 
 describe('computeVisibleSessionListIndex workflow Runs', () => {
+    it.each(['user', 'agent'] as const)('keeps an authoritative %s Run in Needs you from permission through review, then removes the settled hold', (startedBy) => {
+        const project = (state: 'running' | 'waiting_for_review' | 'succeeded', attentionRequired: boolean) => computeVisibleSessionListIndex({
+            source: source.slice(0, 2), resolveSessionRow,
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListAttentionPlacementV1: 'top', attentionPlacement: { mode: 'global' },
+            presentation: { enabled: false, presentation: 'grouped' },
+            workFilter: normalizeSessionListFilterV1({ show: 'both', startedBy: ['you', 'agents'], homeServerIds: ['home'] }),
+            workflowRuns: [{ serverId: 'home', summary: createWorkflowRunSummaryFixture({ id: 'review-run',
+                ownerAccountId: 'account-1', startedBy, origin: { kind: 'direct', originSessionId: 'lead' }, state, attentionRequired,
+                invocationAttentionRequired: attentionRequired }) }],
+        })!;
+        for (const state of ['running', 'waiting_for_review'] as const) {
+            const result = project(state, true);
+            expect(result).toEqual(expect.arrayContaining([
+                expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+                expect.objectContaining({ type: 'workflow_run', runId: 'review-run', groupKind: 'attention' }),
+            ]));
+            expect(result.filter(row => row.type === 'workflow_run')).toEqual([
+                expect.objectContaining({ runId: 'review-run', groupKind: 'attention' }),
+            ]);
+            expect(result.find(row => row.type === 'workflow_run')).not.toHaveProperty('reportsDepth');
+        }
+        expect(project('succeeded', false).some(row => row.type === 'header' && row.headerKind === 'attention')).toBe(false);
+    });
     it('keeps existing project order and appends new Run groups in first-seen order', () => {
         const group = (path: string) => sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity('home',
             resolveSessionProjectGroupingKeyParts({ machineId: 'machine-1', path })));
@@ -80,6 +103,40 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
             'header:/c', 'run-1', 'run-3',
             'header:/d', 'run-4',
         ]);
+    });
+
+    it('Runs-only seeds group order from the Runs (newest first), not from the Sessions corpus it does not show', () => {
+        // P03-RUNS-LIST-GAP live shape: the newest Run's folder holds no Session; two older folders do.
+        const groupFor = (machineId: string, path: string) => sessionProjectGroupingIdentityKey(
+            buildSessionProjectGroupingIdentity('home', resolveSessionProjectGroupingKeyParts({ machineId, path })));
+        const seeded = [['machine-1', '/home/happier'], ['machine-2', '/home/happier/cli']] as const;
+        const sessionSource: SessionListIndexItem[] = seeded.flatMap(([machineId, path]) => [
+            { type: 'header', headerKind: 'project', title: path, serverId: 'home', groupKey: groupFor(machineId, path),
+                workspaceKey: groupFor(machineId, path) },
+            { type: 'session', sessionId: `s:${path}`, serverId: 'home', groupKey: groupFor(machineId, path), groupKind: 'project' },
+        ] satisfies SessionListIndexItem[]);
+        const runAt = (id: string, machineId: string, directory: string) => ({ serverId: 'home',
+            summary: { ...summary(id, 'user'), where: { machineId, directory } } });
+        // Server window order: createdAt desc.
+        const workflowRuns = [
+            runAt('newest', 'machine-f759', '/tmp/J-SESSION-4-code-review-1107'),
+            runAt('older-cli', 'machine-2', '/home/happier/cli'),
+            runAt('oldest-happier', 'machine-1', '/home/happier'),
+        ];
+        const rows = computeVisibleSessionListIndex({ source: sessionSource,
+            resolveSessionRow: (_server, id) => ({ ...resolveSessionRow('home', id), metadata: id === 's:/home/happier'
+                ? { machineId: 'machine-1', path: '/home/happier' } : { machineId: 'machine-2', path: '/home/happier/cli' } }),
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            sessionListLayoutChoice: 'projects', sessionListAttentionPlacementV1: 'inPlace',
+            presentation: { enabled: false, presentation: 'grouped' },
+            workFilter: normalizeSessionListFilterV1({ show: 'runs', homeServerIds: ['home'] }),
+            workflowRuns,
+        })!;
+        const runIds = rows.flatMap(item => item.type === 'workflow_run' ? [item.runId] : []);
+        // Every stored Run is listed, and the newest one is not buried under older Session-seeded folders.
+        expect(runIds).toEqual(['newest', 'older-cli', 'oldest-happier']);
+        expect(rows.filter(item => item.type === 'header').map(item => item.type === 'header' ? item.title : null))
+            .toEqual(['/tmp/J-SESSION-4-code-review-1107', '/home/happier/cli', '/home/happier']);
     });
 
     it('merges Runs with one pass over Session groups and preserves every row in input order', () => {
@@ -218,7 +275,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         })!;
         expect(result.filter(item => item.type === 'session').map(item => item.sessionId)).toEqual(['step']);
     });
-    it('distinguishes the same Run project on two machines without any Sessions, and refreshes cached identity', () => {
+    it('keeps distinct Run project groups without Session-only Machine decoration', () => {
         const machines = ['machine-1111', 'machine-2222'].map(id => createMachineFixture({
             id, metadata: { ...createMachineFixture().metadata!, displayName: 'Dev box', host: 'dev.local', homeDir: '/home' },
         }));
@@ -235,10 +292,8 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         const projected = buildSessionListProjectHeaderViewModels(input);
         const models = projected.projectHeaderViewModelByGroupKey;
         const headers = rows.filter(item => item.type === 'header');
-        const names = resolveMachineDisplayNames(machines);
-        expect(headers.map(header => models.get(header.groupKey!)?.machineSubtitle))
-            .toEqual(machines.map(machine => names.get(machine.id)));
-        expect(new Set([...models.values()].map(model => model.machineSubtitle)).size).toBe(2);
+        expect(new Set(headers.map(header => header.groupKey)).size).toBe(2);
+        expect([...models.values()].every(model => model.machineDetail === undefined)).toBe(true);
         expect(buildSessionListProjectHeaderViewModels({ ...input,
             machinesById: new Map(machines.map(machine => [machine.id, { ...machine, activeAt: 200 }])),
         })).toBe(projected);
@@ -246,7 +301,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         const refreshed = buildSessionListProjectHeaderViewModels({ ...input,
             machinesById: new Map([[renamed.id, renamed], [machines[1]!.id, machines[1]!]]),
         });
-        expect(refreshed.projectHeaderViewModelByGroupKey.get(headers[0]!.groupKey!)?.machineSubtitle).toBe('Laptop');
+        expect(refreshed).toBe(projected);
 
     });
     it('groups Runs without a Session corpus by their accepted project and uses its canonical workspace name', () => {

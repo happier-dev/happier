@@ -1136,6 +1136,7 @@ const artifactsBrowserTranslations = { ja: {
             someone: '誰か',
             askRedo: 'やり直しを依頼',
             redoRequest: '提案のあとでドキュメントが変更されました。現在のバージョンでもう一度提案してもらえますか？',
+            outsideSelection: '選択範囲外のテキストも変更します。',
         },
     } } satisfies Pick<Record<'en' | 'fr' | 'de' | 'es' | 'it' | 'pt' | 'ca' | 'ru' | 'pl' | 'ja' | 'zh-Hans' | 'zh-Hant', ArtifactsBrowserTranslations>, "ja">;
 
