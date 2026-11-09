@@ -2,7 +2,7 @@ import { createMachineSharingTranslations } from '../machineSharingTranslations.
 export const machineSharing = createMachineSharingTranslations({
     fallback: { adminDisabled: "管理員存取已關閉。若要檢查獨立使用者設定，請開啟這台機器的安全設定，將管理員存取設為「預先授權」，儲存後重試。預先授權允許 Happier 無需詢問即可執行管理員命令。", adminCheckRequired: "此預覽需要無需輸入密碼的管理員存取。重試前，請在這台機器的設定中檢查管理員存取。", managedCliRequired: "受管 Happier CLI 缺失或無法執行。請在這台機器上安裝或修復 Happier，然後重試。", prerequisites: {"unsupported_platform": "獨立使用者需要 Linux。請選擇 Linux 機器。", "sudo_unavailable": "sudo 無法使用。請在這台機器上安裝或修復 sudo，然後重試。", "sudoers_invalid": "sudo 規則無效。請修復這台機器的管理員存取設定，然後重試。", "agent_user_missing": "缺少代理的 Linux 使用者。請修復獨立使用者設定，然後重試。", "workspace_not_ready": "工作區資料夾尚未就緒。請確認資料夾存在且可存取，然後重試。", "payload_not_accessible": "獨立使用者無法執行受管 Happier CLI。請修復安裝和存取權限，然後重試。", "workspace_ancestor_not_traversable": "上層資料夾阻止了工作區存取。請檢查資料夾權限，然後重試。", "agent_launch_kind_unavailable": "此 Happier CLI 無法啟動獨立使用者。請更新這台機器上的 Happier，然後重試。", "provisioning_unavailable": "無法檢查獨立使用者設定。請查看這台機器的設定診斷，然後重試。", "launch_probe_failed": "獨立使用者啟動檢查失敗。請修復這台機器的獨立使用者設定，然後重試。", "mcp_socket_access_unavailable": "獨立使用者無法存取工作階段通訊端。請修復獨立使用者設定，然後重試。", "local_admin_api_accessible": "獨立使用者可以存取擁有者的本機管理 API。請修復隔離設定後再重試。", "metadata_unavailable": "這台機器的設定詳細資料無法使用。請重新連接機器，然後重試。"},  lead: "這裡的代理以 Happier 的使用者執行。你新增的人可以做它能做的任何事，包括檢視這個畫面。", detail: "畫面控制權只屬於能管理這台機器的人。只與你信任的人共用。", offer: "獨立使用者為每個人提供各自的 Linux 使用者、主目錄和檢出副本。", turnOn: "在「安全性」中設定", previewing: "正在檢查 {machine} 上會有哪些變化…", reviewUsers: "你新增的每個人都會在 {machine} 上取得自己的 Linux 使用者。", reviewFolders: "工作區資料夾的權限會改變，讓這些使用者能夠存取。", reviewSessions: "{machine} 上正在執行的工作階段會重新啟動。", reviewAdmin: "需要 {machine} 的管理員權限。", confirm: "開啟", applying: "正在 {machine} 上開啟獨立使用者…", alreadyOn: "獨立使用者已開啟。", changed: "在你檢視之後，{machine} 的設定已變更。", reviewAgain: "重新檢視", failed: "無法開啟獨立使用者。", locked: "{machine} 上正在進行另一項變更。完成後再試。", unknown: "可能已經開始。重試前請先檢查 {machine}。", unavailable: "目前無法為 {machine} 開啟獨立使用者。", approval: "正在等待你的核准。" },
     terminals: { projectEmpty: '在此專案中開啟終端。', opening: '正在開啟終端。', sharedOsLead: "只向你信任的 {machine} 擁有者交付資料。", sharedOsDetail: "擁有者可以查看已傳遞的金鑰和選定的憑證。未啟用獨立使用者時，你的工作與使用此機器的其他人共用同一 Linux 使用者，因此他們可以讀取你的憑證和工作階段內容。獨立使用者無法收回已複製的資料。", denied: '你已無權存取此終端。', rootDenied: '此工作區無法用於終端。', offline: '此機器離線。正在顯示最後已知的輸出。', openUnknown: '終端可能已開啟。請先檢查現有終端，再重試。', unavailable: '此機器不支援終端。', failed: '無法開啟此終端。' },
-    revoked: '{owner} 已停止共享 {machine}。你在這裡執行中的工作正在停止。工作階段仍保留在歷史記錄中，但你無法在這裡開始新工作。',
+    revoked: '{owner} 已停止共享 {machine}。你無法在這裡開始新工作。已接受的任務可以執行完畢；開啟的終端機會關閉。工作階段仍保留在歷史記錄中。',
     recipientEncryptionIncompatible: '這台端對端加密機器需要使用端對端加密帳戶。',
     destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', sharedWithoutOwner: '共享給你', owner: '{owner} 的機器 · {platform}', ownerOnly: "{owner} 的機器", pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
     title: '共享', description: '新增的人員和團隊可以在 {machine} 的工作區啟動工作階段、執行指令碼和開啟終端機。',
@@ -24,8 +24,8 @@ export const machineSharing = createMachineSharingTranslations({
     ownHistory: "你在這裡啟動的工作階段在 Happier 中仍歸你所有，即使存取權限結束。", through: "透過 {audience}",
     leave: '退出此共享', inherited: '你仍透過 {audience} 擁有存取權。請聯絡管理者變更權限。', unavailable: '無法檢查 {machine} 的存取權。',
     saveFailed: '無法為 {person} 儲存「{draft}」。目前仍為「{current}」。',
-    leaveLoss: '離開後，你在 {machine} 上正在執行的工作會停止。只有擁有者再次與你共用，你才能回來。',
-    effectiveLoss: '失去最後一項存取權的人，其執行中的工作階段、指令碼、執行任務、排隊及準備中的工作、終端機和服務將停止。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。',
+    leaveLoss: '離開後，你無法在 {machine} 上開始新工作。已接受的任務可以執行完畢；開啟的終端機會關閉。只有擁有者再次與你共用，你才能回來。',
+    effectiveLoss: '失去最後一項存取權的人無法開始新工作。已接受的任務可以執行完畢；開啟的終端機會關閉。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。',
     overlap: '他們仍可透過其他方式存取，例如透過團隊。他們的工作會繼續執行。', custodianProtected: '無法在這裡移除或取代機器的原始擁有者。',
     unpublished: "{machine} 的擁有者尚未發布可分享的詳細資訊。", custodianOnly: "只有 {machine} 的擁有者可以執行此操作。「可以管理」不包含此權限。", upgradeRequired: "{machine} 的擁有者需要先在這台機器上更新 Happier。", unpublishedTag: "詳細資訊尚未發布", unpublishedMember: "在 {machine} 的擁有者發布可分享的詳細資訊之前，{person} 無法開啟它。",
 });

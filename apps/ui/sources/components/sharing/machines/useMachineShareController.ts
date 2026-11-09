@@ -319,7 +319,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         level: { kind: 'locked', value: response.access.role === 'manage' ? 'admin' : 'view', reason: { code: 'own_access', message: t('machines.sharing.ownHistory', { machine: machineName }) } },
         removal: response.ownDirectGrant ? removal(ownPrincipal) : { kind: 'blocked',
             reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
-        // Leaving is said to the person leaving: their own work stops, never the owner's census sentence about them.
+        // Address the person leaving directly, rather than using the owner's audience summary.
         removalConsequences: inherited.length === 0 ? [t('machines.sharing.leaveLoss', { machine: machineName })] : removalConsequences([]),
         operation: state.operations[ownKey] ?? IDLE,
     } : null;

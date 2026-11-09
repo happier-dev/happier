@@ -2,7 +2,7 @@ import { createMachineSharingTranslations } from '../machineSharingTranslations.
 export const machineSharing = createMachineSharingTranslations({
     fallback: { adminDisabled: "管理员访问已关闭。要检查独立用户设置，请打开这台机器的安全设置，将管理员访问设为“预先授权”，保存后重试。预先授权允许 Happier 无需询问即可运行管理员命令。", adminCheckRequired: "此预览需要无需输入密码的管理员访问。重试前，请在这台机器的设置中检查管理员访问。", managedCliRequired: "受管 Happier CLI 缺失或无法运行。请在这台机器上安装或修复 Happier，然后重试。", prerequisites: {"unsupported_platform": "独立用户需要 Linux。请选择 Linux 机器。", "sudo_unavailable": "sudo 不可用。请在这台机器上安装或修复 sudo，然后重试。", "sudoers_invalid": "sudo 规则无效。请修复这台机器的管理员访问设置，然后重试。", "agent_user_missing": "缺少代理的 Linux 用户。请修复独立用户设置，然后重试。", "workspace_not_ready": "工作区文件夹尚未就绪。请确认文件夹存在且可访问，然后重试。", "payload_not_accessible": "独立用户无法运行受管 Happier CLI。请修复安装和访问权限，然后重试。", "workspace_ancestor_not_traversable": "上级文件夹阻止了工作区访问。请检查文件夹权限，然后重试。", "agent_launch_kind_unavailable": "此 Happier CLI 无法启动独立用户。请更新这台机器上的 Happier，然后重试。", "provisioning_unavailable": "无法检查独立用户设置。请查看这台机器的设置诊断，然后重试。", "launch_probe_failed": "独立用户启动检查失败。请修复这台机器的独立用户设置，然后重试。", "mcp_socket_access_unavailable": "独立用户无法访问会话套接字。请修复独立用户设置，然后重试。", "local_admin_api_accessible": "独立用户可以访问所有者的本地管理 API。请修复隔离设置后再重试。", "metadata_unavailable": "这台机器的设置详情不可用。请重新连接机器，然后重试。"},  lead: "这里的代理以 Happier 的用户运行。你添加的人可以做它能做的任何事，包括查看这个屏幕。", detail: "屏幕控制权只属于能管理这台机器的人。只与你信任的人共享。", offer: "独立用户为每个人提供各自的 Linux 用户、主目录和检出副本。", turnOn: "在“安全”中设置", previewing: "正在检查 {machine} 上会有哪些变化…", reviewUsers: "你添加的每个人都会在 {machine} 上获得自己的 Linux 用户。", reviewFolders: "工作区文件夹的权限会改变，以便这些用户能够访问。", reviewSessions: "{machine} 上正在运行的会话会重新启动。", reviewAdmin: "需要 {machine} 的管理员权限。", confirm: "开启", applying: "正在 {machine} 上开启独立用户…", alreadyOn: "独立用户已开启。", changed: "在你查看之后，{machine} 的设置发生了变化。", reviewAgain: "重新查看", failed: "无法开启独立用户。", locked: "{machine} 上正在进行另一项更改。完成后再试。", unknown: "可能已经开始。重试前请先检查 {machine}。", unavailable: "目前无法为 {machine} 开启独立用户。", approval: "正在等待你的批准。" },
     terminals: { projectEmpty: '在此项目中打开终端。', opening: '正在打开终端。', sharedOsLead: "只向你信任的 {machine} 所有者交付资料。", sharedOsDetail: "所有者可以查看已传递的密钥和选定的凭据。未启用独立用户时，你的工作与使用此机器的其他人共用同一 Linux 用户，因此他们可以读取你的凭据和会话上下文。独立用户无法收回已经复制的资料。", denied: '你已无权访问此终端。', rootDenied: '此工作区无法用于终端。', offline: '此机器离线。正在显示最后已知的输出。', openUnknown: '终端可能已打开。请先检查现有终端，再重试。', unavailable: '此机器不支持终端。', failed: '无法打开此终端。' },
-    revoked: '{owner} 已停止共享 {machine}。你在这里运行的工作正在停止。会话仍保留在历史记录中，但你无法在这里开始新工作。',
+    revoked: '{owner} 已停止共享 {machine}。你无法在这里开始新工作。已接受的任务可以执行完毕；打开的终端会关闭。会话仍保留在历史记录中。',
     recipientEncryptionIncompatible: '这台端到端加密机器需要使用端到端加密账户。',
     destinations: { yours: '你的机器', created: '由 Happier 创建', shared: '共享给你 · {team}', sharedWithoutOwner: '共享给你', owner: '{owner} 的机器 · {platform}', ownerOnly: "{owner} 的机器", pendingKey: '正在等待安全访问', sharedPurposeUnsupported: '此工作需要使用你自己的机器。' },
     title: '共享', description: '添加的人员和团队可以在 {machine} 的工作区启动会话、运行脚本和打开终端。',
@@ -24,8 +24,8 @@ export const machineSharing = createMachineSharingTranslations({
     ownHistory: "你在这里启动的会话在 Happier 中仍归你所有，即使访问权限结束。", through: "通过 {audience}",
     leave: '退出此共享', inherited: '你仍通过 {audience} 拥有访问权限。请联系管理员更改权限。', unavailable: '无法检查 {machine} 的访问权限。',
     saveFailed: '无法为 {person} 保存“{draft}”。当前仍为“{current}”。',
-    leaveLoss: '离开后，你在 {machine} 上正在运行的工作会停止。只有所有者再次与你共享，你才能回来。',
-    effectiveLoss: '失去最后一项访问权限的人，其正在运行的会话、脚本、运行任务、排队及准备中的工作、终端和服务将被停止。Happier 历史记录仍归本人所有；已获取的数据无法收回。',
+    leaveLoss: '离开后，你无法在 {machine} 上开始新工作。已接受的任务可以执行完毕；打开的终端会关闭。只有所有者再次与你共享，你才能回来。',
+    effectiveLoss: '失去最后一项访问权限的人无法开始新工作。已接受的任务可以执行完毕；打开的终端会关闭。Happier 历史记录仍归本人所有；已获取的数据无法收回。',
     overlap: '他们仍可通过其他方式访问，例如通过团队。他们的工作会继续运行。', custodianProtected: '无法在这里移除或替换机器的原始所有者。',
     unpublished: "{machine} 的所有者尚未发布可共享的详细信息。", custodianOnly: "只有 {machine} 的所有者可以执行此操作。“可以管理”不包含此权限。", upgradeRequired: "{machine} 的所有者需要先在这台机器上更新 Happier。", unpublishedTag: "详细信息尚未发布", unpublishedMember: "在 {machine} 的所有者发布可共享的详细信息之前，{person} 无法打开它。",
 });
