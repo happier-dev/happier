@@ -157,7 +157,8 @@ export const PLUGIN = definePlugin({
         try { return await (await runtime(context)).inspect(input.resource); }
         catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
       } },
-    'native-credential-apply': { ...nativeDefaults, title: label('kind'), confirmation, dangerLevel: 'writesRemote',
+    'native-credential-apply': { ...nativeDefaults, title: label('kind'),
+      confirmation: { title: label('nativeCredentialConfirmTitle'), body: label('nativeCredentialConfirmBody') }, dangerLevel: 'writesRemote',
       inputSchema: ROLE_SCHEMAS.nativeCredentialApplyInput,
       resultSchema: MachineProvisionerNativeCredentialApplyResultV1Schema,
       async run(input, context) {
