@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { isAbsolute, join } from 'path';
+import { PassThrough } from 'node:stream';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { registerSessionHandlers } from './registerSessionHandlers';
+import { runFilesystemEffectInternal } from './fileSystem/filesystemEffectInternal';
+import { createFilesystemEffectChannel, initializeFilesystemEffectChannel } from './fileSystem/filesystemEffectChannel';
+import type { SessionAttachmentNativeRuntime } from './fileSystem/sessionAttachmentIntake';
 
 describe('registerSessionHandlers attachments uploads', () => {
   let workingDirectory: string;
@@ -41,7 +45,26 @@ describe('registerSessionHandlers attachments uploads', () => {
   it('binds attachment uploads to the actual session directory and previews only finalized handles', async () => {
     const handlers = new Map<string, RpcHandler>();
     const mgr: RpcHandlerRegistrar = { registerHandler(method, handler) { handlers.set(method, handler); } };
-    const registration = registerSessionHandlers(mgr, workingDirectory, { sessionId: 'session-a' });
+    const nativeRuntime: SessionAttachmentNativeRuntime = {
+      workingDirectory,
+      requester: { sessionId: 'session-a', homeServerIdentityId: 'home-a', identity: {
+        kind: 'isolated', separationRequired: true, requester: {
+          serverId: 'profile-a', accountId: 'member-a', machineId: 'machine-a', installationId: 'installation-a',
+        },
+      } },
+      async prepareFilesystemEffect(configuration) {
+        // Replace only the OS worker pipe; native path policy and transfers stay real.
+        const input = new PassThrough();
+        const output = new PassThrough();
+        const running = runFilesystemEffectInternal(input, output);
+        const channel = createFilesystemEffectChannel({ input, output, dispose: async () => { await running; } });
+        await initializeFilesystemEffectChannel(channel, configuration);
+        return channel;
+      },
+    };
+    const registration = registerSessionHandlers(mgr, workingDirectory, {
+      sessionId: 'session-a', readSessionAttachmentNativeRuntime: () => nativeRuntime,
+    });
     const invoke = async (method: string, request: unknown) => {
       const handler = handlers.get(method);
       if (!handler) throw new Error(`Missing attachment handler ${method}`);
@@ -116,10 +139,10 @@ describe('registerSessionHandlers attachments uploads', () => {
       expect(preview).toMatchObject({ success: true, sizeBytes: bytes.length, name: 'notes.txt' });
       await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT, { downloadId: preview.downloadId });
       await registration.dispose();
-      expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
+      await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, {
         t: 'session_attachment_download_v1', attachmentHandle: finalized.attachmentHandle,
         recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
-      })).toMatchObject({ success: false });
+      })).rejects.toMatchObject({ code: 'filesystem_identity_custody_unavailable' });
       expect(await readFile(destination)).toEqual(bytes);
     } finally {
       await registration?.dispose();

@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import { Socket } from 'socket.io-client';
@@ -532,7 +533,7 @@ export function createSessionClientInteractionApi(
         getSessionSyncPendingInputServerContractResult: () => SessionSyncPendingInputServerContractResult | null;
         getUserSocket: () => Socket<ServerToClientEvents, ClientToServerEvents> | null;
         getSessionConnectionSupervisor: () => import('@happier-dev/connection-supervisor').ManagedConnectionSupervisor | null;
-        getRpcHandlerManager: () => { handleRequest: (data: { method: string; params: unknown }) => Promise<unknown> };
+        getRpcHandlerManager: () => Pick<RpcHandlerManager, 'handleRequest'>;
         getMetadata: () => Metadata | null;
         updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void>;
         setMetadata: (metadata: Metadata | null) => void;
@@ -1143,7 +1144,7 @@ export function createSessionClientInteractionApi(
                     return;
                 }
                 const response = runWithServerHttpBaseUrl(serverUrl, async () => {
-                    await deps.getRpcHandlerManager().handleRequest(data, callback);
+                    await deps.getRpcHandlerManager().handleRequest(data, callback, 'authenticated_home_socket');
                 });
                 pendingRpcResponses.add(response);
                 try {
