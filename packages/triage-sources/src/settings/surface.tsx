@@ -112,6 +112,8 @@ import type { TriageSourceSettingsScopeSelectionV1, TriageSourceSettingsDraftFie
 export type TriageSourceSettingsSurfaceIdentityV1 = Readonly<{
   /** The contributing source plugin's own id, exactly as the host knows it. */
   pluginId: string;
+  /** The contribution id that identifies this source in configured instances. */
+  sourceLocalId: string;
   /** That plugin's local id for its own read-only `listInstances` Action. */
   listInstancesLocalActionId: string;
   /** That plugin's Connected Account service contribution local id. */
@@ -260,13 +262,15 @@ export function createTriageSourceSettingsSurface(
     // discovery, and re-acquires through that requester's admission signal.
     React.useEffect(() => {
       if (configuredReadiness.pending || configuredReadiness.ready === false) return;
-      void runConfiguredRead({ v: 1 });
-    }, [configuredReadiness.pending, configuredReadiness.ready, configuredReadiness.revision, runConfiguredRead]);
+      void runConfiguredRead({ v: 1, source: { pluginId: identity.pluginId, localId: identity.sourceLocalId } });
+    }, [configuredReadiness.pending, configuredReadiness.ready, configuredReadiness.revision, identity.pluginId, identity.sourceLocalId, runConfiguredRead]);
 
     const read = React.useCallback(() => {
       if (!discoveryReadiness.pending && discoveryReadiness.ready !== false) startDiscovery();
-      if (!configuredReadiness.pending && configuredReadiness.ready !== false) void runConfiguredRead({ v: 1 });
-    }, [configuredReadiness.pending, configuredReadiness.ready, discoveryReadiness.pending, discoveryReadiness.ready, runConfiguredRead, startDiscovery]);
+      if (!configuredReadiness.pending && configuredReadiness.ready !== false) void runConfiguredRead({
+        v: 1, source: { pluginId: identity.pluginId, localId: identity.sourceLocalId },
+      });
+    }, [configuredReadiness.pending, configuredReadiness.ready, discoveryReadiness.pending, discoveryReadiness.ready, identity.pluginId, identity.sourceLocalId, runConfiguredRead, startDiscovery]);
 
     const refresh = React.useCallback(() => {
       // Everything this page learned from its own presses is discarded, because the

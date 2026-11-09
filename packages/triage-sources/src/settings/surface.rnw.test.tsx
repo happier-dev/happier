@@ -40,6 +40,7 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PLUGIN_ID = 'example.tracker';
+const SOURCE_LOCAL_ID = 'tracker';
 const LIST_INSTANCES_LOCAL_ACTION_ID = 'triage-list-instances-v1';
 const SOURCE_DISPLAY_NAME = 'Example Tracker';
 const CONNECTED_ACCOUNT_SERVICE_LOCAL_ID = 'tracker-account';
@@ -48,6 +49,7 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 
 const renderSurface = createTriageSourceSettingsSurface({
   pluginId: PLUGIN_ID,
+  sourceLocalId: SOURCE_LOCAL_ID,
   listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
   connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
   connectedAccountPurpose: PURPOSE,
@@ -339,6 +341,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const oldRead = new Promise<JsonValue>((resolve) => { releaseOldRead = resolve; });
     const surface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID, listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      sourceLocalId: SOURCE_LOCAL_ID,
       connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       connectedAccountPurpose: PURPOSE, sourceDisplayName: SOURCE_DISPLAY_NAME,
       DraftFields: ({ draft, busy, onChange }) => <Button title="Choose another workspace" disabled={busy}
@@ -389,6 +392,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const nextPage = new Promise<JsonValue>((resolve) => { releaseNextPage = resolve; });
     const surface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID, listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      sourceLocalId: SOURCE_LOCAL_ID,
       connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       connectedAccountPurpose: PURPOSE, sourceDisplayName: SOURCE_DISPLAY_NAME,
       scopeSelection: {
@@ -434,6 +438,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const nativeDraft = { v: 1, binding: nativeBinding, localInstanceKey: 'native-scope', keyStability: 'stable', configuration: { v: 1, token: 'scope:native' }, locator: { v: 1, displayLabel: 'local-user' } };
     const surface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID, listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      sourceLocalId: SOURCE_LOCAL_ID,
       connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID, connectedAccountPurpose: PURPOSE, sourceDisplayName: SOURCE_DISPLAY_NAME,
       nativeLoginLabel: { key: 'example.nativeLogin', fallback: 'Use this machine’s CLI login' },
       nativeAuthenticationFailureLabel: { key: 'example.nativeRepair', fallback: 'Sign in on this machine.' },
@@ -468,6 +473,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     });
     const configurableSurface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID,
+      sourceLocalId: SOURCE_LOCAL_ID,
       listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
       connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       connectedAccountPurpose: PURPOSE,
@@ -515,6 +521,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     };
     const configurableSurface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID,
+      sourceLocalId: SOURCE_LOCAL_ID,
       listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
       connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       connectedAccountPurpose: PURPOSE,
@@ -564,6 +571,9 @@ describe('the mounted PRs & Issues source settings page', () => {
     });
     expect(harness.recorded.map((entry) => entry.action))
       .toContainEqual({ ...TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 });
+    expect(harness.recorded.find((entry) => (
+      (entry.action as Readonly<{ localId?: string }>).localId === TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1.localId
+    ))?.input).toEqual({ v: 1, source: { pluginId: PLUGIN_ID, localId: SOURCE_LOCAL_ID } });
   });
 
   it('lists what this source can reach and configures the one the user chose', async () => {
