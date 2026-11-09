@@ -11,7 +11,6 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.auggie', connectRoute: null },
     flavorAliases: ['auggie'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -58,6 +57,6 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
     ],
   },
   assets: {
-    svgIcon: { assetId: 'auggie' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

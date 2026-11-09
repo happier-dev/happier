@@ -541,7 +541,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           purpose: 'model_upstream',
           materialization: {
             kind: 'httpHeaders',
-            origins: ['https://api.anthropic.com'],
+            origin: 'https://api.anthropic.com',
             headerNames: ['authorization'],
           },
         }],

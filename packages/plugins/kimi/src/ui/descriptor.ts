@@ -11,7 +11,6 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.kimi', connectRoute: null },
     flavorAliases: ['kimi', 'kimi-cli'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -38,6 +37,6 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'kimi' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

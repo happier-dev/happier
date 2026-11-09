@@ -4,6 +4,16 @@ import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescr
 import { PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 
 describe('ConnectedAccountUiProjectionEntryV1', () => {
+  it('projects a dynamic service brand and setup presentation without borrowing built-in identity', () => {
+    const ui = { iconResourceId: 'service-mark', shortName: 'Acme', setup: {
+      order: 9, firstRun: true, catalogDescription: { key: 'acme.catalog', fallback: 'Use your Acme subscription' },
+    } };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: 'acme', title: 'Acme account', ui,
+      authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }] } });
+    const projection = projectConnectedAccountDescriptorV1({ descriptor, pluginId: 'acme.account', serviceId: 'acme',
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [] });
+    expect(ConnectedAccountUiProjectionEntryV1Schema.parse(projection).ui).toEqual(ui);
+  });
   it('projects declaration-owned manual guidance and rejects credential-bearing console links', () => {
     const setup = { url: 'https://provider.test/keys', checklist: ['Create an API key.', { key: 'provider.copyKey', fallback: 'Copy the key here.' }] };
     const raw = { id: 'keys', title: 'Provider', authentication: {

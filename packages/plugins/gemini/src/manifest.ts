@@ -55,12 +55,14 @@ export const GEMINI_PLUGIN = definePlugin({
     'gemini-account': {
       declaration: {
         title: 'Gemini',
+        ui: { iconResourceId: 'agent-mark', setup: { order: 2, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogGemini', fallback: 'API key or a Google Cloud service account.' } } },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'api-key',
           modes: [{
             id: 'api-key',
             kind: 'manual',
+            apiKey: true,
             setup: {
               url: 'https://aistudio.google.com/apikey',
               checklist: ['Create a Gemini API key in Google AI Studio for the project you want to use.', 'Copy the key and paste it here.'],
@@ -142,6 +144,7 @@ export const GEMINI_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: 'gemini-cli' },
@@ -253,6 +256,7 @@ export const GEMINI_PLUGIN = definePlugin({
     ],
   },
   resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

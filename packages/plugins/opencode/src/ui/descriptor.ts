@@ -13,7 +13,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.opencode', connectRoute: null },
     flavorAliases: ['opencode', 'open-code'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -38,6 +37,18 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'opencode' },
   },
   behavior: {
+    accountingSourcePresentation: [
+      {
+        sourceId: 'opencode-native-accounting',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'OpenCode'
+          }
+        }
+      }
+    ],
     descriptorId: 'opencode.uiBehavior.v1',
     guidance: { includeInSessionGettingStartedCliExamples: true },
     newSession: {

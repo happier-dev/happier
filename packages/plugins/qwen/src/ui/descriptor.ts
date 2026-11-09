@@ -1,0 +1,23 @@
+export const QWEN_UI_DESCRIPTOR = Object.freeze({
+  kind: 'plugin.ui.v1',
+  pluginId: 'qwen',
+  agentId: 'qwen',
+  version: 1,
+  display: {
+    nameKey: 'agentInput.agent.qwen',
+    subtitleKey: 'profiles.aiBackend.qwenSubtitleExperimental',
+    permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
+    availability: { experimental: true },
+    connectedService: { serviceId: null, labelKey: 'agentInput.agent.qwen', connectRoute: null },
+    flavorAliases: ['qwen', 'qwen-code'],
+    permissions: { promptProtocol: 'codexDecision' },
+    resume: { uiVendorResumeIdLabelKey: 'sessionInfo.qwenSessionId', uiVendorResumeIdCopiedKey: 'sessionInfo.qwenSessionIdCopied' },
+    toolRendering: { hideUnknownToolsByDefault: true },
+    picker: { iconName: 'code', iconScale: 0.9, cliGlyph: 'Q', cliGlyphScale: 1.0, profileCompatibilityGlyphScale: 1.0 },
+    avatarOverlay: { circleScale: 0.35, iconScaleRatio: 0.22 },
+    icon: { assetId: 'qwen' },
+  },
+  behavior: {},
+  components: { slots: [] },
+  assets: { svgIcon: { path: 'assets/agent-mark.svg' } },
+});

@@ -11,7 +11,6 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.kiro', connectRoute: null },
     flavorAliases: ['kiro', 'kiro-cli'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -43,6 +42,6 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'kiro' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

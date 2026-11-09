@@ -12,7 +12,6 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.pi', connectRoute: null },
     flavorAliases: ['pi', 'pi-coding-agent'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     runtimeInput: {
@@ -39,10 +38,22 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'pi' },
   },
   behavior: {
+    accountingSourcePresentation: [
+      {
+        sourceId: 'pi-native-accounting',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'Pi'
+          }
+        }
+      }
+    ],
     descriptorId: 'pi.uiBehavior.v1',
   },
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'pi' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

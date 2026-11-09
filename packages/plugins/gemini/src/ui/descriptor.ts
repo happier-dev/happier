@@ -12,7 +12,6 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: 'gemini', labelKey: 'agentInput.connectedServiceLabel.gemini', connectRoute: null },
     flavorAliases: ['gemini'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -32,6 +31,6 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'gemini' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

@@ -120,6 +120,7 @@ export const CODEX_PLUGIN = definePlugin({
       declaration: {
         // The account people have is ChatGPT; "Codex" stays the agent's name.
         title: 'ChatGPT',
+        ui: { iconResourceId: 'agent-mark', setup: { order: 1, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogChatGpt', fallback: 'Plus, Pro or Team plan. Sign in with a code or a browser.' } } },
         usageIdentity: { providerId: CODEX_ACCOUNT_USAGE_PROVIDER_ID },
         metadata: CODEX_ACCOUNT_USAGE_PLAN_METADATA,
         recoveryCredits: { supported: true },
@@ -169,6 +170,7 @@ export const CODEX_PLUGIN = definePlugin({
     codex: {
       declaration: {
         title: 'Codex',
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         runtime: { kind: 'custom' },
         cli: {
           displayName: 'OpenAI Codex CLI',
@@ -552,6 +554,7 @@ export const CODEX_PLUGIN = definePlugin({
     ],
   },
   resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

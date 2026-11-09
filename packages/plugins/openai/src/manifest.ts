@@ -14,6 +14,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   displayName: 'OpenAI Realtime Voice',
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
+    'service-mark': { kind: 'asset', path: 'assets/service-mark.svg', contentType: 'image/svg+xml' },
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
@@ -33,11 +34,13 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     openai: {
       declaration: {
         title: 'OpenAI API key',
+        ui: { iconResourceId: 'service-mark', setup: { order: 4, firstRun: false, catalogDescription: { key: 'connectedServicesSettings.catalogOpenAi', fallback: 'Pay per use, billed to your OpenAI organization.' } } },
         authentication: {
           defaultModeId: 'api-key',
           modes: [{
             id: 'api-key',
             kind: 'manual',
+            apiKey: true,
             setup: {
               url: 'https://platform.openai.com/api-keys',
               checklist: ['Choose the OpenAI API project you want to use and create a secret API key.', 'Copy the key when it is shown and paste it here.'],

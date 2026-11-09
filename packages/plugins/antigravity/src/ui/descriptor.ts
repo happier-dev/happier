@@ -13,7 +13,6 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: 'happier.agent.antigravity/antigravity-account', labelKey: 'agentInput.agent.antigravity', connectRoute: null },
     flavorAliases: ['agy'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -39,6 +38,6 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
   },
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'antigravity' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

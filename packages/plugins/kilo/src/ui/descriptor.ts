@@ -11,7 +11,6 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.kilo', connectRoute: null },
     flavorAliases: ['kilo', 'kilocode'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -41,6 +40,6 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'kilo' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

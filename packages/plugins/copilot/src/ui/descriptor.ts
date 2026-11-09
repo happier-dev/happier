@@ -11,7 +11,6 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.connectedServiceLabel.copilot', connectRoute: null },
     flavorAliases: ['copilot', 'github-copilot', 'copilot-cli'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -41,6 +40,6 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'copilot' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

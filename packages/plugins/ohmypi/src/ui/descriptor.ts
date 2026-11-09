@@ -11,7 +11,6 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.ohMyPi', connectRoute: null },
     flavorAliases: ['ohMyPi', 'oh-my-pi', 'omp'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -61,6 +60,6 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
   },
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'ohMyPi' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

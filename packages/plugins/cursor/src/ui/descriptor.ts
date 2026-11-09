@@ -11,7 +11,6 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.cursor', connectRoute: null },
     flavorAliases: ['cursor', 'cursor-agent'],
     permissions: {
-      modeGroup: 'codexLike',
       promptProtocol: 'codexDecision',
     },
     resume: {
@@ -42,6 +41,6 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
   behavior: {},
   components: { slots: [] },
   assets: {
-    svgIcon: { assetId: 'cursor' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });
