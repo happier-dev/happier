@@ -17,6 +17,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import {
   materializeLeasedAgentProviderBinding,
   prepareLeasedAgentProviderBinding,
+  readLeasedAgentProviderNativeHome,
 } from '@/plugins/runtime/providerBindings/adapter';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
@@ -310,6 +311,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
     composed = await composeProviderBindingMaterialization({
       materialization,
       materializationBaseDir: join(input.materializationBaseDir, 'team-broker'),
+      nativeHome: readLeasedAgentProviderNativeHome({ lease: input.lease, agentId: input.agentId }),
       sessionId: materializationScopeId,
     });
     const retainedCleanup = composed.takeCleanupOwnership();
@@ -513,6 +515,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     const composed = await composeProviderBindingMaterialization({
       materialization,
       materializationBaseDir: join(input.materializationBaseDir, 'team-direct'),
+      nativeHome: readLeasedAgentProviderNativeHome({ lease: input.lease, agentId: input.agentId }),
       sessionId: materializationScopeId,
     });
     const retainedCleanup = composed.takeCleanupOwnership();

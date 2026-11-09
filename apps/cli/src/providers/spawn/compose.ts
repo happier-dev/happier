@@ -15,10 +15,19 @@ import {
   relative,
   resolve,
 } from 'node:path';
+import { homedir } from 'node:os';
 
 import { AgentProviderBindingLaunchMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import type { AgentProviderBindingLaunchMaterializationV1, AgentProviderBindingMaterializationV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
+import { applyConnectedServiceStateSharingDescriptor, resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
+
+export type ProviderBindingNativeHomeContext = Readonly<{
+  descriptor: ConnectedServiceStateSharingDescriptor;
+  sourceEnvironment?: Readonly<Record<string, string | undefined>>;
+  homeDir?: string;
+}>;
 
 export type ComposedProviderBindingMaterialization = Readonly<{
   providerEnvironmentOverlay: SessionEnvOverlayV1;
@@ -35,6 +44,20 @@ function writePrivateFile(path: string, contents: string): void {
   } finally {
     closeSync(descriptor);
   }
+}
+
+function createJsonObjectOverlay(contents: string): (nativeContents: string) => string {
+  const patch: unknown = JSON.parse(contents);
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new Error('Provider binding JSON merge requires objects');
+  }
+  return (nativeContents) => {
+    const existing: unknown = JSON.parse(nativeContents);
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      throw new Error('Provider binding JSON merge requires objects');
+    }
+    return JSON.stringify({ ...existing, ...patch });
+  };
 }
 
 export function resolveProviderMaterializationParentPath(
@@ -95,6 +118,7 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
   materialization: AgentProviderBindingMaterializationV1;
   materializationBaseDir: string;
   sessionId?: string;
+  nativeHome?: ProviderBindingNativeHomeContext;
 }>): Promise<ComposedProviderBindingMaterialization> {
   const materialization = AgentProviderBindingMaterializationV1Schema.parse(input.materialization);
   const additionalRedactionValues = Object.freeze([...(materialization.additionalRedactionValues ?? [])]);
@@ -160,14 +184,49 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
     return physicalCleanup;
   };
   try {
+    let providerEnvironmentOverlay = materialization.env;
+    const overlays = Object.fromEntries(materialization.files.filter(file => file.merge === 'jsonObject')
+      .map(file => [file.relativePath.replaceAll('\\', '/'), createJsonObjectOverlay(file.utf8)]));
+    let copiedConfigEntries: readonly string[] = [];
+    if (materialization.nativeHome) {
+      const context = input.nativeHome;
+      const declaration = context?.descriptor.nativeHome;
+      if (!context || !declaration) throw new Error('Provider binding native-home descriptor is unavailable');
+      const sourceEnvironment = context.sourceEnvironment ?? process.env;
+      const sourceRoot = resolveConnectedServiceNativeHomeRoot({ nativeHome: declaration,
+        sourceEnvironment, homeDir: context.homeDir ?? homedir() });
+      const stateSharing = await applyConnectedServiceStateSharingDescriptor({
+        descriptor: context.descriptor,
+        nativeSourceContext: { sourceRoot, sourceEnv: Object.fromEntries(Object.entries(sourceEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
+        target: { targetMaterializedRoot: rootPath, targetMaterializedEnv: { [declaration.environmentKey]: rootPath } },
+        configMode: context.descriptor.config.supported ? 'copied' : 'isolated',
+        requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: process.cwd(),
+        copyTransformByEntry: overlays,
+      });
+      copiedConfigEntries = stateSharing.manifest.configEntries;
+      const projected = { ...stateSharing.envOverrides, [declaration.environmentKey]: rootPath };
+      const projectedNames = new Set(Object.keys(projected).map(name => name.toUpperCase()));
+      providerEnvironmentOverlay = [
+        ...materialization.env.filter(entry => !projectedNames.has(entry.name.toUpperCase())),
+        ...Object.entries(projected).map(([name, value]) => ({ name, value, source: 'provider' as const })),
+      ];
+    }
     for (const file of materialization.files) {
+      // Merge while the canonical state-sharing owner copies the source rather
+      // than reading our own private write back to reconstruct native settings.
+      const relativePath = file.relativePath.replaceAll('\\', '/');
+      if (file.merge === 'jsonObject' && copiedConfigEntries.includes(relativePath)) continue;
       const absolutePath = join(rootPath, ...file.relativePath.split(/[\\/]/u));
       const parentPath = resolveProviderMaterializationParentPath(absolutePath);
       mkdirSync(parentPath, { recursive: true, mode: 0o700 });
-      writePrivateFile(absolutePath, file.utf8);
+      const contents = overlays[relativePath]?.('{}') ?? file.utf8;
+      // Descriptor config copies belong to this private root. Replace only that
+      // private destination; never write through a linked native source.
+      rmSync(absolutePath, { force: true });
+      writePrivateFile(absolutePath, contents);
     }
     return {
-      providerEnvironmentOverlay: materialization.env,
+      providerEnvironmentOverlay,
       launchMaterialization,
       additionalRedactionValues,
       cleanup,

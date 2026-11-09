@@ -45,6 +45,32 @@ function createDescriptor(params: Readonly<{
 }
 
 describe('applyConnectedServiceStateSharingDescriptor', () => {
+  it('projects selected authentication and removes competing credential overrides without changing source settings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-selected-auth-config-'));
+    const sourceRoot = join(root, 'native');
+    const targetRoot = join(root, 'selected');
+    try {
+      await mkdir(sourceRoot);
+      const source = stringify({ theme: 'dark', auth: { preferred_method: 'api_key', auth_provider_command: 'fake-command', keep: 'native' },
+        models: { first: { api_key: 'fake-key', env_key: 'FAKE_AMBIENT', max_tokens: 123 }, second: { api_key: 'fake-other', name: 'other' } } });
+      await writeFile(join(sourceRoot, 'config.toml'), source);
+      await applyConnectedServiceStateSharingDescriptor({
+        descriptor: { ...createDescriptor({ configEntries: [{ path: 'config.toml', mode: 'force_copied' }] }),
+          transforms: [{ entry: 'config.toml', kind: 'rewrite_toml', spec: { setStringValues: {},
+            removeKeyPaths: [['auth', 'auth_provider_command'], ['models', '*', 'api_key'], ['models', '*', 'env_key']],
+            setStringValuesFromEnvironment: [{ path: ['auth', 'preferred_method'], environmentKey: 'FAKE_SELECTED_MODE',
+              values: { subscription: 'oidc', 'api-key': 'api_key' } }],
+          } }] },
+        nativeSourceContext: { sourceRoot, sourceEnv: {} },
+        target: { targetMaterializedRoot: targetRoot, targetMaterializedEnv: { FAKE_SELECTED_MODE: 'subscription' } },
+        configMode: 'copied', requestedStateMode: 'isolated', effectiveStateMode: 'isolated', cwd: root,
+      });
+      expect(parse(await readFile(join(targetRoot, 'config.toml'), 'utf8'))).toEqual({ theme: 'dark',
+        auth: { preferred_method: 'oidc', keep: 'native' }, models: { first: { max_tokens: 123 }, second: { name: 'other' } } });
+      expect(await readFile(join(sourceRoot, 'config.toml'), 'utf8')).toBe(source);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('honors the declared Claude fallback native-home override before the platform default', () => {
     const homeDir = join(tmpdir(), 'claude-native-home-default');
     const native = join(tmpdir(), 'claude-native-home-custom');
@@ -528,6 +554,10 @@ describe('applyConnectedServiceStateSharingDescriptor', () => {
   });
 
   it('resolves native Agent homes from the declared environment key or its home-relative default', () => {
+    expect(resolveConnectedServiceNativeHomeRoot({
+      nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.' },
+      sourceEnvironment: {}, homeDir: '/users/example',
+    })).toBe('/users/example');
     expect(resolveConnectedServiceNativeHomeRoot({
       nativeHome: {
         environmentKey: 'CODEX_HOME',

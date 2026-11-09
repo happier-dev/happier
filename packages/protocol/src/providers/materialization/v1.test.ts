@@ -23,6 +23,18 @@ describe('provider binding materialization V1', () => {
     expect(AgentProviderBindingMaterializationV1Schema.parse({
       v: 1, kind: 'configFile', env: [envRow()], files: [{ relativePath: 'provider/config.json', utf8: '{}' }],
     }).kind).toBe('configFile');
+    expect(AgentProviderBindingMaterializationV1Schema.parse({
+      v: 1, kind: 'configFile', nativeHome: true, env: [],
+      files: [{ relativePath: 'settings.json', utf8: '{}', merge: 'jsonObject' }],
+    })).toMatchObject({ nativeHome: true, files: [{ merge: 'jsonObject' }] });
+    for (const invalid of [
+      { nativeHome: false, files: [{ relativePath: 'settings.json', utf8: '{}' }] },
+      { nativeHome: true, files: [{ relativePath: 'settings.json', utf8: '{}', merge: 'deep' }] },
+    ]) {
+      expect(AgentProviderBindingMaterializationV1Schema.safeParse({
+        v: 1, kind: 'configFile', env: [], ...invalid,
+      }).success).toBe(false);
+    }
     expect(AgentProviderBindingMaterializationV1Schema.safeParse({
       v: 1, kind: 'spawnEnv', env: [envRow()], cleanup: () => undefined,
     }).success).toBe(false);

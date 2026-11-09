@@ -1,3 +1,6 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { AgentAcpRuntimeOptions, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1, AgentProviderBindingAdapter, AgentProviderBindingMaterializeInput, AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
@@ -5,6 +8,7 @@ import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protoc
 import { describe, expect, it, vi } from 'vitest';
 import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 
+import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { FX_PLUGIN } from '../../manifest.js';
 import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../vercel-ai-gateway/src/provider/contribution.js';
 
@@ -20,29 +24,75 @@ function input(adapter: AgentProviderBindingAdapter): AgentProviderBindingMateri
 }
 
 describe('registered FX Provider binding', () => {
+  it.each(['apiKey', 'none'] as const)('materializes a configured Chat endpoint with %s auth and the selected model in private native settings', async kind => {
+    const activation = await createPluginTestkit({ manifest: FX_PLUGIN.manifest, module: { activate: FX_PLUGIN.activate } });
+    try {
+      const adapter = activation.registration('agents', 'fx')?.providerBinding;
+      if (!adapter) throw new Error('FX Provider adapter missing');
+      const base = input(adapter);
+      const result = await adapter.materialize({ ...base,
+        binding: { ...base.binding, contributionKey: null,
+          endpoint: { ...base.binding.endpoint, endpointTemplateId: 'custom-chat', normalizedUrl: 'http://127.0.0.1:2345/v1', publicHeaders: {} },
+          runtimeCredentialTransport: kind === 'none' ? null : base.binding.runtimeCredentialTransport },
+        credential: kind === 'none' ? { kind: 'none' } : base.credential,
+      });
+      expect(result.kind).toBe('configFile');
+      if (result.kind !== 'configFile') throw new Error('Expected private config');
+      expect(result).toHaveProperty('nativeHome', true);
+      const settings = JSON.parse(result.files.find(file => file.relativePath === '.fx/settings.json')!.utf8);
+      expect(settings.models.happier).toBe(base.binding.selection.model.id);
+      expect(settings.providers.happier).toEqual({ protocol: 'openai-chat-completions', base_url: 'http://127.0.0.1:2345/v1',
+        auth: kind === 'none' ? { type: 'none' } : { type: 'bearer', env: 'HAPPIER_FX_PROVIDER_API_KEY' }, tool_choice_mode: 'omit' });
+      expect(JSON.stringify(result.files)).not.toContain('selected-fixture-key');
+      expect(Object.fromEntries(result.env.map(row => [row.name, row.value]))).toMatchObject({
+        FX_PROVIDER: 'happier', FX_MODEL: base.binding.selection.model.id, AI_GATEWAY_API_KEY: null,
+        HAPPIER_FX_PROVIDER_API_KEY: kind === 'none' ? null : 'selected-fixture-key',
+      });
+    } finally { await activation.dispose(); }
+  });
   it.each(['session', 'run'] as const)('admits the bound %s status child through the real native Exec environment owner', async lane => {
     const activation = await createPluginTestkit({ manifest: FX_PLUGIN.manifest, module: { activate: FX_PLUGIN.activate } });
     const controller = new AbortController();
+    let cleanup: (() => void) | null = null;
     try {
       const agent = activation.registration('agents', 'fx');
-      if (!agent?.factory) throw new Error('FX runtime factory missing');
+      if (!agent?.factory || !agent.providerBinding || !agent.connectedAccountLaunch?.stateSharingDescriptor) throw new Error('FX runtime factory or native binding missing');
       const runtime = await agent.factory({ plugin: { id: FX_PLUGIN.manifest.id, version: FX_PLUGIN.manifest.version }, agent: { id: 'fx' }, signal: controller.signal });
-      const environment = { AI_GATEWAY_API_KEY: 'selected-fixture-key', FX_PROVIDER: 'gateway', FX_MODEL: 'anthropic/claude-sonnet-4.6', FX_AUTH_MODE: 'local' };
+      const adapter = agent.providerBinding;
+      const base = input(adapter);
+      const source = await mkdtemp(join(tmpdir(), 'happier-fx-native-provider-'));
+      const materialization = await adapter.materialize({ ...base,
+        binding: { ...base.binding, contributionKey: null,
+          endpoint: { ...base.binding.endpoint, endpointTemplateId: 'custom-chat', normalizedUrl: 'http://127.0.0.1:2345/v1', publicHeaders: {} },
+          runtimeCredentialTransport: lane === 'run' ? null : base.binding.runtimeCredentialTransport },
+        credential: lane === 'run' ? { kind: 'none' } : base.credential,
+      });
+      const composed = await composeProviderBindingMaterialization({ materialization,
+        materializationBaseDir: join(source, 'materialized'),
+        nativeHome: { descriptor: { ...agent.connectedAccountLaunch.stateSharingDescriptor, providerId: 'fx' }, sourceEnvironment: { HOME: source }, homeDir: source },
+      });
+      cleanup = composed.cleanup;
+      const environment = Object.fromEntries(composed.providerEnvironmentOverlay.flatMap(row => row.value === null ? [] : [[row.name, row.value]]));
       let nativePreparations = 0;
       // Only executable resolution is a fake OS boundary. Admission, environment
       // filtering, native qualification, process launch and capture are real.
       const exec = createStablePluginExecService({ allowedExecutables: [{ kind: 'systemTool', id: 'fx-cli' }],
         allowedEnvKeys: [], environment, signal: controller.signal, isOccurrenceCurrent: () => true,
         resolveExecutable: async () => ({ command: process.execPath, args: ['-e', `
-          const selected = process.env.AI_GATEWAY_API_KEY === 'selected-fixture-key'
-            && process.env.FX_PROVIDER === 'gateway' && process.env.FX_AUTH_MODE === 'local'
-            && !process.env.VERCEL_OIDC_TOKEN && !process.env.FX_GATEWAY_BASE_URL;
-          process.stdout.write(JSON.stringify({kind:'status',auth:selected?'AI_GATEWAY_API_KEY':'missing',auth_refreshable:false,model:process.env.FX_MODEL}));
+          const { readFileSync } = require('node:fs');
+          const { join } = require('node:path');
+          const settings = JSON.parse(readFileSync(join(process.env.HOME, '.fx/settings.json'), 'utf8'));
+          const provider = settings.providers[process.env.FX_PROVIDER];
+          const selected = provider.base_url === 'http://127.0.0.1:2345/v1'
+            && provider.protocol === 'openai-chat-completions'
+            && (provider.auth.type === 'none' || process.env[provider.auth.env] === 'selected-fixture-key')
+            && !process.env.AI_GATEWAY_API_KEY && !process.env.VERCEL_OIDC_TOKEN && !process.env.FX_GATEWAY_BASE_URL;
+          process.stdout.write(JSON.stringify({kind:'status',auth:selected?'configured provider':'missing',auth_refreshable:false,model:settings.models[process.env.FX_PROVIDER]}));
         `, '--'] }), resolvePath: async () => process.cwd(),
         prepareAgentNativeLaunch: async () => { nativePreparations += 1; },
       });
       const nativeLaunch = issueAgentNativeLaunchQualifierForHost(exec);
-      const binding = { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat' as const, normalizedUrl: 'https://ai-gateway.vercel.sh/coding-agent/v1', credential: 'apiKey' as const }, model: { id: environment.FX_MODEL, name: 'Sonnet' }, materialization: { v: 1 as const, kind: 'spawnEnv' as const } };
+      const binding = { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat' as const, normalizedUrl: 'http://127.0.0.1:2345/v1', credential: lane === 'run' ? 'none' as const : 'apiKey' as const }, model: base.binding.selection.model, materialization: composed.launchMaterialization };
       let opened = false;
       const open = async () => {
         expect(nativePreparations).toBe(1);
@@ -58,7 +108,7 @@ describe('registered FX Provider binding', () => {
       else await runtime.sessions!.executionRunContextV1!.open({ kind: 'create', runId: 'bound-fx', cwd: process.cwd(), providerBinding: binding, profile: { pluginId: FX_PLUGIN.manifest.id, localId: 'default' }, input: { text: 'Reply OK' } },
         { ...common, executionRun: { services: { nativeLaunch } } } as unknown as AgentExecutionRunRuntimeContextV1);
       expect(opened).toBe(true);
-    } finally { controller.abort(); await activation.dispose(); }
+    } finally { controller.abort(); cleanup?.(); await activation.dispose(); }
   });
 
   it('passes native stop, recovery and usage codecs to the canonical host ACP composer', async () => {
@@ -77,7 +127,7 @@ describe('registered FX Provider binding', () => {
     } finally { await activation.dispose(); }
   });
 
-  it('materializes the selected Gateway key and model only in the child environment', async () => {
+  it('materializes the native Gateway route with the selected key and saved model', async () => {
     vi.stubEnv('AI_GATEWAY_API_KEY', 'inherited-rival-key');
     vi.stubEnv('VERCEL_OIDC_TOKEN', 'inherited-oidc');
     vi.stubEnv('FX_PROVIDER', 'codex');
@@ -90,11 +140,14 @@ describe('registered FX Provider binding', () => {
       if (!adapter) throw new Error('FX Provider adapter missing');
       const result = await adapter.materialize(input(adapter));
       expect(AgentProviderBindingMaterializationV1Schema.parse(result)).toEqual(result);
-      expect(result.kind).toBe('spawnEnv');
+      expect(result.kind).toBe('configFile');
       const env = Object.fromEntries(result.env.map(row => [row.name, row.value]));
       expect(env).toMatchObject({ AI_GATEWAY_API_KEY: 'selected-fixture-key', VERCEL_OIDC_TOKEN: null, FX_PROVIDER: 'gateway', FX_MODEL: 'anthropic/claude-sonnet-4.6', FX_AUTH_MODE: 'local', FX_GATEWAY_BASE_URL: null });
       expect(result.env.map(row => row.name).sort()).toEqual([...FX_PLUGIN.manifest.contributes.agents[0]!.providerRequirements!.authIsolation.ownedEnvKeys].sort());
-      expect(result).not.toHaveProperty('files');
+      if (result.kind !== 'configFile') throw new Error('Expected private config');
+      expect(result.nativeHome).toBe(true);
+      expect(JSON.parse(result.files[0]!.utf8)).toMatchObject({ models: { gateway: 'anthropic/claude-sonnet-4.6' }, credential_source: 'ai_gateway_api_key' });
+      expect(JSON.stringify(result.files)).not.toContain('selected-fixture-key');
       const base = input(adapter);
       const transport = base.binding.runtimeCredentialTransport!;
       // This external boundary is semantic data; JSON key insertion order
@@ -113,8 +166,8 @@ describe('registered FX Provider binding', () => {
       const base = input(adapter);
       const unsupported: AgentProviderBindingMaterializeInput[] = [
         { ...base, credential: { kind: 'none' as const } },
-        { ...base, binding: { ...base.binding, contributionKey: null } },
-        { ...base, binding: { ...base.binding, endpoint: { ...base.binding.endpoint, normalizedUrl: 'https://custom.example/v1' } } },
+        { ...base, binding: { ...base.binding, endpoint: { ...base.binding.endpoint, protocol: 'openai-responses' } } },
+        { ...base, binding: { ...base.binding, contributionKey: null, endpoint: { ...base.binding.endpoint, normalizedUrl: 'https://custom.example/v1', publicHeaders: { 'X-Project': 'custom' } } } },
         { ...base, binding: { ...base.binding, endpoint: { ...base.binding.endpoint, publicHeaders: { 'X-Project': 'custom' } } } },
         { ...base, credential: { kind: 'apiKey', transport: base.binding.runtimeCredentialTransport!, value: '' } },
       ];
@@ -129,7 +182,7 @@ describe('registered FX Provider binding', () => {
       if (!agent?.factory) throw new Error('FX runtime factory missing');
       const runtime = await agent.factory({ plugin: { id: FX_PLUGIN.manifest.id, version: FX_PLUGIN.manifest.version }, agent: { id: 'fx' }, signal: new AbortController().signal });
       const request: AgentSessionOpenRequest = { ...(kind === 'create' ? { kind } : { kind, providerSessionId: 'native-fx' }), sessionId: 'fx-test', cwd: '/workspace',
-        providerBinding: { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat', normalizedUrl: 'https://ai-gateway.vercel.sh/coding-agent/v1', credential: 'apiKey' }, model: { id: 'anthropic/claude-sonnet-4.6', name: 'Sonnet' }, materialization: { v: 1, kind: 'spawnEnv' } } };
+        providerBinding: { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat', normalizedUrl: 'http://127.0.0.1:2345/v1', credential: kind === 'create' ? 'apiKey' : 'none' }, model: { id: 'anthropic/claude-sonnet-4.6', name: 'Sonnet' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['.fx/settings.json'] } } };
       let source = 'fx login';
       let probes = 0;
       let opened = 0;
@@ -141,13 +194,13 @@ describe('registered FX Provider binding', () => {
         return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } }, stdout: new TextEncoder().encode(JSON.stringify({ kind: 'status', auth: source, auth_refreshable: source === 'fx login', model: 'anthropic/claude-sonnet-4.6' })), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
       } } }, protocols: { acp: { open: async (openedRequest: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) => {
         opened += 1;
-        expect(openedRequest).toBe(request);
+        expect(openedRequest).toEqual(request);
         expect(options.transport).toEqual({ kind: 'stdio', executable: { kind: 'systemTool', id: 'fx-cli' }, args: ['acp'] });
         return { send: async () => ({ status: 'admitted' as const }), cancel: async () => ({ status: 'requested' as const }), watch: () => ({ dispose() {} }), dispose() {} };
       } } } } as unknown as AgentSessionRuntimeContext;
       await expect(runtime.sessions!.open(request, context)).rejects.toMatchObject({ code: 'fx_provider_credential_source_mismatch' });
       expect(opened).toBe(0);
-      source = 'AI_GATEWAY_API_KEY';
+      source = 'configured provider';
       await runtime.sessions!.open(request, context);
       expect(opened).toBe(1);
       expect(probes).toBe(2);
@@ -166,11 +219,11 @@ describe('registered FX Provider binding', () => {
       if (!agent?.factory) throw new Error('FX runtime factory missing');
       const runtime = await agent.factory({ plugin: { id: FX_PLUGIN.manifest.id, version: FX_PLUGIN.manifest.version }, agent: { id: 'fx' }, signal: new AbortController().signal });
       const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'fx-run', cwd: '/workspace', profile: { pluginId: FX_PLUGIN.manifest.id, localId: 'default' }, input: { text: 'Reply OK' },
-        providerBinding: { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat', normalizedUrl: 'https://ai-gateway.vercel.sh/coding-agent/v1', credential: 'apiKey' }, model: { id: 'anthropic/claude-sonnet-4.6', name: 'Sonnet' }, materialization: { v: 1, kind: 'spawnEnv' } } };
+        providerBinding: { connectionId: 'pc_fx', upstream: { protocol: 'openai-chat', normalizedUrl: 'https://ai-gateway.vercel.sh/coding-agent/v1', credential: 'apiKey' }, model: { id: 'anthropic/claude-sonnet-4.6', name: 'Sonnet' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['.fx/settings.json'] } } };
       let probes = 0;
       let opened = 0;
       const open = async (actual: AgentExecutionRunOpenRequest, options: AgentAcpRuntimeOptions) => {
-        expect(actual).toBe(request);
+        expect(actual).toEqual(request);
         expect(options.transport).toMatchObject({ args: ['acp'] });
         opened += 1;
         return { send: async () => ({ status: 'admitted' as const }), stop: async () => ({ status: 'requested' as const }), watch: () => ({ dispose() {} }), dispose() {} };

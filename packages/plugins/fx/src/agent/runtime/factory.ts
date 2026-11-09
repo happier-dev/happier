@@ -8,7 +8,6 @@ import { FX_SESSION_UPDATES } from '../acp/sessionUpdates.js';
 import { FX_PROMPT_USAGE } from '../acp/usage.js';
 import { FX_AUTH_STATUS_COMMAND, parseFxStatusCommand } from '../auth/status.js';
 import { FX_ACP_COMMAND } from '../preflight.js';
-import { FX_GATEWAY_CONNECTION_URL } from '../providerBinding/adapter.js';
 import { FX_TERMINAL_CONTRIBUTION } from '../terminal/contribution.js';
 import { prepareFxConnectedAccount } from '../auth/connectedAccount.js';
 export { fxExternalSessionsContribution } from '../externalSessions/contribution.js';
@@ -27,9 +26,8 @@ async function verifyProviderBinding(
   const binding = request.providerBinding;
   if (!binding) return;
   const refuse = () => new PluginError({ code: 'fx_provider_credential_source_mismatch',
-    message: 'FX could not confirm the selected Gateway API key. Open FX and use /provider to select AI_GATEWAY_API_KEY, then retry.' });
-  if (binding.materialization.kind !== 'spawnEnv' || binding.upstream.protocol !== 'openai-chat'
-    || binding.upstream.normalizedUrl !== FX_GATEWAY_CONNECTION_URL || binding.upstream.credential !== 'apiKey') throw refuse();
+    message: 'FX could not confirm the selected Provider and model in its private native settings. Retry the connection or inspect FX status.' });
+  if (binding.materialization.kind !== 'configFile' || binding.upstream.protocol !== 'openai-chat') throw refuse();
   const nativeLaunch = context.session
     ? context.session.services.nativeLaunch
     : context.executionRun.services.nativeLaunch;
@@ -49,7 +47,9 @@ async function verifyProviderBinding(
   const observed = result.termination.observed;
   const facts = parseFxStatusCommand({ ok: observed.kind === 'exit' && observed.exitCode === 0 && !result.stdoutTruncated,
     exitCode: observed.kind === 'exit' ? observed.exitCode : null, stdout: new TextDecoder().decode(result.stdout), stderr: '' });
-  if (facts.status.state !== 'logged_in' || facts.credentialSource !== 'AI_GATEWAY_API_KEY' || facts.model !== binding.model.id) throw refuse();
+  if (facts.status.state !== 'logged_in'
+    || (facts.credentialSource !== 'AI_GATEWAY_API_KEY' && facts.credentialSource !== 'configured provider')
+    || facts.model !== binding.model.id) throw refuse();
 }
 
 export const createFxAgentRuntime: AgentRuntimeFactory = () => ({ surfaces: { terminal: FX_TERMINAL_CONTRIBUTION }, sessions: {

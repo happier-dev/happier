@@ -5,7 +5,7 @@ import type { ProviderBrokerConsumerV1, ProviderCredentialTransportV1 } from '@h
 import type { SessionTeamCredentialBindingIntentV1, TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { materializeLeasedAgentProviderBinding, prepareLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
+import { materializeLeasedAgentProviderBinding, prepareLeasedAgentProviderBinding, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import type { SessionTeamCredentialProviderBinding } from './sessionTeamCredentialProviderBinding';
@@ -102,6 +102,7 @@ export async function materializeSessionTeamCredentialNativeBinding(input: Reado
       prepared, credential: { kind: 'apiKey', transport, value: opened.placeholder } });
     composed = await composeProviderBindingMaterialization({ materialization,
       materializationBaseDir: join(input.materializationBaseDir, 'team-native'),
+      nativeHome: readLeasedAgentProviderNativeHome({ lease: input.lease, agentId: input.agentId }),
       sessionId: input.consumer.kind === 'session' ? input.consumer.sessionId : input.consumer.executionRunId });
     input.signal.throwIfAborted();
     const releaseMaterialization = composed.takeCleanupOwnership();

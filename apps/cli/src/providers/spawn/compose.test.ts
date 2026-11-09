@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { FX_STATE_SHARING } from '../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
 
 import {
   composeProviderBindingMaterialization,
@@ -11,6 +12,35 @@ import {
 } from './compose';
 
 describe('provider binding host materialization', () => {
+  it('projects the declared native home, preserves native preferences and shared Sessions, and retains cleanup ownership', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-provider-native-home-'));
+    const source = join(base, 'native');
+    await mkdir(join(source, '.fx/sessions/existing'), { recursive: true });
+    await writeFile(join(source, '.fx/sessions/existing/events.jsonl'), 'native-event');
+    await writeFile(join(source, '.fx/mcp.json'), '{"servers":{}}');
+    await writeFile(join(source, '.fx/settings.json'), '{"theme":"dark","models":{"gateway":"old"}}');
+    const result = await composeProviderBindingMaterialization({
+      materialization: {
+        v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: '.fx/settings.json', utf8: '{"models":{"happier":"selected"}}', merge: 'jsonObject' }],
+      },
+      nativeHome: { descriptor: { providerId: 'fx', ...FX_STATE_SHARING }, sourceEnvironment: { HOME: source }, homeDir: source },
+      materializationBaseDir: join(base, 'materialized'),
+    });
+    if (result.launchMaterialization.kind !== 'configFile') throw new Error('Expected file materialization');
+    const root = result.launchMaterialization.rootPath;
+    expect(result.providerEnvironmentOverlay).toContainEqual({ name: 'HOME', value: root, source: 'provider' });
+    expect(JSON.parse(await readFile(join(root, '.fx/settings.json'), 'utf8'))).toEqual({ theme: 'dark', models: { happier: 'selected' } });
+    expect(await readFile(join(root, '.fx/mcp.json'), 'utf8')).toBe('{"servers":{}}');
+    expect(await realpath(join(root, '.fx/sessions'))).toBe(await realpath(join(source, '.fx/sessions')));
+    const retainedCleanup = result.takeCleanupOwnership();
+    result.cleanup?.();
+    expect(await readFile(join(root, '.fx/sessions/existing/events.jsonl'), 'utf8')).toBe('native-event');
+    retainedCleanup?.();
+    expect(await readFile(join(source, '.fx/settings.json'), 'utf8')).toBe('{"theme":"dark","models":{"gateway":"old"}}');
+    expect(await readFile(join(source, '.fx/sessions/existing/events.jsonl'), 'utf8')).toBe('native-event');
+    await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('resolves Windows config-file parents with the platform path implementation', () => {
     expect(resolveProviderMaterializationParentPath(
       String.raw`C:\Users\alice\.happier\provider-binding\config\provider.json`,

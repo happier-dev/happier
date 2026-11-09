@@ -234,6 +234,7 @@ const ProviderBindingRelativePathV1Schema = lazyZodSchema(() => z.string().check
 const ProviderBindingFileV1Schema = lazyZodSchema(() => z.pipe(PlainDataObjectV1Schema, z.strictObject({
   relativePath: ProviderBindingRelativePathV1Schema,
   utf8: z.string(),
+  merge: z.optional(z.literal('jsonObject')),
 })));
 
 const ProviderBindingFilesV1Schema = z.pipe(boundedArrayPreflight(
@@ -272,7 +273,7 @@ const AgentProviderBindingMaterializationDataV1Schema = lazyZodSchema(() => z.di
     kind: z.literal('engineConfig'),
     engineConfig: ProviderBindingCanonicalJsonObjectV1Schema,
   }),
-  z.strictObject({ ...commonMaterializationShape, kind: z.literal('configFile'), files: ProviderBindingFilesV1Schema }),
+  z.strictObject({ ...commonMaterializationShape, kind: z.literal('configFile'), files: ProviderBindingFilesV1Schema, nativeHome: z.optional(z.literal(true)) }),
 ]));
 export const AgentProviderBindingMaterializationV1Schema = lazyZodSchema(() => z.pipe(PlainDataObjectV1Schema, AgentProviderBindingMaterializationDataV1Schema));
 export type AgentProviderBindingMaterialization = z.infer<typeof AgentProviderBindingMaterializationV1Schema>;
