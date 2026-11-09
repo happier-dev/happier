@@ -592,7 +592,7 @@ export const de = {
     connectedServices_purposes_default_set: "Standardkonto auswählen",
     connectedServices_pools_create: "Pool für verbundenen Dienst erstellen",
     connectedServices_pools_patch: "Pool für verbundenen Dienst bearbeiten",
-    connectedServices_pools_delete: "Pool für verbundenen Dienst löschen",
+    connectedServices_pools_delete: "Pool löschen",
     connectedServices_pools_members_add: "Mitglied zum Pool des verbundenen Dienstes hinzufügen",
     connectedServices_pools_members_patch: "Poolmitglied des verbundenen Dienstes bearbeiten",
     connectedServices_pools_members_remove: "Poolmitglied des verbundenen Dienstes entfernen",

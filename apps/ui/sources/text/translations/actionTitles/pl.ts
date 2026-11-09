@@ -592,7 +592,7 @@ export const pl = {
     connectedServices_purposes_default_set: "Wybierz domyślne połączone konto",
     connectedServices_pools_create: "Utwórz pulę połączonej usługi",
     connectedServices_pools_patch: "Edytuj pulę połączonej usługi",
-    connectedServices_pools_delete: "Usuń pulę połączonej usługi",
+    connectedServices_pools_delete: "Usuń pulę",
     connectedServices_pools_members_add: "Dodaj członka puli połączonej usługi",
     connectedServices_pools_members_patch: "Edytuj członka puli połączonej usługi",
     connectedServices_pools_members_remove: "Usuń członka puli połączonej usługi",

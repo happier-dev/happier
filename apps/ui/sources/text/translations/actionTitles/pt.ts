@@ -592,7 +592,7 @@ export const pt = {
     connectedServices_purposes_default_set: "Escolher conta conectada padrão",
     connectedServices_pools_create: "Criar pool de serviços conectados",
     connectedServices_pools_patch: "Editar pool de serviços conectados",
-    connectedServices_pools_delete: "Excluir pool de serviços conectados",
+    connectedServices_pools_delete: "Excluir pool",
     connectedServices_pools_members_add: "Adicionar membro ao pool de serviços conectados",
     connectedServices_pools_members_patch: "Editar membro do pool de serviços conectados",
     connectedServices_pools_members_remove: "Remover membro do pool de serviços conectados",

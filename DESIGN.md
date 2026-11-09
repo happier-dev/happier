@@ -742,7 +742,8 @@ live in the page-presentation owners in code.
   not shown there.
 - **A phone has one way around.** The tab bar holds the four tabs and More, and it does not move between
   tabs. Every tab opens on one head: the Home line, Activity and the avatar, with the page's large title
-  under them on the page edge. A destination More opens has no tab bar, so its head always has a Back.
+  under them on the page edge. A destination More opens keeps the tab bar, with no tab shown as selected, and its
+  head always has a Back. A page with its own bottom bar folds the tab bar while that page is on screen.
 - **Everything is findable.** Every setting a page renders is declared for search. A result names
   the setting and its location, and opening it brings the row into view.
 - **Status speaks only when it matters.** Healthy items stay quiet. A tinted banner appears only when

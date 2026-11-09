@@ -600,7 +600,7 @@ const en = {
         connectedServices_purposes_default_set: "Choose default connected account",
         connectedServices_pools_create: "Create connected-service pool",
         connectedServices_pools_patch: "Edit connected-service pool",
-        connectedServices_pools_delete: "Delete connected-service pool",
+        connectedServices_pools_delete: "Delete pool",
         connectedServices_pools_members_add: "Add connected-service pool member",
         connectedServices_pools_members_patch: "Edit connected-service pool member",
         connectedServices_pools_members_remove: "Remove connected-service pool member",

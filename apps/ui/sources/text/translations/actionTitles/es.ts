@@ -592,7 +592,7 @@ export const es = {
     connectedServices_purposes_default_set: "Elegir cuenta conectada predeterminada",
     connectedServices_pools_create: "Crear grupo de servicios conectados",
     connectedServices_pools_patch: "Editar grupo de servicios conectados",
-    connectedServices_pools_delete: "Eliminar grupo de servicios conectados",
+    connectedServices_pools_delete: "Eliminar grupo",
     connectedServices_pools_members_add: "Añadir miembro al grupo de servicios conectados",
     connectedServices_pools_members_patch: "Editar miembro del grupo de servicios conectados",
     connectedServices_pools_members_remove: "Eliminar miembro del grupo de servicios conectados",

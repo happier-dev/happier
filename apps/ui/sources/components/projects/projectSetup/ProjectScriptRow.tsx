@@ -148,7 +148,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
     : workerRefusal
     ? t('projectWorkers.empty')
     : props.failureCode
-    ? props.failureText ?? t('projects.scripts.run.refused', { reason: props.failureCode })
+    ? props.failureText ?? t('projects.scripts.run.refused')
     : stop.pending || stop.stopRequested
       ? t('projects.scripts.run.stopping')
       // A live run an agent started from a Session says so (lab `s-agent` PANE); Stop stays one owner.

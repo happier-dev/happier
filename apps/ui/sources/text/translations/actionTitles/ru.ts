@@ -592,7 +592,7 @@ export const ru = {
     connectedServices_purposes_default_set: "Выбрать подключённый аккаунт по умолчанию",
     connectedServices_pools_create: "Создать пул подключённого сервиса",
     connectedServices_pools_patch: "Изменить пул подключённого сервиса",
-    connectedServices_pools_delete: "Удалить пул подключённого сервиса",
+    connectedServices_pools_delete: "Удалить пул",
     connectedServices_pools_members_add: "Добавить участника пула подключённого сервиса",
     connectedServices_pools_members_patch: "Изменить участника пула подключённого сервиса",
     connectedServices_pools_members_remove: "Удалить участника пула подключённого сервиса",

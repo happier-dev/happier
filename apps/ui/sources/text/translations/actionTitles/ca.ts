@@ -592,7 +592,7 @@ export const ca = {
     connectedServices_purposes_default_set: "Tria el compte connectat predeterminat",
     connectedServices_pools_create: "Crea un pool de serveis connectats",
     connectedServices_pools_patch: "Edita un pool de serveis connectats",
-    connectedServices_pools_delete: "Suprimeix un pool de serveis connectats",
+    connectedServices_pools_delete: "Suprimeix el pool",
     connectedServices_pools_members_add: "Afegeix un membre al pool de serveis connectats",
     connectedServices_pools_members_patch: "Edita un membre del pool de serveis connectats",
     connectedServices_pools_members_remove: "Elimina un membre del pool de serveis connectats",

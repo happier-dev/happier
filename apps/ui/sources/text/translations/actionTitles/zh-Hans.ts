@@ -592,7 +592,7 @@ export const zhHans = {
     connectedServices_purposes_default_set: "选择默认连接账户",
     connectedServices_pools_create: "创建已连接服务池",
     connectedServices_pools_patch: "编辑已连接服务池",
-    connectedServices_pools_delete: "删除已连接服务池",
+    connectedServices_pools_delete: "删除服务池",
     connectedServices_pools_members_add: "添加已连接服务池成员",
     connectedServices_pools_members_patch: "编辑已连接服务池成员",
     connectedServices_pools_members_remove: "移除已连接服务池成员",

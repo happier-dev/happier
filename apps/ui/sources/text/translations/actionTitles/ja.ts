@@ -592,7 +592,7 @@ export const ja = {
     connectedServices_purposes_default_set: "既定の接続アカウントを選択",
     connectedServices_pools_create: "接続サービスプールを作成",
     connectedServices_pools_patch: "接続サービスプールを編集",
-    connectedServices_pools_delete: "接続サービスプールを削除",
+    connectedServices_pools_delete: "プールを削除",
     connectedServices_pools_members_add: "接続サービスプールにメンバーを追加",
     connectedServices_pools_members_patch: "接続サービスプールのメンバーを編集",
     connectedServices_pools_members_remove: "接続サービスプールからメンバーを削除",

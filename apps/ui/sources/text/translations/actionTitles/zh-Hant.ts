@@ -592,7 +592,7 @@ export const zhHant = {
     connectedServices_purposes_default_set: "選擇預設已連線帳號",
     connectedServices_pools_create: "建立已連線服務帳號池",
     connectedServices_pools_patch: "編輯已連線服務帳號池",
-    connectedServices_pools_delete: "刪除已連線服務帳號池",
+    connectedServices_pools_delete: "刪除服務帳號池",
     connectedServices_pools_members_add: "新增已連線服務帳號池成員",
     connectedServices_pools_members_patch: "編輯已連線服務帳號池成員",
     connectedServices_pools_members_remove: "移除已連線服務帳號池成員",
