@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
+import { SharedSavedSecretReferenceSelectionProtocolV1Schema } from '../../plugins/contributions/accessProviderSelection.js';
 import { MachineRecipeStepV1Schema, MachineRecipeStepDeclarationV1Schema, MachineRecipeV1Schema, MachineRecipeSelectionV1Schema, MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, resolveMachineRecipeStepInputsV1 } from './machineRecipeV1.js';
 
 describe('machine recipe executable declarations', () => {
@@ -100,7 +101,7 @@ describe('machine recipe executable declarations', () => {
             expect(() => resolveMachineRecipeStepInputsV1(recipe.steps[0]!, { identity, other: { name: 'jq' } })).toThrow();
         }
     });
-    it('admits static localized recipe input hints only at declared input paths', () => {
+    it('admits static recipe hints and saved-secret selection at declared input paths', () => {
         const field = { path: 'manager', title: { key: 'software.manager', fallback: 'Package manager' }, widget: 'select',
             options: [{ value: 'brew', label: 'Homebrew' }, { value: 'winget', label: 'WinGet' }] };
         const recipe = { id: 'install-package', revision: '1', title: 'Exact package', software: true,
@@ -121,6 +122,14 @@ describe('machine recipe executable declarations', () => {
         ]) expect(MachineRecipeV1Schema.safeParse({ ...recipe, inputHints: { fields: [invalid] } }).success).toBe(false);
         const { inputHints: _hints, ...oldDefinition } = recipe;
         expect(MachineRecipeV1Schema.parse(oldDefinition)).toEqual(oldDefinition);
+        const credentialRecipe = { ...recipe,
+            inputSchema: { type: 'object', properties: {
+                joinCredential: SharedSavedSecretReferenceSelectionProtocolV1Schema.jsonSchema,
+            }, required: ['joinCredential'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'joinCredential', title: 'Setup key', widget: 'select',
+                inputType: { hostType: 'savedSecretReference' } }] },
+        };
+        expect(MachineRecipeV1Schema.safeParse(credentialRecipe).success).toBe(true);
     });
 
     it('admits only the declared daemon identity facts in ownership and template bindings', () => {

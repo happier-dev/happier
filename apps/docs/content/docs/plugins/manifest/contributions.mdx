@@ -361,9 +361,11 @@ the ordinary plugin ABI; there is no recipe registration, execution callback or
 privileged plugin module. The host validates declarations and references, checks
 the selected Machine, reviews exact effects, and owns admission and execution.
 Optional `inputHints` describe declared input paths using localized titles and
-static choices. They cannot request host option sources, semantic input types or
-Connected Account inventories. Omitting hints leaves the closed `inputSchema`
-as the input contract.
+static choices. A saved-secret selection field can set
+`inputType: { hostType: 'savedSecretReference' }` to use the existing SavedSecret
+picker scoped to the target Home. Other host/plugin input types, dynamic option
+sources and Connected Account inventories remain excluded. Omitting hints leaves
+the closed `inputSchema` as the input contract.
 Set `software: true` on recipes offered as Software. The existing
 `action.options.resolve` Action reads `machines.setup.software.available` for
 the plan/apply source-item reference field on the explicitly selected Home and
@@ -380,7 +382,7 @@ Missing brand/source facts remain absent; listing does not load logo bytes.
 For selected recipe configuration, pass exact qualified recipe refs in the
 same Action's `values`. The optional `machineRecipeDetails` result contains
 only those selected software declarations, including their closed
-`inputSchema`, static `inputHints` and declared `removeSteps`. Ordinary browsing
+`inputSchema`, `inputHints` and declared `removeSteps`. Ordinary browsing
 does not include these details. An unavailable revision is refused, not replaced
 with a newer one. This metadata does not report installed packages or native
 support; absent removal steps do not imply an automatic inverse operation.
@@ -392,6 +394,19 @@ field validator; values are not coerced or recursively interpreted. Keep private
 keys and secret bytes out of inputs and template variables; secret-backed files
 use `secretGrant` references. The grant's `grantRef` may bind a reviewed input;
 the input contains the reference, never the secret bytes.
+
+Authored `secretGrant` content can instead use `credentialSelection` with the
+shared `provider`, `config` and `credentialRefs` selection; omit `grantRef` for
+this arm. Saved-secret selections use the shared `{ ref, resourceRevision }`
+contract. Only these two declared credential leaves accept input references;
+the host validates the bound selection and scopes its grant to the selected
+Machine and installation. The current Apply flow consumes the `network.join`
+saved-secret purpose. Bind its file path with
+`{ kind: 'targetFact', fact: 'invocation.credentialFile' }`; the host derives this
+path from the installation. Plan acquires no credential bytes. Approved Apply
+uses existing requester-scoped SavedSecret custody and encrypted Home grants to
+deliver the root-owned `0600` invocation file. These fields do not establish
+bundled recipe or preset availability.
 
 Package declarations accept an input reference for the whole `packages` array
 or for an individual identity, as in the example. Binding an identity object
@@ -411,8 +426,8 @@ and `os.securityOrigins`. The native OS fact owner reads only demanded facts;
 these neither change daemon identity nor become public recipe inputs. Missing
 requested evidence returns `machine_recipe_target_fact_unavailable` rather than
 an inferred value. Resolved facts are covered by the reviewed effect-plan digest
-and replanned at Apply. Credentials continue to use admitted secret-grant
-references.
+and replanned at Apply. Credential bytes remain outside target facts and
+template plaintext.
 
 File templates retain their `value`/`variables` shape and render once:
 

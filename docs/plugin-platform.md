@@ -594,9 +594,12 @@ selecting a Machine. This changes no Action, wire shape or persisted format.
 Package declarations retain manager-specific identity and optional version pins;
 compact observations retain the exact observed manager, package and version.
 These fields do not establish native support for a package manager or pin.
-Optional recipe `inputHints` reuse the shared static, localized input grammar and
-resolve only declared input-schema paths. Host option sources, semantic input
-types and Connected Account inventories are not recipe-authoring authority.
+Optional recipe `inputHints` reuse the shared localized input grammar and resolve
+only declared input-schema paths. Static choices remain supported. The sole
+admitted semantic `inputType` is `{ hostType: 'savedSecretReference' }`, which
+uses the existing SavedSecret picker scoped to the target Home. Other host/plugin
+input types, dynamic option sources and Connected Account inventories remain
+excluded.
 Declarations without hints retain their existing input contract.
 
 The same `action.options.resolve` source accepts picked recipe refs in `values`.

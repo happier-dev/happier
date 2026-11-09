@@ -481,8 +481,11 @@ export const MachineRecipeV1Schema = z.object({
     appliesWhen: z.object({ posture: z.literal('publicSshOpen') }).strict().optional(),
 }).strict().superRefine((recipe, context) => {
     recipe.inputHints?.fields.forEach((field, index) => {
-        if (field.inputType !== undefined) context.addIssue({ code: 'custom', path: ['inputHints', 'fields', index, 'inputType'],
-            message: 'Recipe input hints cannot request host options' });
+        if (field.inputType !== undefined
+            && (!('hostType' in field.inputType) || field.inputType.hostType !== 'savedSecretReference')) {
+            context.addIssue({ code: 'custom', path: ['inputHints', 'fields', index, 'inputType'],
+                message: 'Recipe input types support only saved-secret reference selection' });
+        }
         if (!resolveDeclaredInputLeaves(recipe.inputSchema, field.path, field.visibleWhen ? 'conditional-field' : 'every-arm')) {
             context.addIssue({ code: 'custom', path: ['inputHints', 'fields', index, 'path'],
                 message: 'Recipe input fields must resolve to a declared inputSchema leaf' });
