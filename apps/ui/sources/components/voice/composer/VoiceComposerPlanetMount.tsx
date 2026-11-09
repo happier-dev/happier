@@ -74,8 +74,8 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
     const holdEnabled = useLocalSetting('voiceHoldToTalkEnabled');
     const isActivelyFocused = useHostActivelyFocused();
     const onHoldUnavailable = React.useCallback(() => {
-        Modal.alert(t('voicePresence.holdToTalkTitle'), t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') }));
-    }, [control.serviceTitle]);
+        Modal.alert(t('voicePresence.holdToTalkTitle'), t('voicePresence.holdToTalkUnavailableHere'));
+    }, []);
     const { availability, live, muted, primaryAction, primaryActionHint, primaryActionLabel, onPrimaryAction } = control;
     // The attempt owner decides the press means setup; the composer shows that setup in place above
     // the work (lab T1) instead of leaving for Settings → Voice, and its Try starts this composer's target.
@@ -88,7 +88,8 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
     }, [onPrimaryAction, primaryAction]);
     const startsGlobal = idleTarget.kind === 'global';
     const holdHint = holdEnabled
-        ? control.canHoldToTalk ? t('voicePresence.holdToTalkHint') : t('voicePresence.holdToTalkUnavailable', { service: control.serviceTitle ?? t('voicePresence.title') })
+        ? control.canHoldToTalk ? t('voicePresence.holdToTalkHint') : t(live
+            ? 'voicePresence.holdToTalkUnavailableHere' : 'voicePresence.holdToTalkNeedsConversation')
         : null;
 
     // A transport that cannot do anything is worse than no transport (§2.5).
@@ -120,7 +121,7 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
                 disabled={primaryAction === null}
                 isActivelyFocused={isActivelyFocused}
                 onPress={onPress}
-                beginHoldToTalk={holdEnabled ? control.beginHoldToTalk : undefined}
+                beginHoldToTalk={holdEnabled && control.canHoldToTalk ? control.beginHoldToTalk : undefined}
                 onHoldUnavailable={onHoldUnavailable}
             />
             <VoiceSetupPopover

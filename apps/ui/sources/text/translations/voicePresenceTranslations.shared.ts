@@ -10,6 +10,8 @@ export type VoicePresenceTranslation = Readonly<{
     holdToTalkTitle: string;
     holdToTalkDescription: string;
     holdToTalkHint: string;
+    holdToTalkNeedsConversation?: string;
+    holdToTalkUnavailableHere?: string;
     holdToTalkUnavailable: (params: Readonly<{ service: string }>) => string;
     talkWithVoice: string;
     dictate: string;
@@ -54,6 +56,8 @@ export const voicePresenceTranslationsEnglish = { en: {
         holdToTalkTitle: "Hold to talk",
         holdToTalkDescription: "Hold the Voice mark to say one thing; let go to send. Tapping still starts and ends Voice.",
         holdToTalkHint: "Hold for one turn; release to send. Drag away to cancel.",
+        holdToTalkNeedsConversation: "Start a conversation to check whether Hold is available. Tapping still starts Voice.",
+        holdToTalkUnavailableHere: "Hold is unavailable in this conversation. Tap to talk instead.",
         holdToTalkUnavailable: ({ service }) => `${service} doesn't support holding to talk. Tap to talk instead.`,
         talkWithVoice: 'Talk with Voice',
         dictate: 'Dictate',

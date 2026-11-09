@@ -13,6 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { VoicePresenceContainerPreview } from '@/components/voice/presence/VoicePresenceContainerPreview';
 import { getAvailableVoicePresenceContainers, resolveVoicePresenceContainer } from '@/components/voice/presence/useVoicePresenceContainer';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
 
 /** "Show live Voice as": each tile draws the real container at rest (no subscriptions). */
 const PRESENCE_CONTAINERS = [
@@ -21,13 +22,31 @@ const PRESENCE_CONTAINERS = [
   { id: 'orb', labelKey: 'settingsVoice.ui.presenceContainer.orb' },
 ] as const satisfies ReadonlyArray<{ id: VoicePresenceContainer; labelKey: string }>;
 
+/** The runtime owns Hold support. Keep its subscription local to this one preference row. */
+function HoldToTalkSetting(props: Readonly<{ enabled: boolean; onChange: (next: boolean) => void }>) {
+  const connected = useVoiceSessionStore(state => state.status === 'connected');
+  const supported = useVoiceSessionStore(state => state.canHoldToTalk === true);
+  const available = connected && supported;
+  return (
+    <SettingRow setting={VOICE_ADVANCED_SETTINGS.settings.holdToTalk} subtitleLines={0}
+      subtitle={available ? undefined : t(connected
+        ? 'voicePresence.holdToTalkUnavailableHere' : 'voicePresence.holdToTalkNeedsConversation')}
+      disabled={!available}
+      rightElement={<Switch testID="settings.voice.ui.holdToTalk"
+        accessibilityLabel={t('voicePresence.holdToTalkTitle')}
+        value={props.enabled} disabled={!available} onValueChange={props.onChange} />}
+    />
+  );
+}
+
 /**
- * Presentational only.
+ * Preference ownership stays in the settings route.
  *
  * `voice`/`setVoice` carry the **synced** Voice settings; `voicePresenceContainer`/`setVoicePresenceContainer`
  * carry a **device-local** preference. The section renders both and owns neither — the Voice
  * settings route reads MMKV through `useLocalSettingMutable` and hands the pair down. Reading
- * storage here would put a second owner behind the same switch.
+ * preference storage here would put a second owner behind the same switch. The Hold row
+ * separately consumes the admitted runtime's support; it never changes a preference on arrival.
  */
 export function VoiceUiSection(props: {
   voice: VoiceSettings;
@@ -51,12 +70,7 @@ export function VoiceUiSection(props: {
       {props.setVoiceHoldToTalkEnabled && (
         <SettingSection section={VOICE_ADVANCED_SETTINGS.sectionRefs.input}>
           <ItemGroup title={t('voicePresence.howYouTalk')}>
-            <SettingRow setting={VOICE_ADVANCED_SETTINGS.settings.holdToTalk} subtitleLines={0}
-              rightElement={<Switch testID="settings.voice.ui.holdToTalk"
-                accessibilityLabel={t('voicePresence.holdToTalkTitle')}
-                value={props.voiceHoldToTalkEnabled === true}
-                onValueChange={props.setVoiceHoldToTalkEnabled} />}
-            />
+            <HoldToTalkSetting enabled={props.voiceHoldToTalkEnabled === true} onChange={props.setVoiceHoldToTalkEnabled} />
           </ItemGroup>
         </SettingSection>
       )}
