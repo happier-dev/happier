@@ -11,15 +11,37 @@ const manifest: { exports: Record<string, { 'happier-source'?: string }> } = JSO
 );
 
 describe('shared client runtime boundaries', () => {
-  it.each([
+  const uiEntries = [
     'components/settings/server/localControl/useLocalRelayRuntimeControl.ts',
     'components/systemTasks/remoteSshBootstrap/nativeTask.ts',
     'components/personalHome/bootstrap/runPersonalHomeBootstrapFromSystemTasks.ts',
     'sync/domains/accessEndpoints/sources/relayAccessSource.ts',
+    'components/plugins/surfaces/pluginSurfaceAccountActionServices.ts',
+    'sync/api/machines/managedMachineEnrollment.ts',
+    'sync/api/machines/managedMachineOrigination.ts',
+    'sync/api/machines/managedMachineAccountAcquire.ts',
+    'sync/api/machines/managedMachineAccountNative.ts',
+    'sync/api/machines/managedMachineAccountGuest.ts',
+    'utils/system/runtimeFetch.ts',
+  ];
+  it.each([
+    ...uiEntries.map((entry) => `apps/ui/sources/${entry}`),
+    'packages/cli-common/src/machines/managed/index.ts',
+    'packages/cli-common/src/systemTasks/nativeRemoteSshBootstrap.ts',
+    'packages/plugins/machine-vercel/src/machine/nativeClient.ts',
+    'packages/plugins/machine-vercel/src/manifest.ts',
+    'packages/plugins/machine-vercel/src/account.ts',
+    'packages/plugins/machine-fly/src/machine/nativeClient.ts',
+    'packages/plugins/machine-fly/src/manifest.ts',
+    'packages/plugins/machine-fly/src/account.ts',
+    'packages/plugins/machine-digitalocean/src/machine/nativeClient.ts',
+    'packages/plugins/machine-digitalocean/src/manifest.ts',
+    'packages/plugins/machine-digitalocean/src/account.ts',
+    'packages/plugins/machine-digitalocean/src/accountRuntime.ts',
   ])('%s does not bundle host filesystem, process or module-loader code', async (entry) => {
     const result = await build({
       absWorkingDir: repoRoot,
-      entryPoints: [resolve(repoRoot, 'apps/ui/sources', entry)],
+      entryPoints: [resolve(repoRoot, entry)],
       bundle: true,
       write: false,
       metafile: true,

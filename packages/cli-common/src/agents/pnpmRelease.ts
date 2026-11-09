@@ -19,6 +19,31 @@ export type PnpmReleaseAsset = Readonly<{
 
 export const PNPM_GITHUB_REPO = 'pnpm/pnpm';
 
+// Immutable upstream v12.14.0 release-asset SHA-256 digests. Keep this aligned
+// with packageManager; bootstrap must not spend a shared GitHub API quota.
+export const MANAGED_PNPM_VERSION = '12.14.0';
+const PINNED_PNPM_ASSET_DIGESTS = {
+  'pnpm-darwin-arm64.tar.gz': '50f48e0e17508952790a3fbf58fcf14f3b82efa5f594ca04ad904e29aaf854b0',
+  'pnpm-darwin-x64.tar.gz': '2c412e07382049b4edb04fa6da78f3d4ef7810b75853c80544dcfb7c0ed79880',
+  'pnpm-linux-arm64-musl.tar.gz': '511a54809bdfd28270d30011d1697f582c8130d555b4fa0e2856b1a7534c98bf',
+  'pnpm-linux-arm64.tar.gz': 'cfc780b9e690549e6633e1045fb1fb6ef84e390711e2099e6ccbae91c32456ea',
+  'pnpm-linux-x64-musl.tar.gz': 'd7115e2f2791d79bf9e7e448609537595bb7787de1ef5292ce91ff3d1be2629e',
+  'pnpm-linux-x64.tar.gz': '3910c3852136bed5bc1511b9137a45fd4357ed6b3970d9d08893641e9005867e',
+  'pnpm-win32-arm64.zip': '97f707ce677b7591bad9d95c1f74635b5b2b9468da92ef94d426db4453524357',
+  'pnpm-win32-x64.zip': '6f0f38e917c8ce76ef31db528c357e2bfa354a1bcb16464e3cdec39e6530d784',
+} as const;
+
+export function resolvePinnedPnpmReleaseAsset(): PnpmReleaseAsset {
+  return resolvePnpmReleaseAsset({
+    tag_name: `v${MANAGED_PNPM_VERSION}`,
+    assets: Object.entries(PINNED_PNPM_ASSET_DIGESTS).map(([name, digest]) => ({
+      name,
+      digest: `sha256:${digest}`,
+      browser_download_url: `https://github.com/${PNPM_GITHUB_REPO}/releases/download/v${MANAGED_PNPM_VERSION}/${name}`,
+    })),
+  });
+}
+
 function normalizeTag(raw: unknown): string | null {
   return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
 }

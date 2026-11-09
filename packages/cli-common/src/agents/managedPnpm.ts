@@ -1,26 +1,22 @@
-import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
-import { delimiter, dirname, join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { accessSync, constants as fsConstants, statSync } from 'node:fs';
+import { chmod, lstat, mkdir, rename, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
-import { isPidPresent } from '../process/processLiveness.js';
-import { execFileWithDeadline, resolveWindowsCommandOnPath } from '../process/index.js';
+import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
+import { execFileWithDeadline, resolveExecutableCommand } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { removeHappierTempDirAsync } from '../tempDirs/createHappierTempDir.js';
 import { resolveVendorInstallTimeoutMs } from './install/vendorRecipeInstall.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
-import { resolvePnpmReleaseAsset, PNPM_GITHUB_REPO } from './pnpmRelease.js';
+import { resolvePinnedPnpmReleaseAsset } from './pnpmRelease.js';
 import { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 import type { AgentInstallProgressCallback } from './installProgress.js';
 
 type EnsureManagedPnpmDeps = Readonly<{
-  fetchGitHubLatestRelease?: typeof fetchGitHubLatestRelease;
   downloadGitHubReleaseAsset?: typeof downloadGitHubReleaseAsset;
 }>;
 
@@ -68,92 +64,11 @@ function readPnpmOverride(processEnv: NodeJS.ProcessEnv): string | null {
   return isExecutableFile(raw) ? raw : null;
 }
 
-function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath(command, processEnv) ?? null;
-  }
-
-  const pathDirs = String(processEnv.PATH ?? '')
-    .split(delimiter)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  for (const dir of pathDirs) {
-    const candidate = join(dir, command);
-    if (!existsSync(candidate)) continue;
-    // On Unix, verify the file is executable
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // File exists but is not executable; continue searching
-      continue;
-    }
-  }
-  return null;
-}
-
-/**
- * Acquire an exclusive lock for pnpm bootstrap to prevent concurrent installs from corrupting shared state.
- * Returns a FileHandle that must be closed to release the lock.
- */
-async function shouldRecoverStalePnpmBootstrapLock(lockPath: string): Promise<boolean> {
-  const lockStats = await stat(lockPath);
-  const ageMs = Date.now() - lockStats.mtimeMs;
-  const rawContents = await readFile(lockPath, 'utf8').catch(() => '');
-
-  try {
-    const parsed = JSON.parse(rawContents) as { pid?: unknown };
-    if (typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0) {
-      return !isPidPresent(parsed.pid);
-    }
-  } catch {
-    // Fall back to age-based recovery for legacy or malformed locks.
-  }
-
-  return ageMs >= STALE_PNPM_BOOTSTRAP_LOCK_MAX_AGE_MS;
-}
-
-async function acquirePnpmBootstrapLock(processEnv: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<FileHandle> {
-  const lockDir = join(managedPnpmInstallDir(processEnv), '.lock');
-  await mkdir(lockDir, { recursive: true });
-  const lockPath = join(lockDir, 'bootstrap.lock');
-
-  // Open with exclusive flag; will wait/retry if another process holds the lock
-  // Use a simple retry loop with exponential backoff
-  const maxRetries = 30;
-  const baseDelayMs = 100;
-
-  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-    signal?.throwIfAborted();
-    try {
-      // Try to open exclusively; on Unix this uses O_EXCL, on Windows uses exclusive share mode
-      const handle = await open(lockPath, 'wx');
-      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }), 'utf8');
-      return handle;
-    } catch (err) {
-      // EEXIST means lock is held; retry with backoff
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST' && attempt < maxRetries - 1) {
-        if (await shouldRecoverStalePnpmBootstrapLock(lockPath).catch(() => false)) {
-          await rm(lockPath, { force: true }).catch(() => undefined);
-          continue;
-        }
-        const delayMs = baseDelayMs * Math.pow(1.5, attempt);
-        await delay(delayMs, undefined, { signal });
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new Error('Failed to acquire pnpm bootstrap lock after retries');
-}
-
 export function resolveExistingPnpmCommand(processEnv: NodeJS.ProcessEnv = process.env): string | null {
   const managedOrOverride = resolveExistingManagedOrOverridePnpmCommand(processEnv);
   if (managedOrOverride) return managedOrOverride;
 
-  return resolveCommandOnPath('pnpm', processEnv);
+  return resolveExecutableCommand('pnpm', { env: processEnv });
 }
 
 function shouldBootstrapManagedPnpm(processEnv: NodeJS.ProcessEnv): boolean {
@@ -203,25 +118,16 @@ async function installManagedPnpm(
   signal?: AbortSignal,
   onProgress?: AgentInstallProgressCallback,
 ): Promise<string> {
-  // Acquire exclusive lock to prevent concurrent bootstrap races
-  const lockHandle = await acquirePnpmBootstrapLock(processEnv, signal);
-  try {
+  let waitReported = false;
+  return await withWorkspaceBundleLock(async () => {
     signal?.throwIfAborted();
     // Double-check if installation exists after acquiring lock (another process may have completed it)
     const managedPath = resolveExistingManagedOrOverridePnpmCommand(processEnv);
     if (managedPath) return managedPath;
 
-    const fetchLatestRelease = deps.fetchGitHubLatestRelease ?? fetchGitHubLatestRelease;
     const downloadAsset = deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset;
 
-    const release = await fetchLatestRelease({
-      signal,
-      githubRepo: PNPM_GITHUB_REPO,
-      userAgent: 'happier-cli',
-      githubToken: processEnv.GITHUB_TOKEN,
-    });
-    signal?.throwIfAborted();
-    const asset = resolvePnpmReleaseAsset(release);
+    const asset = resolvePinnedPnpmReleaseAsset();
     const scratchDir = await createManagedToolScratchDir({
       installDir: managedPnpmInstallDir(processEnv),
       prefix: 'bootstrap',
@@ -231,6 +137,7 @@ async function installManagedPnpm(
       const nextBinPath = join(nextDir, 'bin', resolveManagedPnpmBinaryName());
       const downloadPath = join(scratchDir, asset.name);
 
+      onProgress?.({ t: 'log', line: 'Downloading managed pnpm.' });
       await downloadAsset({
         signal,
         onProgress,
@@ -241,6 +148,7 @@ async function installManagedPnpm(
       });
 
       signal?.throwIfAborted();
+      onProgress?.({ t: 'log', line: 'Installing managed pnpm.' });
       await rm(nextDir, { recursive: true, force: true });
       await mkdir(dirname(nextBinPath), { recursive: true });
       await rm(nextBinPath, { force: true });
@@ -272,17 +180,18 @@ async function installManagedPnpm(
         await removeHappierTempDirAsync(scratchDir);
       }
     }
-  } finally {
-    // Release lock
-    await lockHandle.close();
-    // Clean up lock file (best effort; ignore errors)
-    try {
-      const lockPath = join(managedPnpmInstallDir(processEnv), '.lock', 'bootstrap.lock');
-      await rm(lockPath, { force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-  }
+  }, {
+    lockPath: join(managedPnpmInstallDir(processEnv), '.lock', 'bootstrap.lock'),
+    timeoutMs: null,
+    staleAfterMs: STALE_PNPM_BOOTSTRAP_LOCK_MAX_AGE_MS,
+    signal,
+    errorLabel: 'managed pnpm bootstrap lock',
+    onWait: () => {
+      if (waitReported) return;
+      waitReported = true;
+      onProgress?.({ t: 'log', line: 'Waiting for managed pnpm bootstrap lock.' });
+    },
+  });
 }
 
 /**
@@ -311,9 +220,9 @@ export async function ensureManagedPnpmCommand(
 
   try {
     return await installManagedPnpm(processEnv, deps, options.signal, options.onProgress);
-  } catch {
+  } catch (error) {
     options.signal?.throwIfAborted();
-    return null;
+    throw error;
   }
 }
 

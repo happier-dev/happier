@@ -1,16 +1,15 @@
-import { parseTailscaleCurrentProfileId } from './statusSnapshot.js';
-import { networkInterfaces } from 'node:os';
-import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
-import { TailscaleCommandError } from './commandError.js';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { networkInterfaces } from 'node:os';
+import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import { execFileWithDeadline, resolveWindowsCommandOnPath } from '../process/index.js';
 import {
   resolveRelayAccessCommandTimeoutMs,
 } from '../relayAccess/deadline.js';
 import type { RelayAccessDeadlineV1 } from '../relayAccess/types.js';
+import { TailscaleCommandError } from './commandError.js';
 import {
   extractTailscaleServeHttpsUrl,
   tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
@@ -19,9 +18,12 @@ import {
 import {
   isTailscaleDaemonUnreachableOutput,
   parseTailscaleStatusJson,
+  parseTailscaleCurrentProfileId,
   tailscaleStatusSnapshotForUnreachableDaemon,
   type TailscaleStatusSnapshot,
 } from './statusSnapshot.js';
+
+export { TailscaleCommandError, type TailscaleCommandFailure } from './commandError.js';
 
 export type TailscaleCommandResult = Readonly<{
   command: string;
@@ -40,8 +42,6 @@ export type TailscaleCommandRequest = Readonly<{
 }>;
 
 export type TailscaleCommandRunner = (request: TailscaleCommandRequest) => Promise<TailscaleCommandResult>;
-
-export { TailscaleCommandError, type TailscaleCommandFailure } from './commandError.js';
 
 export type ResolveTailscaleCommandOnPath = (
   command: string,
@@ -95,6 +95,8 @@ export type RunTailscaleServeEnableResult = Readonly<{
 export type RunTailscaleFunnelEnableParams = RunTailscaleParams &
   Readonly<{
     upstreamUrl: string;
+    servePath?: string;
+    httpsPort?: number;
   }>;
 
 export type RunTailscaleLoginResult = Readonly<{
@@ -237,6 +239,20 @@ const runCommand: TailscaleCommandRunner = async (request) => {
   }
 };
 
+function resolveCommandRunner(deps: RunTailscaleDeps): TailscaleCommandRunner {
+  return async request => {
+    const result = await (deps.runCommand ?? runCommand)(request);
+    // SSH/process adapters may return a non-zero result rather than reject it.
+    if (result.exitCode !== 0) throw new TailscaleCommandError('Tailscale command failed.', result);
+    return result;
+  };
+}
+
+function ignoreUnavailableStatus(error: unknown): string {
+  if (error instanceof TailscaleCommandError && error.failure) throw error;
+  return '';
+}
+
 function collectOutput(result: Readonly<{ stdout?: string; stderr?: string }>): string {
   return [String(result.stdout ?? ''), String(result.stderr ?? '')].filter(Boolean).join('\n').trim();
 }
@@ -344,12 +360,59 @@ function resolveTailscaleCommandSignal(params: RunTailscaleParams): AbortSignal 
   return params.signal ?? params.deadline?.signal;
 }
 
+function tailscaleCommandArgs(params: RunTailscaleParams, args: readonly string[]): readonly string[] {
+  if (params.socketPath === undefined) return args;
+  if (params.socketPath.length === 0 || params.socketPath.includes('\0')) throw new TypeError('Invalid tailscaled socket path');
+  return [`--socket=${params.socketPath}`, ...args];
+}
+
+/** Read only OperatorUser from native prefs; login and Running never grant mutation authority. */
+export async function runTailscaleOperatorObservation(
+  params: RunTailscaleParams & Readonly<{ daemonUsername: string | null }>,
+  deps: RunTailscaleDeps = {},
+): Promise<MachineAdminAccessObservationV1['tailscaledOperator']> {
+  const signal = resolveTailscaleCommandSignal(params);
+  signal?.throwIfAborted();
+  if (!params.daemonUsername) return { authorization: 'unknown' };
+  try {
+    const command = await resolveCommand(params, deps);
+    const result = await resolveCommandRunner(deps)({ command,
+      args: tailscaleCommandArgs(params, ['debug', 'prefs']), env: sanitizeTailscaleEnv(params.env ?? process.env),
+      timeoutMs: resolveTailscaleCommandTimeoutMs(params, 750), ...(signal ? { signal } : {}),
+    });
+    signal?.throwIfAborted();
+    if (result.exitCode !== 0) return { authorization: 'unknown' };
+    const prefs: unknown = JSON.parse(result.stdout);
+    if (typeof prefs !== 'object' || prefs === null || Array.isArray(prefs)
+      || !('OperatorUser' in prefs) || typeof prefs.OperatorUser !== 'string') return { authorization: 'unknown' };
+    return { authorization: prefs.OperatorUser === params.daemonUsername ? 'allowed' : 'denied' };
+  } catch {
+    signal?.throwIfAborted();
+    return { authorization: 'unknown' };
+  }
+}
+
 export async function runTailscaleVersion(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<string> {
   return await runTextCommand({ ...params, args: ['version'] }, deps);
 }
 
-export async function runTailscaleStatus(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<string> {
-  return await runTextCommand({ ...params, args: ['status'] }, deps);
+export async function runTailscaleStatus(
+  params: RunTailscaleParams & Readonly<{ json?: boolean }> = {},
+  deps: RunTailscaleDeps = {},
+): Promise<string> {
+  return await runTextCommand({ ...params, args: ['status', ...(params.json ? ['--json'] : [])] }, deps);
+}
+
+/** Demand-only native observation; this never switches or admits a profile. */
+export async function runTailscaleCurrentProfileId(
+  params: RunTailscaleParams = {},
+  deps: RunTailscaleDeps = {},
+): Promise<string | null> {
+  const signal = resolveTailscaleCommandSignal(params);
+  signal?.throwIfAborted();
+  const output = await runTextCommand({ ...params, args: ['switch', '--list', '--json'] }, deps);
+  signal?.throwIfAborted();
+  return parseTailscaleCurrentProfileId(JSON.parse(output));
 }
 
 export async function runTailscaleStatusJson(
@@ -389,14 +452,14 @@ export async function runTailscaleStatusJson(
 
 export async function runTailscaleLogin(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<RunTailscaleLoginResult> {
   const command = await resolveCommand(params, deps);
-  const runner = deps.runCommand ?? runCommand;
+  const runner = resolveCommandRunner(deps);
   const env = sanitizeTailscaleEnv(params.env ?? process.env);
 
   try {
     const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 30_000);
     const result = await runner({
       command,
-      args: ['login', '--qr'],
+      args: tailscaleCommandArgs(params, ['login', '--qr']),
       env,
       timeoutMs,
       ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
@@ -415,7 +478,7 @@ export async function runTailscaleLogin(params: RunTailscaleParams = {}, deps: R
   const fallbackTimeoutMs = resolveTailscaleCommandTimeoutMs(params, 30_000);
   const fallbackResult = await runner({
     command,
-    args: ['login'],
+    args: tailscaleCommandArgs(params, ['login']),
     env,
     timeoutMs: fallbackTimeoutMs,
     ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
@@ -434,9 +497,9 @@ export async function runTailscaleUp(
 ): Promise<TailscaleCommandResult> {
   const command = await resolveCommand(params, deps);
   const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 30_000);
-  return await (deps.runCommand ?? runCommand)({
+  return await resolveCommandRunner(deps)({
     command,
-    args: ['up', ...(params.extraArgs ?? [])],
+    args: tailscaleCommandArgs(params, ['up', ...(params.extraArgs ?? [])]),
     env: sanitizeTailscaleEnv(params.env ?? process.env),
     timeoutMs,
     ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
@@ -446,9 +509,9 @@ export async function runTailscaleUp(
 export async function runTailscaleDown(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<TailscaleCommandResult> {
   const command = await resolveCommand(params, deps);
   const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 15_000);
-  return await (deps.runCommand ?? runCommand)({
+  return await resolveCommandRunner(deps)({
     command,
-    args: ['down'],
+    args: tailscaleCommandArgs(params, ['down']),
     env: sanitizeTailscaleEnv(params.env ?? process.env),
     timeoutMs,
     ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
@@ -456,10 +519,10 @@ export async function runTailscaleDown(params: RunTailscaleParams = {}, deps: Ru
 }
 
 export async function runTailscaleServeStatus(
-  params: RunTailscaleParams = {},
+  params: RunTailscaleParams & Readonly<{ json?: boolean }> = {},
   deps: RunTailscaleDeps = {},
 ): Promise<string> {
-  return await runTextCommand({ ...params, args: ['serve', 'status'] }, deps);
+  return await runTextCommand({ ...params, args: ['serve', 'status', ...(params.json ? ['--json'] : [])] }, deps);
 }
 
 export async function runTailscaleFunnelStatus(
@@ -474,22 +537,29 @@ export async function runTailscaleFunnelEnable(
   deps: RunTailscaleDeps = {},
 ): Promise<RunTailscaleServeEnableResult> {
   const command = await resolveCommand(params, deps);
-  const runner = deps.runCommand ?? runCommand;
+  const runner = resolveCommandRunner(deps);
   const env = sanitizeTailscaleEnv(params.env ?? process.env);
   const upstreamUrl = String(params.upstreamUrl ?? '').trim();
-  const args = ['funnel', '--bg', upstreamUrl];
+  const servePath = String(params.servePath ?? '/').trim() || '/';
+  const httpsPort = normalizeServeHttpsPort(params.httpsPort);
+  const args = ['funnel', '--bg'];
+  if (params.httpsPort !== undefined || servePath !== '/') {
+    args.push(`--https=${httpsPort}`);
+    if (servePath !== '/') args.push(`--set-path=${servePath}`);
+  }
+  args.push(upstreamUrl);
 
   try {
     const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 30_000);
     await runner({
       command,
-      args,
+      args: tailscaleCommandArgs(params, args),
       env,
       timeoutMs,
       ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
     });
   } catch (error) {
-    if (!(error instanceof TailscaleCommandError)) {
+    if (!(error instanceof TailscaleCommandError) || error.failure) {
       throw error;
     }
 
@@ -509,6 +579,7 @@ export async function runTailscaleFunnelEnable(
     {
       env,
       tailscaleBin: command,
+      socketPath: params.socketPath,
       timeoutMs: params.timeoutMs,
       deadline: params.deadline,
       signal: params.signal,
@@ -517,25 +588,18 @@ export async function runTailscaleFunnelEnable(
       runCommand: runner,
       resolveTailscaleBin: async () => command,
     },
-  ).catch(() => '');
+  ).catch(ignoreUnavailableStatus);
 
   return {
     approvalUrl: null,
-    httpsUrl: tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, upstreamUrl),
+    httpsUrl: tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+      serveStatusText: status,
+      internalServerUrl: upstreamUrl,
+      servePath,
+      httpsPort,
+    }),
     rawStatus: status,
   };
-}
-
-export async function runTailscaleFunnelReset(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<void> {
-  const command = await resolveCommand(params, deps);
-  const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 15_000);
-  await (deps.runCommand ?? runCommand)({
-    command,
-    args: ['funnel', 'reset'],
-    env: sanitizeTailscaleEnv(params.env ?? process.env),
-    timeoutMs,
-    ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
-  });
 }
 
 export async function runTailscaleServeEnable(
@@ -543,7 +607,7 @@ export async function runTailscaleServeEnable(
   deps: RunTailscaleDeps = {},
 ): Promise<RunTailscaleServeEnableResult> {
   const command = await resolveCommand(params, deps);
-  const runner = deps.runCommand ?? runCommand;
+  const runner = resolveCommandRunner(deps);
   const env = sanitizeTailscaleEnv(params.env ?? process.env);
   const upstreamUrl = String(params.upstreamUrl ?? '').trim();
   const servePath = String(params.servePath ?? '/').trim() || '/';
@@ -564,13 +628,13 @@ export async function runTailscaleServeEnable(
     const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 30_000);
     await runner({
       command,
-      args,
+      args: tailscaleCommandArgs(params, args),
       env,
       timeoutMs,
       ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
     });
   } catch (error) {
-    if (!(error instanceof TailscaleCommandError)) {
+    if (!(error instanceof TailscaleCommandError) || error.failure) {
       throw error;
     }
 
@@ -590,6 +654,7 @@ export async function runTailscaleServeEnable(
     {
       env,
       tailscaleBin: command,
+      socketPath: params.socketPath,
       timeoutMs: params.timeoutMs,
       deadline: params.deadline,
       signal: params.signal,
@@ -598,7 +663,7 @@ export async function runTailscaleServeEnable(
       runCommand: runner,
       resolveTailscaleBin: async () => command,
     },
-  ).catch(() => '');
+  ).catch(ignoreUnavailableStatus);
 
   return {
     approvalUrl: null,
@@ -611,94 +676,6 @@ export async function runTailscaleServeEnable(
       }),
     rawStatus: status,
   };
-}
-
-export async function runTailscaleServeDisable(
-  params: RunTailscaleServeDisableParams = {},
-  deps: RunTailscaleDeps = {},
-): Promise<void> {
-  const command = await resolveCommand(params, deps);
-  const runner = deps.runCommand ?? runCommand;
-  const env = sanitizeTailscaleEnv(params.env ?? process.env);
-  const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 15_000);
-  const servePath = String(params.servePath ?? '/').trim() || '/';
-  const httpsPort = normalizeServeHttpsPort(params.httpsPort);
-  const args = ['serve', `--https=${httpsPort}`];
-  if (servePath !== '/') {
-    args.push(`--set-path=${servePath}`);
-  }
-  args.push('off');
-
-  await runner({
-    command,
-    args,
-    env,
-    timeoutMs,
-    ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
-  });
-}
-
-export async function runTailscaleServeReset(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<void> {
-  const command = await resolveCommand(params, deps);
-  const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 15_000);
-  await (deps.runCommand ?? runCommand)({
-    command,
-    args: ['serve', 'reset'],
-    env: sanitizeTailscaleEnv(params.env ?? process.env),
-    timeoutMs,
-    ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
-  });
-}
-
-export async function runTailscaleOperatorObservation(
-  params: RunTailscaleParams & Readonly<{ daemonUsername: string | null }>,
-  deps: RunTailscaleDeps = {},
-): Promise<MachineAdminAccessObservationV1['tailscaledOperator']> {
-  const signal = resolveTailscaleCommandSignal(params);
-  signal?.throwIfAborted();
-  if (!params.daemonUsername) return { authorization: 'unknown' };
-  try {
-    const command = await resolveCommand(params, deps);
-    const result = await resolveCommandRunner(deps)({ command,
-      args: tailscaleCommandArgs(params, ['debug', 'prefs']), env: sanitizeTailscaleEnv(params.env ?? process.env),
-      timeoutMs: resolveTailscaleCommandTimeoutMs(params, 750), ...(signal ? { signal } : {}),
-    });
-    signal?.throwIfAborted();
-    if (result.exitCode !== 0) return { authorization: 'unknown' };
-    const prefs: unknown = JSON.parse(result.stdout);
-    if (typeof prefs !== 'object' || prefs === null || Array.isArray(prefs)
-      || !('OperatorUser' in prefs) || typeof prefs.OperatorUser !== 'string') return { authorization: 'unknown' };
-    return { authorization: prefs.OperatorUser === params.daemonUsername ? 'allowed' : 'denied' };
-  } catch {
-    signal?.throwIfAborted();
-    return { authorization: 'unknown' };
-  }
-}
-
-function resolveCommandRunner(deps: RunTailscaleDeps): TailscaleCommandRunner {
-  return async request => {
-    const result = await (deps.runCommand ?? runCommand)(request);
-    // SSH/process adapters may return a non-zero result rather than reject it.
-    if (result.exitCode !== 0) throw new TailscaleCommandError('Tailscale command failed.', result);
-    return result;
-  };
-}
-
-function tailscaleCommandArgs(params: RunTailscaleParams, args: readonly string[]): readonly string[] {
-  if (params.socketPath === undefined) return args;
-  if (params.socketPath.length === 0 || params.socketPath.includes('\0')) throw new TypeError('Invalid tailscaled socket path');
-  return [`--socket=${params.socketPath}`, ...args];
-}
-
-export async function runTailscaleCurrentProfileId(
-  params: RunTailscaleParams = {},
-  deps: RunTailscaleDeps = {},
-): Promise<string | null> {
-  const signal = resolveTailscaleCommandSignal(params);
-  signal?.throwIfAborted();
-  const output = await runTextCommand({ ...params, args: ['switch', '--list', '--json'] }, deps);
-  signal?.throwIfAborted();
-  return parseTailscaleCurrentProfileId(JSON.parse(output));
 }
 
 async function runTailscaleHttpsRouteDisable(
@@ -725,9 +702,28 @@ async function runTailscaleHttpsRouteDisable(
   });
 }
 
+export async function runTailscaleServeDisable(
+  params: RunTailscaleServeDisableParams = {},
+  deps: RunTailscaleDeps = {},
+): Promise<void> {
+  await runTailscaleHttpsRouteDisable('serve', params, deps);
+}
+
 export async function runTailscaleFunnelDisable(
   params: RunTailscaleServeDisableParams = {},
   deps: RunTailscaleDeps = {},
 ): Promise<void> {
   await runTailscaleHttpsRouteDisable('funnel', params, deps);
+}
+
+export async function runTailscaleServeReset(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<void> {
+  const command = await resolveCommand(params, deps);
+  const timeoutMs = resolveTailscaleCommandTimeoutMs(params, 15_000);
+  await resolveCommandRunner(deps)({
+    command,
+    args: tailscaleCommandArgs(params, ['serve', 'reset']),
+    env: sanitizeTailscaleEnv(params.env ?? process.env),
+    timeoutMs,
+    ...(resolveTailscaleCommandSignal(params) ? { signal: resolveTailscaleCommandSignal(params) } : {}),
+  });
 }

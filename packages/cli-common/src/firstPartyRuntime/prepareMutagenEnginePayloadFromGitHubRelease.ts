@@ -2,7 +2,6 @@ import { createHappierTempDir, removeHappierTempDirAsync } from '../tempDirs/cre
 import { join } from 'node:path';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
 
@@ -54,23 +53,8 @@ export async function prepareMutagenEnginePayloadFromGitHubRelease(params: Reado
   const scratchRoot = createHappierTempDir({ purpose: 'mutagen-engine' });
 
   try {
-    const release = await fetchGitHubReleaseByTag({
-      githubRepo: source.githubRepo,
-      tag: releaseTag,
-      githubToken: source.githubToken,
-      userAgent: source.userAgent,
-    }).catch((error) => {
-      throw artifactError(`failed to resolve Mutagen engine release ${source.githubRepo}@${releaseTag}`, error);
-    });
-    const releaseTagName = readStringField(release, 'tag_name');
-    if (releaseTagName && releaseTagName !== releaseTag) {
-      throw new MutagenEngineArtifactError(
-        'mutagen_engine_artifact_untrusted',
-        `Mutagen engine release response tag ${releaseTagName} does not match ${releaseTag}.`,
-      );
-    }
     const bundle = resolveMutagenEngineReleaseAssetBundle({
-      assets: readField(release, 'assets'),
+      githubRepo: source.githubRepo,
       engineVersion,
       targetTriple: target,
     });
@@ -122,7 +106,7 @@ function resolveReleaseSource(params: Readonly<{
   githubRepo?: string;
   githubToken?: string;
   userAgent?: string;
-}>): Readonly<{ githubRepo: string; githubToken: string; userAgent: string }> {
+}>): Readonly<{ githubRepo: string; userAgent: string }> {
   const source = params.artifactSource?.kind === 'github-release' ? params.artifactSource : null;
   return {
     githubRepo: normalize(
@@ -132,16 +116,6 @@ function resolveReleaseSource(params: Readonly<{
         ?? process.env.HAPPIER_FIRST_PARTY_RELEASE_REPO
         ?? DEFAULT_MUTAGEN_ENGINE_RELEASE_REPOSITORY,
       DEFAULT_MUTAGEN_ENGINE_RELEASE_REPOSITORY,
-    ),
-    githubToken: normalize(
-      source?.githubToken
-        ?? params.githubToken
-        ?? process.env.HAPPIER_MUTAGEN_ENGINE_RELEASE_TOKEN
-        ?? process.env.HAPPIER_GITHUB_TOKEN
-        ?? process.env.GITHUB_TOKEN
-        ?? process.env.GH_TOKEN
-        ?? '',
-      '',
     ),
     userAgent: normalize(
       source?.userAgent
@@ -156,17 +130,6 @@ function resolveReleaseSource(params: Readonly<{
 function normalize(value: unknown, fallback: string): string {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
-}
-
-function readField(value: unknown, key: string): unknown {
-  return value != null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)[key]
-    : undefined;
-}
-
-function readStringField(value: unknown, key: string): string {
-  const field = readField(value, key);
-  return typeof field === 'string' ? field.trim() : '';
 }
 
 function artifactError(context: string, error: unknown): MutagenEngineArtifactError {

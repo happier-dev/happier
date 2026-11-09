@@ -7,7 +7,7 @@ import { syncBuiltinESMExports } from 'node:module';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { installVersionedPayload, resolveInstalledFirstPartyComponentPaths, writeHappierCliChoice } from '../../firstPartyRuntime/index.js';
+import { readDesktopInstallations, readDesktopResourceOwnership, resolveFirstPartyInstallLayout, installVersionedPayload, resolveInstalledFirstPartyComponentPaths, writeHappierCliChoice } from '../../firstPartyRuntime/index.js';
 import {
   DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   createLocalHappierJsonExecutor,
@@ -114,6 +114,26 @@ describe('local command acquisition lifecycle', () => {
 });
 
 describe('ensureLocalFirstPartyComponentCommand', () => {
+  it('registers a Desktop consumer when reusing a managed CLI, while retaining its separate install home', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'cli-desktop-consumer-'));
+    const processEnv = { ...process.env, HAPPIER_HOME_DIR: join(rootDir, 'runtime'), HAPPIER_FIRST_PARTY_INSTALL_HOME: join(rootDir, 'install'),
+      HAPPIER_DESKTOP_BUNDLE_ID: 'dev.happier.app', HAPPIER_DESKTOP_STATE_DIR: join(rootDir, 'desktop'), HAPPIER_STACK_REPO_DIR: join(rootDir, 'no-repo') };
+    const payloadRoot = join(rootDir, 'payload');
+    mkdirSync(join(payloadRoot, 'package-dist'), { recursive: true });
+    writeFileSync(join(payloadRoot, process.platform === 'win32' ? 'happier.exe' : 'happier'), 'cli');
+    writeFileSync(join(payloadRoot, 'package-dist', 'index.mjs'), 'export {};');
+    try {
+      await installVersionedPayload({ componentId: 'happier-cli', versionId: '1.0.0', payloadRoot, processEnv, desktopBundleId: 'dev.happier.preview' });
+      expect(resolveExplicitOrInstalledLocalFirstPartyCommand({ componentId: 'happier-cli', processEnv, releaseRing: 'stable' })?.provenance).toBe('managed');
+      const command = await ensureLocalFirstPartyComponentCommand({ componentId: 'happier-cli', processEnv, releaseRing: 'stable' });
+      const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', processEnv });
+      expect((await readDesktopResourceOwnership(layout.installRoot))?.consumers).toEqual(['dev.happier.app', 'dev.happier.preview']);
+      expect(await readDesktopInstallations({ bundleId: 'dev.happier.app', stateDir: processEnv.HAPPIER_DESKTOP_STATE_DIR })).toEqual([
+        { happyHomeDir: processEnv.HAPPIER_HOME_DIR, firstPartyInstallHome: processEnv.HAPPIER_FIRST_PARTY_INSTALL_HOME, cliPath: command },
+      ]);
+    } finally { rmSync(rootDir, { recursive: true, force: true }); }
+  });
+
   it('returns an explicit env-var command without attempting install', async () => {
     const preparePayload = vi.fn();
     const installPayload = vi.fn();

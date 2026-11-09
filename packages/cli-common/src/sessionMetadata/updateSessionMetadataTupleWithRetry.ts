@@ -1,5 +1,6 @@
-import { SessionSharedMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionSharedMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectSessionDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplayProjectionV1';
+import { projectUsageSessionTimingV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { SessionDisplayProjectionV1Schema, SessionSharedDisplayEnvelopeV1Schema, SessionOwnerDisplayEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionMetadataTuplePatchV1, SessionMetadataOwnerMigrationPatchV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionSharedMetadataV1, SessionDisplayProjectionV1, SessionSharedDisplayV1, SessionOwnerDisplayV1, SessionSharedDisplayEnvelopeV1, SessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol';
 
@@ -69,7 +70,7 @@ export type SessionMetadataTupleMutationV1<M, A> =
   | Readonly<{
       kind: 'metadata';
       expectedMetadataRevision?: number;
-      update: (metadata: M) => M | Promise<M>;
+      update: (metadata: M, metadataRevision?: number) => M | Promise<M>;
     }>
   | Readonly<{
       kind: 'agentState';
@@ -78,7 +79,8 @@ export type SessionMetadataTupleMutationV1<M, A> =
   /**
    * The owner's explicit request to split a layout-0 tuple into the canonical
    * layout-1 owner/shared tuple without changing any value (PA-L2). It commits
-   * through the same `owner_migration` CAS as a value-changing owner mutation.
+   * through the value-preserving `owner_migration` CAS. Ordinary edits follow
+   * that split through their own layout-1 tuple CAS.
    * A tuple that is already layout 1 is complete and commits nothing; a
    * layout-0 tuple without owner currentness is refused typed, never written
    * through the legacy writer.
@@ -116,6 +118,7 @@ export type SessionMetadataOwnerMigrationCurrentnessV1 =
 export type SessionMetadataLegacyOwnerMutationRequestV1<M, A> =
   | Readonly<{
       kind: 'metadata';
+      usageTimingV1: UsageSessionTimingV1;
       current:
         SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A>;
       updatedMetadata: M;
@@ -126,6 +129,7 @@ export type SessionMetadataLegacyOwnerMutationRequestV1<M, A> =
     }>
   | Readonly<{
       kind: 'agentState';
+      usageTimingV1: UsageSessionTimingV1;
       current:
         SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A>;
       updatedAgentState: A;
@@ -147,11 +151,7 @@ export type SessionMetadataTupleMutationCommitResultV1<M, A> =
     }>;
 
 type TupleMutationError = Error & {
-  code:
-    | 'metadata_privacy_upgrade_required'
-    | 'metadata_tuple_conflict'
-    | 'session_attested_context_read_only'
-    | 'metadata_tuple_ambiguous';
+  code: SessionMetadataMutationFailureCodeV1;
   retryable: false;
   unsupportedFields?: readonly string[];
 };
@@ -166,14 +166,6 @@ function createTupleMutationError(
     retryable: false as const,
     ...(unsupportedFields ? { unsupportedFields } : {}),
   });
-}
-
-function resolveMaxAttempts(value: number | undefined): number {
-  return typeof value === 'number'
-    && Number.isFinite(value)
-    && value > 0
-      ? Math.min(10, Math.floor(value))
-      : 6;
 }
 
 /**
@@ -259,7 +251,7 @@ async function prepareDisplayProjection<M, A>(params: Readonly<{
   }
 }
 
-function applyMetadataUpdate<M>(metadata: M, update: (metadata: M) => M | Promise<M>): M | Promise<M> {
+function applyMetadataUpdate<M>(metadata: M, update: (metadata: M, metadataRevision?: number) => M | Promise<M>, metadataRevision?: number): M | Promise<M> {
   const readContext = (value: unknown): unknown => value !== null && typeof value === 'object'
     ? Reflect.get(value, 'attestedContext') : undefined;
   const initial = readContext(metadata);
@@ -276,7 +268,7 @@ function applyMetadataUpdate<M>(metadata: M, update: (metadata: M) => M | Promis
     }
     return updated;
   };
-  const updated = update(updateInput);
+  const updated = update(updateInput, metadataRevision);
   // The legacy socket writer requires synchronous callbacks to stay synchronous.
   return updated && typeof (updated as Promise<M>).then === 'function'
     ? Promise.resolve(updated).then(verify) : verify(updated as M);
@@ -399,23 +391,24 @@ async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
 }>): Promise<PreparedOwnerMutation<M, A> | null> {
   const { current, mutation, crypto } = params;
   assertReviewedMetadataRevision(current, mutation);
-  let updatedMetadata = current.value.metadata;
-  let updatedAgentState = current.value.agentState;
+  const metadata = current.value.metadata;
+  const agentState = current.value.agentState;
   if (mutation.kind === 'metadata') {
-    updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update);
-    if (tupleValuesEqual(updatedMetadata, current.value.metadata)) {
+    const updatedMetadata = await applyMetadataUpdate(metadata, mutation.update, current.metadataVersion);
+    if (tupleValuesEqual(updatedMetadata, metadata)) {
       return null;
     }
   } else if (mutation.kind === 'agentState') {
-    const baseAgentState = current.value.agentState ?? ({} as A);
-    updatedAgentState = await mutation.update(baseAgentState);
+    const baseAgentState = agentState ?? ({} as A);
+    const updatedAgentState = await mutation.update(baseAgentState);
     if (tupleValuesEqual(updatedAgentState, baseAgentState)) {
       return null;
     }
   }
-  // An explicit `ownerMigration` keeps every value: the split is the change.
+  // Migration always preserves the source values. The server validates this
+  // privacy split independently of the subsequent ordinary edit.
   const createdOwnerMetadata = createSessionOwnerMetadataV1({
-    metadata: updatedMetadata,
+    metadata,
   });
   if (!createdOwnerMetadata.ok) {
     throw createTupleMutationError(
@@ -427,8 +420,8 @@ async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
     );
   }
   const sharedMetadata = projectSessionSharedMetadataV1({
-    metadata: updatedMetadata,
-    agentState: updatedAgentState,
+    metadata,
+    agentState,
   });
   const displayProjectionV1 = await prepareDisplayProjection({
     sharedMetadata, ownerMetadata: createdOwnerMetadata.ownerMetadata,
@@ -447,7 +440,7 @@ async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
       }) as unknown as M,
       sharedMetadata,
       ownerMetadata: createdOwnerMetadata.ownerMetadata,
-      agentState: updatedAgentState,
+      agentState,
     },
     displayProjectionV1,
     ...(mutation.kind === 'ensureDisplayProjection'
@@ -455,9 +448,9 @@ async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
     sharedMetadataCiphertext: await crypto.encryptPayload(sharedMetadata),
     ownerMetadataEnvelope:
       await crypto.encodeOwnerMetadata(createdOwnerMetadata.ownerMetadata),
-    agentStateCiphertext: updatedAgentState === null
+    agentStateCiphertext: agentState === null
       ? null
-      : await crypto.encryptPayload(updatedAgentState),
+      : await crypto.encryptPayload(agentState),
   };
 }
 
@@ -468,6 +461,7 @@ function buildOwnerMigrationPatchV1<M, A>(params: Readonly<{
 }>): SessionMetadataOwnerMigrationPatchV1 {
   return {
     mode: 'owner_migration',
+    usageTimingV1: projectUsageSessionTimingV1(params.prepared.value),
     ...params.currentness,
     source: {
       metadataLayoutVersion: 0,
@@ -570,7 +564,7 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
         'metadata_privacy_upgrade_required',
       );
     }
-    const updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update);
+    const updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update, current.metadataVersion);
     if (tupleValuesEqual(updatedMetadata, current.value.metadata)) {
       return null;
     }
@@ -601,7 +595,7 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
   let updatedMetadata = current.value.metadata;
   let updatedAgentState = current.value.agentState;
   if (mutation.kind === 'metadata') {
-    updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update);
+    updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update, current.metadataVersion);
     if (params.projectKey === undefined && tupleValuesEqual(updatedMetadata, current.value.metadata)) {
       return null;
     }
@@ -693,6 +687,7 @@ function buildPreparedSessionMetadataTuplePatchV1<M, A>(
   if (current.mode === 'owner' && prepared.mode === 'owner') {
     return {
       mode: 'owner',
+      usageTimingV1: projectUsageSessionTimingV1(prepared.value),
       metadataLayoutVersion: 1,
       displayProjectionV1: prepared.displayProjectionV1,
       expectedOwnerMetadata: current.ownerMetadataEnvelope,
@@ -713,6 +708,7 @@ function buildPreparedSessionMetadataTuplePatchV1<M, A>(
   ) {
     return {
       mode: 'shared_editor',
+      usageTimingV1: projectUsageSessionTimingV1({}),
       metadataLayoutVersion: 1,
       displayProjectionV1: prepared.displayProjectionV1,
       sharedMetadata: {
@@ -749,14 +745,15 @@ export async function prepareSessionMetadataTuplePatchV1<M, A>(
  * This owner applies the requested semantic mutation, splits owner/shared
  * projections, preserves an unchanged exact owner envelope, encrypts the
  * rebuilt tuple and its recipient-scoped display through typed client callbacks,
- * serializes one CAS PATCH, and
+ * serializes each CAS PATCH, and
  * reapplies the same semantic mutation after an explicit conflict refresh.
  * Transport adapters only open/seal/encrypt, commit, refetch, and update state.
  *
  * Ordinary layout 0 delegates to the compatible legacy owner unless owner
  * migration currentness is available, in which case the mutation commits the
- * layout-0 → layout-1 split. An explicit `ownerMigration` request performs that
- * split with no value change. `ensureDisplayProjection` additionally repairs an
+ * value-preserving layout-0 → layout-1 split, then the ordinary edit at the next
+ * revision. An explicit `ownerMigration` request completes after the split.
+ * `ensureDisplayProjection` additionally repairs an
  * unavailable display from an authorized full-owner snapshot, requiring actual
  * Account-material currentness even for layout 1. Its leaf availability is
  * read-local proof, not a new authority or a wire field. Ordinary owner and
@@ -775,15 +772,13 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
     refreshAfterConflict?: (
       current: SessionMetadataTupleMutationSnapshotV1<M, A>,
     ) => Promise<SessionMetadataTupleMutationSnapshotV1<M, A>>;
-    waitBeforeRetry?: (context: Readonly<{
-      attempt: number;
-      nextAttempt: number;
-      maxAttempts: number;
-    }>) => Promise<void>;
     isAmbiguousCommitError?: (error: unknown) => boolean;
     mutateLegacy?: (
       request: SessionMetadataLegacyOwnerMutationRequestV1<M, A>,
-    ) => Promise<SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A>>;
+    ) => Promise<SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A> | Readonly<{
+      result: 'conflict';
+      currentSnapshot: SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A>;
+    }>>;
     ownerMigrationCurrentness?:
       SessionMetadataOwnerMigrationCurrentnessV1;
     resolveOwnerMigrationCurrentness?: () =>
@@ -794,11 +789,10 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
      * performs another local preparation, refresh, or commit.
      */
     assertCurrent?: () => void;
-    maxAttempts?: number;
   }>,
 ): Promise<SessionMetadataTupleMutationSnapshotV1<M, A>> {
-  const maxAttempts = resolveMaxAttempts(params.maxAttempts);
   let current = params.initialSnapshot;
+  let completedOwnerMigration = false;
   assertReviewedMetadataRevision(current, params.mutation);
   if (params.projectKey !== undefined && current.mode !== 'owner') {
     throw createTupleMutationError('Project publication requires a layout-one owner tuple', 'metadata_privacy_upgrade_required');
@@ -813,7 +807,7 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
       || params.resolveOwnerMigrationCurrentness
     )
   ) {
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    while (current.mode === 'legacy_owner') {
       params.assertCurrent?.();
       const source:
         SessionMetadataLegacyOwnerTupleMutationSnapshotV1<M, A> =
@@ -872,20 +866,15 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
             refreshed,
           })
         ) {
-          return refreshed;
+          current = refreshed;
+          completedOwnerMigration = true;
+          break;
         }
         if (
           refreshed?.mode === 'legacy_owner'
           && tupleSourceIsExact(source, refreshed)
-          && attempt < maxAttempts
         ) {
           current = refreshed;
-          params.assertCurrent?.();
-          await params.waitBeforeRetry?.({
-            attempt,
-            nextAttempt: attempt + 1,
-            maxAttempts,
-          });
           params.assertCurrent?.();
           continue;
         }
@@ -901,11 +890,13 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
             'metadata_privacy_upgrade_required',
           );
         }
-        return buildCommittedOwnerSnapshot({
+        current = buildCommittedOwnerSnapshot({
           prepared,
           metadataVersion: result.metadataVersion,
           agentStateVersion: result.agentStateVersion,
         });
+        completedOwnerMigration = true;
+        break;
       }
       params.assertCurrent?.();
       const refreshed = result.currentSnapshot
@@ -924,7 +915,9 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
           refreshed,
         })
       ) {
-        return refreshed;
+        current = refreshed;
+        completedOwnerMigration = true;
+        break;
       }
       if (!refreshed) {
         throw createTupleMutationError(
@@ -936,67 +929,80 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
         current = refreshed;
         break;
       }
-      if (attempt >= maxAttempts) {
-        throw createTupleMutationError(
-          'Metadata tuple update conflict',
-          'metadata_tuple_conflict',
-        );
-      }
       current = refreshed;
-      params.assertCurrent?.();
-      await params.waitBeforeRetry?.({
-        attempt,
-        nextAttempt: attempt + 1,
-        maxAttempts,
-      });
       params.assertCurrent?.();
     }
   }
 
-  if (current.mode === 'legacy_owner') {
-    if (params.mutation.kind === 'ownerMigration' || params.mutation.kind === 'ensureDisplayProjection') {
-      throw createTupleMutationError(
-        'Session metadata owner migration currentness is unavailable',
-        'metadata_privacy_upgrade_required',
-      );
-    }
-    if (!params.mutateLegacy) {
-      throw createTupleMutationError(
-        'Legacy Session metadata mutation delegate is unavailable',
-        'metadata_privacy_upgrade_required',
-      );
-    }
+  if (completedOwnerMigration && (params.mutation.kind === 'ownerMigration' || params.mutation.kind === 'ensureDisplayProjection')) {
+    return current;
+  }
+  // An acknowledged or exact recovered value-preserving split advances a
+  // reviewed edit's revision. A changed competing tuple still conflicts.
+  const mutation = completedOwnerMigration && params.mutation.kind === 'metadata'
+    && params.mutation.expectedMetadataRevision !== undefined
+    ? { ...params.mutation, expectedMetadataRevision: current.metadataVersion }
+    : params.mutation;
+
+  while (true) {
     params.assertCurrent?.();
-    if (params.mutation.kind === 'metadata') {
-      const mutation = params.mutation;
-      const updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update);
-      if (tupleValuesEqual(updatedMetadata, current.value.metadata)) {
+    if (current.mode === 'legacy_owner') {
+      assertReviewedMetadataRevision(current, mutation);
+      if (params.mutation.kind === 'ownerMigration' || params.mutation.kind === 'ensureDisplayProjection') {
+        throw createTupleMutationError(
+          'Session metadata owner migration currentness is unavailable',
+          'metadata_privacy_upgrade_required',
+        );
+      }
+      if (!params.mutateLegacy) {
+        throw createTupleMutationError(
+          'Legacy Session metadata mutation delegate is unavailable',
+          'metadata_privacy_upgrade_required',
+        );
+      }
+      params.assertCurrent?.();
+      if (params.mutation.kind === 'metadata') {
+        const mutation = params.mutation;
+        const updatedMetadata = await applyMetadataUpdate(current.value.metadata, mutation.update, current.metadataVersion);
+        if (tupleValuesEqual(updatedMetadata, current.value.metadata)) {
+          return current;
+        }
+        params.assertCurrent?.();
+        const result = await params.mutateLegacy({
+          kind: 'metadata',
+          usageTimingV1: projectUsageSessionTimingV1({ metadata: updatedMetadata, agentState: current.value.agentState }),
+          current,
+          updatedMetadata,
+          mutation: { ...mutation, update: (metadata, metadataRevision) => applyMetadataUpdate(metadata, mutation.update, metadataRevision) },
+        });
+        params.assertCurrent?.();
+        if ('result' in result) {
+          current = result.currentSnapshot;
+          continue;
+        }
+        return result;
+      }
+      const baseAgentState = current.value.agentState ?? ({} as A);
+      const updatedAgentState = await params.mutation.update(baseAgentState);
+      if (tupleValuesEqual(updatedAgentState, baseAgentState)) {
         return current;
       }
       params.assertCurrent?.();
-      return await params.mutateLegacy({
-        kind: 'metadata',
+      const result = await params.mutateLegacy({
+        kind: 'agentState',
+        usageTimingV1: projectUsageSessionTimingV1({ metadata: current.value.metadata, agentState: updatedAgentState }),
         current,
-        updatedMetadata,
-        mutation: { ...mutation, update: metadata => applyMetadataUpdate(metadata, mutation.update) },
+        updatedAgentState,
+        mutation: params.mutation,
       });
+      params.assertCurrent?.();
+      if ('result' in result) {
+        current = result.currentSnapshot;
+        continue;
+      }
+      return result;
     }
-    const baseAgentState = current.value.agentState ?? ({} as A);
-    const updatedAgentState = await params.mutation.update(baseAgentState);
-    if (tupleValuesEqual(updatedAgentState, baseAgentState)) {
-      return current;
-    }
-    params.assertCurrent?.();
-    return await params.mutateLegacy({
-      kind: 'agentState',
-      current,
-      updatedAgentState,
-      mutation: params.mutation,
-    });
-  }
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    params.assertCurrent?.();
     if (params.mutation.kind === 'ensureDisplayProjection') {
       const ownerCurrentness = await params.resolveOwnerMigrationCurrentness?.() ?? params.ownerMigrationCurrentness;
       if (current.mode !== 'owner' || !ownerCurrentness) {
@@ -1009,7 +1015,7 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
       | PreparedSharedEditorMutation<M>
       | null = await prepareTupleMutation({
       current,
-      mutation: params.mutation,
+      mutation,
       crypto: params.crypto,
       ...(params.projectKey !== undefined ? { projectKey: params.projectKey } : {}),
     });
@@ -1060,15 +1066,8 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
       if (
         refreshed
         && tupleSourceIsExact(current, refreshed)
-        && attempt < maxAttempts
       ) {
         current = refreshed;
-        params.assertCurrent?.();
-        await params.waitBeforeRetry?.({
-          attempt,
-          nextAttempt: attempt + 1,
-          maxAttempts,
-        });
         params.assertCurrent?.();
         continue;
       }
@@ -1107,15 +1106,8 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
     }
 
     params.assertCurrent?.();
-    if (attempt >= maxAttempts) break;
-    // Read the retry snapshot after contention backoff. Waiting after the read
-    // makes each retry stale again while the runner keeps publishing.
-    await params.waitBeforeRetry?.({
-      attempt,
-      nextAttempt: attempt + 1,
-      maxAttempts,
-    });
-    params.assertCurrent?.();
+    // Reacquire after the failed commit, immediately before preparing again.
+    // The containing operation owns cancellation; metadata adds no cutoff.
     const next: SessionMetadataTupleMutationSnapshotV1<M, A> | undefined =
       result.currentSnapshot
       ?? await (async (): Promise<
@@ -1139,8 +1131,4 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
     params.assertCurrent?.();
   }
 
-  throw createTupleMutationError(
-    'Metadata tuple update conflict',
-    'metadata_tuple_conflict',
-  );
 }

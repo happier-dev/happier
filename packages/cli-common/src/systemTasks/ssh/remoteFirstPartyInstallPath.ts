@@ -4,6 +4,8 @@ import { resolveRetainedVersionIds } from '../../firstPartyRuntime/retentionPoli
 import { FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS } from '../../firstPartyRuntime/versionUse.js';
 import { warnFirstPartyRetentionObservationUnavailable } from '../../firstPartyRuntime/pruneRetainedVersions.js';
 import { compareVersions } from '../../update/compareVersions.js';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, assertValidFirstPartyVersionId } from '../../firstPartyRuntime/installLayoutContract.js';
+import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 import {
   getFirstPartyComponentCatalogEntry,
@@ -99,12 +101,24 @@ export function resolveRemoteFirstPartyInstallLayout(params: Readonly<{
 export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
   layout: RemoteFirstPartyInstallLayout;
   payloadRootExpression: string;
+  /** CLI payloads carry their existing canonical installer; other components retain shell promotion. */
+  cliInstall?: Readonly<{ componentId: 'happier-cli' | 'happier-daemon'; channel: PublicReleaseRingId; versionId: string }>;
 }>): string {
   const payloadRootExpression = String(params.payloadRootExpression ?? '').trim();
   if (!payloadRootExpression) {
     throw new Error('Remote first-party payload root is required.');
   }
   const layout = params.layout;
+  if (params.cliInstall) {
+    assertValidFirstPartyVersionId(params.cliInstall.versionId);
+    const binary = `${payloadRootExpression}${layout.binaryPath.slice(layout.currentPath.length)}`;
+    return [
+      'set -eu',
+      `test -f ${binary}`,
+      `chmod +x ${binary}`,
+      `${FIRST_PARTY_INSTALL_HOME_ENV_KEY}=${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} ${binary} self __install-payload --component ${params.cliInstall.componentId} --payload-root ${payloadRootExpression} --version ${params.cliInstall.versionId} --channel ${params.cliInstall.channel}`,
+    ].join('; ');
+  }
   const versionsDir = quoteRemotePathWithHomeExpansion(layout.versionsDir);
   const versionDir = quoteRemotePathWithHomeExpansion(layout.versionDir);
   const currentPath = quoteRemotePathWithHomeExpansion(layout.currentPath);
@@ -227,5 +241,5 @@ export function normalizeRemoteReleaseArch(value: unknown): 'x64' | 'arm64' {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'x86_64' || normalized === 'amd64' || normalized === 'x64') return 'x64';
   if (normalized === 'aarch64' || normalized === 'arm64') return 'arm64';
-  throw new Error(`Unsupported remote bootstrap architecture: ${normalized || 'unknown'}`);
+  throw new SystemTaskExecutionError('guest_architecture_unsupported', 'Unsupported remote bootstrap architecture.');
 }

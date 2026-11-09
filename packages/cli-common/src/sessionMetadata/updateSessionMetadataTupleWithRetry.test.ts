@@ -21,6 +21,7 @@ import {
   prepareSessionMetadataTuplePatchV1,
   updateSessionMetadataTupleWithRetry,
   type SessionMetadataLegacyOwnerTupleMutationSnapshotV1,
+  type SessionMetadataOwnerTupleMutationSnapshotV1,
   type SessionMetadataTupleMutationSnapshotV1,
 } from './updateSessionMetadataTupleWithRetry.js';
 
@@ -34,7 +35,7 @@ function ownerSnapshot(params: Readonly<{
   ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1;
   agentStateVersion?: number;
   agentStateCiphertext?: string | null;
-}> = {}): SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState> {
+}> = {}): SessionMetadataOwnerTupleMutationSnapshotV1<Metadata, AgentState> {
   const metadata = params.metadata ?? {
     path: '/workspace',
     host: 'local',
@@ -148,6 +149,52 @@ function legacyOwnerSnapshot(params: Readonly<{
 }
 
 describe('updateSessionMetadataTupleWithRetry', () => {
+  it('publishes timing from the winning state attempt without disclosing request content', async () => {
+    const initialSnapshot = ownerSnapshot({ agentState: { requests: { privateId: { tool: 'Private tool',
+      arguments: { secret: 'Private arguments' }, createdAt: 10 } } } });
+    const refreshed = ownerSnapshot({ metadataVersion: 3, agentStateVersion: 5,
+      agentState: { requests: { privateId: { tool: 'Private tool', arguments: {}, createdAt: 20 } } } });
+    const patches: SessionMetadataTuplePatchV1[] = [];
+    await updateSessionMetadataTupleWithRetry({ initialSnapshot, crypto: cryptoAdapter(),
+      mutation: { kind: 'agentState', update: state => ({ ...state, requests: {}, completedRequests: {
+        privateId: { ...(state.requests as Record<string, object>).privateId, completedAt: 80, status: 'approved' },
+      } }) },
+      commit: async patch => { patches.push(patch); return patches.length === 1 ? { result: 'conflict' as const }
+        : { result: 'success' as const, metadataVersion: 4, agentStateVersion: 6 }; },
+      refreshAfterConflict: async () => refreshed,
+    });
+    expect(patches.map(patch => Reflect.get(patch, 'usageTimingV1'))).toEqual([
+      { v: 1, metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: 10, maxMs: 80 } },
+      { v: 1, metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: 20, maxMs: 80 } },
+    ]);
+    expect(JSON.stringify(patches.map(patch => Reflect.get(patch, 'usageTimingV1')))).not.toContain('privateId');
+  });
+
+  it('leaves owner timing unknown for a shared-only editor', async () => {
+    const owner = ownerSnapshot();
+    const patch = await prepareSessionMetadataTuplePatchV1({ current: {
+      mode: 'shared_editor', metadataLayoutVersion: 1, metadataVersion: 2,
+      sharedMetadataCiphertext: 'shared', value: { metadata: owner.value.sharedMetadata,
+        sharedMetadata: owner.value.sharedMetadata, ownerMetadata: null, agentState: null },
+    }, mutation: { kind: 'metadata', update: metadata => ({ ...metadata, summary: { text: 'changed', updatedAt: 4 } }) },
+      crypto: cryptoAdapter(),
+    });
+    expect(Reflect.get(patch ?? {}, 'usageTimingV1')).toEqual({ v: 1, metadata: null, agentState: null });
+  });
+
+  it('carries timing on the legacy mutation callback from the exact prepared value', async () => {
+    const initialSnapshot = legacyOwnerSnapshot({ metadata: { path: '/repo', host: 'host' },
+      metadataVersion: 1, metadataCiphertext: 'legacy', agentStateVersion: 1,
+      agentState: { requests: { pending: { tool: 'Private tool', turnId: 'turn-private', arguments: {}, createdAt: 10 } } } });
+    let timing: unknown;
+    await updateSessionMetadataTupleWithRetry({ initialSnapshot, crypto: cryptoAdapter(),
+      mutation: { kind: 'metadata', update: metadata => ({ ...metadata, name: 'changed' }) },
+      commit: async () => { throw new Error('Legacy callback owns this transport'); },
+      mutateLegacy: async request => { timing = Reflect.get(request, 'usageTimingV1'); return initialSnapshot; },
+    });
+    expect(timing).toEqual({ v: 1, metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: 10, maxMs: null } });
+  });
+
   it.each(['shared', 'owner'] as const)('withdraws display after a %s seal failure on an ordinary mutation, but refuses explicit repair', async leaf => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const crypto = displayCryptoAdapter();
@@ -408,7 +455,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     let committed: SessionMetadataTuplePatchV1 | undefined;
     await expect(updateSessionMetadataTupleWithRetry({ initialSnapshot,
       mutation: { kind: 'metadata', update: metadata => ({ ...metadata, summary: { text: 'after', updatedAt: 2 } }) },
-      crypto: displayCryptoAdapter(), maxAttempts: 1, isAmbiguousCommitError: () => true,
+      crypto: displayCryptoAdapter(), isAmbiguousCommitError: () => true,
       commit: async patch => { committed = patch; throw new Error('lost response'); },
       refreshAfterConflict: async () => {
         if (!committed || committed.mode !== 'owner') throw new Error('Expected owner patch');
@@ -1003,7 +1050,6 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       crypto,
       commit,
       refreshAfterConflict,
-      maxAttempts: 2,
     });
 
     expect(commit).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -1104,6 +1150,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
     expect(commit).toHaveBeenCalledWith({
       mode: 'shared_editor',
+      usageTimingV1: { v: 1, metadata: null, agentState: null },
       metadataLayoutVersion: 1,
       displayProjectionV1: null,
       sharedMetadata: {
@@ -1132,13 +1179,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
   });
 
-  it('uses one structural no-op rule independent of object key order', async () => {
-    const initial = ownerSnapshot({
-      metadata: {
-        host: 'local',
-        path: '/workspace',
-      },
-    });
+  it.each(['owner', 'legacy_owner'] as const)('uses one structural no-op rule independent of object key order for %s', async mode => {
+    const metadata = { host: 'local', path: '/workspace' };
+    const initial = mode === 'owner' ? ownerSnapshot({ metadata })
+      : legacyOwnerSnapshot({ metadata, metadataVersion: 2, metadataCiphertext: 'legacy-source', agentStateVersion: 4 });
     const crypto = cryptoAdapter();
     const commit = vi.fn();
 
@@ -1153,6 +1197,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       },
       crypto,
       commit,
+      ownerMigrationCurrentness: { expectedAccountEncryptionMode: 'plain', expectedAccountContentPublicKeyFingerprint: null },
     });
 
     expect(result).toBe(initial);
@@ -1160,7 +1205,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('atomically migrates a layout-0 owner while applying its metadata mutation', async () => {
+  it('migrates original layout-0 values before applying reviewed metadata at the next revision', async () => {
     const initial = legacyOwnerSnapshot({
       metadata: {
         path: '/workspace',
@@ -1174,9 +1219,9 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       agentStateCiphertext: 'agent-exact-source',
     });
     const crypto = cryptoAdapter();
-    const commit = vi.fn(async () => ({
+    const commit = vi.fn(async (patch: SessionMetadataTuplePatchV1) => ({
       result: 'success' as const,
-      metadataVersion: 3,
+      metadataVersion: patch.mode === 'owner_migration' ? 3 : 4,
       agentStateVersion: 5,
     }));
 
@@ -1184,6 +1229,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       initialSnapshot: initial,
       mutation: {
         kind: 'metadata',
+        expectedMetadataRevision: 2,
         update: (metadata) => ({
           ...metadata,
           summary: { text: 'After', updatedAt: 2 },
@@ -1199,6 +1245,8 @@ describe('updateSessionMetadataTupleWithRetry', () => {
 
     expect(commit).toHaveBeenCalledWith({
       mode: 'owner_migration',
+      usageTimingV1: { v: 1, metadata: { v: 1, minMs: null, maxMs: null },
+        agentState: { v: 1, minMs: null, maxMs: null } },
       expectedAccountEncryptionMode: 'plain',
       expectedAccountContentPublicKeyFingerprint: null,
       source: {
@@ -1217,7 +1265,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         metadataLayoutVersion: 1,
         displayProjectionV1: null,
         sharedMetadata: {
-          ciphertext: expect.stringContaining('"After"'),
+          ciphertext: expect.stringContaining('"Before"'),
         },
         ownerMetadata: expect.objectContaining({ t: 'plain' }),
         agentState: {
@@ -1225,10 +1273,15 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         },
       },
     });
+    expect(commit).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'owner',
+      sharedMetadata: { expectedVersion: 3, ciphertext: expect.stringContaining('"After"') },
+      agentState: { expectedVersion: 5, ciphertext: expect.stringContaining('"controlledByUser":false') },
+    }));
     expect(result).toMatchObject({
       mode: 'owner',
       metadataLayoutVersion: 1,
-      metadataVersion: 3,
+      metadataVersion: 4,
       agentStateVersion: 5,
       value: {
         metadata: {
@@ -1239,7 +1292,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
   });
 
-  it('atomically migrates a layout-0 owner while applying its Agent-state mutation', async () => {
+  it('migrates original layout-0 values before applying its Agent-state mutation', async () => {
     const initial = legacyOwnerSnapshot({
       metadata: {
         path: '/workspace',
@@ -1252,10 +1305,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       agentStateCiphertext: 'agent-exact-source',
     });
     const crypto = cryptoAdapter();
-    const commit = vi.fn(async () => ({
+    const commit = vi.fn(async (patch: SessionMetadataTuplePatchV1) => ({
       result: 'success' as const,
-      metadataVersion: 3,
-      agentStateVersion: 5,
+      metadataVersion: patch.mode === 'owner_migration' ? 3 : 4,
+      agentStateVersion: patch.mode === 'owner_migration' ? 5 : 6,
     }));
 
     const result = await updateSessionMetadataTupleWithRetry({
@@ -1283,9 +1336,12 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         `content-public-key-sha256:${'a'.repeat(64)}`,
       target: expect.objectContaining({
         agentState: {
-          ciphertext: expect.stringContaining('"controlledByUser":true'),
+          ciphertext: expect.stringContaining('"controlledByUser":false'),
         },
       }),
+    }));
+    expect(commit).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: 'owner', agentState: { expectedVersion: 5, ciphertext: expect.stringContaining('"controlledByUser":true') },
     }));
     expect(result).toMatchObject({
       mode: 'owner',
@@ -1432,6 +1488,11 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         result: 'success' as const,
         metadataVersion: 4,
         agentStateVersion: 5,
+      })
+      .mockResolvedValueOnce({
+        result: 'success' as const,
+        metadataVersion: 5,
+        agentStateVersion: 5,
       });
 
     await updateSessionMetadataTupleWithRetry({
@@ -1444,11 +1505,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
       resolveOwnerMigrationCurrentness,
       refreshAfterConflict: async () => refreshed,
-      maxAttempts: 2,
     });
 
     expect(resolveOwnerMigrationCurrentness).toHaveBeenCalledTimes(2);
-    expect(commit.mock.calls.map(([request]) => ({
+    expect(commit.mock.calls.filter(([request]) => request.mode === 'owner_migration').map(([request]) => ({
       mode: request.expectedAccountEncryptionMode,
       fingerprint: request.expectedAccountContentPublicKeyFingerprint,
       sourceVersion: request.source.metadata.version,
@@ -1481,13 +1541,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     > | null = null;
     const commit = vi.fn(async (patch: SessionMetadataTuplePatchV1) => {
       if (patch.mode !== 'owner_migration') {
-        throw new Error('expected owner migration');
+        return { result: 'success' as const, metadataVersion: 4, agentStateVersion: 5 };
       }
       const createdOwner = createSessionOwnerMetadataV1({
-        metadata: {
-          ...initial.value.metadata,
-          summary: { text: 'After', updatedAt: 2 },
-        },
+        metadata: initial.value.metadata,
       });
       if (!createdOwner.ok) {
         throw new Error('invalid migrated owner fixture');
@@ -1501,15 +1558,9 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         agentStateVersion: 5,
         agentStateCiphertext: patch.target.agentState.ciphertext,
         value: {
-          metadata: {
-            ...initial.value.metadata,
-            summary: { text: 'After', updatedAt: 2 },
-          },
+          metadata: initial.value.metadata,
           sharedMetadata: projectSessionSharedMetadataV1({
-            metadata: {
-              ...initial.value.metadata,
-              summary: { text: 'After', updatedAt: 2 },
-            },
+            metadata: initial.value.metadata,
             agentState: initial.value.agentState,
           }),
           ownerMetadata: createdOwner.ownerMetadata,
@@ -1538,8 +1589,22 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       isAmbiguousCommitError: (error) => error === ambiguous,
     });
 
-    expect(result).toBe(migrated);
-    expect(commit).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ metadataVersion: 4, value: { metadata: { summary: { text: 'After', updatedAt: 2 } } } });
+    expect(commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a reviewed edit conflicted when migration refreshes a changed competing tuple', async () => {
+    const initialSnapshot = legacyOwnerSnapshot({ metadata: { path: '/workspace', host: 'local' },
+      metadataVersion: 2, metadataCiphertext: 'legacy-source', agentStateVersion: 4 });
+    const commit = vi.fn(async () => ({ result: 'conflict' as const,
+      currentSnapshot: ownerSnapshot({ metadataVersion: 3, agentStateVersion: 5 }) }));
+    await expect(updateSessionMetadataTupleWithRetry({ initialSnapshot,
+      mutation: { kind: 'metadata', expectedMetadataRevision: 2,
+        update: metadata => ({ ...metadata, summary: { text: 'Reviewed', updatedAt: 2 } }) },
+      crypto: cryptoAdapter(), commit,
+      ownerMigrationCurrentness: { expectedAccountEncryptionMode: 'plain', expectedAccountContentPublicKeyFingerprint: null },
+    })).rejects.toMatchObject({ code: 'metadata_tuple_conflict' });
+    expect(commit).toHaveBeenCalledTimes(1);
   });
 
   it('replays after an ambiguous rejection only when the exact source is unchanged', async () => {
@@ -1575,7 +1640,6 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
       refreshAfterConflict: async () => initial,
       isAmbiguousCommitError: (error) => error === ambiguous,
-      maxAttempts: 2,
     });
 
     expect(commit).toHaveBeenCalledTimes(2);
@@ -1619,7 +1683,6 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         agentStateCiphertext: 'agent-different',
       }),
       isAmbiguousCommitError: (error) => error === ambiguous,
-      maxAttempts: 3,
     })).rejects.toMatchObject({
       code: 'metadata_tuple_ambiguous',
       retryable: false,
@@ -1628,19 +1691,33 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
-  it('stops after the bounded number of explicit conflict retries', async () => {
+  it('continues authoritative semantic rebases beyond the former retry ceiling', async () => {
+    const previousCeiling = 10;
+    let commits = 0;
+    const result = await updateSessionMetadataTupleWithRetry<Metadata & Pick<SessionSharedMetadataV1, 'summary'>, AgentState>({
+      initialSnapshot: ownerSnapshot(),
+      mutation: { kind: 'metadata', update: metadata => ({ ...metadata, summary: { text: 'after', updatedAt: 2 } }) },
+      crypto: cryptoAdapter(),
+      commit: async () => {
+        commits += 1;
+        return commits <= previousCeiling + 1
+          ? { result: 'conflict', currentSnapshot: ownerSnapshot({ metadataVersion: 2 + commits }) }
+          : { result: 'success', metadataVersion: 2 + commits, agentStateVersion: 4 };
+      },
+    });
+    expect(result.value.metadata.summary?.text).toBe('after');
+    expect(commits).toBe(previousCeiling + 2);
+  });
+
+  it('stops a conflicted mutation when its containing operation is cancelled', async () => {
     const crypto = cryptoAdapter();
-    const commit = vi.fn(async () => ({
-      result: 'conflict' as const,
-      currentSnapshot: ownerSnapshot({
-        metadataVersion: 3,
-        ownerMetadataEnvelope: {
-          t: 'encrypted',
-          c: 'owner-authoritative',
-        },
-        agentStateVersion: 5,
-      }),
-    }));
+    const controller = new AbortController();
+    const cancelled = new Error('containing operation cancelled');
+    const refresh = vi.fn(async () => ownerSnapshot());
+    const commit = vi.fn(async () => {
+      controller.abort(cancelled);
+      return { result: 'conflict' as const };
+    });
 
     await expect(updateSessionMetadataTupleWithRetry({
       initialSnapshot: ownerSnapshot(),
@@ -1653,12 +1730,11 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       },
       crypto,
       commit,
-      maxAttempts: 3,
-    })).rejects.toMatchObject({
-      code: 'metadata_tuple_conflict',
-      retryable: false,
-    });
+      refreshAfterConflict: refresh,
+      assertCurrent: () => controller.signal.throwIfAborted(),
+    })).rejects.toBe(cancelled);
 
-    expect(commit).toHaveBeenCalledTimes(3);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

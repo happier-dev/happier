@@ -20,12 +20,12 @@ export const MUTAGEN_ENGINE_FORK_REMOTE = 'https://github.com/happier-dev/mutage
 export const MUTAGEN_ENGINE_FORK_BRANCH = 'happier/external-stream-v1';
 /** Immutable commit on which the Happier fork implementation was based. */
 export const MUTAGEN_ENGINE_FORK_SOURCE_BASE_COMMIT = 'f5ed5c91fa6c934f5678393c56d00362d6443a1d';
-/** Exact committed fork bytes approved for the managed engine release. */
-export const MUTAGEN_ENGINE_FORK_RELEASE_COMMIT = '0139d6755f7281c84899b207de3179235afe9b9e';
+/** Immutable fork commit selected by the signed .12 release. */
+export const MUTAGEN_ENGINE_FORK_RELEASE_COMMIT = 'bee29cad5c61b10e129d9f03e25c86a00f5d7925';
 export const MUTAGEN_ENGINE_TRANSPORT_SPIKE_COMMIT = 'cd8069cf8b945dfa0d0f47d8685322c6f1e16e44';
 export const MUTAGEN_ENGINE_UPSTREAM_TAG = 'v0.18.1';
 /** Immutable first-party component policy version used for acquisition. */
-export const MUTAGEN_ENGINE_VERSION = '0.18.1-happier.11';
+export const MUTAGEN_ENGINE_VERSION = '0.18.1-happier.12';
 export const MUTAGEN_ENGINE_UPSTREAM_COMMIT = 'a225ae50aee3d7ebb59139203cb84e8a6a3ff4bf';
 export const MUTAGEN_ENGINE_GO_VERSION = '1.22.12';
 export const MUTAGEN_ENGINE_PROTOCOL_EPOCH = 'external-stream-v1';
@@ -168,51 +168,42 @@ export function resolveMutagenEngineReleaseTag(engineVersion: string): string {
 }
 
 /**
- * Resolve manager/agent archive assets from one immutable fork release.  The
- * target triple is part of the filename so an x64 host cannot accidentally
- * consume a similarly named rolling CLI archive.
+ * Resolve published assets directly from the immutable tag and release matrix.
+ * Their names are fixed by the fork workflow; metadata discovery would spend
+ * the shared anonymous REST quota without adding any artifact trust.
  */
 export function resolveMutagenEngineReleaseAssetBundle(params: Readonly<{
-  assets: unknown;
+  githubRepo: string;
   engineVersion: string;
   targetTriple: MutagenEngineArtifactTarget;
-  preferZipOnWindows?: boolean;
 }>): MutagenEngineReleaseAssetBundle {
   const version = String(params.engineVersion ?? '').trim();
   const targetTriple = params.targetTriple;
-  resolveMutagenEngineReleaseTag(version);
+  const tag = resolveMutagenEngineReleaseTag(version);
   if (!MUTAGEN_ENGINE_SUPPORTED_TARGETS.includes(targetTriple)) {
     throw new MutagenEngineArtifactError(
       'mutagen_engine_unsupported_platform',
       `Unsupported Mutagen engine target triple: ${String(targetTriple)}`,
     );
   }
-  const assets = Array.isArray(params.assets) ? params.assets : [];
-  const byName = new Map<string, MutagenEngineReleaseAsset>();
-  for (const value of assets) {
-    if (value == null || typeof value !== 'object') continue;
-    const record = value as Record<string, unknown>;
-    const name = typeof record.name === 'string' ? record.name.trim() : '';
-    const url = typeof record.browser_download_url === 'string'
-      ? record.browser_download_url.trim()
-      : typeof record.url === 'string' ? record.url.trim() : '';
-    if (name && url) byName.set(name, { name, url });
-  }
-  const base = `happier-mutagen-v${version}-${targetTriple}`;
-  const archiveNames = targetTriple.startsWith('windows-') && params.preferZipOnWindows !== false
-    ? [`${base}.zip`, `${base}.tar.gz`]
-    : [`${base}.tar.gz`, `${base}.zip`];
-  const archive = archiveNames.map((name) => byName.get(name)).find((entry): entry is MutagenEngineReleaseAsset => entry != null);
-  const checksumsName = `checksums-happier-mutagen-v${version}.txt`;
-  const checksums = byName.get(checksumsName);
-  const checksumsSig = byName.get(`${checksumsName}.minisig`);
-  if (!archive || !checksums || !checksumsSig) {
+  const githubRepo = params.githubRepo.trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(githubRepo)) {
     throw new MutagenEngineArtifactError(
       'mutagen_engine_artifact_untrusted',
-      `Mutagen engine release ${resolveMutagenEngineReleaseTag(version)} is missing the exact ${targetTriple} archive, checksums, or signature.`,
+      'Mutagen engine release repository must identify a GitHub owner/repository.',
     );
   }
-  return { version, targetTriple, archive, checksums, checksumsSig };
+  const baseUrl = `https://github.com/${githubRepo}/releases/download/${encodeURIComponent(tag)}/`;
+  const asset = (name: string): MutagenEngineReleaseAsset => ({ name, url: `${baseUrl}${encodeURIComponent(name)}` });
+  const extension = targetTriple === 'windows-amd64' ? 'zip' : 'tar.gz';
+  const checksumsName = `checksums-happier-mutagen-v${version}.txt`;
+  return {
+    version,
+    targetTriple,
+    archive: asset(`happier-mutagen-v${version}-${targetTriple}.${extension}`),
+    checksums: asset(checksumsName),
+    checksumsSig: asset(`${checksumsName}.minisig`),
+  };
 }
 
 /** Map Node host values to the fixed manager/agent release matrix. */

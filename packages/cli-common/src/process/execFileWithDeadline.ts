@@ -12,6 +12,8 @@ export type ExecFileWithDeadlineOptions =
     terminateOnAbort?: (child: ChildProcess) => Promise<void>;
     /** Caller-owned resource ceiling for each UTF-8 output suffix; omitted preserves execFile capture. */
     outputTailMaxBytes?: number;
+    /** Incremental stdout consumer; omitting a capture limit retains no output. */
+    onStdoutChunk?: (chunk: string) => void;
     /** Transient bytes delivered only through the child's stdin, followed by EOF. Caller owns clearing. */
     inputBytes?: Uint8Array;
   }>;
@@ -68,7 +70,8 @@ export function execFileWithDeadline(
   args: readonly string[],
   options: ExecFileWithDeadlineOptions,
 ): Promise<ExecFileWithDeadlineResult> {
-  const { timeout, terminateOnAbort, outputTailMaxBytes, inputBytes, ...commandOptions } = options;
+  const { timeout, terminateOnAbort, outputTailMaxBytes: requestedTailMaxBytes, onStdoutChunk, inputBytes, ...commandOptions } = options;
+  const outputTailMaxBytes = requestedTailMaxBytes ?? (onStdoutChunk ? 0 : undefined);
   if (outputTailMaxBytes !== undefined && (!Number.isSafeInteger(outputTailMaxBytes) || outputTailMaxBytes < 0)) {
     throw new TypeError('outputTailMaxBytes must be a nonnegative safe integer');
   }
@@ -137,7 +140,7 @@ export function execFileWithDeadline(
       };
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
-      child.stdout?.on('data', (chunk: string) => { stdout = append(stdout, chunk, 'stdoutTruncated'); });
+      child.stdout?.on('data', (chunk: string) => { onStdoutChunk?.(chunk); stdout = append(stdout, chunk, 'stdoutTruncated'); });
       child.stderr?.on('data', (chunk: string) => { stderr = append(stderr, chunk, 'stderrTruncated'); });
       child.once('error', (error) => { processError = error; });
       child.once('close', (code, signalCode) => {

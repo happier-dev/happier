@@ -10,7 +10,10 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { isPidPresent } from '../process/processLiveness.js';
-import { processGenerationProvesReuse, readProcessStartTimeMsSync } from '@happier-dev/cli-common/processInstance';
+import {
+  processGenerationProvesReuse,
+  readProcessStartTimeMsSync,
+} from '@happier-dev/cli-common/processInstance';
 
 type JsonOwnerFileLockOptions = Readonly<{
   lockPath: string;

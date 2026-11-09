@@ -66,6 +66,27 @@ describe('remote first-party install layout', () => {
       expect((await readdir(layout.versionsDir)).sort()).toEqual(['1.0.0', '2.0.0', '5.0.0', '6.0.0']);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
+  it('delegates CLI promotion to the staged CLI with the separate installation home', async () => {
+    if (process.platform === 'win32') return;
+    const root = await mkdtemp(join(tmpdir(), 'happier-remote-cli-promotion-'));
+    try {
+      const payload = join(root, 'payload');
+      await mkdir(payload);
+      await writeFile(join(payload, 'happier'), '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_FIRST_PARTY_INSTALL_HOME" "$@"\n', { mode: 0o755 });
+      const command = buildRemoteFirstPartyPromotionCommand({
+        layout: resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '1.2.3', remoteHomeDir: root }),
+        payloadRootExpression: '"$payload_root"',
+        cliInstall: { componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3' },
+      });
+      const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, payload_root: payload } });
+      expect(result.stdout.trim().split('\n')).toEqual([
+        root, 'self', '__install-payload', '--component', 'happier-cli', '--payload-root', payload,
+        '--version', '1.2.3', '--channel', 'stable',
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it('does not remove current or previous when promotion retries a protected version or has an invalid payload', async () => {
     if (process.platform === 'win32') return;
     const home = await mkdtemp(join(tmpdir(), 'happier-promote-failure-'));

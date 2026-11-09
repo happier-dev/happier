@@ -2,23 +2,25 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-const { extractArchivePayloadToDirectoryMock } = vi.hoisted(() => ({
-    extractArchivePayloadToDirectoryMock: vi.fn(async () => undefined),
-}));
-
-vi.mock('@happier-dev/release-runtime/archiveExtraction', () => ({
-    extractArchivePayloadToDirectory: extractArchivePayloadToDirectoryMock,
-}));
+import { afterEach, describe, expect, it } from 'vitest';
+import * as tar from 'tar';
 
 import { extractGitHubReleaseAsset } from './extractGitHubReleaseAsset.js';
+
+async function writeArchive(rootDir: string, files: Readonly<Record<string, string>>): Promise<void> {
+    const sourceDir = join(rootDir, 'source');
+    for (const [name, contents] of Object.entries(files)) {
+        const filePath = join(sourceDir, name);
+        await mkdir(join(filePath, '..'), { recursive: true });
+        await writeFile(filePath, contents);
+    }
+    await tar.c({ cwd: sourceDir, file: join(rootDir, 'codex.tar.gz'), gzip: true }, Object.keys(files));
+}
 
 describe('extractGitHubReleaseAsset', () => {
     const tempDirs: string[] = [];
 
     afterEach(async () => {
-        extractArchivePayloadToDirectoryMock.mockReset();
         await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
     });
 
@@ -26,12 +28,10 @@ describe('extractGitHubReleaseAsset', () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
         tempDirs.push(rootDir);
 
-        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
-            const extractDir = join(rootDir, 'extract');
-            await mkdir(extractDir, { recursive: true });
-            await writeFile(join(extractDir, 'codex-command-runner.exe'), 'runner', 'utf8');
-            await writeFile(join(extractDir, 'codex-windows-sandbox-setup.exe'), 'sandbox', 'utf8');
-            await writeFile(join(extractDir, 'codex-x86_64-pc-windows-msvc.exe'), 'codex', 'utf8');
+        await writeArchive(rootDir, {
+            'codex-command-runner.exe': 'runner',
+            'codex-windows-sandbox-setup.exe': 'sandbox',
+            'codex-x86_64-pc-windows-msvc.exe': 'codex',
         });
 
         const outputPath = join(rootDir, 'current', 'bin', 'codex.exe');
@@ -42,9 +42,6 @@ describe('extractGitHubReleaseAsset', () => {
             outputPath,
         });
 
-        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(
-            expect.not.objectContaining({ limits: expect.anything() }),
-        );
         await expect(readFile(outputPath, 'utf8')).resolves.toBe('codex');
         await expect(readFile(join(rootDir, 'extract', 'codex-command-runner.exe'), 'utf8')).resolves.toBe('runner');
     });
@@ -53,21 +50,17 @@ describe('extractGitHubReleaseAsset', () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-layout-'));
         tempDirs.push(rootDir);
 
-        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
-            const extractDir = join(rootDir, 'extract');
-            await mkdir(join(extractDir, 'bin'), { recursive: true });
-            await mkdir(join(extractDir, 'codex-path'), { recursive: true });
-            await mkdir(join(extractDir, 'codex-resources'), { recursive: true });
-            await writeFile(join(extractDir, 'bin', 'codex.exe'), 'codex', 'utf8');
-            await writeFile(join(extractDir, 'bin', 'codex-code-mode-host.exe'), 'host', 'utf8');
-            await writeFile(join(extractDir, 'codex-resources', 'codex-command-runner.exe'), 'runner', 'utf8');
-            await writeFile(join(extractDir, 'codex-resources', 'codex-windows-sandbox-setup.exe'), 'sandbox', 'utf8');
-            await writeFile(join(extractDir, 'codex-path', 'rg.exe'), 'undeclared', 'utf8');
+        await writeArchive(rootDir, {
+            'bin/codex.exe': 'codex',
+            'bin/codex-code-mode-host.exe': 'host',
+            'codex-resources/codex-command-runner.exe': 'runner',
+            'codex-resources/codex-windows-sandbox-setup.exe': 'sandbox',
+            'codex-path/rg.exe': 'undeclared',
         });
 
         const outputDir = join(rootDir, 'next');
         await extractGitHubReleaseAsset({
-            archivePath: join(rootDir, 'codex-package.tar.gz'),
+            archivePath: join(rootDir, 'codex.tar.gz'),
             archiveName: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
             extractDir: join(rootDir, 'extract'),
             outputPath: join(outputDir, 'bin', 'codex.exe'),
@@ -92,45 +85,30 @@ describe('extractGitHubReleaseAsset', () => {
         await expect(readFile(join(outputDir, 'codex-path', 'rg.exe'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('forwards explicit per-file and expanded-byte ceilings without changing other shared limits', async () => {
+    it('applies explicit per-file and expanded-byte ceilings through the real extractor', async () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
         tempDirs.push(rootDir);
 
-        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
-            const extractDir = join(rootDir, 'extract');
-            await mkdir(extractDir, { recursive: true });
-            await writeFile(join(extractDir, 'codex-aarch64-apple-darwin'), 'codex', 'utf8');
-        });
+        await writeArchive(rootDir, { 'codex-aarch64-apple-darwin': 'codex' });
 
-        await extractGitHubReleaseAsset({
+        await expect(extractGitHubReleaseAsset({
             archivePath: join(rootDir, 'codex.tar.gz'),
             archiveName: 'codex-aarch64-apple-darwin.tar.gz',
             extractDir: join(rootDir, 'extract'),
             outputPath: join(rootDir, 'current', 'bin', 'codex'),
             archiveExtractionLimits: {
-                maxFileBytes: 384 * 1024 * 1024,
-                maxExpandedBytes: 384 * 1024 * 1024,
+                maxFileBytes: 4,
+                maxExpandedBytes: 4,
             },
-        });
-
-        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(expect.objectContaining({
-            limits: {
-                maxFileBytes: 384 * 1024 * 1024,
-                maxExpandedBytes: 384 * 1024 * 1024,
-            },
-        }));
+        })).rejects.toThrow(/limit/i);
+        await expect(stat(join(rootDir, 'current', 'bin', 'codex'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('fails closed when multiple extracted entries do not contain an archive-stem match', async () => {
         const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
         tempDirs.push(rootDir);
 
-        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
-            const extractDir = join(rootDir, 'extract');
-            await mkdir(extractDir, { recursive: true });
-            await writeFile(join(extractDir, 'alpha.exe'), 'alpha', 'utf8');
-            await writeFile(join(extractDir, 'beta.exe'), 'beta', 'utf8');
-        });
+        await writeArchive(rootDir, { 'alpha.exe': 'alpha', 'beta.exe': 'beta' });
 
         await expect(extractGitHubReleaseAsset({
             archivePath: join(rootDir, 'codex.tar.gz'),
@@ -155,11 +133,28 @@ describe('extractGitHubReleaseAsset', () => {
             outputPath,
         });
 
-        expect(extractArchivePayloadToDirectoryMock).not.toHaveBeenCalled();
+        await expect(stat(join(rootDir, 'extract'))).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(outputPath, 'utf8')).resolves.toBe('#!/bin/sh\nexit 0\n');
         if (process.platform !== 'win32') {
             const outputStat = await stat(outputPath);
             expect(outputStat.mode & 0o111).not.toBe(0);
         }
+    });
+
+    it.each(['tar.bz2', 'tbz2'])('extracts a declared nested file from a %s release instead of publishing compressed bytes', async (extension) => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-bzip2-'));
+        tempDirs.push(rootDir);
+        const archiveName = `payload.${extension}`;
+        const archivePath = join(rootDir, archiveName);
+        const outputPath = join(rootDir, 'output', 'tool');
+        // Python stdlib-produced tar.bz2: nested/tool, contents "bzip2-payload\n".
+        await writeFile(archivePath, Buffer.from('QlpoOTFBWSZTWUkYzkMAAHT7gMqQBABAAvOAAgB2Jd4wCAggAFRCm1D1GjQAG1NNP1QSUTRoaDQAAH2kBqED3IQiPEZy6FD0CGBm0vba4TmCMHGWqFkyX4OeptJR21MgojFK5+PFwKf1Q0MzIvxdyRThQkEkYzkM', 'base64'));
+        await extractGitHubReleaseAsset({
+            archiveName, archivePath, outputPath,
+            extractDir: join(rootDir, 'extract'),
+            outputDir: join(rootDir, 'output'),
+            archiveEntries: [{ archivePath: 'nested/tool', destinationPath: 'tool' }],
+        });
+        expect(await readFile(outputPath, 'utf8')).toBe('bzip2-payload\n');
     });
 });

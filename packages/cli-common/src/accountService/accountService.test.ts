@@ -16,6 +16,7 @@ import {
   resolveAccountServiceHomeTarget,
   type AccountServiceHomeEnrollmentAdapters,
 } from './index.js';
+import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestRedirectPolicy.js';
 
 const HOME_A = createHome('srv_home_a', false);
 const HOME_B = createHome('srv_home_b', true);
@@ -115,6 +116,19 @@ function createEnrollmentHarness(options: Readonly<{
 }
 
 describe('Account Service deterministic domain operations', () => {
+  it.each(['requestAssertion', 'redeemAssertion', 'reconcileAuthenticatedHome'] as const)('preserves %s redirect refusal without enrollment fallback or retry', async (phase) => {
+    const { adapters, adoptHome } = createEnrollmentHarness();
+    const refusal = new CredentialRequestRedirectError(307);
+    const enrollmentAdapters = { ...adapters, [phase]: async () => { throw refusal; } } satisfies typeof adapters;
+    await expect(runAccountServiceDirectoryJourney({
+      directory: { homes: [HOME_B], preferredHomeServerIdentityId: HOME_B.homeServerIdentityId },
+      issuerServerIdentityId: 'srv_directory', adoptHome, enrollmentAdapters, nowMs: 1_700_000_002_000,
+    })).rejects.toBe(refusal);
+    expect(adapters.commitHomeCredential).not.toHaveBeenCalled();
+    if (phase === 'requestAssertion') expect(adapters.openHomeTransport).not.toHaveBeenCalled();
+    else expect(adapters.closeHomeTransport).toHaveBeenCalledOnce();
+  });
+
   it('selects the exact linked Home before a different preferred Home and never substitutes for an absent target', () => {
     const directory = { homes: [HOME_A, HOME_B], preferredHomeServerIdentityId: HOME_B.homeServerIdentityId };
     expect(resolveAccountServiceHomeTarget({ directory, explicitHomeServerIdentityId: HOME_A.homeServerIdentityId }))

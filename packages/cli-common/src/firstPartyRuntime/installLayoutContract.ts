@@ -2,6 +2,8 @@ const FIRST_PARTY_VERSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const FIRST_PARTY_VERSION_ID_MAX_LENGTH = 200;
 
 export const FIRST_PARTY_INSTALL_HOME_ENV_KEY = 'HAPPIER_FIRST_PARTY_INSTALL_HOME';
+/** Code-only tools location, independent of private state and CLI payloads. */
+export const MANAGED_TOOLS_ROOT_ENV_KEY = 'HAPPIER_MANAGED_TOOLS_ROOT';
 export const FIRST_PARTY_MANAGED_TOOLS_DIR_NAME = 'tools';
 
 export class InvalidFirstPartyVersionIdError extends Error {

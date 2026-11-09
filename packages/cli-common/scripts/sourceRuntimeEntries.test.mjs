@@ -11,6 +11,71 @@ import { describe, expect, it } from 'vitest';
 import { createWorkspaceSourceResolver, readCliSourceEntries, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths } from '../sourceRuntimeEntries.mjs';
 
 describe('CLI source entry ownership', () => {
+  it('keeps source-tool registration out of the CJS daemon runtime graph', async () => {
+    const result = await build({
+      entryPoints: [fileURLToPath(new URL('../sourceRuntimeEntries.mjs', import.meta.url))],
+      bundle: true, packages: 'external', platform: 'node', format: 'cjs',
+      write: false, metafile: true, logLevel: 'silent',
+    });
+    expect(Object.keys(result.metafile.inputs).some((path) => path.endsWith('/registerSourceRuntime.mjs'))).toBe(false);
+  });
+
+  it('loads newly reachable CLI aliases in daemon and generator entries from every caller cwd', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'happier-source-entry-alias-'));
+    const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+    try {
+      const common = join(fixture, 'packages/cli-common');
+      const cli = join(fixture, 'apps/cli');
+      const ui = join(fixture, 'apps/ui');
+      for (const directory of [common, join(cli, 'scripts/build-owned'), join(cli, 'src/daemon'),
+        join(cli, 'src/cli/actions'), join(cli, 'src/cli/commands/shared'), join(ui, 'sources'), join(ui, 'scripts')]) {
+        await mkdir(directory, { recursive: true });
+      }
+      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
+        await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
+      }
+      await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+      await writeFile(join(cli, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+      await writeFile(join(cli, 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: { '@/*': ['./src/*'] } } }));
+      await writeFile(join(cli, 'tsconfig.runtime.json'), JSON.stringify({ extends: './tsconfig.json' }));
+      await writeFile(join(cli, 'src/cli/commands/shared/argvFlags.ts'), 'export const value = 42;');
+      await writeFile(join(cli, 'src/cli/actions/newFile.ts'),
+        "export { value } from '@/cli/commands/shared/argvFlags';");
+      await writeFile(join(cli, 'src/cli/actions/newFile.cts'),
+        "module.exports = require('@/cli/commands/shared/argvFlags');");
+      await writeFile(join(cli, 'src/daemon/startDaemon.ts'), "export { value } from '../cli/actions/newFile';");
+      await writeFile(join(cli, 'src/index.ts'), `import { createRequire } from 'node:module';
+import { value } from './daemon/startDaemon';
+const cjs = createRequire(import.meta.url)('./cli/actions/newFile.cts');
+console.log(value, cjs.value, process.env.TSX_TSCONFIG_PATH === '');`);
+      const generator = join(cli, 'scripts/build-owned/generator.ts');
+      await writeFile(generator, `import '../../../../packages/cli-common/registerSourceRuntime.mjs';
+const { value } = await import('../../src/daemon/startDaemon.ts'); console.log(value);`);
+      await writeFile(join(ui, 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: { '@/*': ['./sources/*'] } } }));
+      await writeFile(join(ui, 'sources/value.ts'), 'export const value = 43;');
+      await writeFile(join(ui, 'sources/index.ts'), "import { value } from '@/value'; console.log(value);");
+      const prebuild = join(ui, 'scripts/prebuild.mjs');
+      await writeFile(prebuild, `import { createCliSourceLoader } from '../../../packages/cli-common/cliSourceLoader.mjs';
+const loader = await createCliSourceLoader('fixture-ui-prebuild');
+try {
+  await loader.import(${JSON.stringify(pathToFileURL(generator).href)}, import.meta.url);
+  await import('../sources/index.ts');
+}
+finally { await loader.unregister(); }`);
+      for (const cwd of [fixture, cli, ui]) {
+        for (const entry of [join(cli, 'src/index.ts'), generator, join(ui, 'sources/index.ts'), prebuild]) {
+          const { stdout } = await promisify(execFile)(process.execPath, [
+            '--experimental-strip-types', '--import', join(common, 'registerSourceRuntime.mjs'), entry,
+          ], { cwd, env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '' } });
+          const expected = entry === join(cli, 'src/index.ts') ? '42 42 true'
+            : entry === join(ui, 'sources/index.ts') ? '43' : entry === prebuild ? '42\n43' : '42';
+          expect(stdout.trim()).toBe(expected);
+        }
+      }
+    } finally { await rm(fixture, { recursive: true, force: true }); }
+  });
+
   it('links source-only SDK exports before tsx can select stale UI declaration paths', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'happier-source-ui-declarations-'));
     const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -19,7 +84,7 @@ describe('CLI source entry ownership', () => {
       const ui = join(fixture, 'apps/ui');
       await mkdir(common, { recursive: true });
       await mkdir(ui, { recursive: true });
-      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'cliRuntimeSidecars.mjs']) {
+      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs']) {
         await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
       }
       await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -191,6 +256,21 @@ console.log(JSON.stringify([esm.Value.answer, cjs.Value.answer]));
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }
+  });
+
+  it('compiler source paths retain authored JavaScript types without using built declarations', () => {
+    const root = resolve('fixture-compiler-source');
+    const packages = new Map([['fixture-compiler-source', { root, manifest: { exports: {
+      './javascript': { types: './javascript.d.mts', default: './javascript.mjs' },
+      './typescript': { types: './dist/typescript.d.ts', 'happier-source': './src/typescript.ts' },
+      './generated-types': { types: './dist/generated.d.mts', 'happier-source': './src/generated.mjs' },
+    } } }]]);
+    expect(workspaceSourceCompilerPaths(packages)).toEqual({
+      'fixture-compiler-source/javascript': [join(root, 'javascript.d.mts')],
+      'fixture-compiler-source/typescript': [join(root, 'src/typescript.ts')],
+      'fixture-compiler-source/generated-types': [join(root, 'src/generated.mjs')],
+    });
+    expect(resolveWorkspaceSource(packages, 'fixture-compiler-source/javascript')).toBe(join(root, 'javascript.mjs'));
   });
 
   it('selects the declared portable SDK source while preserving Node source ownership', async () => {

@@ -105,13 +105,15 @@ async function invokeCurrentConnectedAccountCallback(
         source: PluginConnectedAccountCredentialStore,
         assertCurrent: (() => Promise<void>) | undefined,
         registerRawForRedaction: (value: string) => void,
+        readRedactionValue: (key: string, value: string | null) => string | null = (_key, value) => value,
     ): PluginConnectedAccountCredentialStore {
         return Object.freeze({
             async get(key: string, options?: Readonly<{ signal?: AbortSignal }>) {
                 await assertCurrent?.();
                 const value = await source.get(key, assertCurrent ? options : undefined);
                 await assertCurrent?.();
-                if (value !== null) registerRawForRedaction(value);
+                const secret = readRedactionValue(key, value);
+                if (secret !== null) registerRawForRedaction(secret);
                 return value;
             },
             async set(
@@ -122,7 +124,8 @@ async function invokeCurrentConnectedAccountCallback(
                 await assertCurrent?.();
                 await source.set(key, value, assertCurrent ? options : undefined);
                 await assertCurrent?.();
-                registerRawForRedaction(value);
+                const secret = readRedactionValue(key, value);
+                if (secret !== null) registerRawForRedaction(secret);
             },
             async delete(key: string, options?: Readonly<{ signal?: AbortSignal }>) {
                 await assertCurrent?.();
@@ -130,6 +133,12 @@ async function invokeCurrentConnectedAccountCallback(
                 await assertCurrent?.();
             },
         });
+    }
+
+    function registerEstablishedCredentialForRedaction(input: ConnectedAccountRuntimeEstablishedInvocation,
+        key: string, value: string | null, register: (value: string) => void): void {
+        const secret = input.readCredentialRedactionValue ? input.readCredentialRedactionValue(key, value) : value;
+        if (secret !== null) register(secret);
     }
 
     async function invokeEstablishedRuntime<Context extends object, TQuota extends ConnectedAccountRuntimeQuotaBase, TOperation extends ConnectedAccountRuntimeEstablishedOperation>(
@@ -206,6 +215,7 @@ async function invokeCurrentConnectedAccountCallback(
                                     ? undefined
                                     : assertCurrent,
                                 (value) => registerRawForRedaction(value),
+                                input.readCredentialRedactionValue,
                             ),
                         });
                         return operation.kind === 'refresh'
@@ -301,5 +311,5 @@ async function invokeCurrentConnectedAccountCallback(
     }
 
   return Object.freeze({ assertEstablishedTarget, assertEstablishedAuthorityCurrent, assertEstablishedFenceCurrent,
-    invokeCurrentConnectedAccountCallback, guardStagedCredentials, invokeEstablishedRuntime });
+    invokeCurrentConnectedAccountCallback, guardStagedCredentials, registerEstablishedCredentialForRedaction, invokeEstablishedRuntime });
 }

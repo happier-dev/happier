@@ -40,15 +40,15 @@ export function isWorkspaceBundleLockPriorityChange(
   lockPath: string, filename: string, priorityScope?: WorkspaceBundleLockPriorityScope,
 ): boolean;
 
-export interface WorkspaceBundleLockOptions<T = unknown> {
+export interface WorkspaceBundleLockOptions<T = unknown, TimeoutMs extends number | null = number> {
   lockPath: string;
   heldLockValue?: string;
   heldLockPath?: string;
   /** Refuse contention without watching or sleeping; an explicit priorityScope retains only soft preference. */
   wait?: boolean;
   priorityScope?: WorkspaceBundleLockPriorityScope;
-  /** Bounds waits without a fresh authenticated owner heartbeat; healthy owners use staleAfterMs. */
-  timeoutMs?: number;
+  /** Bounds waits without a fresh authenticated heartbeat; null leaves async waits caller-cancellable. */
+  timeoutMs?: TimeoutMs;
   pollIntervalMs?: number;
   staleAfterMs?: number;
   initializationGraceMs?: number;
@@ -81,7 +81,7 @@ export interface WorkspaceBundleLockOptions<T = unknown> {
     lockPath: string;
     owner: Record<string, unknown> | null;
     staleAfterMs: number;
-    timeoutMs: number;
+    timeoutMs: TimeoutMs;
     waitedMs: number;
   }) => void;
 }
@@ -97,9 +97,9 @@ export function observeWorkspaceBundleLock(
   lockPath: string,
   options?: { staleAfterMs?: number; nowMs?: number },
 ): { active: boolean; ownerId: string | null };
-export function withWorkspaceBundleLock<T>(
+export function withWorkspaceBundleLock<T, TimeoutMs extends number | null = number>(
   fn: (context: WorkspaceBundleLockContext) => Promise<T> | T,
-  options: WorkspaceBundleLockOptions<T> & { signal?: AbortSignal },
+  options: WorkspaceBundleLockOptions<T, TimeoutMs> & { signal?: AbortSignal },
 ): Promise<T>;
 export function withWorkspaceBundleLockSync<T>(
   fn: (context: WorkspaceBundleLockContext) => T,

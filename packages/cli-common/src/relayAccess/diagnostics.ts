@@ -1,4 +1,5 @@
 import { RelayAccessDeadlineExceededError } from './deadline.js';
+import { TailscaleCommandError } from '../tailscale/commandError.js';
 import type { RelayAccessDiagnosticCodeV1, RelayAccessDiagnosticV1, RelayAccessProviderId } from './types.js';
 
 const MAX_DEVELOPER_MESSAGE_LENGTH = 500;
@@ -22,6 +23,9 @@ export function sanitizeRelayAccessDiagnosticText(input: unknown): string {
 }
 
 export function classifyRelayAccessDiagnosticCode(error: unknown): RelayAccessDiagnosticCodeV1 {
+    if (error instanceof TailscaleCommandError && error.failure) {
+        return error.failure.code;
+    }
     if (error instanceof RelayAccessDeadlineExceededError) {
         return 'provider_command_timeout';
     }
@@ -47,6 +51,8 @@ export function classifyRelayAccessDiagnosticCode(error: unknown): RelayAccessDi
 
 function defaultMessageForCode(code: RelayAccessDiagnosticCodeV1): string {
     switch (code) {
+        case 'tailscale_operator_authorization_refused':
+            return 'Tailscale refused operator authorization.';
         case 'provider_not_installed':
             return 'Provider CLI is not installed.';
         case 'provider_not_authenticated':
@@ -74,6 +80,15 @@ export function createRelayAccessDiagnostic(params: Readonly<{
     code?: RelayAccessDiagnosticCodeV1;
 }>): RelayAccessDiagnosticV1 {
     const code = params.code ?? classifyRelayAccessDiagnosticCode(params.error);
+    if (params.error instanceof TailscaleCommandError && params.error.failure) {
+        return {
+            code: params.error.failure.code,
+            providerId: params.providerId,
+            phase: params.phase,
+            message: params.error.message,
+            retryable: false,
+        };
+    }
     const developerMessage = sanitizeRelayAccessDiagnosticText(params.error);
     return {
         code,

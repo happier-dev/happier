@@ -6,7 +6,10 @@ import { dirname, join, win32 as win32Path } from 'node:path';
 import { resolveServerRuntimePrismaEngineFileName } from './serverRuntimeArtifactLayout.js';
 
 export const DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS = 30_000;
-export const DEFAULT_SERVER_LIGHT_SQLITE_CONNECTION_LIMIT = 4;
+// SQLite has one writer. One connection keeps server-light writes queued in order instead of
+// competing for the database lock; readiness uses its own connection so it does not queue
+// behind application reads (#832). HAPPIER_SQLITE_CONNECTION_LIMIT is an advanced override.
+export const DEFAULT_SERVER_LIGHT_SQLITE_CONNECTION_LIMIT = 1;
 const PRISMA_SQLITE_BUSY_TIMEOUT_MS_MAX = 600_000;
 const PRISMA_SQLITE_CONNECTION_LIMIT_MAX = 64;
 

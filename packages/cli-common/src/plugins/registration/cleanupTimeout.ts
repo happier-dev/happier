@@ -15,7 +15,11 @@ export async function raceWithTimeout<T>(
                 .catch((error: unknown) => ({ type: 'rejected' as const, error })),
             new Promise<Readonly<{ type: 'timeout' }>>((resolve) => {
                 timer = setTimeout(() => resolve({ type: 'timeout' }), Math.max(0, Math.trunc(timeoutMs)));
-                timer.unref?.();
+                const timerHandle: unknown = timer;
+                if (typeof timerHandle === 'object' && timerHandle !== null
+                    && 'unref' in timerHandle && typeof timerHandle.unref === 'function') {
+                    timerHandle.unref();
+                }
             }),
         ]);
     } finally {

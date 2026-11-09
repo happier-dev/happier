@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { createOpenSshHappierJsonExecutor, parseStrictPersonalHomeTaskFinalResult } from './openSshHappierJsonExecutor.js';
 import { buildRemoteBootstrapCommand, buildRemoteHappierInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
 import { createHappierJsonExecutorFromTextRunner } from './happierJsonExecutor.js';
-import { createSetupMachineRecipeExecutorFromRemoteCommandRunner } from './remoteSetupMachineRecipeExecutor.js';
+import { createEnrollMachineFlowExecutorFromRemoteCommandRunner } from './remoteEnrollMachineFlowExecutor.js';
 
 describe('transport-neutral Happier JSON executor', () => {
   it('refuses a failed CLI envelope even when the native process exits successfully', async () => {
@@ -37,6 +37,22 @@ describe('parseStrictPersonalHomeTaskFinalResult', () => {
 });
 
 describe('createOpenSshHappierJsonExecutor', () => {
+  it('runs streamed dedicated enrollment as its admitted daemon user, not the SSH bootstrap user', async () => {
+    const commands: string[] = [];
+    const executor = createOpenSshHappierJsonExecutor({
+      ssh: { target: 'root@example.test', auth: 'agent' }, auth: { mode: 'agent' }, knownHostsMode: 'system',
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
+      runRemoteText: async ({ remoteCommand }) => {
+        commands.push(remoteCommand);
+        return { status: 0, stdout: '{}\n', stderr: '' };
+      },
+    });
+    await executor.runHappierText(['auth', 'enroll-remote', '--json']);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain('runuser -u happier');
+    expect(commands[0]).toContain('/opt/happier/cli/current/happier');
+  });
+
   it('keeps the finite service lifetime through the SSH label adapter and a real remote shell', async () => {
     if (process.platform === 'win32') return;
     const directory = await mkdtemp(join(tmpdir(), 'happier-ssh-service-lifetime-'));
@@ -46,7 +62,7 @@ describe('createOpenSshHappierJsonExecutor', () => {
       await mkdir(join(directory, '.happier/cli/current'), { recursive: true });
       await writeFile(binary, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
       await chmod(binary, 0o755);
-      const executor = createSetupMachineRecipeExecutorFromRemoteCommandRunner({
+      const executor = createEnrollMachineFlowExecutorFromRemoteCommandRunner({
         parsed: { ssh: { target: 'dev@example.test', auth: 'agent' }, relay: { relayUrl: 'https://home.example.test' } },
         auth: { mode: 'agent' }, knownHostsMode: 'system', serviceMode: 'user',
         runRemoteCommand: async ({ label, data }) => {

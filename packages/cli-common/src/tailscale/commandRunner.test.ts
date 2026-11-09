@@ -6,11 +6,144 @@ import {
   runTailscaleFunnelEnable,
   runTailscaleLogin,
   runTailscaleServeEnable,
+  runTailscaleServeStatus,
   runTailscaleStatusJson,
+  runTailscaleStatus,
+  runTailscaleOperatorObservation,
+  runTailscaleDown,
+  runTailscaleUp,
+  runTailscaleFunnelDisable,
+  runTailscaleServeDisable,
+  runTailscaleServeReset,
   sanitizeTailscaleEnv,
   TailscaleCommandError,
   type TailscaleCommandRunner,
 } from './commandRunner.js';
+
+describe('runTailscaleStatus', () => {
+  it('preserves capability URLs in raw JSON for native port selection', async () => {
+    const stdout = JSON.stringify({ Self: { CapMap: { 'https://tailscale.com/cap/funnel-ports?ports=10000': [] } } });
+    const runCommand: TailscaleCommandRunner = async request => ({ ...request, exitCode: 0,
+      stdout: request.args.includes('--json') ? stdout : 'text status', stderr: '' });
+    expect(await runTailscaleStatus({ tailscaleBin: '/bin/tailscale', json: true }, { runCommand })).toBe(stdout);
+    expect(await runTailscaleStatus({ tailscaleBin: '/bin/tailscale' }, { runCommand })).toBe('text status');
+  });
+});
+
+describe('runTailscaleServeStatus', () => {
+  it('reads the native JSON inventory on the selected socket and preserves the text default', async () => {
+    const requests: string[][] = [];
+    const runCommand: TailscaleCommandRunner = async request => {
+      requests.push([...request.args]);
+      return { ...request, exitCode: 0, stdout: '{}', stderr: '' };
+    };
+    const params = { tailscaleBin: '/bin/tailscale', socketPath: '/run/relay/tailscaled.sock' };
+    expect(await runTailscaleServeStatus({ ...params, json: true }, { runCommand })).toBe('{}');
+    await runTailscaleServeStatus(params, { runCommand });
+    expect(requests).toEqual([
+      ['--socket=/run/relay/tailscaled.sock', 'serve', 'status', '--json'],
+      ['--socket=/run/relay/tailscaled.sock', 'serve', 'status'],
+    ]);
+  });
+});
+
+
+describe('runTailscaleOperatorObservation', () => {
+  it('uses the same selected socket for membership and HTTPS effects including readback', async () => {
+    const requests: { args: readonly string[] }[] = [];
+    const params = { tailscaleBin: '/bin/tailscale', socketPath: '/run/private-tailscale/tailscaled.sock' };
+    const deps = { runCommand: async (request: Parameters<TailscaleCommandRunner>[0]) => {
+      requests.push(request);
+      return { ...request, exitCode: 0, stdout: '', stderr: '' };
+    } };
+    await runTailscaleLogin(params, deps);
+    await runTailscaleUp(params, deps);
+    await runTailscaleDown(params, deps);
+    await runTailscaleServeEnable({ ...params, upstreamUrl: 'http://localhost:3000' }, deps);
+    await runTailscaleFunnelEnable({ ...params, upstreamUrl: 'http://localhost:3000' }, deps);
+    await runTailscaleServeDisable(params, deps);
+    await runTailscaleFunnelDisable(params, deps);
+    await runTailscaleServeReset(params, deps);
+    expect(requests.map(request => request.args)).toEqual([
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'login', '--qr'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'up'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'down'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'serve', '--bg', 'http://localhost:3000'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'serve', 'status'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'funnel', '--bg', 'http://localhost:3000'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'funnel', 'status'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'serve', '--https=443', '--set-path=/', 'off'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'funnel', '--https=443', '--set-path=/', 'off'],
+      ['--socket=/run/private-tailscale/tailscaled.sock', 'serve', 'reset'],
+    ]);
+  });
+
+  it.each([
+    [{ OperatorUser: 'happier', Persist: { PrivateNodeKey: 'not-an-observation' } }, 'allowed'],
+    [{ OperatorUser: 'another-user' }, 'denied'],
+    [{ OperatorUser: '' }, 'denied'],
+    [{ BackendState: 'Running' }, 'unknown'],
+    [{ OperatorUser: null }, 'unknown'],
+    [{ OperatorUser: ['happier'] }, 'unknown'],
+    [null, 'unknown'],
+  ] as const)('reads only native operator evidence: %j', async (prefs, authorization) => {
+    const requests: unknown[] = [];
+    const observation = await runTailscaleOperatorObservation({ daemonUsername: 'happier', tailscaleBin: '/bin/tailscale',
+      socketPath: '/run/private-tailscale/tailscaled.sock' }, {
+      runCommand: async request => {
+        requests.push(request);
+        return { ...request, exitCode: 0, stdout: JSON.stringify(prefs), stderr: '' };
+      },
+    });
+    expect(observation).toEqual({ authorization });
+    expect(requests).toEqual([expect.objectContaining({ command: '/bin/tailscale',
+      args: ['--socket=/run/private-tailscale/tailscaled.sock', 'debug', 'prefs'] })]);
+  });
+
+  it('leaves malformed or unreadable native evidence unknown without a mutation or retry', async () => {
+    for (const stdout of ['not json', '{"OperatorUser":"happier"}']) {
+      const requests: unknown[] = [];
+      const observation = await runTailscaleOperatorObservation({ daemonUsername: 'happier', tailscaleBin: '/bin/tailscale' }, {
+        runCommand: async request => {
+          requests.push(request);
+          if (stdout.startsWith('{')) throw new TailscaleCommandError('read denied', { ...request, exitCode: 1, stdout, stderr: 'denied' });
+          return { ...request, exitCode: 0, stdout, stderr: '' };
+        },
+      });
+      expect(observation).toEqual({ authorization: 'unknown' });
+      expect(requests).toEqual([expect.objectContaining({ args: ['debug', 'prefs'] })]);
+    }
+  });
+
+  it('does no native work without the exact daemon identity', async () => {
+    const runCommand = vi.fn<TailscaleCommandRunner>();
+    expect(await runTailscaleOperatorObservation({ daemonUsername: null }, { runCommand })).toEqual({ authorization: 'unknown' });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it('never treats successful-looking output from a failed native read as authority', async () => {
+    const runCommand: TailscaleCommandRunner = async request => ({ ...request,
+      exitCode: 1, stdout: '{"OperatorUser":"happier"}', stderr: 'permission denied' });
+    expect(await runTailscaleOperatorObservation({ daemonUsername: 'happier', tailscaleBin: '/bin/tailscale' }, { runCommand }))
+      .toEqual({ authorization: 'unknown' });
+  });
+
+  it('preserves cancellation instead of turning it into an operator fact', async () => {
+    const controller = new AbortController(); controller.abort();
+    const runCommand = vi.fn<TailscaleCommandRunner>();
+    await expect(runTailscaleOperatorObservation({ daemonUsername: 'happier', signal: controller.signal }, { runCommand }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+// OS boundary: make accidental controller-local inference observable for SSH runners.
+vi.mock('node:os', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:os')>(),
+  networkInterfaces: vi.fn(() => ({
+    controllerOverlay: [{ address: '100.64.0.10', family: 'IPv4', internal: false }],
+  })),
+}));
 
 describe('sanitizeTailscaleEnv', () => {
   it('removes problematic inherited XPC state while preserving unrelated variables', () => {
@@ -286,6 +419,21 @@ describe('runTailscaleServeEnable', () => {
 });
 
 describe('runTailscaleFunnelEnable', () => {
+  it('uses the documented pinned-port enable and scoped off forms for the relay', async () => {
+    const requests: string[][] = [];
+    const runCommand: TailscaleCommandRunner = async request => {
+      requests.push([...request.args]);
+      return { ...request, exitCode: 0, stdout: '', stderr: '' };
+    };
+    const params = { tailscaleBin: '/fixture/tailscale', httpsPort: 10000, servePath: '/' };
+    await runTailscaleFunnelEnable({ ...params, upstreamUrl: 'http://127.0.0.1:3340' }, { runCommand });
+    await runTailscaleFunnelDisable(params, { runCommand });
+    expect(requests).toEqual([
+      ['funnel', '--bg', '--https=10000', 'http://127.0.0.1:3340'],
+      ['funnel', 'status'],
+      ['funnel', '--https=10000', '--set-path=/', 'off'],
+    ]);
+  });
   it('returns the https URL for the requested upstream instead of the first status entry', async () => {
     const runner = vi.fn<TailscaleCommandRunner>()
       .mockResolvedValueOnce({
@@ -366,6 +514,52 @@ describe('runTailscaleServeDisable', () => {
 });
 
 describe('runTailscaleStatusJson', () => {
+  it('never uses controller-local interfaces as evidence for an injected target transport', async () => {
+    const snapshot = await runTailscaleStatusJson({ tailscaleBin: '/bin/tailscale', env: {} }, {
+      runCommand: async (request) => ({
+        command: request.command, args: request.args, exitCode: 0, stderr: '',
+        stdout: JSON.stringify({ BackendState: 'Running', TUN: true, TailscaleIPs: ['100.64.0.10'] }),
+      }),
+    });
+    expect(snapshot).toMatchObject({ running: true, interfaceName: null, sourceRanges: [] });
+  });
+
+  it('keeps membership readable when the same-target OS inspection fails', async () => {
+    const snapshot = await runTailscaleStatusJson({ tailscaleBin: '/bin/tailscale', env: {} }, {
+      runCommand: async (request) => ({
+        command: request.command, args: request.args, exitCode: 0, stderr: '',
+        stdout: JSON.stringify({ BackendState: 'Running', TUN: true, TailscaleIPs: ['100.64.0.10'] }),
+      }),
+      readNetworkInterfaces: () => { throw new Error('native interfaces unavailable'); },
+    });
+    expect(snapshot).toMatchObject({ loggedIn: true, running: true, interfaceName: null, sourceRanges: [] });
+  });
+
+
+  it('carries native scope and DNS facts through the actual status command owner', async () => {
+    const readNetworkInterfaces = vi.fn(() => ({
+      utun7: [{ address: '100.64.0.10', family: 'IPv4' as const, internal: false }],
+    }));
+    const runner = vi.fn<TailscaleCommandRunner>(async (request) => ({
+      command: request.command, args: request.args, exitCode: 0, stderr: '',
+      stdout: JSON.stringify({
+        BackendState: 'Running', TUN: true, TailscaleIPs: ['100.64.0.10'],
+        CurrentTailnet: { Name: 'example-tailnet', MagicDNSEnabled: false },
+      }),
+    }));
+    expect(runner).not.toHaveBeenCalled();
+    expect(readNetworkInterfaces).not.toHaveBeenCalled();
+    const snapshot = await runTailscaleStatusJson({ env: {}, tailscaleBin: '/bin/tailscale' }, {
+      runCommand: runner, readNetworkInterfaces,
+    });
+    expect(snapshot).toMatchObject({
+      magicDnsEnabled: false, interfaceName: 'utun7', sourceRanges: ['100.64.0.0/10'],
+    });
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(readNetworkInterfaces).toHaveBeenCalledTimes(1);
+  });
+
+
   it('parses a logged-in status snapshot without exposing raw command output', async () => {
     const mod = await import('./commandRunner.js') as {
       runTailscaleStatusJson?: (
@@ -419,6 +613,9 @@ describe('runTailscaleStatusJson', () => {
       dnsName: 'relay.tailf00.ts.net',
       tailnetName: 'example-tailnet',
       tailscaleIps: ['100.64.0.10'],
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       loggedIn: true,
       running: true,
       daemonReachable: true,
@@ -471,6 +668,9 @@ describe('runTailscaleStatusJson', () => {
       dnsName: null,
       tailnetName: null,
       tailscaleIps: [],
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       loggedIn: false,
       running: false,
       daemonReachable: true,

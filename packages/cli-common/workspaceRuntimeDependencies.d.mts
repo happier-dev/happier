@@ -64,6 +64,12 @@ export function resolveInstalledRuntimePackage(params: Readonly<{
   dereferenceRootDir?: string;
 }>): ResolvedRuntimePackage;
 
+export function resolveInstalledRuntimeDependency(params: Readonly<{
+  dependency: RuntimeDependency;
+  resolveFromPackageJsonPath: string;
+  dereferenceRootDir?: string;
+}>): ResolvedRuntimePackage | null;
+
 export function copyDirDereferenceContainedSync(params: Readonly<{
   sourceDir: string;
   destDir: string;

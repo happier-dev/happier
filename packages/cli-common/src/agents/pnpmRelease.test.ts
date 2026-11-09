@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
-import { resolvePnpmReleaseAsset } from './pnpmRelease.js';
+import { MANAGED_PNPM_VERSION, resolvePinnedPnpmReleaseAsset, resolvePnpmReleaseAsset } from './pnpmRelease.js';
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 const originalArchDescriptor = Object.getOwnPropertyDescriptor(process, 'arch');
@@ -53,6 +54,34 @@ function currentPnpmAssetName(): string {
 }
 
 describe('resolvePnpmReleaseAsset', () => {
+  it('bootstraps the same exact pnpm version as the repository pin', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'));
+    expect(manifest.packageManager.split('+')[0]).toBe(`pnpm@${MANAGED_PNPM_VERSION}`);
+  });
+
+  it.each([
+    ['darwin', 'arm64', 'gnu', 'pnpm-darwin-arm64.tar.gz'],
+    ['darwin', 'x64', 'gnu', 'pnpm-darwin-x64.tar.gz'],
+    ['linux', 'arm64', 'gnu', 'pnpm-linux-arm64.tar.gz'],
+    ['linux', 'x64', 'gnu', 'pnpm-linux-x64.tar.gz'],
+    ['linux', 'arm64', 'musl', 'pnpm-linux-arm64-musl.tar.gz'],
+    ['linux', 'x64', 'musl', 'pnpm-linux-x64-musl.tar.gz'],
+    ['win32', 'arm64', 'gnu', 'pnpm-win32-arm64.zip'],
+    ['win32', 'x64', 'gnu', 'pnpm-win32-x64.zip'],
+  ] as const)('resolves a pinned %s/%s/%s asset without discovery', (platform, arch, libc, name) => {
+    withPlatformArch(platform, arch, () => {
+      const report = vi.spyOn(process.report, 'getReport').mockReturnValue({
+        header: libc === 'gnu' ? { glibcVersionRuntime: '2.39' } : {},
+      } as unknown as NodeJS.ProcessReport);
+      try {
+        const asset = resolvePinnedPnpmReleaseAsset();
+        expect(asset).toMatchObject({ name, version: MANAGED_PNPM_VERSION, tag: `v${MANAGED_PNPM_VERSION}` });
+        expect(asset.url.endsWith(`/v${MANAGED_PNPM_VERSION}/${name}`)).toBe(true);
+        expect(asset.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+      } finally { report.mockRestore(); }
+    });
+  });
+
   it('selects the current Windows x64 archive asset', () => withPlatformArch('win32', 'x64', () => {
     expect(resolvePnpmReleaseAsset({
       tag_name: 'v11.8.0',

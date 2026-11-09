@@ -8,6 +8,18 @@ import {
 } from './manager';
 
 describe('E11 canonical service lifecycle', () => {
+  it('unregisters an explicit systemd timer before deleting its definition and reloading', () => {
+    const plan = planServiceAction({
+      backend: 'systemd-user', action: 'uninstall', label: 'dev.happier.stack.exp',
+      definitionPath: '/tmp/dev.happier.stack.exp.timer',
+    });
+    expect(plan.commands).toEqual([
+      expect.objectContaining({ cmd: 'systemctl', args: ['--user', 'disable', '--now', 'dev.happier.stack.exp.timer'], expectedFailure: 'service-absent' }),
+      expect.objectContaining({ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }),
+    ]);
+    expect(plan.removals).toEqual([{ path: '/tmp/dev.happier.stack.exp.timer', beforeCommandIndex: 1 }]);
+  });
+
   it('renders an explicit on-failure policy without changing the default', () => {
     const stack = buildServiceDefinition({
       backend: 'systemd-user',
@@ -66,6 +78,10 @@ describe('E11 canonical service lifecycle', () => {
     expect(plan.removals).toEqual([{
       path: 'C:\\Users\\test\\.happier\\services\\dev.happier.stack.exp.ps1',
       beforeCommandIndex: plan.commands.length,
+    }, {
+      path: 'C:\\Users\\test\\.happier\\services\\dev.happier.stack.exp',
+      beforeCommandIndex: plan.commands.length,
+      recursive: true,
     }]);
   });
 

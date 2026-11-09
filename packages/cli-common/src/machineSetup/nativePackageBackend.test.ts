@@ -95,9 +95,7 @@ describe('native package effects through the public recipe interpreter', () => {
             if (input.executable === 'dpkg') return ok('amd64\n');
             if (input.executable === 'apt-get') return ok('apt 3.2.0\n');
             if (input.executable === 'dpkg-query') return { code: 1, stdout: '', stderr: '' };
-            // Ubuntu 26.04 unprivileged lslocks cannot resolve other users' FDs,
-            // even with --notruncate; /run... is its fallback, not an APT lock.
-            if (input.executable === 'lslocks') return ok('{"locks":[{"path":"/run..."}]}');
+            if (input.executable === 'lslocks') return { code: 1, stdout: '', stderr: 'Permission denied' };
             throw new Error('An unresolved lock observation must not mutate or claim repository availability');
         } });
         const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
@@ -107,7 +105,7 @@ describe('native package effects through the public recipe interpreter', () => {
         } }]);
         const effects: string[] = [];
         await expect(mutateApt(async executable => {
-            if (executable === 'lslocks') return ok('{"locks":[{"path":"/run..."}]}');
+            if (executable === 'lslocks') return { code: 1, stdout: '', stderr: 'Permission denied' };
             effects.push(executable);
             return ok();
         }, ['install', '--yes', '--', 'docker.io'])).rejects.toMatchObject({ reasonCode: 'needs_admin_to_check' });

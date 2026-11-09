@@ -1,9 +1,8 @@
-import { readHomeAuthorityMismatchFailure } from '@happier-dev/protocol/ssh/commandFailure';
-import { readKnownSystemTaskFailure } from './runSystemTask.js';
 import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskResult } from '@happier-dev/protocol';
+import { readHomeAuthorityMismatchFailure } from '@happier-dev/protocol/ssh/commandFailure';
 
-import { SystemTaskExecutionError } from './runSystemTask.js';
+import { readKnownSystemTaskFailure, SystemTaskExecutionError } from './runSystemTask.js';
 
 export type InteractiveSystemTaskEventInput = Readonly<{
   type: string;

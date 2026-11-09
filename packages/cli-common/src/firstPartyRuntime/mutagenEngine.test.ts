@@ -56,7 +56,7 @@ const MUTAGEN_ENGINE_SOURCE_POLICY = JSON.parse(
   }>;
 }>;
 const FIXTURE_RELEASE_COMMIT = '3a4774da2a75a0d2a5343e4980d9a03aa44ca81c';
-const APPROVED_FORK_RELEASE_COMMIT = '0139d6755f7281c84899b207de3179235afe9b9e';
+const APPROVED_FORK_RELEASE_COMMIT = 'bee29cad5c61b10e129d9f03e25c86a00f5d7925';
 const MUTAGEN_UMBRELLA_LICENSE = `Unless otherwise specified, all code in this repository is made available under
 the terms of the MIT License, the text of which can be found below.
 
@@ -166,7 +166,7 @@ describe('Mutagen engine artifact contract', () => {
   it('pins the approved fork, upstream, toolchain, protocol, and target matrix', () => {
     expect(MUTAGEN_ENGINE_FORK_SOURCE_BASE_COMMIT).toMatch(/^[0-9a-f]{40}$/u);
     expect(MUTAGEN_ENGINE_FORK_RELEASE_COMMIT).toBe(APPROVED_FORK_RELEASE_COMMIT);
-    expect(MUTAGEN_ENGINE_VERSION).toBe('0.18.1-happier.11');
+    expect(MUTAGEN_ENGINE_VERSION).toBe('0.18.1-happier.12');
     expect(MUTAGEN_ENGINE_UPSTREAM_COMMIT).toBe('a225ae50aee3d7ebb59139203cb84e8a6a3ff4bf');
     expect(MUTAGEN_ENGINE_UPSTREAM_TAG).toBe('v0.18.1');
     expect(MUTAGEN_ENGINE_GO_VERSION).toBe('1.22.12');
@@ -340,6 +340,31 @@ describe('Mutagen engine artifact contract', () => {
       })).toMatchObject({ targetTriple: 'linux-amd64' });
       expect(eventLoopAdvanced).toBe(true);
       await heartbeat;
+
+      const writeVersion = (version: string) => {
+        const releaseTag = resolveMutagenEngineReleaseTag(version);
+        const text = JSON.stringify({ ...payloadManifest, engineVersion: version, releaseTag,
+          sourceTag: releaseTag, sourceArchive: `happier-mutagen-source-${releaseTag}.tar.gz` });
+        writeFileSync(paths.manifestPath, text);
+        writeFileSync(paths.checksumsPath, validChecksums.replace(
+          /^[0-9a-f]{64}  \.happier-mutagen-engine\.json$/mu,
+          `${createHash('sha256').update(text).digest('hex')}  .happier-mutagen-engine.json`,
+        ));
+      };
+      // The previous signed engine lacks wait_for_change. A valid checksum
+      // closure must not let that engine satisfy the current CLI's pin.
+      writeVersion('0.18.1-happier.11');
+      await expect(assertMutagenEngineArtifactPayload({
+        payloadRoot: root, targetTriple: 'linux-amd64', engineVersion: MUTAGEN_ENGINE_VERSION,
+        trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
+      })).rejects.toMatchObject({ code: 'mutagen_engine_artifact_incomplete' });
+      writeVersion(MUTAGEN_ENGINE_VERSION);
+      await expect(assertMutagenEngineArtifactPayload({
+        payloadRoot: root, targetTriple: 'linux-amd64', engineVersion: MUTAGEN_ENGINE_VERSION,
+        trustedForkReleaseCommit: FIXTURE_RELEASE_COMMIT,
+      })).resolves.toMatchObject({ engineVersion: MUTAGEN_ENGINE_VERSION });
+      writeFileSync(paths.manifestPath, manifestText);
+      writeFileSync(paths.checksumsPath, validChecksums);
 
       writeFileSync(paths.managerPath, Buffer.concat([managerBytes.subarray(0, -1), Buffer.from('!')]));
       await expect(assertMutagenEngineArtifactPayload({

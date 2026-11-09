@@ -24,13 +24,14 @@ function isRelativePathInsideRoot(relativePath) {
 
 /**
  * A bundled plugin package declares the resources it ships in its projected
- * manifest. Dynamic Resources carry no `path` and contribute no packaged bytes,
- * so only pathed declarations describe files the package must contain.
+ * manifest, including inert registry catalogs. Dynamic Resources and remote
+ * registry sources contribute no packaged bytes.
  */
 function readDeclaredResourcePaths(packageRoot) {
+  let manifest;
   let resources;
   try {
-    const manifest = JSON.parse(
+    manifest = JSON.parse(
       readFileSync(join(packageRoot, '.happier-plugin', 'plugin.json'), 'utf8'),
     );
     resources = manifest?.contributes?.resources;
@@ -43,16 +44,20 @@ function readDeclaredResourcePaths(packageRoot) {
       problem: `${BUNDLED_PLUGIN_MANIFEST_RELATIVE_PATH} declares no contributes.resources array`,
     };
   }
+  const declaredPaths = [
+    ...resources.filter(resource => resource?.path !== undefined).map(resource => resource.path),
+    ...(manifest.contributes.registrySources ?? [])
+      .filter(source => source?.packageContent !== undefined).map(source => source.packageContent?.path),
+  ];
   const paths = [];
-  for (const resource of resources) {
-    if (resource?.path === undefined) continue;
-    if (typeof resource.path !== 'string' || !resource.path.trim()) {
+  for (const path of declaredPaths) {
+    if (typeof path !== 'string' || !path.trim()) {
       return {
         ok: false,
         problem: `${BUNDLED_PLUGIN_MANIFEST_RELATIVE_PATH} declares a resource with a non-path location`,
       };
     }
-    paths.push(resource.path);
+    paths.push(path);
   }
   return { ok: true, paths };
 }

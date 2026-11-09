@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import childProcess from 'node:child_process';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,10 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
+import { withCliDistBuildLock } from './withCliDistBuildLock.js';
+import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
+import { prepareProcessCustodyRuntime } from './prepareProcessCustodyRuntime.js';
+import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget } from './targets.js';
 
 const tempDirs: string[] = [];
 
@@ -25,6 +30,92 @@ afterEach(async () => {
 });
 
 describe('stageProcessCustodyRuntime', () => {
+  it.each(['current', 'changed-source', 'changed-toolchain', 'damaged-output'] as const)(
+    'prepares %s source custody while an unrelated full-dist writer owns its lease', async (state) => {
+      const compiler = vi.spyOn(childProcess, 'execFileSync').mockReturnValue('fixture-go-one');
+      syncBuiltinESMExports();
+      const root = await makeRoot();
+      const projectRoot = join(root, 'apps', 'cli');
+      const nativeDir = join(projectRoot, 'native', 'processcustody');
+      await fs.mkdir(nativeDir, { recursive: true });
+      await writeFile(join(root, 'package.json'), '{}');
+      await writeFile(join(root, 'pnpm-lock.yaml'), '');
+      await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []');
+      await writeFile(join(nativeDir, 'go.mod'), 'module fixture\n\ngo 1.26.6\n');
+      const source = join(nativeDir, 'main.go');
+      await writeFile(source, 'source-one');
+      const runCommand = vi.fn(async (_command: string, args: string[]) => {
+        await writeFile(args[args.indexOf('-o') + 1]!, await readFile(source));
+      });
+      const prepare = () => prepareProcessCustodyRuntime({ repoRoot: root, payloadDir: projectRoot,
+        target: resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }), runCommand });
+      await prepare();
+      const executable = join(projectRoot, 'tools', 'unpacked',
+        `happier-process-custody${process.platform === 'win32' ? '.exe' : ''}`);
+      const initial = await fs.stat(executable);
+      if (state === 'changed-source') await writeFile(source, 'source-two');
+      if (state === 'changed-toolchain') compiler.mockReturnValue('fixture-go-two');
+      if (state === 'damaged-output') await writeFile(executable, 'damaged');
+      const previousWaitAllowed = process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED;
+      process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED = '0';
+      try {
+        await withCliDistBuildLock(async () => {
+          if (state === 'current') {
+            await withWorkspaceBundleLock(async () => {
+              await prepare();
+            }, { lockPath: join(projectRoot, '.project', 'tmp', 'process-custody-publication.lock'), env: {} });
+          } else await prepare();
+          await prepare();
+          await expect(readFile(executable, 'utf8')).resolves.toBe(state === 'changed-source' ? 'source-two' : 'source-one');
+        }, { lockPath: join(root, '.project', 'tmp', 'cli-dist-build.lock'), env: {} });
+      } finally {
+        if (previousWaitAllowed === undefined) delete process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED;
+        else process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED = previousWaitAllowed;
+      }
+      expect(runCommand).toHaveBeenCalledTimes(state === 'current' ? 1 : 2);
+      if (state === 'current') expect((await fs.stat(executable)).ino).toBe(initial.ino);
+    },
+  );
+
+  it('lets a concurrent dist reader observe complete old or new custody bytes during publication', async () => {
+    const root = await makeRoot();
+    const payloadDir = join(root, 'payload');
+    const toolsDir = join(payloadDir, 'tools', 'unpacked');
+    const executable = join(toolsDir, 'happier-process-custody');
+    const prebuilt = join(root, 'prebuilt');
+    await fs.mkdir(toolsDir, { recursive: true });
+    await writeFile(executable, 'old-complete');
+    await writeFile(prebuilt, 'new-complete');
+    let copying!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { copying = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const cp = fs.cp;
+    vi.spyOn(fs, 'cp').mockImplementation(async (...args) => {
+      await writeFile(String(args[1]), 'partial');
+      copying();
+      await held;
+      await cp(...args);
+    });
+    syncBuiltinESMExports();
+    const publication = stageProcessCustodyRuntime({ repoRoot: root, payloadDir,
+      target: { os: 'linux', arch: 'x64', exeExt: '', bunTarget: 'fixture' },
+      runCommand: vi.fn(), prebuiltExecutablePath: prebuilt });
+    try {
+      await started;
+      await withCliDistBuildLock(async () => {
+        await expect(readFile(executable, 'utf8')).resolves.toBe('old-complete');
+        const reader = await fs.open(executable, 'r');
+        try {
+          release();
+          await publication;
+          expect(await reader.readFile('utf8')).toBe('old-complete');
+          await expect(readFile(executable, 'utf8')).resolves.toBe('new-complete');
+        } finally { await reader.close(); }
+      }, { lockPath: join(root, '.project', 'tmp', 'cli-dist-build.lock'), env: {} });
+    } finally { release(); await publication; }
+  });
+
   it('builds the required target from the canonical Go module when no prebuilt is supplied', async () => {
     const root = await makeRoot();
     const payloadDir = join(root, 'payload');

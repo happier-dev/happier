@@ -12,6 +12,26 @@ import {
 describe('classifyTailscaleServeRootSlot', () => {
   const upstream = 'http://127.0.0.1:3005';
 
+  it('preserves an existing TCP forward on the requested HTTPS listener port', () => {
+    // Tailscale Serve's documented TLS-terminated TCP status shape.
+    expect(classifyTailscaleServeRootSlot([
+      '|-- tcp://machine.tailnet.ts.net:8443 (TLS terminated)',
+      '|-- tcp://100.64.0.5:8443',
+      '|--> tcp://127.0.0.1:5432',
+    ].join('\n'), upstream, { httpsPort: 8443 })).toEqual({
+      kind: 'conflict', exposure: 'serve', httpsUrl: null,
+    });
+  });
+
+  it('classifies only the requested listener while preserving the Home listener', () => {
+    expect(classifyTailscaleServeRootSlot([
+      'https://host.example.ts.net', '|-- / proxy http://127.0.0.1:3005',
+      'https://host.example.ts.net:8443', '|-- / proxy http://127.0.0.1:35550',
+    ].join('\n'), 'http://127.0.0.1:35550', { httpsPort: 8443 })).toEqual({
+      kind: 'exact', httpsUrl: 'https://host.example.ts.net:8443',
+    });
+  });
+
   it('reports the root slot as free when only another path is configured', () => {
     expect(classifyTailscaleServeRootSlot([
       'https://machine.tailnet.ts.net',
@@ -93,6 +113,14 @@ describe('tailscaleServeHttpsUrlForInternalServerUrlFromStatus', () => {
 });
 
 describe('tailscaleServeHttpsUrlForOwnedConfigFromStatus', () => {
+  it('does not adopt a foreign upstream or protocol merely because its port matches', () => {
+    for (const upstream of ['http://foreign.example.test:35550', 'https://127.0.0.1:35550']) {
+      expect(tailscaleServeHttpsUrlForOwnedConfigFromStatus({
+        serveStatusText: ['https://host.example.ts.net:8443', `|-- / proxy ${upstream}`].join('\n'),
+        internalServerUrl: 'http://127.0.0.1:35550', servePath: '/', httpsPort: 8443,
+      })).toBeNull();
+    }
+  });
   it('requires the owned serve path when multiple mappings target the same transfer port', () => {
     const status = [
       'https://machine.tailnet.ts.net',

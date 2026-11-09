@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, copyFile, cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +17,33 @@ import type { BinaryTarget } from './targets.js';
  * source and fails closed if the Go toolchain is unavailable.
  */
 const PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME = 'happier-process-custody';
+const GO_BUILD_FLAGS = ['build', '-trimpath', '-buildvcs=false'];
+
+function buildEnvironment(target: BinaryTarget): NodeJS.ProcessEnv {
+  return { ...process.env, CGO_ENABLED: '0', GOOS: target.os,
+    GOARCH: target.arch === 'x64' ? 'amd64' : target.arch };
+}
+
+/** Input identity for this producer's module, flags and effective toolchain. */
+export async function readProcessCustodyRuntimeInputIdentity(repoRoot: string, target: BinaryTarget): Promise<string> {
+  const cwd = join(repoRoot, 'apps', 'cli', 'native', 'processcustody');
+  const hash = createHash('sha256');
+  hash.update(JSON.stringify({ recipe: GO_BUILD_FLAGS, os: target.os, arch: target.arch,
+    go: execFileSync('go', ['env', '-json', 'GOVERSION', 'GOFLAGS', 'GOEXPERIMENT', 'GOAMD64', 'GOARM', 'GOARM64'],
+      { cwd, env: buildEnvironment(target), encoding: 'utf8' }) }));
+  async function visit(directory: string, prefix = ''): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const relativePath = `${prefix}${entry.name}`;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path, `${relativePath}/`);
+      else hash.update(relativePath).update('\0').update(await readFile(path)).update('\0');
+    }
+  }
+  await visit(cwd);
+  return hash.digest('hex');
+}
 
 export function resolveProcessCustodyRuntimeExecutableName(target: BinaryTarget): string {
   return `${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}${target.exeExt}`;
@@ -70,22 +98,14 @@ export async function stageProcessCustodyRuntime({
       await rm(stagingDir, { recursive: true, force: true });
     }
   } else {
-    const goArch = target.arch === 'x64' ? 'amd64' : target.arch;
     await runCommand('go', [
-      'build',
-      '-trimpath',
-      '-buildvcs=false',
+      ...GO_BUILD_FLAGS,
       '-o',
       executablePath,
       '.',
     ], {
       cwd: join(repoRoot, 'apps', 'cli', 'native', 'processcustody'),
-      env: {
-        ...process.env,
-        CGO_ENABLED: '0',
-        GOOS: target.os,
-        GOARCH: goArch,
-      },
+      env: buildEnvironment(target),
     });
   }
   if (target.os !== 'windows' && !prebuiltExecutablePath) {

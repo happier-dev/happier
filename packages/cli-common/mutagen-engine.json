@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "component": "mutagen-engine",
-  "engineVersion": "0.18.1-happier.11",
+  "engineVersion": "0.18.1-happier.12",
   "fork": {
     "remote": "https://github.com/happier-dev/mutagen.git",
     "branch": "happier/external-stream-v1",
     "sourceBaseCommit": "f5ed5c91fa6c934f5678393c56d00362d6443a1d",
-    "releaseCommit": "0139d6755f7281c84899b207de3179235afe9b9e",
-    "implementationState": "immutable-release",
+    "releaseCommit": "bee29cad5c61b10e129d9f03e25c86a00f5d7925",
+    "implementationState": "released",
     "transportSpikeCommit": "cd8069cf8b945dfa0d0f47d8685322c6f1e16e44"
   },
   "upstream": {

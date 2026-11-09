@@ -64,6 +64,17 @@ const survivorShellArgs = (foreground: string): readonly string[] => ([
 ]);
 
 describe('execFileWithDeadline', () => {
+  it('streams complete stdout to the caller without retaining the output', async () => {
+    let token = '';
+    const result = await execFileWithDeadline(process.execPath, ['-e', "process.stdout.write(' '.repeat(100_000)); process.stdout.write('k'.repeat(16_384) + '\\r\\n');"], {
+      onStdoutChunk: chunk => { token += chunk; },
+      inputBytes: new Uint8Array(),
+    });
+    expect(token.trim()).toBe('k'.repeat(16_384));
+    expect(String(result.stdout)).toBe('');
+    expect(String(result.stderr)).toBe('');
+  });
+
   it.each([0, 7])('retains caller-budgeted Unicode-safe output suffixes without stopping a noisy command (exit %s)', async exitCode => {
     const outputTailMaxBytes = 128;
     const pending = execFileWithDeadline(process.execPath, ['-e', `

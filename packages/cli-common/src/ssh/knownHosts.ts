@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -16,14 +17,6 @@ export type SshKnownHostRememberResult = Readonly<{
   fingerprint: string;
   existingFingerprint?: string;
 }>;
-
-function computeSshFingerprint(key: string): string {
-  const digest = createHash('sha256')
-    .update(Buffer.from(String(key ?? '').trim(), 'base64'))
-    .digest('base64')
-    .replace(/=+$/u, '');
-  return `SHA256:${digest}`;
-}
 
 function parseKnownHosts(text: string): SshKnownHostEntry[] {
   return String(text ?? '')
@@ -146,14 +139,14 @@ export class SshKnownHostsStore {
       keyType: SshKnownHostsStore.normalizeKnownHostToken(params.keyType, 'keyType'),
       key: SshKnownHostsStore.normalizeKnownHostToken(params.key, 'key'),
     };
-    const fingerprint = computeSshFingerprint(entry.key);
+    const fingerprint = computeSshHostKeyFingerprint(entry.key);
     const existing = this.entries.find((candidate) => candidate.host === entry.host && candidate.keyType === entry.keyType);
     if (!existing) {
       this.entries.push(entry);
       return { status: 'added', fingerprint };
     }
 
-    const existingFingerprint = computeSshFingerprint(existing.key);
+    const existingFingerprint = computeSshHostKeyFingerprint(existing.key);
     if (existing.key === entry.key) {
       return { status: 'unchanged', fingerprint };
     }

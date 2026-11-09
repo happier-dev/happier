@@ -60,6 +60,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   slice?: string;
   managedOomPreference?: 'none' | 'avoid' | 'omit';
   runAsUser?: string;
+  umask?: string;
   stdoutPath?: string;
   stderrPath?: string;
   wantedBy?: string;
@@ -85,6 +86,8 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const out = assertSingleLineSystemdField('stdoutPath', String(params.stdoutPath ?? '').trim());
   const err = assertSingleLineSystemdField('stderrPath', String(params.stderrPath ?? '').trim());
   const runAsUser = assertSingleLineSystemdField('runAsUser', String(params.runAsUser ?? '').trim());
+  const umask = assertSingleLineSystemdField('umask', String(params.umask ?? '').trim());
+  if (umask && !/^[0-7]{4}$/.test(umask)) throw new Error('umask must contain four octal digits');
 
   const execStart = Array.isArray(params.execStart)
     ? params.execStart.map((a) => escapeSystemdExecArg(String(a ?? ''))).join(' ')
@@ -96,6 +99,7 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const envLines = systemdEnvLines(params.env);
   const workDirLine = workDir ? `WorkingDirectory=${workDir}\n` : '';
   const userLine = runAsUser ? `User=${runAsUser}\n` : '';
+  const umaskLine = umask ? `UMask=${umask}\n` : '';
   const killModeLine = killMode ? `KillMode=${killMode}\n` : '';
   const sliceLine = slice ? `Slice=${slice}\n` : '';
   const managedOomPreferenceLine =
@@ -118,7 +122,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-${workDirLine}${userLine}${killModeLine}${sliceLine}${managedOomPreferenceLine}${envBlock}ExecStart=${execStart}
+${workDirLine}${userLine}${umaskLine}${killModeLine}${sliceLine}${managedOomPreferenceLine}${envBlock}ExecStart=${execStart}
 Restart=${restartPolicy}
 RestartSec=2
 ${outLine}${errLine}[Install]

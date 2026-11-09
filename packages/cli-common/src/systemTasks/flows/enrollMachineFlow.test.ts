@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
-import { runSetupMachineRecipe } from './setupMachineRecipe.js';
+import { runEnrollMachineFlow } from './enrollMachineFlow.js';
 
-describe('runSetupMachineRecipe', () => {
+describe('runEnrollMachineFlow', () => {
   it('configures the relay, skips auth pairing, and returns the machine id when already authenticated', async () => {
     const relayProfile = {
       serverUrl: 'https://relay.example.test',
@@ -33,7 +33,7 @@ describe('runSetupMachineRecipe', () => {
       })),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile,
       initialAuthStatus: {
         authenticated: true,
@@ -86,7 +86,7 @@ describe('runSetupMachineRecipe', () => {
       startDaemonService: vi.fn(async () => undefined),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile,
       initialAuthStatus: {
         authenticated: true,
@@ -133,7 +133,7 @@ describe('runSetupMachineRecipe', () => {
       startDaemonService: vi.fn(async () => undefined),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile,
       executor,
       steps: {
@@ -176,7 +176,7 @@ describe('runSetupMachineRecipe', () => {
       waitForAuthPairing: vi.fn(async () => ({ machineId: 'machine-confirmed' as string | null })),
     } as const;
 
-    await runSetupMachineRecipe({
+    await runEnrollMachineFlow({
       relayProfile: {
         serverUrl: 'https://relay.example.test',
         webappUrl: 'https://app.example.test',
@@ -209,7 +209,7 @@ describe('runSetupMachineRecipe', () => {
       waitForAuthPairing: vi.fn(async () => ({ machineId: 'machine-current' as string | null })),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile: {
         serverUrl: 'https://relay.example.test',
         webappUrl: 'https://app.example.test',
@@ -254,7 +254,7 @@ describe('runSetupMachineRecipe', () => {
       })),
     } as const;
 
-    await expect(runSetupMachineRecipe({
+    await expect(runEnrollMachineFlow({
       relayProfile,
       executor,
       steps: {
@@ -290,7 +290,7 @@ describe('runSetupMachineRecipe', () => {
       startDaemonService: vi.fn(async () => undefined),
     } as const;
 
-    await expect(runSetupMachineRecipe({
+    await expect(runEnrollMachineFlow({
       relayProfile,
       executor,
       steps: {
@@ -324,7 +324,7 @@ describe('runSetupMachineRecipe', () => {
       startDaemonService: vi.fn(async () => undefined),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile,
       executor,
       steps: {
@@ -363,7 +363,7 @@ describe('runSetupMachineRecipe', () => {
       startDaemonService: vi.fn(async () => undefined),
     } as const;
 
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       relayProfile,
       executor,
       steps: {
@@ -384,7 +384,7 @@ describe('runSetupMachineRecipe', () => {
   it('lets the service disposition owner decide the lifecycle actions, including a restart after pairing', async () => {
     const invocations: string[] = [];
     const seen: Array<{ paired: boolean }> = [];
-    await runSetupMachineRecipe({
+    await runEnrollMachineFlow({
       relayProfile: { serverUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test', localServerUrl: null },
       executor: {
         configureRelay: async () => undefined,

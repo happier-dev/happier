@@ -7,5 +7,6 @@ export * from './buildCliOptionalComponentArtifactPayload.js';
 export * from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 export * from './stageCliProxyApiManagedRuntime.js';
 export * from './stageProcessCustodyRuntime.js';
+export * from './prepareProcessCustodyRuntime.js';
 export * from './buildServerBinaryArtifactPayload.js';
 export * from './stageIrohNativeReleaseEvidence.js';

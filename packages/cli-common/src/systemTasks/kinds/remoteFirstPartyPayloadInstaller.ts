@@ -1,4 +1,4 @@
-import { access, stat } from 'node:fs/promises';
+import { access, open, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, join } from 'node:path';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
@@ -11,7 +11,9 @@ import type {
 } from '../../firstPartyRuntime/index.js';
 import {
   getFirstPartyComponentCatalogEntry,
+  assertValidFirstPartyVersionId,
   prepareFirstPartyComponentPayloadFromGitHubRelease,
+  readAcquisitionFailureCause,
 } from '../../firstPartyRuntime/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
@@ -96,6 +98,50 @@ function assertRemotePayloadCommandSucceeded(result: RemoteFirstPartyCommandResu
     `Remote payload ${phase} failed (exit ${result.status}; stdout present ${result.stdout.length > 0}; stderr present ${result.stderr.length > 0}).`);
 }
 
+/** Flat payloads remain supported; collections select the guest, never the controller. */
+async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64' }>): Promise<string> {
+  const targetId = `${target.os}-${target.arch}`;
+  let payloadRoot = root;
+  try {
+    if ((await stat(join(root, targetId))).isDirectory()) payloadRoot = join(root, targetId);
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+      throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be read.');
+    }
+  }
+  const binaryPath = join(payloadRoot, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
+  let header: Buffer;
+  try {
+    if (!(await stat(binaryPath)).isFile()) throw new Error('Not a file');
+    await access(binaryPath, constants.R_OK);
+    const file = await open(binaryPath, 'r');
+    try {
+      // ELF e_machine and Mach-O cputype are in the fixed executable header.
+      // Read only that header, not a potentially large Bun executable.
+      const bytes = Buffer.alloc(20);
+      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+      header = bytes.subarray(0, bytesRead);
+    } finally { await file.close(); }
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new SystemTaskExecutionError('guest_payload_missing', `The local CLI payload has no executable for ${targetId}.`);
+    }
+    throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload must contain a readable CLI executable.');
+  }
+  // An explicit operator script is interpreted on the guest. Native payloads
+  // must match its ABI even when the guest could emulate a foreign executable.
+  if (header.subarray(0, 2).toString() === '#!') return payloadRoot;
+  const elf = header.length === 20 && header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  const macho = header.length === 20 && header.readUInt32LE(0) === 0xfeedfacf;
+  const matches = (elf && target.os === 'linux' && header[4] === 2 && header[5] === 1
+    && header.readUInt16LE(18) === (target.arch === 'arm64' ? 183 : 62))
+    || (macho && target.os === 'darwin' && header.readUInt32LE(4) === (target.arch === 'arm64' ? 0x0100000c : 0x01000007));
+  if (!matches) {
+    throw new SystemTaskExecutionError('guest_architecture_unsupported', `The local CLI executable does not support ${targetId}. Prepare a matching guest payload and retry setup.`);
+  }
+  return payloadRoot;
+}
+
 export type RemoteFirstPartyPayloadInstallDeps = Readonly<{
   resolveRemoteReleaseTarget: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>;
   runRemoteText: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['runRemoteText']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['runRemoteText']>;
@@ -163,6 +209,12 @@ export async function installRemoteFirstPartyComponentPayload(
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
+  const rethrowGuestPayloadFailure = (error: unknown): never => {
+    if (readAcquisitionFailureCause(error) === 'release_archive_missing') {
+      throw new SystemTaskExecutionError('guest_payload_missing', `The selected release has no ${params.componentId} payload for ${target.os}-${target.arch}.`);
+    }
+    throw error;
+  };
   if (params.strategy === 'remote-self-download' && !localCliPayloadRoot) {
     const plan = await resolvedDeps.resolveSelfDownloadInstallPlan({
       componentId: params.componentId,
@@ -171,7 +223,7 @@ export async function installRemoteFirstPartyComponentPayload(
       arch: target.arch,
       runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
       ...(params.remoteHomeDir ? { remoteHomeDir } : {}),
-    });
+    }).catch(rethrowGuestPayloadFailure);
     params.onPhase?.('transfer');
     const installResult = await executeRemoteSelfDownloadFirstPartyInstallPlan({
       componentId: params.componentId, channel, remoteHomeDir, plan,
@@ -190,16 +242,10 @@ export async function installRemoteFirstPartyComponentPayload(
   params.signal?.throwIfAborted();
   let prepared: PreparedFirstPartyComponentPayload;
   if (localCliPayloadRoot) {
-    const binaryPath = join(localCliPayloadRoot, getFirstPartyComponentCatalogEntry(params.componentId).binaryRelativePath);
-    try {
-      if (!(await stat(binaryPath)).isFile()) throw new Error('CLI payload entrypoint is not a file');
-      await access(binaryPath, constants.R_OK);
-    } catch {
-      throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload must contain a readable CLI executable.');
-    }
+    const payloadRoot = await resolveLocalCliPayloadRoot(localCliPayloadRoot, target);
     prepared = {
       componentId: params.componentId, channel, versionId: `local-${channel}-${resolvedDeps.now()}`,
-      payloadRoot: localCliPayloadRoot, source: `local-payload:${localCliPayloadRoot}`, cleanup: async () => undefined,
+      payloadRoot, source: `local-payload:${payloadRoot}`, cleanup: async () => undefined,
     };
   } else {
     prepared = await resolvedDeps.preparePayload({
@@ -208,15 +254,18 @@ export async function installRemoteFirstPartyComponentPayload(
       os: target.os,
       arch: target.arch,
       userAgent: 'happier-bootstrap',
-    });
+    }).catch(rethrowGuestPayloadFailure);
   }
 
   try {
+    if (params.componentId === 'happier-cli' || params.componentId === 'happier-daemon') {
+      assertValidFirstPartyVersionId(prepared.versionId);
+    }
     params.signal?.throwIfAborted();
     params.onPhase?.('archive');
     const scpReadyPayload = await createScpReadyPayloadArchive(prepared.payloadRoot).catch((error: unknown) => {
       params.signal?.throwIfAborted();
-      if (localCliPayloadRoot) throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be prepared for delivery.');
+      if (localCliPayloadRoot) throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be prepared for delivery.', { cause: error });
       throw error;
     });
     const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemoteFirstPartyPathSegment(params.componentId)}-${sanitizeRemoteFirstPartyPathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
@@ -258,6 +307,9 @@ export async function installRemoteFirstPartyComponentPayload(
           buildRemoteFirstPartyPromotionCommand({
             layout,
             payloadRootExpression: quoteRemotePathWithHomeExpansion(remotePayloadRoot),
+            ...(params.componentId === 'happier-cli' || params.componentId === 'happier-daemon'
+              ? { cliInstall: { componentId: params.componentId, channel, versionId: prepared.versionId } }
+              : {}),
           }),
         ].join('; '),
         ...(params.signal ? { signal: params.signal } : {}),

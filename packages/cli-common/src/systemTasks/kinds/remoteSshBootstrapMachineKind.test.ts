@@ -1,9 +1,16 @@
+import '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readFile, stat } from 'node:fs/promises';
 
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
+import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
-import { materializeSshIdentityPrivateKeyToTempFile } from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
+import {
+  materializeSshIdentityPrivateKeyToTempFile,
+} from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
+import { normalizeRemoteBootstrapCliJsonResult } from '../executors/remoteEnrollMachineFlowExecutor.js';
 import {
   createRemoteSshBootstrapMachineTaskKind as createProductionRemoteSshBootstrapMachineTaskKind,
   createRemoteNativeBootstrapMachineTaskKind,
@@ -18,6 +25,128 @@ type RemoteEnrollmentExecutorParams = Parameters<
 >[0];
 
 describe('native transport through the remote bootstrap task', () => {
+  it.each([
+    ['native', 'absent'], ['ssh', 'absent'], ['configured-native', 'absent'],
+    ['native', 'admitted'], ['ssh', 'admitted'],
+    ['native', 'forged'], ['ssh', 'forged'], ['native', 'foreign'], ['ssh', 'foreign'],
+  ] as const)('starts a sandbox and consumes only its admitted Create pairing approval (%s, %s)', async (transport, review) => {
+    const seen: string[][] = [];
+    let running = false;
+    let configuredStarts = 0;
+    const pairing = { secretB64Url: Buffer.alloc(32, 23).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 15 * 60_000 };
+    const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
+      publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: HOME_TARGET.homeServerIdentityId,
+      pairing, supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'guest-home' };
+    const completion = { kind: 'remote_home_enrollment_result', protocolVersion: 1, success: true,
+      homeServerIdentityId: HOME_TARGET.homeServerIdentityId, machineId: 'joined', encryptionType: 'tokenOnly',
+      pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
+    // Only remote CLI/process IO is substituted; the shared bootstrap recipe is real.
+    const executor = {
+      runHappierJson: async (args: readonly string[]) => {
+        seen.push([...args]);
+        if (args[0] === 'service' && args[1] !== 'list') throw new SystemTaskExecutionError('background_service_failed', 'User services unavailable');
+        if (args[0] === 'daemon' && args[1] === 'start') {
+          if (transport === 'configured-native') throw new SystemTaskExecutionError('native_boot_unconfirmed', 'This guest requires its native persistent process configuration');
+          running = true;
+        }
+        const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined', services: [],
+          service: { installed: false }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' }, server: { activeServerId: 'guest-home' } };
+        return { ...status, v: 1, ok: true, kind: 'auth_status', data: status };
+      },
+      runHappierText: async (args: readonly string[], options?: { onStdoutChunk?: (chunk: string) => void }) => {
+        const stdout = args[1] === 'enroll-remote' ? `${JSON.stringify(request)}\n${JSON.stringify(completion)}\n`
+          : JSON.stringify(args[1] === 'request' ? request : completion);
+        options?.onStdoutChunk?.(stdout);
+        return { status: 0, stderr: '', stdout };
+      },
+    };
+    const managedEnrollment = { homeId: HOME_TARGET.homeServerIdentityId, managedId: 'managed-sandbox', requestId: 'create-sandbox',
+      expectedIntentRevision: 1, controller: { machineId: 'controller', installationId: 'installation' },
+      resource: { contributionRef: { pluginId: 'test.provider', localId: 'sandbox' }, schemaVersion: 1, value: { id: 'guest' } } };
+    const admittedPort = createHostReviewedChildPortV1({ actionId: review === 'foreign' ? 'machines.managed.inspect' : 'machines.managed.acquire', input: managedEnrollment,
+      context: {}, reviewAdmitted: true, execute: async () => ({ ok: true, result: {} }) });
+    const forgedPort: HostReviewedChildPortV1 = { parent: admittedPort.parent, invoke: admittedPort.invoke };
+    const reviewedChild = review === 'absent' ? undefined : review === 'forged' ? forgedPort : admittedPort;
+    let pairingPrompts = 0;
+    let localApprovals = 0;
+    const configuration = { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, managedEnrollment,
+      enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, serviceMode: 'user' as const };
+    const nativeInput = {
+      configuration, reviewedChild, assertCurrent: async () => {}, installRemoteCli: async () => {},
+      approveLocalAuthRequest: async () => { localApprovals++; }, executor,
+      ...(transport === 'configured-native' ? { startDaemonProcess: async () => { configuredStarts++; running = true; } } : {}),
+    };
+    const task = transport !== 'ssh' ? createRemoteNativeBootstrapMachineTaskKind(nativeInput) : createProductionRemoteSshBootstrapMachineTaskKind(Object.assign({
+      assertManagedEnrollmentCurrent: async () => {},
+      resolveHostTrust: async () => ({ status: 'trusted' as const }), installRemoteCli: async () => {}, approveLocalAuthRequest: async () => { localApprovals++; },
+      createRemoteEnrollmentExecutor: () => executor,
+      createHappierJsonExecutor: () => ({ runHappierJson: async ({ args }) => normalizeRemoteBootstrapCliJsonResult(await executor.runHappierJson(args), args[0] === 'auth') }),
+      runRemoteCommand: async () => { throw new Error('Canonical CLI executor owns these commands'); },
+    } satisfies RemoteSshBootstrapMachineDeps, { reviewedChild }));
+    await expect(task.run({ params: { ...configuration, ssh: { target: 'sandbox@example.test', auth: 'agent' } },
+      emit() {}, prompt: async () => { pairingPrompts++; return { approved: true }; } })).resolves.toMatchObject({ machineId: 'joined' });
+    expect(pairingPrompts).toBe(review === 'admitted' ? 0 : 1);
+    expect(localApprovals).toBe(1);
+    expect(running).toBe(true);
+    expect(seen.filter(args => args[0] === 'daemon' && args[1] === 'start')).toEqual(transport === 'configured-native' ? [] : [['daemon', 'start', '--json']]);
+    expect(configuredStarts).toBe(transport === 'configured-native' ? 1 : 0);
+    expect(seen.some(args => args[0] === 'service')).toBe(false);
+  });
+
+  it.each(['current', 'retired', 'aborted'] as const)('offers v3 pairing only through transient prompt delivery and never seals with local credentials (%s)', async currentness => {
+    const pairing = { secretB64Url: Buffer.alloc(32, 23).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 15 * 60_000 };
+    const localApproval = vi.fn(async () => {});
+    const delivered: unknown[] = [];
+    const events: unknown[] = [];
+    const currentnessPhases: string[] = [];
+    let phase = 'install';
+    const lifetime = new AbortController();
+    const task = createRemoteNativeBootstrapMachineTaskKind(Object.assign({
+      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, serviceMode: 'none' as const },
+      assertCurrent: async () => {
+        currentnessPhases.push(phase);
+        if (currentness === 'retired' && phase === 'approval-delivery') throw new SystemTaskExecutionError('enrollment_retired', 'Acquisition retired');
+      }, installRemoteCli: async () => {
+        if (currentness === 'aborted') lifetime.abort(new Error('Installation canceled'));
+      }, approveLocalAuthRequest: localApproval,
+      executor: {
+        runHappierJson: async () => ({ ok: true, data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined' },
+          auth: { needsAuth: false, machineId: 'joined' }, server: { activeServerId: 'guest-home' } }),
+        runHappierText: async (args: readonly string[]) => ({ status: 0, stderr: '', stdout: JSON.stringify(args[1] === 'request'
+          ? { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1, publicKey: Buffer.alloc(32, 1).toString('base64'),
+            homeServerIdentityId: HOME_TARGET.homeServerIdentityId, pairing, supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'guest-home' }
+          : { kind: 'remote_home_enrollment_result', protocolVersion: 1, success: true, homeServerIdentityId: HOME_TARGET.homeServerIdentityId,
+            machineId: 'joined', encryptionType: 'tokenOnly', pairingAuthentication: 'v3', remoteProfileId: 'guest-home' }) }),
+      },
+    }, { deliverAuthApproval: async (request: unknown) => { delivered.push(request); return { ready: true }; } }));
+    const enrollment = task.run({ params: {}, signal: lifetime.signal, emit: event => { events.push(event); }, prompt: async prompt => {
+      expect(prompt.kind).toBe('auth.approveRemoteProvisioning');
+      expect(JSON.stringify(prompt)).not.toContain(pairing.secretB64Url);
+      const deliver = Reflect.get(prompt, 'deliver');
+      expect(typeof deliver).toBe('function');
+      if (typeof deliver !== 'function') throw new Error('Missing requester pairing delivery');
+      phase = 'approval-delivery';
+      expect(await deliver({ requester: 'admitted' })).toEqual({ ready: true });
+      phase = 'approved';
+      return { approved: true };
+    } });
+    if (currentness === 'aborted') {
+      await expect(enrollment).rejects.toThrow('Installation canceled');
+      expect(delivered).toEqual([]);
+    } else if (currentness === 'retired') {
+      await expect(enrollment).rejects.toMatchObject({ code: 'enrollment_retired' });
+      expect(delivered).toEqual([]);
+    } else {
+      await expect(enrollment).resolves.toMatchObject({ machineId: 'joined' });
+      expect(delivered).toEqual([expect.objectContaining({ request: { requester: 'admitted' }, pairing })]);
+    }
+    expect(localApproval).not.toHaveBeenCalled();
+    expect(JSON.stringify(events)).not.toContain(pairing.secretB64Url);
+    // One authority read before releasing requester pairing context. The
+    // streaming guest may claim approval as soon as the requester approves.
+    expect(currentnessPhases).toEqual(currentness === 'aborted' ? [] : ['approval-delivery']);
+  });
+
   it.each([60_000, 480_000])('gives service installation and start only the pairing lifetime remaining after sign-in (%i ms)', async signInMs => {
     vi.useFakeTimers();
     try {
@@ -63,8 +192,8 @@ describe('native transport through the remote bootstrap task', () => {
       ]);
     } finally { vi.useRealTimers(); }
   });
-  it('shares the existing enrollment budget with installation authority reads without renewing it at sign-in', async () => {
-    const stdout = await readFile(new URL('../recipes/fixtures/authRequest.cli-v0.2.16.json', import.meta.url), 'utf8');
+  it('sets no enrollment deadline during installation or the initial auth request', async () => {
+    const stdout = await readFile(new URL('../flows/fixtures/authRequest.cli-v0.2.16.json', import.meta.url), 'utf8');
     vi.useFakeTimers();
     try {
       const startedAt = Date.now();
@@ -74,28 +203,28 @@ describe('native transport through the remote bootstrap task', () => {
         configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, serviceMode: 'none' },
         assertCurrent: async () => {},
         installRemoteCli: async () => {
-          expect(deadlines).toEqual([startedAt + 10 * 60_000]);
+          expect(deadlines).toEqual([]);
           vi.setSystemTime(startedAt + 2 * 60_000);
         },
         approveLocalAuthRequest: async () => {},
         executor: {
           runHappierJson: async () => ({ ok: true, data: { authenticated: false, machineId: null } }),
           runHappierText: async (_args, options) => {
-            expect(options?.timeoutMs).toBe(8 * 60_000);
+            expect(options?.timeoutMs).toBeNull();
             return { status: 0, stdout, stderr: '' };
           },
         },
       });
       await expect(task.run({ params: {}, emit() {}, prompt: async () => ({ approved: false }) }))
         .rejects.toMatchObject({ code: 'remote_cli_update_required' });
-      expect(deadlines.every(deadline => deadline === startedAt + 10 * 60_000)).toBe(true);
+      expect(deadlines).toEqual([]);
     } finally { vi.useRealTimers(); }
   });
-  it('replaces the provisional install deadline with the pairing expiry once consent exists', async () => {
+  it('starts the pairing lifetime after an installation longer than ten minutes', async () => {
     vi.useFakeTimers();
     try {
       const startedAt = Date.now();
-      const pairingCreatedAt = startedAt + 4 * 60_000;
+      const pairingCreatedAt = startedAt + 11 * 60_000;
       const pairingExpiresAt = pairingCreatedAt + 15 * 60_000;
       const deadlines: number[] = [];
       const task = createRemoteNativeBootstrapMachineTaskKind({
@@ -119,7 +248,7 @@ describe('native transport through the remote bootstrap task', () => {
       });
 
       await expect(task.run({ params: {}, emit() {}, prompt: async () => ({ approved: true }) })).resolves.toMatchObject({ machineId: 'joined' });
-      expect(deadlines).toEqual([startedAt + 10 * 60_000, pairingExpiresAt]);
+      expect(deadlines).toEqual([pairingExpiresAt]);
     } finally { vi.useRealTimers(); }
   });
   it.each([60_000, 15 * 60_000])('settles unanswered pairing at the Home pairing deadline (%i ms) with a Retry outcome', async lifetimeMs => {
@@ -155,7 +284,7 @@ describe('native transport through the remote bootstrap task', () => {
   });
 
   it('preserves the released guest update requirement through the composed native task runner', async () => {
-    const stdout = await readFile(new URL('../recipes/fixtures/authRequest.cli-v0.2.16.json', import.meta.url), 'utf8');
+    const stdout = await readFile(new URL('../flows/fixtures/authRequest.cli-v0.2.16.json', import.meta.url), 'utf8');
     const approveLocalAuthRequest = vi.fn(async () => {});
     const task = createRemoteNativeBootstrapMachineTaskKind({
       configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, serviceMode: 'none' },
@@ -192,16 +321,24 @@ describe('native transport through the remote bootstrap task', () => {
   });
 
   it('enrolls with buffered native exec and carries exact managed correlation in private stdin', async () => {
+    vi.useFakeTimers();
+    try {
     let approved = false;
+    let healthy = false;
     const correlation = { homeId: 'srv_home_identity', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1, controller: { machineId: 'controller', installationId: 'installation' }, resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } } };
     let guestInput: unknown;
     const runner = createSystemTasksRunner({ kinds: {} });
     const task = createRemoteNativeBootstrapMachineTaskKind({
-      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, managedEnrollment: correlation, serviceMode: 'none' },
+      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, managedEnrollment: correlation, serviceMode: 'user' },
       assertCurrent: async () => {}, installRemoteCli: async () => {},
       approveLocalAuthRequest: async () => { approved = true; },
       executor: {
-        runHappierJson: async () => ({ ok: true, data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined-machine' } }),
+        // Native CLI process boundary: local PID/auth can be ready before Home
+        // admits the socket and acknowledges machine-control registrations.
+        runHappierJson: async () => ({ ok: true,
+          data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined-machine', services: [] },
+          service: { installed: true }, daemon: { running: true, healthy }, auth: { needsAuth: false, machineId: 'joined-machine' },
+          server: { activeServerId: 'guest-home' } }),
         runHappierText: async (args, options) => {
           expect(options?.onStdoutChunk).toBeUndefined();
           if (args[1] === 'request') {
@@ -218,13 +355,20 @@ describe('native transport through the remote bootstrap task', () => {
       },
     });
     await runner.startAdmitted({ taskId: 'native-enrollment', kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, task);
-    await vi.waitFor(async () => {
-      expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
-    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
     expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).pendingPrompt?.data).toMatchObject({ credentialScope: 'account' });
-    await runner.respond({ taskId: 'native-enrollment', answer: { approved: true } });
+    const response = runner.respond({ taskId: 'native-enrollment', answer: { approved: true } });
+    // The real managed recipe must not complete merely because the PID is
+    // running, nor impose the unrelated local setup's 15-second cutoff.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).result).toBeNull();
+    healthy = true;
+    await vi.advanceTimersByTimeAsync(500);
+    await response;
     await expect(runner.wait({ taskId: 'native-enrollment' })).resolves.toMatchObject({ ok: true, data: { machineId: 'joined-machine' } });
     expect(guestInput).toMatchObject({ managedEnrollment: correlation });
+    } finally { vi.useRealTimers(); }
   });
 });
 

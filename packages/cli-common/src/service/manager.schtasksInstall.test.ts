@@ -1,9 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { planServiceAction } from './manager';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
+
+import { applyServicePlan, planServiceAction, preflightServiceInstallAssets } from './manager';
 
 describe('planServiceAction (schtasks install)', () => {
-  it('creates Windows user tasks with a hidden non-interactive PowerShell action', () => {
+  it('controls and removes existing tasks when the original package asset is unavailable', async () => {
+    const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const read = vi.mocked(readFileSync);
+    read.mockClear();
+    read.mockImplementation(() => { throw new Error('the installing package was removed'); });
+    try {
+      for (const action of ['start', 'stop', 'restart', 'uninstall'] as const) {
+        const plan = planServiceAction({
+          backend: 'schtasks-user', action, label: 'happier-daemon.default',
+          taskName: 'Happier\\happier-daemon.default',
+          definitionPath: 'C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1',
+        });
+        expect(plan.commands.length).toBeGreaterThan(0);
+        expect(plan.copies ?? []).toEqual([]);
+      }
+      expect(read.mock.calls.some(([path]) => String(path).endsWith('happier-service-launcher.exe'))).toBe(false);
+    } finally {
+      read.mockImplementation(actual.readFileSync);
+    }
+  });
+
+  it('creates Windows user tasks through the packaged windowless launcher', () => {
     const plan = planServiceAction({
       backend: 'schtasks-user',
       action: 'install',
@@ -12,6 +43,10 @@ describe('planServiceAction (schtasks install)', () => {
       definitionPath: 'C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1',
       definitionContents: '$ErrorActionPreference = "Stop"',
       persistent: true,
+      windowsLauncher: {
+        sourcePath: 'C:\\package\\native\\windows-x64\\happier-service-launcher.exe',
+        version: '0.2.17',
+      },
     });
 
     const create = plan.commands.find((command) =>
@@ -30,11 +65,17 @@ describe('planServiceAction (schtasks install)', () => {
     expect(registration).toContain('<LogonTrigger><Enabled>true</Enabled><UserId>');
     expect(registration).toContain('<LogonType>InteractiveToken</LogonType>');
     expect(registration).toContain('<RunLevel>LeastPrivilege</RunLevel>');
-    expect(registration).toContain('<Command>powershell.exe</Command>');
-    expect(registration).toContain('-WindowStyle Hidden -File &quot;C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1&quot;');
+    expect(registration).toContain('<Command>C:\\Users\\test\\.happier\\services\\happier-daemon.default\\launcher-0.2.17\\happier-service-launcher.exe</Command>');
+    expect(registration).toContain('--wrapper &quot;C:\\Users\\test\\.happier\\services\\happier-daemon.default.ps1&quot;');
+    expect(registration).toContain('--diagnostic-log &quot;C:\\Users\\test\\.happier\\services\\happier-daemon.default.launcher.log&quot;');
     expect(registration).toContain('$xml.Task.Triggers.LogonTrigger.UserId = $userId');
     expect(registration).toContain('$xml.Task.Principals.Principal.UserId = $userId');
     expect(registration).toContain('$folder.RegisterTask($taskName, $xml.OuterXml, 6, $userId, $null, 3, $null)');
+    expect(plan.copies).toEqual([{
+      sourcePath: 'C:\\package\\native\\windows-x64\\happier-service-launcher.exe',
+      destinationPath: 'C:\\Users\\test\\.happier\\services\\happier-daemon.default\\launcher-0.2.17\\happier-service-launcher.exe',
+      validation: 'windows-service-launcher-x64-v1',
+    }]);
   });
 
   it('plans restart as an ordered task end followed by task run', () => {
@@ -105,5 +146,37 @@ describe('planServiceAction (schtasks install)', () => {
     expect(registration).toContain("[xml]$xml = '<Task");
     expect(registration).toContain('O&apos;Brien &amp; $qa');
     expect(registration).not.toContain('/SC');
+  });  it('rejects an invalid helper before writing a replacement wrapper', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-launcher-preflight-'));
+    const sourcePath = join(root, 'invalid.exe');
+    const definitionPath = join(root, 'relay.ps1');
+    await writeFile(sourcePath, 'not a PE');
+    await writeFile(definitionPath, 'original wrapper');
+    const plan = planServiceAction({
+      backend: 'schtasks-user',
+      action: 'install',
+      label: 'relay',
+      definitionPath,
+      definitionContents: 'replacement wrapper',
+      persistent: true,
+      windowsLauncher: { sourcePath, version: 'fixture' },
+    });
+
+    await expect(applyServicePlan(plan, { runCommands: false })).rejects.toThrow(/invalid .*launcher/u);
+    await expect(readFile(definitionPath, 'utf8')).resolves.toBe('original wrapper');
+  });
+
+  it('lets consumers reject a missing helper before they stop the current service', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-launcher-consumer-preflight-'));
+    const sourcePath = join(root, 'missing.exe');
+
+    await expect(preflightServiceInstallAssets({
+      backend: 'schtasks-user',
+      windowsLauncher: { sourcePath, version: 'fixture' },
+    })).rejects.toThrow(/launcher is unavailable/u);
+    await expect(preflightServiceInstallAssets({
+      backend: 'systemd-user',
+      windowsLauncher: { sourcePath, version: 'fixture' },
+    })).resolves.toBeUndefined();
   });
 });

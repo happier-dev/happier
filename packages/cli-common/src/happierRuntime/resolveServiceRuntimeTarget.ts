@@ -1,5 +1,6 @@
 import type { HappierInstallation, HappierService, HappierServiceRuntimeTarget } from './types.js';
-import { isHappierRuntimePathWithinRoot, normalizeHappierRuntimePath } from './runtimePathMatching.js';
+import { normalizeHappierRuntimePath } from './runtimePathMatching.js';
+import { doesCliLauncherUseInstallation } from '../firstPartyRuntime/managedCliShimInstall.js';
 
 function pathBasename(pathValue: string): string {
   const normalized = normalizeHappierRuntimePath(pathValue);
@@ -111,11 +112,11 @@ export function resolveHappierServiceRuntimeTarget(params: Readonly<{
   }
 
   for (const installation of params.installations) {
-    const candidateRoots = [installation.path, installation.realPath]
+    const candidateRoots = [installation.path, installation.realPath,
+      ...(installation.source === 'firstPartyManaged' ? [installation.managedRoot] : [])]
       .map((value) => normalizeHappierRuntimePath(value))
       .filter(Boolean);
-    const matchedRoot = candidateRoots.find((root) => isHappierRuntimePathWithinRoot(executablePath, root));
-    if (!matchedRoot) {
+    if (!doesCliLauncherUseInstallation({ launcher: [executablePath], installationRoots: candidateRoots })) {
       continue;
     }
     return {

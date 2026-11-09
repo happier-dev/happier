@@ -18,7 +18,6 @@ export {
   runTailscaleDown,
   runTailscaleLogin,
   runTailscaleFunnelEnable,
-  runTailscaleFunnelReset,
   runTailscaleFunnelDisable,
   runTailscaleFunnelStatus,
   runTailscaleServeDisable,
@@ -27,10 +26,13 @@ export {
   runTailscaleServeStatus,
   runTailscaleStatus,
   runTailscaleStatusJson,
+  runTailscaleCurrentProfileId,
+  runTailscaleOperatorObservation,
   runTailscaleUp,
   runTailscaleVersion,
   sanitizeTailscaleEnv,
   TailscaleCommandError,
+  type TailscaleCommandFailure,
   type TailscaleCommandRequest,
   type TailscaleCommandResult,
   type TailscaleCommandRunner,
@@ -60,5 +62,3 @@ export {
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
 } from '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract';
-
-export { runTailscaleOperatorObservation } from './commandRunner.js';

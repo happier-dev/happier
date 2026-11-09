@@ -31,6 +31,7 @@ export class FirstPartyAcquisitionError extends Error {
 }
 
 export function readAcquisitionFailureCause(error: unknown): string {
+  if (error instanceof FirstPartyAcquisitionError) return error.failureCause;
   if (error instanceof Error && error.cause) return readAcquisitionFailureCause(error.cause);
   if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
     return /^[a-z0-9_-]+$/iu.test(error.code) ? error.code : 'unknown';

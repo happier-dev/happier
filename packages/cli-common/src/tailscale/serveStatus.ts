@@ -66,6 +66,8 @@ function proxyTargetMatchesInternalServerUrl(target: URL, internalServerUrl: str
   return Boolean(
     wanted.port
     && target.port === wanted.port
+    && target.protocol === wanted.protocol
+    && target.pathname === wanted.pathname
     && loopbackSpellings.has(target.hostname.toLowerCase())
     && loopbackSpellings.has(wanted.hostname.toLowerCase()),
   );
@@ -78,6 +80,7 @@ function proxyTargetMatchesInternalServerUrl(target: URL, internalServerUrl: str
 export function classifyTailscaleServeRootSlot(
   statusText: string,
   internalServerUrl: string,
+  options: Readonly<{ httpsPort?: number }> = {},
 ): TailscaleServeRootSlot {
   let currentHttpsUrl: string | null = null;
   const lines = String(statusText ?? '').split(/\r?\n/u);
@@ -85,12 +88,26 @@ export function classifyTailscaleServeRootSlot(
     const line = String(rawLine ?? '').trim();
     if (!line) continue;
 
+    // A dedicated HTTPS listener must not replace an existing TCP forward.
+    // Match listener rows, excluding the |--> row naming its local target.
+    const tcpListener = line.match(/^(?:\|--\s+)?(tcp:\/\/\S+)/iu)?.[1];
+    if (tcpListener) {
+      try {
+        if (new URL(tcpListener).port === normalizeHttpsPort(options.httpsPort)) {
+          return { kind: 'conflict', exposure: /\bfunnel\b/iu.test(statusText) ? 'funnel' : 'serve', httpsUrl: null };
+        }
+      } catch {
+        // Non-URL status annotations cannot describe a matching listener.
+      }
+      continue;
+    }
+
     const maybeHttps = line.match(/^(https:\/\/\S+)/iu)?.[1];
     if (maybeHttps && !line.toLowerCase().includes('proxy')) {
       currentHttpsUrl = normalizeHttpsUrl(maybeHttps);
       continue;
     }
-    if (!isRootProxyLine(line)) continue;
+    if (!isRootProxyLine(line) || !currentHttpsUrl || !httpsUrlMatchesPort(currentHttpsUrl, options.httpsPort)) continue;
 
     const target = tryParseProxyTargetFromLine(line);
     if (target && proxyTargetMatchesInternalServerUrl(target, internalServerUrl)) {
@@ -209,7 +226,7 @@ export function tailscaleServeHttpsUrlForOwnedConfigFromStatus(params: Readonly<
     }
 
     const proxyTarget = tryParseProxyTargetFromLine(line);
-    if (!proxyTarget || proxyTarget.port !== wantedPort) {
+    if (!proxyTarget || !proxyTargetMatchesInternalServerUrl(proxyTarget, rawInternalServerUrl)) {
       continue;
     }
 

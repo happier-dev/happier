@@ -124,11 +124,12 @@ export function resolveWorkspaceSource(packages, specifier, { conditions = [] } 
   return resolve(owner.root, replacement === undefined ? target : target.replaceAll('*', replacement));
 }
 
-/** Declaration emission consumes the same authored exports as source runtime
- * imports, even when a nearer installed workspace copy carries stale source. */
+/** Compiler programs consume authored exports even when an installed copy is
+ * stale. JavaScript exports retain their authored declaration authority; TS
+ * implementation exports remain source inputs rather than built declarations. */
 export function workspaceSourceCompilerPaths(packages) {
   const paths = {};
-  for (const [name, { manifest }] of packages) {
+  for (const [name, { root, manifest }] of packages) {
     const exports = manifest.exports;
     const declarations = Object.keys(exports ?? {}).some(key => key.startsWith('.'))
       ? Object.entries(exports) : [['.', exports]];
@@ -136,7 +137,10 @@ export function workspaceSourceCompilerPaths(packages) {
       const target = sourceConditionTarget(declaration);
       if (typeof target !== 'string' || !target.startsWith('./') || /(?:^|\/)(?:dist|package-dist)\//.test(target)) continue;
       const specifier = key === '.' ? name : name + key.slice(1);
-      paths[specifier] = [resolveWorkspaceSource(packages, specifier)];
+      const types = sourceConditionTarget(declaration, ['types']);
+      const authoredJavaScriptTypes = /\.[cm]?jsx?$/.test(target) && typeof types === 'string'
+        && types.startsWith('./') && /\.d\.[cm]?ts$/.test(types) && !/(?:^|\/)(?:dist|package-dist)\//.test(types);
+      paths[specifier] = [authoredJavaScriptTypes ? resolve(root, types) : resolveWorkspaceSource(packages, specifier)];
     }
   }
   return paths;
@@ -269,6 +273,16 @@ export function runtimePackageExports(value) {
     .map(([key,target])=>[key,runtimePackageExports(target)]));
 }
 
+/**
+ * Sidecars run without the CLI's file logger. Its import closure (settings,
+ * persistence, Account auth) would otherwise inline most of Protocol into every
+ * bundled sidecar: process_tree.cjs was 10.6 MB, and 2.5 MB without this edge.
+ */
+const SIDECAR_CLI_LOGGER_STUB = 'const noop=()=>undefined;export const logger=new Proxy({}, {get:()=>noop});';
+const sidecarCliLoggerBoundary = {name:'sidecar-cli-logger-boundary', setup(builder) {
+  builder.onLoad({filter:/apps[\\/]cli[\\/]src[\\/]ui[\\/]logger\.ts$/}, () => ({contents:SIDECAR_CLI_LOGGER_STUB, loader:'js'}));
+}};
+
 /** Executable sidecars own process-local source graphs, not npm package dist. */
 export async function bundleCliSourceSidecars({repoDir, outputDir, build, workspacePackages, requireFromProject}) {
   const sourceDir = join(repoDir, 'apps/cli/scripts');
@@ -294,7 +308,7 @@ export async function bundleCliSourceSidecars({repoDir, outputDir, build, worksp
       bundle:bundlesWorkspaceSource, platform:'node', format:file.endsWith('.cjs')?'cjs':'esm', target:'node20',
       ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
       conditions:[SOURCE_CONDITION], metafile:true, logLevel:'silent',
-      plugins:bundlesWorkspaceSource?[createWorkspaceSourceResolver({workspacePackages,requireFromProject})]:[],
+      plugins:bundlesWorkspaceSource?[sidecarCliLoggerBoundary,createWorkspaceSourceResolver({workspacePackages,requireFromProject})]:[],
     });
     Object.assign(metafile.inputs,result.metafile.inputs);
     Object.assign(metafile.outputs,result.metafile.outputs);

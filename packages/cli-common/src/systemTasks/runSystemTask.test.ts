@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { getRelayAccessProvider, createBuiltinRelayAccessSelection as relaySelection } from '../relayAccess/index.js';
+import { createExecutionRunnerFromKind } from './createExecutionRunnerFromKind.js';
+import { createSystemTasksRunner } from './interactiveTaskKinds.js';
+import { createRelayAccessDisableTaskKind } from './kinds/relayAccessKinds.js';
+import type { RelayAccessConfig } from '../relayAccess/types.js';
 
 import {
   createSystemTaskRegistry,
@@ -8,6 +13,27 @@ import {
 } from './index.js';
 
 describe('executeSystemTask', () => {
+  it.each(['generator', 'interactive'] as const)('preserves the native refusal code and retained configuration through a failed relay disable (%s)', async transport => {
+    let persisted: RelayAccessConfig | null = relaySelection('tailscaleServe');
+    const kind = createRelayAccessDisableTaskKind({ readConfig: async () => persisted,
+      writeConfig: async ({ config }) => { persisted = config; }, getProvider: getRelayAccessProvider,
+      createExecutionContext: () => ({ env: { HAPPIER_TAILSCALE_BIN: '/fixture/tailscale' }, upstreamUrl: null,
+        runCommand: async request => ({ ...request, exitCode: 1, stdout: '',
+          stderr: "sending serve config: 401 Unauthorized: must be root, or be an operator and able to run 'sudo tailscale' to serve a path or Unix socket\n/private/alice token=secret-value" }) }),
+    });
+    const request = { taskId: 'refused-disable', kind: 'relay.access.disable.v1', params: { target: { kind: 'local' } } };
+    const runner = createSystemTasksRunner({ kinds: { [request.kind]: kind } });
+    if (transport === 'interactive') await runner.start(request);
+    const result = transport === 'interactive' ? await runner.wait(request) : await executeSystemTask({ taskId: request.taskId,
+      spec: { protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, kind: 'relay.access.disable.v1', params: { target: { kind: 'local' } } },
+      registry: createSystemTaskRegistry([{ kind: 'relay.access.disable.v1', handler: createExecutionRunnerFromKind(kind) }]),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'tailscale_operator_authorization_refused', message: expect.stringContaining('sudo') } });
+    expect(persisted).toEqual(relaySelection('tailscaleServe'));
+    expect(JSON.stringify(result)).not.toContain('/private/alice');
+    expect(JSON.stringify(result)).not.toContain('secret-value');
+  });
+
   it('publishes callback progress while a handler is still awaiting work', async () => {
     const events: unknown[] = [];
     let finish: (() => void) | undefined;

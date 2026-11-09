@@ -32,8 +32,10 @@ export {
   buildRemoteHappierInvocationCommand,
   type RemoteBootstrapCommandLabel,
 } from './ssh/remoteBootstrapCommandBuilder.js';
-export { isRemoteBootstrapUnauthenticatedCliResult, normalizeRemoteBootstrapCliJsonResult } from './executors/remoteSetupMachineRecipeExecutor.js';
+export { isRemoteBootstrapUnauthenticatedCliResult, normalizeRemoteBootstrapCliJsonResult } from './executors/remoteEnrollMachineFlowExecutor.js';
 export { installRemoteFirstPartyComponentPayload } from './kinds/remoteFirstPartyPayloadInstaller.js';
+export { createOpenSshRemoteCliTransport } from './ssh/openSshRemoteCliTransport.js';
+export { sshCommandError, sshCommandFailure } from './ssh/sshCommandFailure.js';
 export { materializeSshIdentityPrivateKeyToTempFile } from './ssh/materializeSshIdentityPrivateKeyToTempFile.js';
 export {
   buildRemoteSelfDownloadFirstPartyInstallCommand,
@@ -88,29 +90,29 @@ export {
 } from './executors/serverScope.js';
 
 export {
-  createSetupMachineRecipeExecutorFromHappierJsonExecutor,
+  createEnrollMachineFlowExecutorFromHappierJsonExecutor,
   serverHelpSupportsExplicitHomeSetup,
-  type SetupMachineRecipeExecutorOptions,
-} from './executors/setupMachineRecipeExecutor.js';
+  type EnrollMachineFlowExecutorOptions,
+} from './executors/enrollMachineFlowExecutor.js';
 
 export {
-  runSetupMachineRecipe,
-  type SetupMachineAuthStatus,
-  type SetupMachineDaemonStatus,
-  type SetupMachineRecipeExecutor,
-  type SetupMachineRecipeEvent,
-  type SetupMachineRecipeResult,
-  type SetupMachineServiceAction,
-  type SetupMachineServiceCommandOptions,
-  type SetupMachineRecipeStepIds,
-  type SetupMachineRecipeSteps,
-  type SetupMachineRelayProfile,
-} from './recipes/setupMachineRecipe.js';
+  runEnrollMachineFlow,
+  type EnrollMachineAuthStatus,
+  type EnrollMachineDaemonStatus,
+  type EnrollMachineFlowExecutor,
+  type EnrollMachineFlowEvent,
+  type EnrollMachineFlowResult,
+  type EnrollMachineServiceAction,
+  type EnrollMachineServiceCommandOptions,
+  type EnrollMachineFlowStepIds,
+  type EnrollMachineFlowSteps,
+  type EnrollMachineRelayProfile,
+} from './flows/enrollMachineFlow.js';
 export {
-  runRemoteHomeEnrollmentRecipe,
+  runRemoteHomeEnrollmentFlow,
   type RemoteHomeEnrollmentPairingRequest,
   type RemoteHomeEnrollmentResult,
-} from './recipes/remoteHomeEnrollmentRecipe.js';
+} from './flows/remoteHomeEnrollmentFlow.js';
 export {
   applyBackgroundServiceSetupGuidance,
   resolveBackgroundServiceSetupGuidance,
@@ -136,11 +138,6 @@ export {
   formatBackgroundServiceReplacementPrompt,
 } from './setupServiceGuidance/formatBackgroundServiceSetupPrompts.js';
 
-export { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from './executors/enrollMachineFlowExecutor.js';
-
 export * from './kinds/index.js';
 
-export { createOpenSshRemoteCliTransport } from './ssh/openSshRemoteCliTransport.js';
-export { runRemoteHomeEnrollmentFlow } from './flows/remoteHomeEnrollmentFlow.js';
-export { sshCommandError, sshCommandFailure } from './ssh/sshCommandFailure.js';
-export type { RemoteFirstPartyCommandResult } from './kinds/remoteFirstPartyPayloadInstaller.js';
+export { resolveInstalledLocalFirstPartyCommand } from './executors/happierJsonExecutor.js';

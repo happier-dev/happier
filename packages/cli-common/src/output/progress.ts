@@ -241,6 +241,7 @@ export async function runCommandLogged({
       cwd,
       env,
       stdio: quiet ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+      windowsHide: quiet,
       shell: false,
     });
 

@@ -855,3 +855,26 @@ it('refuses to publish a bundled plugin package that cannot serve a resource its
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+it('carries packaged registry catalogs through daemon payload publication and refuses missing catalog bytes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-cli-payload-registry-content-'));
+  try {
+    const fixture = createBundledPluginPayloadFixture(root, [], []);
+    const packageRoot = join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-example');
+    const catalogPath = 'resources/registry/apps.json';
+    writeFileSync(join(packageRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+      id: 'happier.example', contributes: { resources: [], registrySources: [
+        { id: 'apps', format: 'happier-catalog', kinds: ['app'], packageContent: { path: catalogPath } },
+        { id: 'remote', format: 'happier-catalog', kinds: ['app'], url: 'https://catalog.example/apps.json' },
+      ] },
+    }));
+    await expect(copyCliNodeRuntimePayload({ repoRoot: root, payloadDir: fixture.payloadDir, distDir: fixture.distDir }))
+      .rejects.toThrow(catalogPath);
+    const catalog = JSON.stringify({ schemaVersion: 1, apps: [] });
+    mkdirSync(join(packageRoot, 'resources', 'registry'), { recursive: true });
+    writeFileSync(join(packageRoot, catalogPath), catalog);
+    await copyCliNodeRuntimePayload({ repoRoot: root, payloadDir: fixture.payloadDir, distDir: fixture.distDir });
+    expect(readFileSync(join(fixture.payloadDir, 'node_modules', '@happier-dev', 'plugins-example', catalogPath), 'utf8'))
+      .toBe(catalog);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

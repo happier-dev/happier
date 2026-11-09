@@ -17,7 +17,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
+import { resolveInstalledRuntimePackage } from '../../workspaceRuntimeDependencies.mjs';
 
+import { createWindowsServiceLauncherPeFixture } from '../../../../scripts/testing/windowsServiceLauncherPeFixture.mjs';
+import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 import { execOrThrow, resolveBunCommand } from './commands.js';
 import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from './copyCliNodeRuntimePayload.js';
@@ -54,7 +58,7 @@ function targetForHost() {
   };
 }
 
-async function createSupportIdentityFixture(root: string): Promise<void> {
+async function createSupportIdentityFixture(root: string, { nativeSupport = true } = {}): Promise<void> {
   await writeFixtureFile(
     join(root, 'apps/stack/scripts/provision/.bun-version'),
     await readFile(new URL('../../../../apps/stack/scripts/provision/.bun-version', import.meta.url), 'utf8'),
@@ -132,6 +136,12 @@ async function createSupportIdentityFixture(root: string): Promise<void> {
     process.platform === 'win32' ? 'junction' : 'dir',
   );
 
+  const sharp = resolveInstalledRuntimePackage({
+    packageName: 'sharp',
+    resolveFromPackageJsonPath: fileURLToPath(new URL('../../../../apps/cli/package.json', import.meta.url)),
+  });
+  const sharpMetadata: { optionalDependencies?: Record<string, string> } = JSON.parse(await readFile(sharp.packageJsonPath, 'utf8'));
+  const sharpOptionals = Object.fromEntries(Object.keys(sharpMetadata.optionalDependencies ?? {}).map((name) => [name, '1.0.0']));
   for (const packageName of CLI_RUNTIME_EXTERNAL_PACKAGES) {
     const packageDir = join(
       root,
@@ -146,12 +156,25 @@ async function createSupportIdentityFixture(root: string): Promise<void> {
         name: packageName,
         version: '1.0.0',
         main: './index.js',
+        ...(packageName === 'sharp' ? {
+          // Preserve the installed native package boundary's real inventory;
+          // finalization must still enforce the selected target's optionals.
+          optionalDependencies: sharpOptionals,
+        } : {}),
       }),
     );
     await writeFixtureFile(
       join(packageDir, 'index.js'),
       `export const packageName = ${JSON.stringify(packageName)};\n`,
     );
+    if (packageName === 'sharp') {
+      const metadata: { optionalDependencies: Record<string, string> } = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'));
+      for (const name of Object.keys(metadata.optionalDependencies)) {
+        await writeFixtureFile(join(root, 'apps/cli/node_modules', name, 'package.json'),
+          JSON.stringify({ name, version: '1.0.0', main: './index.js' }));
+        await writeFixtureFile(join(root, 'apps/cli/node_modules', name, 'index.js'), 'export {};');
+      }
+    }
   }
 
   for (const segments of CLI_RUNTIME_SIDECAR_ENTRIES) {
@@ -181,52 +204,61 @@ async function unpackTools({ toolsDir }) {
 module.exports = { unpackTools };
 `,
   );
-  await writeFixtureFile(
-    join(root, 'packages', 'plugins', 'cliproxyapi', 'package.json'),
-    JSON.stringify({
-      name: '@happier-dev/plugins-cliproxyapi',
-      scripts: { 'managed-runtime:build': 'fixture' },
-    }),
-  );
-  await writeFixtureFile(
-    join(
-      root,
-      'packages',
-      'plugins',
-      'cliproxyapi',
-      'managed-runtime',
-      'main.go',
-    ),
-    'package main\n',
-  );
-  await writeFixtureFile(
-    join(
-      root,
-      'packages',
-      'plugins',
-      'cliproxyapi',
-      'managed-runtime',
-      'licenses',
-      'CLIProxyAPI-LICENSE',
-    ),
-    'license\n',
-  );
-  await writeFixtureFile(
-    join(
-      root,
-      'packages',
-      'plugins',
-      'cliproxyapi',
-      'managed-runtime',
-      'licenses',
-      'THIRD-PARTY-NOTICES',
-    ),
-    'notices\n',
-  );
+  if (nativeSupport) {
+    await writeFixtureFile(
+      join(root, 'packages', 'plugins', 'cliproxyapi', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugins-cliproxyapi',
+        scripts: { 'managed-runtime:build': 'fixture' },
+        happier: { pluginScaffold: { shipping: 'reservation_only' } },
+      }),
+    );
+    await writeFixtureFile(
+      join(
+        root,
+        'packages',
+        'plugins',
+        'cliproxyapi',
+        'managed-runtime',
+        'main.go',
+      ),
+      'package main\n',
+    );
+    await writeFixtureFile(
+      join(
+        root,
+        'packages',
+        'plugins',
+        'cliproxyapi',
+        'managed-runtime',
+        'licenses',
+        'CLIProxyAPI-LICENSE',
+      ),
+      'license\n',
+    );
+    await writeFixtureFile(
+      join(
+        root,
+        'packages',
+        'plugins',
+        'cliproxyapi',
+        'managed-runtime',
+        'licenses',
+        'THIRD-PARTY-NOTICES',
+      ),
+      'notices\n',
+    );
+  }
   await writeFixtureFile(
     join(root, 'apps', 'cli', 'native', 'processcustody', 'main.go'),
     'package main\n',
   );
+
+  if (process.platform === 'win32') {
+    const launcher = join(root, 'packages/cli-common/native/windows/bin/windows-x64/happier-service-launcher.exe');
+    await mkdir(dirname(launcher), { recursive: true });
+    await writeFile(launcher, createWindowsServiceLauncherPeFixture());
+  }
 
   for (const relativePath of [
     'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts',
@@ -237,6 +269,7 @@ module.exports = { unpackTools };
     'packages/cli-common/nodePtySpawnHelperPermissions.cjs',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
     'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
+    'packages/cli-common/src/service/windowsLauncher.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
     'packages/cli-common/workspaceRuntimeDependencies.mjs',
@@ -246,10 +279,23 @@ module.exports = { unpackTools };
   }
 }
 
+async function installCanonicalProjectionGenerator(root: string): Promise<string> {
+  const sourceRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+  for (const manifestPath of [join(root, 'package.json'), join(root, 'apps/cli/package.json')]) {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    await writeFixtureFile(manifestPath, JSON.stringify({ ...manifest, type: 'module' }));
+  }
+  // Only the private input root is supplied here; projection logic stays real.
+  await writeFixtureFile(join(root, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'),
+    `import { main } from ${JSON.stringify(pathToFileURL(join(sourceRoot, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts')).href)};
+await main(['--root', ${JSON.stringify(root)}, ...process.argv.slice(2)]);`);
+  return sourceRoot;
+}
+
 describe('daemon runtime support identity', () => {
   it('emits Latin-1 source chunks and sidecars while preserving Unicode values, legal notices and stack frames', async () => {
     const root = await makeTempRepo();
-    await createSupportIdentityFixture(root);
+    await createSupportIdentityFixture(root, { nativeSupport: false });
     const license = '/*! @license Fixture 日本語 © 2026 */';
     await writeFixtureFile(join(root, 'packages/cli-common/package.json'), JSON.stringify({
       name: '@happier-dev/cli-common',
@@ -307,7 +353,7 @@ export const readLazy = () => import('./lazy');
 
   it('bundles async ESM and password KDF dependencies into daemon code without adjacent node_modules', async () => {
     const root = await makeTempRepo();
-    await createSupportIdentityFixture(root);
+    await createSupportIdentityFixture(root, { nativeSupport: false });
     const bun = resolveBunCommand();
     if (!bun)
       throw new Error('Bun is required for the daemon dependency bundle check');
@@ -407,9 +453,9 @@ export const readLazy = () => import('./lazy');
     // compiler-test allowance.
   }, 20_000);
 
-  it('loads source-only Session, Run, MCP, voice, plugin and factory entries with one shared module instance in native and Node hosts', async () => {
+  it.each([false, true])('loads source-only Session, Run, MCP, voice, plugin and factory entries with one shared module instance (native=%s)', async (native) => {
     const root = await makeTempRepo();
-    await createSupportIdentityFixture(root);
+    await createSupportIdentityFixture(root, { nativeSupport: false });
     const cliRoot = join(root, 'apps/cli');
     const pluginName = '@happier-dev/plugins-fixture';
     const pluginRoot = join(root, 'packages/plugins/fixture');
@@ -439,6 +485,7 @@ export const readLazy = () => import('./lazy');
       join(pluginRoot, 'package.json'),
       JSON.stringify({
         name: pluginName,
+        version: '0.0.0',
         type: 'module',
         exports: {
           '.': {
@@ -451,36 +498,47 @@ export const readLazy = () => import('./lazy');
     );
     await writeFixtureFile(
       join(pluginRoot, 'src/index.ts'),
-      'export {identity} from "@happier-dev/shared";',
+      `export {identity} from "../../../shared/src/index.ts";
+export { PLUGIN_MANIFEST as manifest } from './manifest.ts';
+import { createFixture } from './agent/runner.ts';
+export function activate(api) { api.agents.register('custom-acp', createFixture, {
+  sessionRunnerFactory: { module: './agent/runner', export: 'createFixture', runtimeApiVersion: 1 },
+}); }`,
     );
     await writeFixtureFile(
       join(pluginRoot, 'src/agent/runner.ts'),
-      'export {identity} from "@happier-dev/shared";',
+      'export {identity} from "../../../../shared/src/index.ts"; export function createFixture() {}',
     );
-    await writeFixtureFile(
-      join(
-        cliRoot,
-        'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
-      ),
-      `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=${JSON.stringify([
-        {
-          daemonEntryPath: pluginName,
-          sourceSpec: { locator: pluginName },
-          manifest: {
-            entrypoints: { daemon: '.happier-plugin/daemon/index.js' },
-            runtime: {
-              agentFactories: [
-                {
-                  locator: { module: 'agent/runner.js' },
-                  normalizedModulePath:
-                    '.happier-plugin/daemon/agent/runner.js',
-                },
-              ],
-            },
-          },
-        },
-      ])};`,
-    );
+    const sourceManifest = ingestPluginManifestV2({
+      schemaVersion: 2, id: 'happier.fixture', version: '0.0.0', displayName: 'Fixture Agent',
+      engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+      entrypoints: { daemon: '.happier-plugin/daemon/index.js' },
+      contributes: { agents: [{
+        id: 'custom-acp', title: 'Fixture Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      }] },
+    });
+    if (!sourceManifest.ok) throw new Error('Source fixture must pass canonical manifest ingress');
+    await writeFixtureFile(join(pluginRoot, 'src/manifest.ts'),
+      `export const PLUGIN_MANIFEST = ${JSON.stringify(sourceManifest.manifest)};`);
+    const sourceRoot = await installCanonicalProjectionGenerator(root);
+    await writeFixtureFile(join(root, 'apps/ui/package.json'), JSON.stringify({
+      name: '@happier-dev/app', type: 'module', dependencies: { [pluginName]: '0.0.0' },
+    }));
+    await mkdir(join(root, 'apps/ui/scripts'), { recursive: true });
+    await writeFixtureFile(join(root, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs'),
+      `import { prepareSourcePluginUiArtifacts } from ${JSON.stringify(pathToFileURL(join(sourceRoot, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs')).href)};
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
+    await symlink(join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+      join(root, 'packages/cli-common/registerSourceRuntime.mjs'));
+    await writeFixtureFile(join(root, 'packages/plugins/broken/package.json'), JSON.stringify({
+      name: '@happier-dev/plugins-broken', version: '0.0.0',
+    }));
+    await writeFixtureFile(join(root, 'packages/plugins/broken/src/manifest.ts'),
+      'export const PLUGIN_MANIFEST = { schemaVersion: 2, id: "happier.broken" };');
+    const staleAsset = join(cliRoot, 'assets/bundled-plugin-manifests/fixture.json');
+    await writeFixtureFile(staleAsset, '{"stale":true}');
     const exports = {
       '.': { 'happier-source': './src/index.ts' },
       ...Object.fromEntries(
@@ -528,6 +586,8 @@ export const readLazy = () => import('./lazy');
     await writeFixtureFile(
       join(cliRoot, 'src/index.ts'),
       `
+      import {BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS} from './plugins/projection/registry/sources/generatedBundledPluginManifests';
+      if(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.length!==1) throw new Error('source locators unavailable');
       import {identity} from '@happier-dev/shared';
       import legacy from 'legacy-cjs';
       if(legacy.charCodeAt(0)!==27) throw new Error('legacy CJS parsing changed');
@@ -544,18 +604,34 @@ export const readLazy = () => import('./lazy');
     const built = await buildCliBinaryArtifactCodePayload({
       repoRoot: root,
       payloadDir,
+      ...(!native ? {
+        commandProbe: (command: string) => command === 'bun',
+        // The compiler is the external boundary; the source generator and
+        // emitted Node graph remain real in the compiler-independent case.
+        compileBinary: async ({ outfile }: { outfile: string }) =>
+          writeFixtureFile(outfile, 'native compiler boundary'),
+      } : {}),
     });
+    const locatorPath = join(cliRoot, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+    expect(existsSync(locatorPath)).toBe(false);
+    expect(await readFile(staleAsset, 'utf8')).toBe('{"stale":true}');
+    const failures = JSON.parse(await readFile(join(payloadDir, '.project/tmp/bundled-plugin-publication/failures.json'), 'utf8'));
+    expect(failures).toEqual([expect.objectContaining({ packageName: '@happier-dev/plugins-broken' })]);
+    const projected = JSON.parse(await readFile(join(payloadDir, 'assets/bundled-plugin-manifests/fixture.json'), 'utf8'));
+    expect(projected.runtime.agentFactories[0].locator.module).toBe('./agent/runner');
     const isolatedRoot = await makeTempRepo();
     const isolatedPayload = join(isolatedRoot, 'payload');
     await cp(payloadDir, isolatedPayload, { recursive: true });
-    const native = spawnSync(join(isolatedPayload, built.entrypoint), [], {
-      cwd: isolatedRoot,
-      env: { ...process.env, NODE_PATH: '' },
-      encoding: 'utf8',
-    });
-    expect(native.stderr).toBe('');
-    expect(native.status).toBe(0);
-    expect(native.stdout.trim()).toBe('source-children-ready');
+    if (native) {
+      const compiled = spawnSync(join(isolatedPayload, built.entrypoint), [], {
+        cwd: isolatedRoot,
+        env: { ...process.env, NODE_PATH: '' },
+        encoding: 'utf8',
+      });
+      expect(compiled.stderr).toBe('');
+      expect(compiled.status).toBe(0);
+      expect(compiled.stdout.trim()).toBe('source-children-ready');
+    }
     const result = spawnSync(
       process.execPath,
       [
@@ -600,7 +676,9 @@ export const readLazy = () => import('./lazy');
         /packages\/shared\/dist\//.test(path),
       ),
     ).toBe(false);
-  }, 20_000);
+    // Match the canonical daemon-projection composed suite's allowance: this
+    // fixture now executes its real generator and UI-preparation child tools.
+  }, 240_000);
 
   it('constructs current native plugin UI artifacts from the canonical authored compiler', async () => {
     const payloadDir = join(await makeTempRepo(), 'payload');
@@ -623,7 +701,7 @@ export const readLazy = () => import('./lazy');
       expect(
         (await readFile(join(artifactRoot, entry.entry))).length,
       ).toBeGreaterThan(0);
-  }, 20_000);
+  }, 240_000);
 
   it('changes for support dependencies and tools, while code-owned scripts remain independent', async () => {
     const root = await makeTempRepo();
@@ -736,7 +814,7 @@ export const readLazy = () => import('./lazy');
     );
   });
 
-  it('changes when ignored bundled-plugin failure diagnostics change', async () => {
+  it('keeps source support independent of checkout bundled-plugin failure diagnostics', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
     const input = {
@@ -771,8 +849,8 @@ export const readLazy = () => import('./lazy');
       '[{"pluginId":"happier.inspector"}]\n',
     );
     const failed = readCliBinaryArtifactSupportIdentity(input);
-    expect(empty.fingerprint).not.toBe(before.fingerprint);
-    expect(failed.fingerprint).not.toBe(empty.fingerprint);
+    expect(empty.fingerprint).toBe(before.fingerprint);
+    expect(failed.fingerprint).toBe(empty.fingerprint);
   });
 
   it('binds native custody provisioning so a helper-less payload cannot share a fingerprint', async () => {
@@ -904,6 +982,10 @@ export const readLazy = () => import('./lazy');
     const identity = readCliBinaryArtifactSupportIdentity(identityInput);
     await writeFixtureFile(join(nativePackage, 'native/.private-staging/scripts/build.mjs'), 'changed private input');
     expect(readCliBinaryArtifactSupportIdentity(identityInput).fingerprint).toBe(identity.fingerprint);
+    await writeFixtureFile(join(root, 'apps/cli/.project/tmp/bundled-plugin-publication/failures.json'), JSON.stringify([{
+      packageName: '@happier-dev/plugins-cliproxyapi', pluginId: 'happier.cliproxyapi',
+      diagnostic: { code: 'plugin_manifest_invalid', message: 'Stale checkout declaration failed' },
+    }]));
     const payloadDir = join(
       root,
       'artifacts',
@@ -932,6 +1014,7 @@ export const readLazy = () => import('./lazy');
     ).toBe(true);
     expect(existsSync(join(payloadDir, 'scripts'))).toBe(false);
     expect(existsSync(join(payloadDir, 'package-dist'))).toBe(false);
+    expect(existsSync(join(payloadDir, '.project'))).toBe(false);
     const stagedNative = join(payloadDir, 'node_modules/@happier-dev/cli-common/native');
     expect(await readFile(join(stagedNative, 'binding.node'), 'utf8')).toBe('shippable native bytes');
     expect(existsSync(join(stagedNative, '.private-staging'))).toBe(false);
@@ -1017,7 +1100,7 @@ export const readLazy = () => import('./lazy');
     'builds %s-target daemon code without recopying its stable runtime support closure',
     async (targetKind) => {
       const root = await makeTempRepo();
-      await createSupportIdentityFixture(root);
+      await createSupportIdentityFixture(root, { nativeSupport: false });
       const payloadDir = join(
         root,
         'artifacts',
@@ -1093,6 +1176,9 @@ export const readLazy = () => import('./lazy');
   it('retains one flattened self-contained daemon payload for release packaging', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
+    const sourceRoot = await installCanonicalProjectionGenerator(root);
+    await symlink(join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+      join(root, 'packages/cli-common/registerSourceRuntime.mjs'));
     const payloadDir = join(root, 'release-payload');
     const target = targetForHost();
     const prebuiltRuntimePath = join(
@@ -1108,7 +1194,7 @@ export const readLazy = () => import('./lazy');
     await writeFixtureFile(prebuiltRuntimePath, 'prebuilt release runtime\n');
     await writeFixtureFile(prebuiltCustodyPath, 'prebuilt release custody\n');
 
-    await buildCliBinaryArtifactPayload({
+    const build = () => buildCliBinaryArtifactPayload({
       repoRoot: root,
       payloadDir,
       target,
@@ -1119,6 +1205,24 @@ export const readLazy = () => import('./lazy');
         await writeFixtureFile(outfile, 'compiled release daemon binary\n');
       },
     });
+    const failuresPath = join(root, 'apps/cli/.project/tmp/bundled-plugin-publication/failures.json');
+    await writeFixtureFile(failuresPath, JSON.stringify([{
+      packageName: '@happier-dev/plugins-cliproxyapi', pluginId: 'happier.cliproxyapi',
+      diagnostic: { code: 'plugin_manifest_invalid', message: 'Publication is incomplete' },
+    }]));
+    // The checkout record describes an earlier publication, while the real
+    // generator evaluates the current source into a private output root.
+    const staleFailures = await readFile(failuresPath, 'utf8');
+    await build();
+    expect(await readFile(failuresPath, 'utf8')).toBe(staleFailures);
+    expect(JSON.parse(await readFile(join(payloadDir, '.project/tmp/bundled-plugin-publication/failures.json'), 'utf8'))).toEqual([]);
+    if (process.platform === 'win32') {
+      expect(await readFile(join(payloadDir, 'happier-service-launcher.exe'))).toEqual(createWindowsServiceLauncherPeFixture());
+      for (const relativePath of ['happier-service-launcher.exe', 'tools/unpacked/happier-cliproxyapi-managed.exe']) {
+        expect(cliDistBuildManifest.readCliRuntimeAssetIntegrity({ runtimeRoot: payloadDir, relativePath }).ok).toBe(true);
+      }
+    }
+
 
     await expect(readFile(join(payloadDir, 'happier'), 'utf8')).resolves.toBe(
       'compiled release daemon binary\n',
@@ -1160,5 +1264,44 @@ export const readLazy = () => import('./lazy');
     expect((await lstat(join(payloadDir, 'scripts'))).isSymbolicLink()).toBe(
       false,
     );
-  });
+
+    // STACK-PAYLOAD-FIX-1109: optional failures remain diagnosable and excluded,
+    // while the self-contained payload still publishes its healthy code.
+    await writeFixtureFile(failuresPath, '[]\n');
+    await writeFixtureFile(join(root, 'packages/plugins/broken/package.json'), JSON.stringify({
+      name: '@happier-dev/plugins-broken', version: '0.0.0',
+    }));
+    await writeFixtureFile(join(root, 'packages/plugins/broken/src/manifest.ts'),
+      'export const PLUGIN_MANIFEST = { schemaVersion: 2, id: "happier.broken" };');
+    await build();
+    expect(JSON.parse(await readFile(join(payloadDir, '.project/tmp/bundled-plugin-publication/failures.json'), 'utf8')))
+      .toMatchObject([{ packageName: '@happier-dev/plugins-broken', diagnostic: { code: 'plugin_manifest_invalid' } }]);
+    expect(existsSync(join(payloadDir, 'node_modules/@happier-dev/plugins-broken'))).toBe(false);
+    expect(await readFile(join(payloadDir, 'happier'), 'utf8')).toBe('compiled release daemon binary\n');
+  }, 240_000);
+
+  it('refuses a required plugin publication failure before compiling the native payload', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root, { nativeSupport: false });
+    const sourceRoot = await installCanonicalProjectionGenerator(root);
+    await symlink(join(sourceRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+      join(root, 'packages/cli-common/registerSourceRuntime.mjs'));
+    await writeFixtureFile(join(root, 'packages/plugins/codex/package.json'), JSON.stringify({
+      name: '@happier-dev/plugins-codex', version: '0.0.0',
+    }));
+    await writeFixtureFile(join(root, 'packages/plugins/codex/src/manifest.ts'),
+      'export const PLUGIN_MANIFEST = { schemaVersion: 2, id: "happier.codex" };');
+    let nativeCompilations = 0;
+    await expect(buildCliBinaryArtifactPayload({
+      repoRoot: root,
+      payloadDir: join(root, 'release-payload'),
+      target: targetForHost(),
+      commandProbe: (command) => command === 'bun' || command === 'pnpm',
+      compileBinary: async ({ outfile }) => {
+        nativeCompilations += 1;
+        await writeFixtureFile(outfile, 'compiled release daemon binary\n');
+      },
+    })).rejects.toThrow();
+    expect(nativeCompilations).toBe(0);
+  }, 240_000);
 });

@@ -132,6 +132,22 @@ posixOnly('ensureHappierCliPathExposure (POSIX shell profiles)', () => {
         expect(removedAgain).toEqual({ removed: false, failure: null });
     });
 
+    it('scopes removal to one bin directory while preserving other Desktop and user profile entries', async () => {
+        const homeDir = await createHome();
+        const binDir = join(homeDir, '.happier', 'bin');
+        const otherBinDir = join(homeDir, '.happier-other', 'bin');
+        const marked = (dir: string) => `\n${HAPPIER_DESKTOP_PATH_MARKER_LINE}\n${renderHappierCliPathExportLine(dir)}\n`;
+        const retained = `# user settings\n${renderHappierCliPathExportLine(binDir)}\n${marked(otherBinDir)}\n${HAPPIER_DESKTOP_PATH_MARKER_LINE}\n${renderHappierCliPathExportLine(binDir)} # user edited\n`;
+        const profilePath = join(homeDir, '.zprofile');
+        await writeFile(profilePath, retained + marked(binDir), 'utf8');
+        const params = { binDir, processEnv: { HOME: homeDir, SHELL: '/bin/bash' } };
+
+        expect(await removeHappierCliPathExposure(params)).toEqual({ removed: true, failure: null });
+        expect(await readFile(profilePath, 'utf8')).toBe(retained);
+        expect(await removeHappierCliPathExposure(params)).toEqual({ removed: false, failure: null });
+        expect(await readFile(profilePath, 'utf8')).toBe(retained);
+    });
+
     it('removes profiles written under a previous shell and keeps an unmarked identical line', async () => {
         const homeDir = await createHome();
         const binDir = join(homeDir, '.happier', 'bin');
@@ -331,6 +347,34 @@ describe('Windows user PATH exposure planning', () => {
     const binDir = 'C:\\Users\\example\\.happier\\bin';
     const npmDir = 'C:\\Users\\example\\AppData\\Roaming\\npm';
 
+    it('scopes Desktop-created removal and retains other homes and their provenance verbatim', () => {
+        const otherDir = 'C:\\Other Home\\bin';
+        const remainingProvenance = ` ${otherDir} `;
+        const remainingMove = ` ${otherDir}|C:\\Tools `;
+        expect(planWindowsUserPathRemoval({
+            binDir,
+            userPath: `${binDir};${otherDir};C:\\Tools`,
+            provenance: `${binDir.toUpperCase()};${remainingProvenance}`,
+            moves: `${binDir}|C:\\Tools;${remainingMove}`,
+        })).toEqual({ removed: true, userPath: `${otherDir};C:\\Tools`, provenance: remainingProvenance, moves: remainingMove });
+    });
+
+    it('undoes only the selected move without removing or reordering another home', () => {
+        const otherDir = 'C:\\Other Home\\bin';
+        expect(planWindowsUserPathRemoval({
+            binDir,
+            userPath: `${binDir};${otherDir};C:\\Tools`,
+            provenance: otherDir,
+            moves: `${binDir.toUpperCase()}|C:\\Tools;${otherDir}|C:\\Tools`,
+        })).toEqual({ removed: true, userPath: `${otherDir};C:\\Tools;${binDir}`, provenance: otherDir, moves: `${otherDir}|C:\\Tools` });
+    });
+
+    it('leaves unrelated records untouched when the selected home has no exposure', () => {
+        const otherDir = 'C:\\Other Home\\bin';
+        const current = { userPath: `${otherDir};C:\\Tools`, provenance: otherDir, moves: `${otherDir}|C:\\Tools` };
+        expect(planWindowsUserPathRemoval({ ...current, binDir })).toEqual({ removed: false, ...current });
+    });
+
     it('prepends the bin dir once and records it as Desktop-created', () => {
         const first = planWindowsUserPathExposure({
             userPath: 'C:\\Tools;%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps',
@@ -434,6 +478,36 @@ describe('Windows user PATH transport', () => {
     afterEach(() => {
         setPlatform(realPlatform);
         execFileMock.mockReset();
+    });
+
+    it('passes a scoped removal through the real plan and keeps unrelated records in the write', async () => {
+        setPlatform('win32');
+        const binDir = 'C:\\Users\\example\\.happier\\bin';
+        const otherDir = 'C:\\Other Home\\bin';
+        execFileMock.mockImplementation((_command, _args, _options, callback) => {
+            callback(null, execFileMock.mock.calls.length === 1 ? JSON.stringify({
+                userPath: `${binDir};${otherDir};C:\\Tools`, userPathKind: 'ExpandString',
+                provenance: `${binDir};${otherDir}`, moves: `${otherDir}|C:\\Tools`,
+            }) : '', '');
+        });
+        expect(await removeHappierCliPathExposure({ binDir, processEnv: { SystemRoot: 'C:\\Windows' } }))
+            .toEqual({ removed: true, failure: null });
+        expect(execFileMock.mock.calls[1]?.[2].env).toEqual(expect.objectContaining({
+            HAPPIER_PATH_USER_PATH: `${otherDir};C:\\Tools`,
+            HAPPIER_PATH_PROVENANCE_VALUE: otherDir,
+            HAPPIER_PATH_MOVES_VALUE: `${otherDir}|C:\\Tools`,
+        }));
+    });
+
+    it('does not write Windows state when a scoped home has no Desktop records', async () => {
+        setPlatform('win32');
+        const otherDir = 'C:\\Other Home\\bin';
+        execFileMock.mockImplementation((_command, _args, _options, callback) => {
+            callback(null, JSON.stringify({ userPath: otherDir, provenance: otherDir, moves: null }), '');
+        });
+        expect(await removeHappierCliPathExposure({ binDir: 'C:\\Removed Home\\bin', processEnv: { SystemRoot: 'C:\\Windows' } }))
+            .toEqual({ removed: false, failure: null });
+        expect(execFileMock).toHaveBeenCalledTimes(1);
     });
 
     it('carries the whole user PATH through the child environment, never as -Command argv', async () => {

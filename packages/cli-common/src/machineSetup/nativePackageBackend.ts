@@ -1,9 +1,10 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { MachineSetupEffectError, readMachineSetupStepExecutionUserV1, type MachineRecipeStepV1, type MachineSetupStepObservationV1 } from './index.js';
 import type { MachineElevationFailureV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import type { NativeRun } from './nativeSystemBackend.js';
+import { isMissingNativeFile } from './nativeFileSafety.js';
 
 type PackageStep = Extract<MachineRecipeStepV1, { kind: 'package' }>;
 type Package = PackageStep['packages'][number];
@@ -26,6 +27,31 @@ function pending(step: PackageStep, installed: ReadonlyMap<string, Installed>) {
 }
 
 const aptLocks = new Set(['/var/lib/dpkg/lock', '/var/lib/dpkg/lock-frontend', '/var/lib/apt/lists/lock', '/var/cache/apt/archives/lock']);
+async function inspectAptLockIdentities(): Promise<'busy' | 'clear' | 'unknown'> {
+    try {
+        const [locks, identities] = await Promise.all([
+            readFile('/proc/locks', 'utf8'),
+            Promise.all([...aptLocks].map(async path => {
+                try {
+                    const { dev, ino } = await stat(path, { bigint: true });
+                    // Linux dev_t encodes the major and minor in disjoint bit ranges.
+                    const major = (dev >> 8n & 0xfffn) | (dev >> 32n & 0xfffff000n);
+                    const minor = (dev & 0xffn) | (dev >> 12n & 0xffffff00n);
+                    return `${major.toString(16)}:${minor.toString(16)}:${ino}`;
+                } catch (error) { if (isMissingNativeFile(error)) return null; throw error; }
+            })),
+        ]);
+        const targets = new Set(identities.filter(identity => identity !== null));
+        let unknown = false;
+        for (const line of locks.split('\n').filter(line => line.trim())) {
+            const match = /^\d+:\s+(?:->\s+)?\S+\s+\S+\s+\S+\s+-?\d+\s+([a-fA-F0-9]+):([a-fA-F0-9]+):(\d+)\s+\d+\s+(?:\d+|EOF)\s*$/.exec(line);
+            if (!match) { unknown = true; continue; }
+            const identity = `${BigInt(`0x${match[1]}`).toString(16)}:${BigInt(`0x${match[2]}`).toString(16)}:${BigInt(match[3]!)}`;
+            if (targets.has(identity)) return 'busy';
+        }
+        return unknown ? 'unknown' : 'clear';
+    } catch { return 'unknown'; }
+}
 /** Advisory locks stay manager-owned; this never deletes or acquires them. */
 export async function inspectAptLocks(run: NativeRun): Promise<'busy' | 'clear' | 'unknown'> {
     const result = await run('lslocks', ['--json', '--notruncate', '--output', 'PATH'], locale);
@@ -38,7 +64,10 @@ export async function inspectAptLocks(run: NativeRun): Promise<'busy' | 'clear' 
         if (!lock || typeof lock !== 'object' || !('path' in lock) || typeof lock.path !== 'string' || lock.path.endsWith('...')) { unknown = true; continue; }
         if (aptLocks.has(lock.path)) return 'busy';
     }
-    return unknown ? 'unknown' : 'clear';
+    // lslocks substitutes mountpoint + "..." when another process's FD path is
+    // unreadable, even with --notruncate. Identify those locks without its PATH
+    // projection; older util-linux versions lack inode output columns.
+    return unknown ? inspectAptLockIdentities() : 'clear';
 }
 const aptBusyFacts = { requiredFact: 'packageManagerLocks', remedy: 'Retry after first-boot or other package-manager updates finish.' };
 async function requireAptUnlocked(run: NativeRun) {

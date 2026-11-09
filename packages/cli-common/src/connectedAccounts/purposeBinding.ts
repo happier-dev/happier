@@ -1,11 +1,14 @@
 import { isConnectedServiceCredentialHealthStatusReconnectRequired } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readInputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { ConnectedAccountMaterializationRequest, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
-import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/protocol';
+import type { ConnectedAccountInvocationPurposeBinding, PluginActionConnectedAccountPurposeBindingV2 } from '@happier-dev/protocol';
 export type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/protocol';
 import { PluginError } from '../plugins/errors.js';
 import { listConnectedAccountActionFormOptions, readConnectedAccountPurposeProfileLabel,
@@ -107,6 +110,29 @@ export function captureConnectedAccountInvocationPurposeBinding(
 
 function sameService(left: QualifiedConnectedAccountRef['service'], right: QualifiedConnectedAccountRef['service']): boolean {
   return left.pluginId === right.pluginId && left.localId === right.localId;
+}
+
+/** Both physical Action hosts read the same declared Account/native operand. */
+export function readDeclaredConnectedAccountActionSelection(
+  value: unknown,
+  mapping: PluginActionConnectedAccountPurposeBindingV2,
+  serviceRefs: readonly QualifiedConnectedAccountRef['service'][],
+): Readonly<{ kind: 'invalid' }> | Readonly<{ kind: 'inherit' }> | Readonly<{ kind: 'native' }>
+  | Readonly<{ kind: 'account'; account: QualifiedConnectedAccountRef }> {
+  const rawAccount = readInputPath(value, mapping.path);
+  const hasAccount = rawAccount !== undefined && rawAccount !== null;
+  if (mapping.nativeServicePath) {
+    const rawNative = readInputPath(value, mapping.nativeServicePath);
+    const hasNative = rawNative !== undefined && rawNative !== null;
+    if (hasAccount === hasNative) return { kind: 'invalid' };
+    if (hasNative) {
+      const native = PluginContributionIdentityV1Schema.safeParse(readInputOptionValue(rawNative));
+      return native.success && serviceRefs.some(ref => sameService(ref, native.data)) ? { kind: 'native' } : { kind: 'invalid' };
+    }
+  }
+  if (!hasAccount) return { kind: 'inherit' };
+  const account = QualifiedConnectedAccountRefSchema.safeParse(readInputOptionValue(rawAccount));
+  return account.success ? { kind: 'account', account: account.data } : { kind: 'invalid' };
 }
 
 export function readConnectedAccountPurposeBindingTarget(

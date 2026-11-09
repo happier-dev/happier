@@ -94,6 +94,7 @@ describe('classifyAgentCliInstall', () => {
       updateSupported: false,
       updateCommand: 'npm install -g @anthropic-ai/claude-code@latest',
       nativeUpdateArgs: null,
+      npmPackageName: '@anthropic-ai/claude-code',
     });
   });
 
@@ -125,6 +126,35 @@ describe('classifyAgentCliInstall', () => {
     })).toMatchObject({ installSource: 'pnpm', updateSupported: false, updateCommand: 'pnpm add -g opencode-ai@latest' });
   });
 
+  it.each([
+    ['npm', '@opencode/cli', 'prefix/lib', 'npm install -g @opencode/cli@latest'],
+    ['pnpm', '@opencode/cli', 'pnpm/global/5', 'pnpm add -g --allow-build=@opencode/cli @opencode/cli@latest'],
+    ['bun', '@opencode/cli', '.bun/install/global', 'bun add -g --trust @opencode/cli@latest'],
+    ['pnpm', 'opencode-ai', 'pnpm/global/5', 'pnpm add -g opencode-ai@latest'],
+  ] as const)('attributes %s package %s before generic manager hints', async (manager, packageName, prefix, updateCommand) => {
+    const command = join(home, prefix, 'node_modules', packageName, 'bin', 'opencode.exe');
+    await mkdir(join(command, '..'), { recursive: true });
+    await writeFile(command, '', 'utf8');
+    expect(classifyAgentCliInstall({
+      runtimeSpec: runtimeSpec({ id: 'opencode', nativeUpdate: null, npmPackageName: 'opencode-ai',
+        managedInstall: { kind: 'managed_package', packageName: '@opencode/cli', binaryName: 'opencode', allowBuild: true } }),
+      command, source: 'system', platform,
+      env: { HOME: home, ...(manager === 'pnpm' ? { PNPM_HOME: join(command, '..') } : {}) },
+    })).toMatchObject({ installSource: manager, updateSupported: false, updateCommand, npmPackageName: packageName });
+  });
+
+  it.each(['@opencode/cli', 'opencode-ai'])('attributes a Windows shim beside %s', async (packageName) => {
+    const prefix = join(home, 'npm');
+    const packageDir = join(prefix, 'node_modules', packageName);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: packageName }), 'utf8');
+    expect(classifyAgentCliInstall({
+      runtimeSpec: runtimeSpec({ id: 'opencode', nativeUpdate: null, npmPackageName: 'opencode-ai',
+        managedInstall: { kind: 'managed_package', packageName: '@opencode/cli', binaryName: 'opencode' } }),
+      command: join(prefix, 'opencode.cmd'), source: 'system', platform: 'win32', env: { USERPROFILE: home },
+    })).toMatchObject({ installSource: 'npm', updateCommand: `npm install -g ${packageName}@latest`, npmPackageName: packageName });
+  });
+
   it('keeps managed installs Happier-updatable and never attributes an override', () => {
     const managed = runtimeSpec({ managedInstall: { kind: 'managed_package', packageName: 'x', binaryName: 'claude' } });
     expect(classifyAgentCliInstall({ runtimeSpec: managed, command: '/m/claude', source: 'managed', platform })).toMatchObject({
@@ -147,6 +177,17 @@ describe('fetchAgentCliLatestVersion', () => {
     await expect(fetchAgentCliLatestVersion({ runtimeSpec: runtimeSpec(), installSource: 'native', deps: { fetchImpl } }))
       .resolves.toEqual({ latestVersion: '2.2.0', heldVersion: null });
     expect(fetchImpl).toHaveBeenCalledWith('https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest', expect.anything());
+  });
+
+  it('retains proven external package identity while managed installs use the current package', async () => {
+    const spec = runtimeSpec({ id: 'opencode', nativeUpdate: null, npmPackageName: 'opencode-ai',
+      managedInstall: { kind: 'managed_package', packageName: '@opencode/cli', binaryName: 'opencode' } });
+    const fetchImpl: typeof fetch = async (url) => json({ version: String(url).includes('opencode-ai') ? '1.19.5' : '2.2.5' });
+    await expect(fetchAgentCliLatestVersion({ runtimeSpec: spec, installSource: 'npm', npmPackageName: 'opencode-ai', deps: { fetchImpl } }))
+      .resolves.toEqual({ latestVersion: '1.19.5', heldVersion: null });
+    await expect(fetchAgentCliLatestVersion({ runtimeSpec: spec, installSource: 'managed', npmPackageName: 'opencode-ai',
+      deps: { fetchImpl, readMinimumReleaseAgeMs: async () => null } }))
+      .resolves.toEqual({ latestVersion: '2.2.5', heldVersion: null });
   });
 
   it('reads the managed GitHub release tag for a release-binary agent', async () => {

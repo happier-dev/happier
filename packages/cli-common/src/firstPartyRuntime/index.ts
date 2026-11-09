@@ -26,6 +26,8 @@ export {
   resolveFirstPartyVersionInstallPath,
 } from './installLayout.js';
 export type { FirstPartyInstallLayout } from './installLayout.js';
+export { MANAGED_TOOLS_ROOT_ENV_KEY } from './installLayoutContract.js';
+export { applyPersistedManagedToolsRoot, resolveSeparateUserToolsLayout } from './managedToolsLayout.js';
 
 export { resolveRetainedVersionIds } from './retentionPolicy.js';
 export type { FirstPartyRetentionResolution } from './retentionPolicy.js';

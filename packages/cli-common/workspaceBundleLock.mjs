@@ -203,7 +203,7 @@ function resolveWorkspaceBundleLockWaitMs({
   initializationGraceMs,
 }) {
   const nowMs = Date.now();
-  const remainingTimeoutMs = hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs)
+  const remainingTimeoutMs = timeoutMs === null || hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs)
     ? Infinity
     : Math.max(1, timeoutMs - (nowMs - startedAt));
   const configuredFallbackMs = Number(options.watchFallbackMs);
@@ -300,7 +300,7 @@ function workspaceBundleLockWaitTimedOut(lockPath, snapshot, staleAfterMs, start
   // Healthy authenticated owners may publish for longer than the contention budget. The existing
   // heartbeat/reclamation policy owns their lifetime. An EEXIST/owner observation can straddle
   // release or initialization, so confirm the same blocker before applying the elapsed bound.
-  if (nowMs - startedAt <= timeoutMs || hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs)) {
+  if (timeoutMs === null || nowMs - startedAt <= timeoutMs || hasFreshAuthenticatedOwnerHeartbeat(snapshot, staleAfterMs, nowMs)) {
     return false;
   }
   const currentSnapshot = readLockOwnerSnapshot(lockPath);
@@ -466,34 +466,60 @@ export function observeWorkspaceBundleLock(lockPath, options = {}) {
   return { active, ownerId };
 }
 
+function workspaceLockCleanupError(cause, lockPath, operation) {
+  const error = new Error(
+    `Failed to safely reclaim workspace bundle lock: ${lockPath} (${operation}: ${cause?.code ?? 'unknown'})`,
+    { cause },
+  );
+  error.code = 'EWORKSPACEBUNDLELOCKCLEANUP';
+  error.path = lockPath;
+  error.operation = operation;
+  return error;
+}
+
 function reclaimLockSnapshot(lockPath, expectedRaw, baseLockPath = lockPath) {
   if (expectedRaw == null) return true;
-  // Retained snapshots share the base lock's namespace; never grow their names.
-  const reclaimPath = `${baseLockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  try {
-    renameSync(lockPath, reclaimPath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return true;
-    throw error;
-  }
+  while (true) {
+    // Retained snapshots share the base lock's namespace; never grow their names.
+    const reclaimPath = `${baseLockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      renameSync(lockPath, reclaimPath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return true;
+      throw error;
+    }
 
-  let movedRaw = null;
-  try {
-    movedRaw = readFileSync(reclaimPath, 'utf8');
-  } catch {
+    let movedRaw = null;
+    try {
+      movedRaw = readFileSync(reclaimPath, 'utf8');
+    } catch (error) {
+      // Quarantine names are retained snapshots too. A peer recoverer may have
+      // already retired or restored this one; reobserve before deciding whether
+      // any of the expected record remains to be reclaimed.
+      if (error?.code === 'ENOENT' && !readLockOwnerSnapshot(reclaimPath).exists) {
+        const current = readLockOwnerSnapshot(lockPath);
+        if (!current.exists || (current.readable && current.raw !== expectedRaw)) return true;
+        // A peer restored this exact snapshot before its quarantine was read.
+        // Reclaim it through the same comparison, preserving replacements.
+        if (current.readable) continue;
+        return false;
+      }
+      restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
+      throw workspaceLockCleanupError(error, lockPath, 'read-quarantine');
+    }
+
+    if (movedRaw === expectedRaw) {
+      try {
+        unlinkSync(reclaimPath);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw workspaceLockCleanupError(error, lockPath, 'unlink-quarantine');
+      }
+      return true;
+    }
+
     restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
     return false;
   }
-
-  if (movedRaw === expectedRaw) {
-    try {
-      unlinkSync(reclaimPath);
-    } catch {}
-    return true;
-  }
-
-  restoreQuarantinedLockSnapshot(lockPath, reclaimPath);
-  return false;
 }
 
 function restoreQuarantinedLockSnapshot(lockPath, reclaimPath) {
@@ -939,9 +965,9 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   }
 
   mkdirSync(dirname(lockPath), { recursive: true });
-  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs === null ? null : (options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS);
   const pollIntervalMs = options.pollIntervalMs ?? 250;
-  const staleAfterMs = options.staleAfterMs ?? timeoutMs;
+  const staleAfterMs = options.staleAfterMs ?? timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   const initializationGraceMs = options.initializationGraceMs ?? Math.min(5_000, staleAfterMs);
   const startedAt = Date.now();
   const ownerToken = randomUUID();

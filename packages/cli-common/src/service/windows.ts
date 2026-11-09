@@ -11,6 +11,11 @@ function psQuoted(s: string): string {
   return `"${psDoubleQuote(s)}"`;
 }
 
+/** A CIM query miss is absence; permission, transport, and missing-cmdlet errors are failures. */
+function queryWindowsScheduledTaskIfPresent(): string {
+  return 'try { $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound -and $_.FullyQualifiedErrorId -like "CmdletizationQuery_NotFound*") { $task = $null } else { throw } }';
+}
+
 export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string): Readonly<{
   taskName: string;
   taskPath: string;
@@ -28,24 +33,70 @@ export function splitQualifiedWindowsScheduledTaskName(qualifiedTaskName: string
   };
 }
 
+export type WindowsScheduledTaskAction = Readonly<{
+  executable: string;
+  arguments: string;
+}>;
+
+export function formatWindowsScheduledTaskAction(action: WindowsScheduledTaskAction): string {
+  return `${quoteWindowsCommandLineArgument(action.executable)} ${action.arguments}`;
+}
+
+export function buildWindowsScheduledTaskLauncherAction(params: Readonly<{
+  launcherPath: string;
+  definitionPath: string;
+  diagnosticLogPath: string;
+}>): WindowsScheduledTaskAction {
+  const launcherPath = String(params.launcherPath ?? '').trim();
+  const definitionPath = String(params.definitionPath ?? '').trim();
+  const diagnosticLogPath = String(params.diagnosticLogPath ?? '').trim();
+  if (!launcherPath) throw new Error('launcherPath is required for Windows scheduled task action');
+  if (!definitionPath) throw new Error('definitionPath is required for Windows scheduled task action');
+  if (!diagnosticLogPath) throw new Error('diagnosticLogPath is required for Windows scheduled task action');
+  return {
+    executable: launcherPath,
+    arguments: `--wrapper ${quoteWindowsCommandLineArgument(definitionPath)} --diagnostic-log ${quoteWindowsCommandLineArgument(diagnosticLogPath)}`,
+  };
+}
+
+export function isWindowsScheduledTaskLauncherActionExpected(params: Readonly<{
+  taskToRun: string;
+  launcherPath: string;
+  definitionPath: string;
+  diagnosticLogPath: string;
+}>): boolean {
+  const taskToRun = String(params.taskToRun ?? '').trim();
+  if (!taskToRun) return false;
+  const expected = buildWindowsScheduledTaskLauncherAction(params);
+  // Windows executable paths ignore casing; option names and arguments retain the
+  // launcher's exact contract. Discovery and install verification use this same rule.
+  const argumentsSuffix = ` ${expected.arguments}`;
+  return taskToRun.endsWith(argumentsSuffix)
+    && taskToRun.slice(0, -argumentsSuffix.length).toLowerCase() === expected.executable.toLowerCase();
+}
+
 /** Register only the invoking user's interactive task, never an all-users logon trigger. */
 export function buildRegisterWindowsUserScheduledTaskPowerShellCommand(params: Readonly<{
   qualifiedTaskName: string;
   definitionPath: string;
   persistent: boolean;
+  action?: WindowsScheduledTaskAction;
 }>): string {
   const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
   const xmlEscape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
   const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const action = buildWindowsScheduledTaskPowerShellAction({ definitionPath: params.definitionPath });
+  const action = params.action ?? {
+    executable: 'powershell.exe',
+    arguments: buildWindowsScheduledTaskPowerShellAction({ definitionPath: params.definitionPath }).slice('powershell.exe '.length),
+  };
   const xml = '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'
     + (params.persistent
       ? '<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>current-user</UserId></LogonTrigger></Triggers>'
       : '<Triggers/>')
     + '<Principals><Principal id="Author"><UserId>current-user</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>'
-    + '<Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>'
-    + xmlEscape(action.slice('powershell.exe '.length)) + '</Arguments></Exec></Actions></Task>';
+    + '<Actions Context="Author"><Exec><Command>' + xmlEscape(action.executable) + '</Command><Arguments>'
+    + xmlEscape(action.arguments) + '</Arguments></Exec></Actions></Task>';
   return [
     '$ErrorActionPreference = "Stop"',
     '$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
@@ -67,18 +118,53 @@ export function buildRegisterWindowsUserScheduledTaskPowerShellCommand(params: R
 export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: Readonly<{
   qualifiedTaskName: string;
   definitionPath: string;
+  launcherPath?: string;
+  diagnosticLogPath?: string;
 }>): string {
   const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.qualifiedTaskName);
   const definitionPath = String(params.definitionPath ?? '').trim();
   if (!definitionPath) throw new Error('definitionPath is required for Windows scheduled task stop');
   const wrapperActionToken = `-File "${definitionPath}"`;
+  const launcherPath = String(params.launcherPath ?? '').trim();
+  const expectedNativeArguments = launcherPath && params.diagnosticLogPath
+    ? buildWindowsScheduledTaskLauncherAction({
+        launcherPath,
+        definitionPath,
+        diagnosticLogPath: params.diagnosticLogPath,
+      }).arguments
+    : '';
+  const expectedLegacyArguments = [
+    buildWindowsScheduledTaskPowerShellAction({ definitionPath }).slice('powershell.exe '.length),
+    // cli-v0.2.1 emitted this action; its registered task can survive later CLI updates.
+    `-NoProfile -ExecutionPolicy Bypass -File "${definitionPath}"`,
+  ];
   return [
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
+    `$definitionPath = ${psQuoted(definitionPath)}`,
     `$wrapperActionToken = ${psQuoted(wrapperActionToken)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    `$launcherPath = ${psQuoted(launcherPath)}`,
+    `$expectedNativeArguments = ${psQuoted(expectedNativeArguments)}`,
+    `$expectedLegacyArguments = @(${expectedLegacyArguments.map(psQuoted).join(', ')})`,
+    '$expectedLauncherRoot = Join-Path (Split-Path -Parent $definitionPath) ([IO.Path]::GetFileNameWithoutExtension($definitionPath))',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -ne $task -and [int]$task.State -eq 4) {',
+    '  $registeredActions = @($task.Actions)',
+    '  if ($registeredActions.Count -ne 1) {',
+    '    throw "Refusing to stop scheduled task because it does not have exactly one registered action"',
+    '  }',
+    '  $registeredAction = $registeredActions[0]',
+    '  $registeredExecute = if ($null -ne $registeredAction.Execute) { [string]$registeredAction.Execute } else { "" }',
+    '  $registeredArguments = if ($null -ne $registeredAction.Arguments) { [string]$registeredAction.Arguments } else { "" }',
+    '  $registeredLauncherParent = if ($registeredExecute) { Split-Path -Parent $registeredExecute } else { "" }',
+    '  $registeredLauncherVersionDir = if ($registeredLauncherParent) { Split-Path -Leaf $registeredLauncherParent } else { "" }',
+    '  $registeredLauncherRoot = if ($registeredLauncherParent) { Split-Path -Parent $registeredLauncherParent } else { "" }',
+    '  $isNativeAction = $launcherPath -and ([IO.Path]::GetFileName($registeredExecute)).Equals("happier-service-launcher.exe", [StringComparison]::OrdinalIgnoreCase) -and $registeredLauncherRoot.Equals($expectedLauncherRoot, [StringComparison]::OrdinalIgnoreCase) -and $registeredLauncherVersionDir -match "^launcher-[A-Za-z0-9._-]+$" -and $registeredArguments.Equals($expectedNativeArguments, [StringComparison]::Ordinal)',
+    '  $isExpectedLegacyArguments = @($expectedLegacyArguments | Where-Object { $registeredArguments.Equals($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0',
+    '  if (-not $isNativeAction -and (-not $registeredExecute.Equals("powershell.exe", [StringComparison]::OrdinalIgnoreCase) -or -not $isExpectedLegacyArguments)) {',
+    '    throw "Refusing to stop scheduled task because its registered action is not the expected Happier launcher or legacy wrapper"',
+    '  }',
     // Stop-ScheduledTask terminates the PowerShell action but can leave the
     // executable launched by that wrapper running. Find only this task's
     // wrapper by its exact -File argument, then terminate each direct child
@@ -87,25 +173,26 @@ export function buildStopWindowsScheduledTaskIfRunningPowerShellCommand(params: 
     '  $allProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
     '  $wrapperProcessIds = @($allProcesses | Where-Object { ([string]$_.CommandLine).IndexOf($wrapperActionToken, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { [int]$_.ProcessId })',
     '  $serviceProcessIds = @($allProcesses | Where-Object { $wrapperProcessIds -contains [int]$_.ParentProcessId } | ForEach-Object { [int]$_.ProcessId })',
+    '  if ($isNativeAction) { Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop }',
     '  foreach ($serviceProcessId in $serviceProcessIds) {',
+    '    if (-not $isNativeAction) {',
     '    $taskkillProcess = Start-Process -FilePath "taskkill.exe" -ArgumentList @("/PID", [string]$serviceProcessId, "/T", "/F") -NoNewWindow -Wait -PassThru',
     '    $taskkillExitCode = $taskkillProcess.ExitCode',
     '    if ($taskkillExitCode -ne 0 -and $null -ne (Get-Process -Id $serviceProcessId -ErrorAction SilentlyContinue)) {',
     '      throw "Failed to stop scheduled task child process $serviceProcessId (taskkill exit $taskkillExitCode)"',
+    '    }',
     '    }',
     '    Wait-Process -Id $serviceProcessId -Timeout 10 -ErrorAction SilentlyContinue',
     '    if ($null -ne (Get-Process -Id $serviceProcessId -ErrorAction SilentlyContinue)) {',
     '      throw "Failed to wait for scheduled task child process $serviceProcessId to exit"',
     '    }',
     '  }',
-    '  $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     '  if ($null -ne $task -and [int]$task.State -eq 4) {',
     '    Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
     '  }',
     '}',
-    // A missing task is the intended no-op. Get-ScheduledTask with
-    // SilentlyContinue still leaves PowerShell's process status at 1 unless
-    // successful completion is made explicit.
+    // A confirmed missing task is the intended no-op.
     'exit 0',
   ].join('; ');
 }
@@ -120,7 +207,7 @@ export function buildSetWindowsScheduledTaskEnabledPowerShellCommand(params: Rea
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     `if ($null -ne $task) { ${command} -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop | Out-Null }`,
     'exit 0',
   ].join('; ');
@@ -134,7 +221,7 @@ export function buildRemoveWindowsScheduledTaskIfPresentPowerShellCommand(params
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -ne $task) {',
     '  Unregister-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Confirm:$false -ErrorAction Stop',
     '}',
@@ -199,7 +286,7 @@ export function buildReadWindowsScheduledTaskStatusPowerShellCommand(params: Rea
     '$ErrorActionPreference = "Stop"',
     `$taskPath = ${psQuoted(taskPath)}`,
     `$taskName = ${psQuoted(taskName)}`,
-    '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
+    queryWindowsScheduledTaskIfPresent(),
     'if ($null -eq $task) {',
     '  [pscustomobject]@{ exists = $false; enabled = $false; active = $false; stateLabel = "not_installed"; stateValue = $null; lastRunTime = ""; lastTaskResult = $null; taskToRun = "" } | ConvertTo-Json -Compress',
     '  exit 0',
@@ -260,6 +347,11 @@ export function buildWindowsScheduledTaskPowerShellAction(params: Readonly<{
   const definitionPath = String(params.definitionPath ?? '').trim();
   if (!definitionPath) throw new Error('definitionPath is required for Windows scheduled task action');
   return `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${definitionPath}"`;
+}
+
+function quoteWindowsCommandLineArgument(value: string): string {
+  const source = String(value ?? '');
+  return `"${source.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/gu, '$1$1')}"`;
 }
 
 export function renderWindowsScheduledTaskWrapperPs1(params: Readonly<{
@@ -365,4 +457,75 @@ export function buildApplyWindowsScheduledTaskServicePolicyPowerShellCommand(par
     `$settings = New-ScheduledTaskSettingsSet ${settingsArgs}`,
     'Set-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Settings $settings | Out-Null',
   ].join('; ');
+}
+
+export type WindowsScheduledTaskDefinition = Readonly<{
+  wrapperPath: string;
+  actionKind: 'native-launcher' | 'legacy-powershell';
+  launcherPath?: string;
+  /** Registered arguments of a native-launcher action, compared exactly against the expected action. */
+  launcherArguments?: string;
+  /** XML observes the full action set; LIST does not expose its shape. */
+  hasSingleExecAction?: boolean;
+}>;
+
+function decodeWindowsTaskXmlText(value: string): string {
+  return String(value ?? '')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', '\'')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+function parseWindowsScheduledTaskDefinitionFromAction(executable: string, argumentsText: string): WindowsScheduledTaskDefinition | null {
+  const argumentsValue = String(argumentsText ?? '').trim();
+  const nativeQuoted = /--wrapper\s+"([^"]+\.ps1)"/iu.exec(argumentsValue);
+  const nativeBare = /--wrapper\s+([^\s]+\.ps1)/iu.exec(argumentsValue);
+  const nativeWrapperPath = nativeQuoted?.[1]?.trim() || nativeBare?.[1]?.trim() || null;
+  if (nativeWrapperPath) {
+    return {
+      wrapperPath: nativeWrapperPath,
+      actionKind: 'native-launcher',
+      launcherPath: String(executable ?? '').trim().replace(/^"|"$/gu, ''),
+      launcherArguments: argumentsValue,
+    };
+  }
+
+  const legacyQuoted = /-File\s+"([^"]+\.ps1)"/iu.exec(argumentsValue);
+  const legacyBare = /-File\s+([^\s]+\.ps1)/iu.exec(argumentsValue);
+  const legacyWrapperPath = legacyQuoted?.[1]?.trim() || legacyBare?.[1]?.trim() || null;
+  return legacyWrapperPath
+    ? { wrapperPath: legacyWrapperPath, actionKind: 'legacy-powershell' }
+    : null;
+}
+
+export function parseWindowsScheduledTaskDefinitionFromXml(contents: string): WindowsScheduledTaskDefinition | null {
+  const actions = /<Actions\b[^>]*>([\s\S]*?)<\/Actions>/iu.exec(String(contents ?? ''))?.[1];
+  const execAction = /<Exec\b[^>]*>([\s\S]*?)<\/Exec>/iu.exec(actions ?? '');
+  if (!execAction) return null;
+  const executable = decodeWindowsTaskXmlText(
+    /<Command>([\s\S]*?)<\/Command>/iu.exec(execAction[1] ?? '')?.[1] ?? '',
+  );
+  const argumentsMatch = /<Arguments>([\s\S]*?)<\/Arguments>/iu.exec(execAction[1] ?? '');
+  if (!argumentsMatch) return null;
+  const definition = parseWindowsScheduledTaskDefinitionFromAction(
+    executable,
+    decodeWindowsTaskXmlText(argumentsMatch[1] ?? ''),
+  );
+  return definition ? { ...definition, hasSingleExecAction: actions?.trim() === execAction[0] } : null;
+}
+
+export function parseWindowsScheduledTaskDefinitionFromTaskToRun(taskToRunText: string): WindowsScheduledTaskDefinition | null {
+  const taskToRun = String(taskToRunText ?? '').trim();
+  if (!taskToRun) return null;
+  // `schtasks /FO LIST /V` reports the action as one localized field among many, so locate the
+  // native action by its own shape on its line instead of by field label.
+  for (const line of taskToRun.split(/\r?\n/u)) {
+    const nativeAction = /("?(?:[A-Za-z]:)?[\\/][^"\r\n]*?happier-service-launcher\.exe"?)\s+(--wrapper\s.*)$/iu.exec(line);
+    if (nativeAction) {
+      return parseWindowsScheduledTaskDefinitionFromAction(nativeAction[1] ?? '', nativeAction[2] ?? '');
+    }
+  }
+  return parseWindowsScheduledTaskDefinitionFromAction('', taskToRun);
 }

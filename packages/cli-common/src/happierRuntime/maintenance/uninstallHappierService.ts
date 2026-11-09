@@ -1,5 +1,3 @@
-import { unlink } from 'node:fs/promises';
-
 import { applyServicePlan, planServiceAction, type ServiceBackend } from '../../service/index.js';
 import type { HappierServiceBackend, HappierServicePlatform } from '../types.js';
 
@@ -40,11 +38,9 @@ export async function uninstallHappierService(params: Readonly<{
         persistent: true,
     });
 
-    await applyServicePlan(servicePlan, { runCommands: params.runCommands });
-
-    try {
-        await unlink(params.definitionPath);
-    } catch {
-        // ignore
-    }
+    await applyServicePlan(params.runCommands === false ? {
+        ...servicePlan,
+        commands: [],
+        removals: servicePlan.removals?.map((removal) => ({ ...removal, beforeCommandIndex: 0 })),
+    } : servicePlan);
 }

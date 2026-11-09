@@ -1,6 +1,8 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import https from 'node:https';
+import { syncBuiltinESMExports } from 'node:module';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -53,31 +55,12 @@ import { execFileWithDeadline } from '../process/execFileWithDeadline.js';
 
 const liveAcquisitionEnabled = process.env.HAPPIER_TEST_MUTAGEN_ENGINE_LIVE_ACQUISITION?.trim() === '1';
 
-/**
- * Pass-through observation of the genuine network boundary: the real GitHub
- * release provider still performs every request; we only count how many
- * acquisitions start for the engine release tag so the concurrent-dedupe
- * contract is discriminating at a system boundary rather than asserted on
- * internal bookkeeping.
- */
-const observedEngineReleaseTagFetches = vi.hoisted(() => ({ tags: [] as string[] }));
-vi.mock('@happier-dev/release-runtime/github', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@happier-dev/release-runtime/github')>();
-  return {
-    ...actual,
-    fetchGitHubReleaseByTag: async (params: Parameters<typeof actual.fetchGitHubReleaseByTag>[0]) => {
-      observedEngineReleaseTagFetches.tags.push(params.tag);
-      return await actual.fetchGitHubReleaseByTag(params);
-    },
-  };
-});
-
 const ENGINE_CHANNEL: PublicReleaseRingId = 'stable';
 const ENGINE_VERSION = MUTAGEN_ENGINE_VERSION;
 const ENGINE_RELEASE_TAG = resolveMutagenEngineReleaseTag(ENGINE_VERSION);
 const ENGINE_TARGET_TRIPLE = resolveMutagenEngineArtifactTarget();
-/** Manager/agent `version` prints the pinned upstream base version. */
-const EXPECTED_BINARY_VERSION = MUTAGEN_ENGINE_UPSTREAM_TAG.replace(/^v/u, '');
+/** Manager and agent identify the published fork version, including its build. */
+const EXPECTED_BINARY_VERSION = MUTAGEN_ENGINE_VERSION;
 const LIVE_ACQUISITION_TIMEOUT_MS = 10 * 60_000;
 
 /**
@@ -116,6 +99,15 @@ function createEmptyHomeProcessEnv(): Readonly<{ homeDir: string; processEnv: No
 describe.skipIf(!liveAcquisitionEnabled)(`live Mutagen engine acquisition from an empty Happier home (${ENGINE_RELEASE_TAG})`, () => {
   it('acquires the pinned engine once for two concurrent requests, installs a verified manager/agent pair, and runs harmless version commands', { timeout: LIVE_ACQUISITION_TIMEOUT_MS }, async () => {
     const { homeDir, processEnv } = createEmptyHomeProcessEnv();
+    delete processEnv.HAPPIER_FIRST_PARTY_INSTALL_HOME;
+    const requests: URL[] = [];
+    const originalRequest = https.request;
+    // Observe the real OS transport, including redirects, without mocking domain logic.
+    vi.spyOn(https, 'request').mockImplementation((...args: Parameters<typeof https.request>) => {
+      requests.push(new URL(String(args[0])));
+      return originalRequest(...args);
+    });
+    syncBuiltinESMExports();
     try {
       const validator = createDaemonPayloadValidator();
 
@@ -196,9 +188,12 @@ describe.skipIf(!liveAcquisitionEnabled)(`live Mutagen engine acquisition from a
       // The downloaded payload was validated during acquisition, too.
       expect(validator.validatedManifest()).toMatchObject({ engineVersion: ENGINE_VERSION });
 
-      // Dedupe at the real network boundary: exactly one acquisition started
-      // for the pinned engine release tag.
-      expect(observedEngineReleaseTagFetches.tags.filter((tag) => tag === ENGINE_RELEASE_TAG)).toHaveLength(1);
+      // Two concurrent consumers share three signed-asset reads and spend no REST quota.
+      expect(requests.filter((url) => url.hostname === 'api.github.com')).toHaveLength(0);
+      const releaseRequests = requests.filter((url) => url.hostname === 'github.com'
+        && url.pathname.startsWith(`/happier-dev/mutagen/releases/download/${ENGINE_RELEASE_TAG}/`));
+      expect(releaseRequests).toHaveLength(3);
+      expect(new Set(releaseRequests.map((url) => url.pathname)).size).toBe(3);
 
       // Both installed binaries execute a harmless version command.
       const managerVersion = await execFileWithDeadline(artifactPaths.managerPath, ['version'], {
@@ -212,6 +207,8 @@ describe.skipIf(!liveAcquisitionEnabled)(`live Mutagen engine acquisition from a
       });
       expect(agentVersion.stdout.toString().trim()).toBe(EXPECTED_BINARY_VERSION);
     } finally {
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });

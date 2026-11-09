@@ -39,7 +39,8 @@ async function copyScpReadyEntry(
   }
 
   if (sourceInfo.isDirectory()) {
-    await mkdir(targetPath, { recursive: true, mode: sourceInfo.mode });
+    // Immutable source bundles still need writable scratch directories for copying and cleanup.
+    await mkdir(targetPath, { recursive: true });
     const entries = await readdir(sourcePath);
     for (const entry of entries) {
       await copyScpReadyEntry(join(sourcePath, entry), join(targetPath, entry), seenRealPaths);

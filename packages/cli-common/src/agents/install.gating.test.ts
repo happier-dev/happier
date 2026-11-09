@@ -343,97 +343,31 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     try {
       const runtimeDir = join(homeDir, 'managed-runtime');
       const runtimeCommand = join(runtimeDir, 'node.exe');
-      type SpawnSyncFn = typeof import('node:child_process').spawnSync;
-      type SpawnSyncMockFn = (
-        command: string,
-        args?: ReadonlyArray<string>,
-        options?: import('node:child_process').SpawnSyncOptions,
-      ) => import('node:child_process').SpawnSyncReturns<Buffer>;
-      const spawnSyncMock = vi.fn<SpawnSyncMockFn>((_command, args, options) => {
-        if (args?.some(arg => arg.includes('opencode-ai')) && typeof options?.cwd === 'string') {
-          const workspaceDir = options.cwd;
-          const opencodePackageDir = join(workspaceDir, 'node_modules', 'opencode-ai');
-          const opencodeBinDir = join(opencodePackageDir, 'bin');
-          mkdirSync(opencodeBinDir, { recursive: true });
-          writeFileSync(
-            join(opencodePackageDir, 'package.json'),
-            JSON.stringify({
-              name: 'opencode-ai',
-              optionalDependencies: {
-                'opencode-windows-x64': '1.17.8',
-                'opencode-windows-x64-baseline': '1.17.8',
-              },
-            }, null, 2),
-            'utf8',
-          );
-          writeFileSync(join(opencodeBinDir, 'opencode.exe'), 'Error: opencode-ai postinstall was not run.\n', 'utf8');
-          for (const packageName of ['opencode-windows-x64', 'opencode-windows-x64-baseline']) {
-            const platformPackageDir = join(
-              workspaceDir,
-              'node_modules',
-              '.pnpm',
-              `${packageName}@1.17.8`,
-              'node_modules',
-              packageName,
-            );
-            const platformBinDir = join(platformPackageDir, 'bin');
-            mkdirSync(platformBinDir, { recursive: true });
-            writeFileSync(join(platformPackageDir, 'package.json'), JSON.stringify({ name: packageName }, null, 2), 'utf8');
-            writeFileSync(join(platformBinDir, 'opencode.exe'), `REAL OPENCODE BINARY ${packageName}\n`, 'utf8');
-          }
+      const runCommand = vi.fn<typeof execFileWithDeadline>(async (_command, args, options) => {
+        const commandLine = args.join(' ');
+        if (!commandLine.includes('@opencode/cli') || !commandLine.includes('--allow-build=@opencode/cli') || !commandLine.includes('--ignore-scripts=false')) {
+          throw new Error('OpenCode vendor build was not approved');
         }
-        return {
-          pid: 0,
-          output: [null, Buffer.alloc(0), Buffer.alloc(0)],
-          status: 0,
-          signal: null,
-          stdout: Buffer.alloc(0),
-          stderr: Buffer.alloc(0),
-        };
-      }).mockName('spawnSync');
-
-      const res = await installAgentCli({
-        agentId: 'opencode',
-        platform: 'win32',
-        logDir,
-        env: {
-          ...process.env,
-          HAPPIER_HOME_DIR: homeDir,
-          PATH: '',
-          PATHEXT: '.EXE;.CMD;.BAT;.COM',
-          COMSPEC: 'C:\\WINDOWS\\system32\\cmd.exe',
-        },
-        skipIfInstalled: false,
-        deps: {
-          ensureManagedPnpmCommand: async () => 'C:\\happier\\managed\\pnpm.cmd',
-          ensureManagedJavaScriptRuntimeCommand: async () => runtimeCommand,
-          execFileWithDeadline: asyncInstallCommand(spawnSyncMock as unknown as SpawnSyncFn),
-        },
+        if (typeof options.cwd !== 'string') throw new Error('Expected managed workspace');
+        const binDir = join(options.cwd, 'node_modules', '.bin');
+        await mkdir(binDir, { recursive: true });
+        await writeFile(join(binDir, 'opencode.cmd'), '@echo 2.2.5\r\n');
+        return { stdout: '', stderr: '' };
       });
-
-      expect(res.ok, JSON.stringify(res)).toBe(true);
-      if (!res.ok) return;
-      expect(res.plan.installMode).toBe('managed_package');
-      expect(res.plan.managedInstall).toEqual({
-        kind: 'managed_package',
-        packageName: 'opencode-ai',
-        binaryName: 'opencode',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+      const result = await installAgentCli({
+        agentId: 'opencode', platform: 'win32', logDir, skipIfInstalled: false,
+        env: { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '', PATHEXT: '.EXE;.CMD;.BAT;.COM', COMSPEC: 'C:\\WINDOWS\\system32\\cmd.exe' },
+        deps: { ensureManagedPnpmCommand: async () => 'C:\\happier\\managed\\pnpm.cmd',
+          ensureManagedJavaScriptRuntimeCommand: async () => runtimeCommand, execFileWithDeadline: runCommand },
       });
-      const firstCall = spawnSyncMock.mock.calls[0];
-      expect(firstCall).toBeDefined();
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.managedInstall).toEqual({ kind: 'managed_package', packageName: '@opencode/cli', binaryName: 'opencode', allowBuild: true });
+      const firstCall = runCommand.mock.calls[0];
       expect(firstCall?.[0]).toBe('C:\\WINDOWS\\system32\\cmd.exe');
-      expect(firstCall?.[1]?.join(' ')).toContain('pnpm.cmd');
-      expect(firstCall?.[1]?.join(' ')).toContain('opencode-ai');
-      expect(firstCall?.[1]).not.toEqual(['/c', 'npm install -g opencode-ai']);
-      expect(String(firstCall?.[2]?.env?.PATH ?? '')).toContain(runtimeDir);
-      const systemNpmCalls = spawnSyncMock.mock.calls.filter(([command]) => /(?:^|[\\/])npm(?:\.(?:cmd|exe))?$/i.test(command));
-      expect(systemNpmCalls).toEqual([]);
-      const materializedBinary = await readFile(
-        join(homeDir, 'tools', 'providers', 'opencode', 'current', 'workspace', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe'),
-        'utf8',
-      );
-      expect(materializedBinary).toContain('REAL OPENCODE BINARY');
+      expect(firstCall?.[1].join(' ')).toContain('pnpm.cmd');
+      expect(String(firstCall?.[2].env?.PATH ?? '')).toContain(runtimeDir);
+      expect(await readFile(join(homeDir, 'tools', 'providers', 'opencode', 'current', 'workspace', 'node_modules', '.bin', 'opencode.cmd'), 'utf8')).toContain('2.2.5');
     } finally {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
       Object.defineProperty(process, 'arch', originalArchDescriptor);
@@ -446,109 +380,45 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     }
   });
 
-  it('repairs the Unix OpenCode binary target when pnpm install skips postinstall', async () => {
-    if (!originalPlatformDescriptor || !originalArchDescriptor) {
-      throw new Error('Expected process.platform to be configurable for this test');
-    }
-    if (process.platform === 'win32') return;
-
-    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
-    Object.defineProperty(process, 'arch', { ...originalArchDescriptor, value: 'x64' });
-
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-opencode-unix-home-'));
-    const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-opencode-unix-log-'));
+  it.skipIf(process.platform === 'win32').each(['linux', 'darwin'] as const)('installs OpenCode 2 with only its vendor build approved on %s', async (platform) => {
+    if (!originalPlatformDescriptor) throw new Error('Expected configurable platform');
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-install-opencode-'));
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: platform });
     try {
-      const runtimeCommand = join(homeDir, 'managed-runtime', 'node');
-      type SpawnSyncFn = typeof import('node:child_process').spawnSync;
-      type SpawnSyncMockFn = (
-        command: string,
-        args?: ReadonlyArray<string>,
-        options?: import('node:child_process').SpawnSyncOptions,
-      ) => import('node:child_process').SpawnSyncReturns<Buffer>;
-      const spawnSyncMock = vi.fn<SpawnSyncMockFn>((_command, args, options) => {
-        if (args?.some(arg => arg.includes('opencode-ai')) && typeof options?.cwd === 'string') {
-          const workspaceDir = options.cwd;
-          const opencodePackageDir = join(workspaceDir, 'node_modules', 'opencode-ai');
-          const opencodeBinDir = join(opencodePackageDir, 'bin');
-          const nodeModulesBinDir = join(workspaceDir, 'node_modules', '.bin');
-          mkdirSync(opencodeBinDir, { recursive: true });
-          mkdirSync(nodeModulesBinDir, { recursive: true });
-          writeFileSync(
-            join(opencodePackageDir, 'package.json'),
-            JSON.stringify({
-              name: 'opencode-ai',
-              bin: { opencode: 'bin/opencode.exe' },
-              optionalDependencies: {
-                'opencode-linux-x64': '1.17.8',
-                'opencode-linux-x64-baseline': '1.17.8',
-              },
-            }, null, 2),
-            'utf8',
-          );
-          // opencode-ai 1.18.35 publishes this target on Unix too; its pnpm shim launches it.
-          writeFileSync(join(opencodeBinDir, 'opencode.exe'), '#!/bin/sh\necho "opencode-ai postinstall was not run" >&2\nexit 1\n', 'utf8');
-          chmodSync(join(opencodeBinDir, 'opencode.exe'), 0o755);
-          writeFileSync(join(nodeModulesBinDir, 'opencode'), '#!/bin/sh\nshim_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$shim_dir/../opencode-ai/bin/opencode.exe" "$@"\n', 'utf8');
-          chmodSync(join(nodeModulesBinDir, 'opencode'), 0o755);
-          for (const packageName of ['opencode-linux-x64', 'opencode-linux-x64-baseline']) {
-            const platformPackageDir = join(
-              workspaceDir,
-              'node_modules',
-              '.pnpm',
-              `${packageName}@1.17.8`,
-              'node_modules',
-              packageName,
-            );
-            const platformBinDir = join(platformPackageDir, 'bin');
-            mkdirSync(platformBinDir, { recursive: true });
-            writeFileSync(join(platformPackageDir, 'package.json'), JSON.stringify({ name: packageName }, null, 2), 'utf8');
-            writeFileSync(join(platformBinDir, 'opencode'), '#!/bin/sh\necho "1.17.8 $*"\n', 'utf8');
-            chmodSync(join(platformBinDir, 'opencode'), 0o755);
-          }
+      // Only the package-manager OS process is synthetic; installation and promotion stay real.
+      const runCommand = vi.fn<typeof execFileWithDeadline>(async (_command, args, options) => {
+        if (!args.includes('@opencode/cli') || !args.includes('--allow-build=@opencode/cli') || !args.includes('--ignore-scripts=false')) {
+          throw Object.assign(new Error('OpenCode 2 postinstall was not approved'), { code: 1, stderr: 'OpenCode 2 postinstall was not approved' });
         }
-        return {
-          pid: 0,
-          output: [null, Buffer.alloc(0), Buffer.alloc(0)],
-          status: 0,
-          signal: null,
-          stdout: Buffer.alloc(0),
-          stderr: Buffer.alloc(0),
-        };
-      }).mockName('spawnSync');
-
-      const res = await installAgentCli({
-        agentId: 'opencode',
-        platform: 'linux',
-        logDir,
-        env: {
-          ...process.env,
-          HAPPIER_HOME_DIR: homeDir,
-          PATH: '',
-        },
-        skipIfInstalled: false,
-        deps: {
-          ensureManagedPnpmCommand: async () => '/happier/managed/pnpm',
-          ensureManagedJavaScriptRuntimeCommand: async () => runtimeCommand,
-          execFileWithDeadline: asyncInstallCommand(spawnSyncMock as unknown as SpawnSyncFn),
-        },
+        if (typeof options.cwd !== 'string') throw new Error('Expected managed workspace');
+        const binDir = join(options.cwd, 'node_modules', '.bin');
+        await mkdir(binDir, { recursive: true });
+        await writeFile(join(binDir, 'opencode'), '#!/bin/sh\necho 2.2.5\n', { mode: 0o755 });
+        return { stdout: '', stderr: '' };
       });
-
-      expect(res.ok).toBe(true);
-      if (!res.ok) return;
-      expect(res.plan.installMode).toBe('managed_package');
-      // Execute the promoted launcher and package-manager shim, not an internal helper.
-      const launched = spawnSyncProcess(join(homeDir, 'tools', 'providers', 'opencode', 'current', 'bin', 'opencode'), ['--version'], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: '/usr/bin:/bin' },
-      });
-      expect({ status: launched.status, stdout: launched.stdout, stderr: launched.stderr }).toEqual({
-        status: 0, stdout: '1.17.8 --version\n', stderr: '',
-      });
+      const input = {
+        agentId: 'opencode' as const, platform, skipIfInstalled: false,
+        env: { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' }, logDir: homeDir,
+        deps: { ensureManagedPnpmCommand: async () => '/managed/pnpm',
+          ensureManagedJavaScriptRuntimeCommand: async () => '/managed/node/bin/node', execFileWithDeadline: runCommand },
+      };
+      const result = await installAgentCli(input);
+      expect(result.ok, JSON.stringify(result)).toBe(true);
+      if (!result.ok) return;
+      expect(result.plan.managedInstall).toEqual({ kind: 'managed_package', packageName: '@opencode/cli', binaryName: 'opencode', allowBuild: true });
+      const launcherPath = join(homeDir, 'tools', 'providers', 'opencode', 'current', 'bin', 'opencode');
+      const launcher = await readFile(launcherPath, 'utf8');
+      const launched = spawnSyncProcess(launcherPath, ['--version'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } });
+      expect(launched.status).toBe(0);
+      expect(launched.stdout.trim()).toBe('2.2.5');
+      runCommand.mockRejectedValueOnce(Object.assign(new Error('vendor build failed'), { code: 1, stderr: 'vendor build failed' }));
+      const failed = await installAgentCli(input);
+      expect(failed).toMatchObject({ ok: false, errorCode: 'command-failed' });
+      expect(await readFile(launcherPath, 'utf8')).toBe(launcher);
+      expect(await readFile(failed.logPath!, 'utf8')).toContain('vendor build failed');
     } finally {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
-      Object.defineProperty(process, 'arch', originalArchDescriptor);
       await rm(homeDir, { recursive: true, force: true });
-      await rm(logDir, { recursive: true, force: true });
     }
   });
 

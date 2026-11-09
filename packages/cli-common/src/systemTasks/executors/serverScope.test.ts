@@ -359,7 +359,7 @@ describe('converging this home\'s services onto the chosen CLI (R12, one CLI per
       { label: 'happier-daemon.default', env: { ...stable, HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following' }, active: true },
       // Another Home's pinned service, stopped by the person.
       { label: 'happier-daemon.company', env: { ...stable, HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_ACTIVE_SERVER_ID: 'company' }, active: false },
-      // The active Home: setup's own recipe converges it, so it is left to that.
+      // The active Home: setup's own flow converges it, so it is left to that.
       { label: 'happier-daemon.personal', env: { ...stable, HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_ACTIVE_SERVER_ID: 'personal' }, active: true },
       // Turned off at login by the person, and stopped: must stay off after the switch.
       { label: 'happier-daemon.lab', env: { ...stable, HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_ACTIVE_SERVER_ID: 'lab' }, active: false, disabled: true },

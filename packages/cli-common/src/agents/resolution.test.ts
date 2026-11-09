@@ -62,6 +62,15 @@ describe('readBackendCliSourcePreference', () => {
 });
 
 describe('resolveAgentCliManagedCommandPath', () => {
+  it('uses the selected external tools root without moving the first-party CLI payload', () => {
+    const home = join(tmpdir(), 'custodian-private');
+    const tools = join(tmpdir(), 'machine-code', 'tools');
+    expect(resolveManagedToolsRoot({ HAPPIER_HOME_DIR: home,
+      HAPPIER_MANAGED_TOOLS_ROOT: tools })).toBe(tools);
+    expect(managedUvInstallDir({ HAPPIER_HOME_DIR: home,
+      HAPPIER_MANAGED_TOOLS_ROOT: tools })).toBe(join(tools, 'uv'));
+  });
+
   it.each([undefined, '   '])('preserves the personal tools layout without a configured payload (%s)', (override) => {
     const home = join(tmpdir(), 'personal-happier');
     expect(resolveManagedToolsRoot({ HAPPIER_HOME_DIR: home, HAPPIER_FIRST_PARTY_INSTALL_HOME: override }))

@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process';
 
-import { uninstallManagedFirstPartyComponent, type UninstallManagedFirstPartyComponentResult } from '../../firstPartyRuntime/index.js';
+import { doesCliLauncherUseInstallation, uninstallManagedFirstPartyComponent, type UninstallManagedFirstPartyComponentResult } from '../../firstPartyRuntime/index.js';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import {
-    isHappierRuntimePathWithinRoot,
     normalizeHappierRuntimePath,
 } from '../runtimePathMatching.js';
 import type { HappierInstallation, HappierService } from '../types.js';
@@ -83,7 +82,7 @@ function resolveMatchingDaemonServices(
         if (service.serviceType !== 'daemon' || service.verification !== 'verified') return false;
         const executablePath = normalizeHappierRuntimePath(service.executablePath);
         if (!executablePath) return false;
-        return installationRoots.some((root) => isHappierRuntimePathWithinRoot(executablePath, root));
+        return doesCliLauncherUseInstallation({ launcher: [executablePath], installationRoots });
     });
 }
 
@@ -105,7 +104,8 @@ export function buildCliUninstallPlan(params: Readonly<{
         return { kind: 'active-installation-not-found' };
     }
 
-    const installationRoots = [selectedInstallation.path, selectedInstallation.realPath]
+    const installationRoots = [selectedInstallation.path, selectedInstallation.realPath,
+        ...(selectedInstallation.source === 'firstPartyManaged' ? [selectedInstallation.managedRoot] : [])]
         .map(normalizeHappierRuntimePath)
         .filter((value): value is string => Boolean(value));
     const serviceTargets = params.keepService ? [] : resolveMatchingDaemonServices(params.services, installationRoots);

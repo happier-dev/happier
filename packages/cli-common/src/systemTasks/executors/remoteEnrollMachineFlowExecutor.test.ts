@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeRemoteBootstrapCliJsonResult } from './remoteSetupMachineRecipeExecutor.js';
+import { normalizeRemoteBootstrapCliJsonResult } from './remoteEnrollMachineFlowExecutor.js';
 
 describe('remote bootstrap CLI envelope admission', () => {
   it('recognizes the CLI signed-out result without treating other auth failures as signed out', () => {

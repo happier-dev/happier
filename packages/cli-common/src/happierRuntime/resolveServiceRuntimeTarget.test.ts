@@ -142,4 +142,17 @@ describe('resolveHappierServiceRuntimeTarget', () => {
       installationId: installations[0]?.id,
     });
   });
+
+  it('associates an older pinned payload with the managed installation that owns it', () => {
+    const installation: HappierInstallation = {
+      id: 'preview', source: 'firstPartyManaged', components: ['happier-cli', 'happier-daemon'],
+      ring: 'preview', version: '0.3.0', path: '/tmp/happier-test/cli-preview/current',
+      realPath: '/tmp/happier-test/cli-preview/versions/0.3.0', managedRoot: '/tmp/happier-test/cli-preview',
+      shimName: 'hprev', onPath: true,
+    };
+    expect(resolveHappierServiceRuntimeTarget({
+      service: { ...baseService, executablePath: '/tmp/happier-test/cli-preview/versions/0.2.17/happier' },
+      installations: [installation],
+    })).toMatchObject({ kind: 'installation', installationId: installation.id });
+  });
 });

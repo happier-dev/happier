@@ -12,6 +12,7 @@ const OPERATOR_REMEDIATION = "Run this Tailscale step with sudo. If this account
 export class TailscaleCommandError extends Error {
   readonly result: TailscaleCommandResult;
   readonly failure: TailscaleCommandFailure | null;
+  readonly stderrClass: 'operator_authorization_refused' | 'unclassified' | 'empty';
 
   constructor(message: string, result: TailscaleCommandResult) {
     // Linux Tailscale 1.104.2, tailscale/tailscale#21204. Do not infer the specific
@@ -21,6 +22,8 @@ export class TailscaleCommandError extends Error {
     super(refused ? `Tailscale refused operator authorization. ${OPERATOR_REMEDIATION}` : message);
     this.name = 'TailscaleCommandError';
     this.result = result;
+    this.stderrClass = refused ? 'operator_authorization_refused'
+      : result.stderr.trim() ? 'unclassified' : 'empty';
     this.failure = refused ? {
       code: 'tailscale_operator_authorization_refused', retryable: false, remediation: OPERATOR_REMEDIATION,
     } : null;

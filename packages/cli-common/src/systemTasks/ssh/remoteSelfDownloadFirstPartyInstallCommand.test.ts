@@ -1,13 +1,14 @@
-import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
+import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 import {
   buildRemoteSelfDownloadFirstPartyInstallCommand,
@@ -112,14 +113,12 @@ describe('remote self-download first-party installer command', () => {
     if (process.platform === 'win32') return; // The remote installer runs on POSIX targets.
     const root = await mkdtemp(join(tmpdir(), 'happier-self-download-'));
     const home = join(root, 'home with spaces');
-    const payload = join(root, 'payload');
+    const fixture = await createCliPayloadFixture();
     const archivePath = join(root, 'payload.tar.gz');
     const run = promisify(execFile);
     try {
       await mkdir(home);
-      await mkdir(payload);
-      await writeFile(join(payload, 'happier'), '#!/bin/sh\nprintf "%s\\n" installed\n');
-      await run('tar', ['-czf', archivePath, '-C', root, 'payload']);
+      await run('tar', ['-czf', archivePath, '-C', dirname(fixture.payloadRoot), basename(fixture.payloadRoot)]);
       const command = buildRemoteSelfDownloadFirstPartyInstallCommand({
         componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3',
         archive: { name: 'payload.tar.gz', url: pathToFileURL(archivePath).href },
@@ -129,6 +128,7 @@ describe('remote self-download first-party installer command', () => {
       await run(join(home, '.happier', 'cli', 'current', 'happier'), []);
       expect(await readFile(join(home, '.happier', 'cli', 'current.version'), 'utf8')).toBe('1.2.3\n');
     } finally {
+      await fixture.cleanup();
       await rm(root, { recursive: true, force: true });
     }
   });

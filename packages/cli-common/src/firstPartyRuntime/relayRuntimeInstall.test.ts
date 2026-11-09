@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { resolveRelayRuntimeDefaults } from './relayRuntime.js';
 import { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';
+import { createWindowsServiceLauncherPeFixture } from '../../../../scripts/testing/windowsServiceLauncherPeFixture.mjs';
 import { writePersonalHomeServerArtifactCapability } from './personalHome/artifactContract.js';
 
 describe('installOrUpdateRelayRuntimeLocal', () => {
@@ -953,7 +954,10 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
 
   it('installs sibling ui-web assets when the provided Windows server binary lives under bin/', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-'));
+    const priorExecPath = process.execPath;
     try {
+      process.execPath = join(homeDir, 'hstack.exe');
+      await writeFile(join(homeDir, 'happier-service-launcher.exe'), createWindowsServiceLauncherPeFixture());
       const payloadRoot = join(homeDir, 'payload');
       const binDir = join(payloadRoot, 'bin');
       const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
@@ -988,13 +992,17 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
 
       await expect(readFileText(installedUiPath)).resolves.toContain('preview');
     } finally {
+      process.execPath = priorExecPath;
       await rm(homeDir, { recursive: true, force: true });
     }
   });
 
   it('normalizes root-level Windows server payloads into the installRoot bin layout without dropping sidecars', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-'));
+    const priorExecPath = process.execPath;
     try {
+      process.execPath = join(homeDir, 'hstack.exe');
+      await writeFile(join(homeDir, 'happier-service-launcher.exe'), createWindowsServiceLauncherPeFixture());
       const payloadRoot = join(homeDir, 'payload');
       const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
       const uiSourceDir = join(payloadRoot, 'ui-web', 'current');
@@ -1039,6 +1047,7 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
       await expect(readFileText(installedUiPath)).resolves.toContain('preview');
       await expect(readFileText(installedMigrationPath)).resolves.toContain('-- init');
     } finally {
+      process.execPath = priorExecPath;
       await rm(homeDir, { recursive: true, force: true });
     }
   });

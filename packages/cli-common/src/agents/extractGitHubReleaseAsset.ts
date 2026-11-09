@@ -1,14 +1,12 @@
 import { chmod, copyFile, mkdir, readdir, rename, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractArchivePayloadToDirectory, resolveReleaseArchiveFormat } from '@happier-dev/release-runtime/archiveExtraction';
 
 function stripArchiveExtension(archiveName: string): string {
   const normalized = archiveName.trim();
-  if (normalized.endsWith('.tar.gz')) return normalized.slice(0, -'.tar.gz'.length);
-  if (normalized.endsWith('.tar.xz')) return normalized.slice(0, -'.tar.xz'.length);
-  if (normalized.endsWith('.zip')) return normalized.slice(0, -'.zip'.length);
-  return normalized;
+  const format = resolveReleaseArchiveFormat(normalized);
+  return format ? normalized.slice(0, -format.suffix.length) : normalized;
 }
 
 function resolveExtractedEntryName(params: Readonly<{
@@ -115,9 +113,7 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
   skipTarLinks?: boolean;
 }>): Promise<void> {
   params.signal?.throwIfAborted();
-  const archiveName = params.archiveName.toLowerCase();
-
-  if (archiveName.endsWith('.tar.gz') || archiveName.endsWith('.tar.xz') || archiveName.endsWith('.zip')) {
+  if (resolveReleaseArchiveFormat(params.archiveName)) {
     await mkdir(params.extractDir, { recursive: true });
     await extractArchivePayloadToDirectory({
       signal: params.signal,

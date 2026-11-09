@@ -1,3 +1,4 @@
+import { createBuiltinRelayAccessSelection as relaySelection } from './registry.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -26,19 +27,19 @@ describe('relayAccess publicUrl', () => {
         ).toBe('https://stack.example.test/path');
     });
 
-    it('reads the persisted cloudflare named-tunnel config and resolves the canonical public url', async () => {
+    it('does not infer a verified public URL from a persisted Cloudflare desired hostname', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-relay-access-'));
         try {
             await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
             await writeFile(
                 join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-                JSON.stringify({ providerId: 'cloudflareNamed', hostname: 'relay.example.test', token: 'secret' }),
+                JSON.stringify(relaySelection('cloudflareNamed', { hostname: 'relay.example.test' }, [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'account-a' } } }])),
                 'utf8',
             );
 
             await expect(
                 resolveRelayAccessConfiguredCanonicalPublicServerUrl({ HOME: homeDir }),
-            ).resolves.toBe('https://relay.example.test');
+            ).resolves.toBeNull();
         } finally {
             await rm(homeDir, { recursive: true, force: true });
         }
@@ -47,13 +48,13 @@ describe('relayAccess publicUrl', () => {
     it('does not treat a persisted tailscaleFunnel config as a canonical public url without an upstream match', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
-            magicDnsEnabled: null,
-            interfaceName: null,
-            sourceRanges: [],
             backendState: 'Running',
             authUrl: null,
             dnsName: 'my-machine.tailnet.ts.net',
             tailnetName: 'tailnet.ts.net',
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             tailscaleIps: [],
             loggedIn: true,
             running: true, daemonReachable: true,
@@ -67,7 +68,7 @@ describe('relayAccess publicUrl', () => {
             await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
             await writeFile(
                 join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-                JSON.stringify({ providerId: 'tailscaleFunnel' }),
+                JSON.stringify(relaySelection('tailscaleFunnel')),
                 'utf8',
             );
 
@@ -90,13 +91,13 @@ describe('relayAccess publicUrl', () => {
     it('resolves a persisted tailscaleFunnel canonical public url when the caller provides the matching upstream url', async () => {
         const { runTailscaleStatusJson, runTailscaleFunnelStatus } = await import('../tailscale/index.js');
         vi.mocked(runTailscaleStatusJson).mockResolvedValue({
-            magicDnsEnabled: null,
-            interfaceName: null,
-            sourceRanges: [],
             backendState: 'Running',
             authUrl: null,
             dnsName: 'my-machine.tailnet.ts.net',
             tailnetName: 'tailnet.ts.net',
+            magicDnsEnabled: null,
+            interfaceName: null,
+            sourceRanges: [],
             tailscaleIps: [],
             loggedIn: true,
             running: true, daemonReachable: true,
@@ -110,7 +111,7 @@ describe('relayAccess publicUrl', () => {
             await mkdir(join(homeDir, '.happier', 'relay', 'access'), { recursive: true });
             await writeFile(
                 join(homeDir, '.happier', 'relay', 'access', 'local.json'),
-                JSON.stringify({ providerId: 'tailscaleFunnel' }),
+                JSON.stringify(relaySelection('tailscaleFunnel')),
                 'utf8',
             );
 

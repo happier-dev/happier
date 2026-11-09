@@ -1,16 +1,61 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { renderSystemdServiceUnit } from '../../service/systemd.js';
 import { buildLaunchdPlistXml } from '../../service/launchd.js';
-import { renderWindowsScheduledTaskWrapperPs1 } from '../../service/windows.js';
+import { createWindowsServiceLauncherPeFixture } from '../../../../../scripts/testing/windowsServiceLauncherPeFixture.mjs';
+import { resolveInstalledWindowsServiceLauncherPaths } from '../../service/windowsLauncher.js';
+import { buildWindowsScheduledTaskLauncherAction, renderWindowsScheduledTaskWrapperPs1 } from '../../service/windows.js';
 
-import { discoverHappierServices } from './discoverHappierServices.js';
+import { discoverHappierServices, readWindowsScheduledTaskWrapperPath } from './discoverHappierServices.js';
 
 describe('discoverHappierServices', () => {
+    it('reads a task-owned native launcher action through the shared Scheduler inventory', () => {
+        const definitionPath = 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default.ps1';
+        const launcherPath = 'C:\\Users\\tester\\.happier\\services\\happier-daemon.default\\launcher-1-abc\\happier-service-launcher.exe';
+        const args = `--wrapper "${definitionPath}" --diagnostic-log "C:\\Users\\tester\\.happier\\services\\happier-daemon.default.launcher.log"`;
+        expect(readWindowsScheduledTaskWrapperPath('Happier\\happier-daemon.default', { run: ({ cmd }) =>
+            cmd === 'powershell.exe' ? '["Happier\\\\happier-daemon.default"]'
+                : `<Task><Actions><Exec><Command>${launcherPath}</Command><Arguments>${args.replaceAll('"', '&quot;')}</Arguments></Exec></Actions></Task>`,
+        })).toBe(definitionPath);
+    });
+
+    it.each([
+        { extraAction: '', upgradeNeeded: false },
+        { extraAction: '<Exec><Command>other.exe</Command><Arguments/></Exec>', upgradeNeeded: true },
+        { extraAction: '<ComHandler><ClassId>other</ClassId></ComHandler>', upgradeNeeded: true },
+    ])('keeps wrapper ownership but flags additional Scheduler actions: $extraAction', async ({ extraAction, upgradeNeeded }) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-native-task-actions-'));
+        try {
+            const label = 'happier-daemon.default';
+            const definitionPath = join(root, `${label}.ps1`);
+            await writeFile(definitionPath, renderWindowsScheduledTaskWrapperPs1({
+                programArgs: ['C:\\Happier\\happier.exe', 'daemon', 'start-sync'],
+                env: { HAPPIER_HOME_DIR: root, HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service' },
+            }));
+            const paths = resolveInstalledWindowsServiceLauncherPaths({ definitionPath, label, version: 'fixture' });
+            await mkdir(dirname(paths.launcherPath), { recursive: true });
+            await writeFile(paths.launcherPath, createWindowsServiceLauncherPeFixture());
+            const action = buildWindowsScheduledTaskLauncherAction({ ...paths, definitionPath });
+            const inventory = await discoverHappierServices({
+                platform: 'win32', roots: [{ path: root, scope: 'user' }],
+                windowsLauncher: { sourcePath: paths.launcherPath, version: 'fixture' },
+                commands: { run: ({ cmd, args }) => {
+                    if (cmd === 'powershell.exe') return args.some((arg) => arg.includes('.GetFolder('))
+                        ? JSON.stringify([`Happier\\${label}`]) : '{"exists":true,"active":true,"enabled":true}';
+                    if (args.includes('/XML')) return `<Task><Actions><Exec><Command>${action.executable}</Command><Arguments>${action.arguments.replaceAll('"', '&quot;')}</Arguments></Exec>${extraAction}</Actions></Task>`;
+                    return '';
+                } },
+            });
+            expect(inventory.services).toEqual([expect.objectContaining({
+                definitionPath, windowsLauncherUpgradeNeeded: upgradeNeeded,
+            })]);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
     it('lists daemon, relay and stack services through the scoped Scheduler JSON boundary', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-runtime-scoped-task-list-'));
         const labels = ['happier-daemon.default', 'happier-server.default', 'dev.happier.stack.qa'];
@@ -19,7 +64,7 @@ describe('discoverHappierServices', () => {
             const inventory = await discoverHappierServices({ platform: 'win32', roots: [{ path: root, scope: 'user' }], commands: { run: ({ cmd, args }) => {
                 commands.push(`${cmd} ${args.join(' ')}`);
                 if (cmd === 'powershell.exe') return JSON.stringify(labels.map((label) => `\\Happier\\${label}`));
-                if (args.includes('/XML')) return `<Task><Arguments>-File "C:\\Users\\tester\\.happier\\services\\${String(args[args.indexOf('/TN') + 1]).split('\\').pop()}.ps1"</Arguments></Task>`;
+                if (args.includes('/XML')) return `<Task><Actions><Exec><Command>powershell.exe</Command><Arguments>-File "C:\\Users\\tester\\.happier\\services\\${String(args[args.indexOf('/TN') + 1]).split('\\').pop()}.ps1"</Arguments></Exec></Actions></Task>`;
                 return '';
             } } });
             expect(inventory.services.map((service) => service.label).sort()).toEqual([...labels].sort());
@@ -99,7 +144,7 @@ describe('discoverHappierServices', () => {
             const definitionPath = `C:\\Users\\tester\\.happier\\services\\${label}.ps1`;
             const inventory = await discoverHappierServices({ platform: 'win32', roots: [{ path: join(root, 'missing'), scope: 'user' }], commands: { run: ({ args }) => {
                 if (args.some((arg) => arg.includes('.GetFolder("\\Happier")'))) return JSON.stringify([`\\Happier\\${label}`]);
-                if (args.includes('/XML')) return `<Task><Arguments>-File "${definitionPath}"</Arguments></Task>`;
+                if (args.includes('/XML')) return `<Task><Actions><Exec><Command>powershell.exe</Command><Arguments>-File "${definitionPath}"</Arguments></Exec></Actions></Task>`;
                 return `TaskName: \\Happier\\${label}\r\nStatus: Ready\r\n`;
             } } });
             expect(inventory.services).toEqual([expect.objectContaining({ serviceType: 'daemon', label, instanceId, definitionPath, happierHomeDir: 'C:\\Users\\tester\\.happier', ring: 'stable', targetMode, verification: 'candidate', installed: true })]);

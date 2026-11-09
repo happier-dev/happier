@@ -1,9 +1,17 @@
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { HappierJsonExecutor } from './happierJsonExecutor.js';
-import { scopeHappierJsonExecutor, type HappierServerScope } from './scopeHappierJsonExecutor.js';
+import {
+  scopeHappierJsonExecutor,
+  type HappierServerScope,
+} from './scopeHappierJsonExecutor.js';
 import type { LocalServerProfileScope } from './serverScope.js';
 
-import type { EnrollMachineAuthStatus, EnrollMachineDaemonStatus, EnrollMachineRelayProfile, EnrollMachineFlowExecutor } from '../flows/enrollMachineFlow.js';
+import type {
+  EnrollMachineAuthStatus,
+  EnrollMachineDaemonStatus,
+  EnrollMachineRelayProfile,
+  EnrollMachineFlowExecutor,
+} from '../flows/enrollMachineFlow.js';
 
 const DEFAULT_DAEMON_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_DAEMON_READY_POLL_MS = 500;

@@ -729,6 +729,18 @@ export function resolveInstalledRuntimePackage({
   );
 }
 
+/** Missing optional dependencies are omitted by runtime materialization. */
+export function resolveInstalledRuntimeDependency({ dependency, resolveFromPackageJsonPath, dereferenceRootDir }) {
+  try {
+    return resolveInstalledRuntimePackage({
+      packageName: dependency.name, resolveFromPackageJsonPath, dereferenceRootDir,
+    });
+  } catch (error) {
+    if (dependency.optional && error?.code === 'MODULE_NOT_FOUND') return null;
+    throw error;
+  }
+}
+
 export function copyDirDereferenceContainedSync({
   sourceDir,
   destDir,
@@ -814,19 +826,14 @@ export function vendorRuntimeDependencyTree({
 
   for (const dependency of dependencies) {
     if (excludeRootDependencies.includes(dependency.name)) continue;
-    let resolvedPackage;
-    try {
-      resolvedPackage = resolveInstalledRuntimePackage({
-        packageName: dependency.name,
-        resolveFromPackageJsonPath: dependency.name === 'onnxruntime-common'
-          ? commonResolveFromPackageJsonPath ?? resolveFromPackageJsonPath
-          : resolveFromPackageJsonPath,
-        dereferenceRootDir,
-      });
-    } catch (error) {
-      if (dependency.optional && error?.code === 'MODULE_NOT_FOUND') continue;
-      throw error;
-    }
+    const resolvedPackage = resolveInstalledRuntimeDependency({
+      dependency,
+      resolveFromPackageJsonPath: dependency.name === 'onnxruntime-common'
+        ? commonResolveFromPackageJsonPath ?? resolveFromPackageJsonPath
+        : resolveFromPackageJsonPath,
+      dereferenceRootDir,
+    });
+    if (!resolvedPackage) continue;
     validateResolvedPackage?.({
       packageName: dependency.name,
       packageDir: resolvedPackage.packageDir,

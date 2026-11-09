@@ -1,9 +1,80 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createSetupMachineRecipeExecutorFromHappierJsonExecutor } from './setupMachineRecipeExecutor.js';
-import { runSetupMachineRecipe } from '../recipes/setupMachineRecipe.js';
+import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from './enrollMachineFlowExecutor.js';
+import { runEnrollMachineFlow } from '../flows/enrollMachineFlow.js';
 
-describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
+describe('createEnrollMachineFlowExecutorFromHappierJsonExecutor', () => {
+  it('settles an explicitly process-managed daemon from its healthy control observation without waiting for a user service', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    let settled = false;
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+      runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
+      runHappierJson: async () => {
+        reads++;
+        return { service: { installed: false }, daemon: { running: true, healthy: true }, auth: { needsAuth: false } };
+      },
+    } });
+    const result = executor.waitForReadyDaemon!(Object.assign({ timeoutMs: 1_000, requireMachineControlReady: true },
+      { requireServiceInstalled: false })).then(value => { settled = true; return value; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      expect(reads).toBe(1);
+    } finally {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await result;
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([false, null, undefined])('does not turn unproved machine-control readiness (%s) into managed bootstrap success', async healthy => {
+    vi.useFakeTimers();
+    try {
+      let reads = 0;
+      const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+        // Genuine native CLI process boundary, with a live PID but no ready RPC receipt.
+        runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        runHappierJson: async () => {
+          reads++;
+          return { service: { installed: true }, daemon: { running: true, healthy }, auth: { needsAuth: false } };
+        },
+      } });
+      const result = executor.waitForReadyDaemon!({ timeoutMs: 1_000, requireMachineControlReady: true });
+      const refused = expect(result).rejects.toMatchObject({ code: 'daemon_service_not_ready' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await refused;
+      const settledReads = reads;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(reads).toBe(settledReads);
+      // Standalone setup keeps its released process/auth readiness contract.
+      await expect(executor.waitForReadyDaemon!({})).resolves.toMatchObject({ daemonRunning: true });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('withdraws the managed readiness observation on cancellation without further native reads', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let reads = 0;
+      const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+        runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        runHappierJson: async () => {
+          reads++;
+          return { service: { installed: true }, daemon: { running: true, healthy: false }, auth: { needsAuth: false } };
+        },
+      } });
+      const result = executor.waitForReadyDaemon!({ signal: controller.signal, timeoutMs: 60_000, requireMachineControlReady: true });
+      const cancelled = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await cancelled;
+      const settledReads = reads;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toBe(settledReads);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('repairs local-only registration by approving the complete pairing envelope over stdin', async () => {
     const request = {
       publicKey: 'repair-request',
@@ -12,7 +83,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
       url: 'https://home.test/pair',
     };
     let approved = false;
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
         // CLI process boundary: enforce the approver's request-envelope contract.
@@ -34,7 +105,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
         },
       },
     });
-    const result = await runSetupMachineRecipe({
+    const result = await runEnrollMachineFlow({
       executor,
       relayProfile: { serverUrl: 'https://home.test', webappUrl: 'https://home.test', localServerUrl: null },
       initialAuthStatus: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'local-only', machineId: null },
@@ -46,7 +117,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
   it.each(['server-confirmed', 'local-only'] as const)('claims app-approved replacement pairing for a different account with %s registration', async (registrationState) => {
     const commands: string[][] = [];
     let paired = false;
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: async () => ({ status: 0, stdout: PROFILE_SCOPED_SERVER_HELP, stderr: '' }),
         runHappierJson: async (args) => {
@@ -63,7 +134,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
       options: { scopeToConfiguredServer: true, knownServerScope: { serverId: 'home', activeServerId: 'cloud', selectedService: null, targetMode: 'pinned' } },
     });
     let approved = false;
-    const recipe = {
+    const flow = {
       relayProfile: { serverUrl: 'https://home.test', webappUrl: 'https://home.test', localServerUrl: null },
       executor,
       expectedAccountId: 'account-new',
@@ -71,7 +142,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
       steps: { installService: false, startService: false, verifyService: false },
       emit: () => undefined,
     };
-    const result = await runSetupMachineRecipe(recipe);
+    const result = await runEnrollMachineFlow(flow);
     expect(approved).toBe(true);
     expect(commands).toContainEqual(['--server', 'home', 'auth', 'wait', '--public-key', 'replacement-request', '--json']);
     expect(commands.some((args) => args.includes('approve'))).toBe(false);
@@ -79,7 +150,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
   });
   it('refuses to change the service when replacement pairing did not prove the selected account', async () => {
     const commands: string[][] = [];
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: async () => ({ status: 0, stdout: PROFILE_SCOPED_SERVER_HELP, stderr: '' }),
         runHappierJson: async (args) => {
@@ -94,7 +165,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
         },
       },
     });
-    const recipe = {
+    const flow = {
       relayProfile: { serverUrl: 'https://home.test', webappUrl: 'https://home.test', localServerUrl: null },
       executor,
       expectedAccountId: 'account-new',
@@ -102,12 +173,12 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
       steps: { verifyService: false },
       emit: () => undefined,
     };
-    await expect(runSetupMachineRecipe(recipe)).rejects.toMatchObject({ code: 'account_mismatch' });
+    await expect(runEnrollMachineFlow(flow)).rejects.toMatchObject({ code: 'account_mismatch' });
     expect(commands.some((args) => args.includes('service'))).toBe(false);
   });
   it('uses the service takeover contract for install and start when manual relay takeover is enabled', async () => {
     const runHappierJson = vi.fn(async () => ({ ok: true }));
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierJson,
         runHappierText: vi.fn(),
@@ -137,7 +208,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
       }
       return { ok: true };
     });
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierJson,
         runHappierText: vi.fn(async () => ({ status: 0, stdout: PROFILE_SCOPED_SERVER_HELP, stderr: '' })),
@@ -164,7 +235,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
   });
   it('keeps the service decided before the write for a Home that already had a profile', async () => {
     const targetModes: Array<string | undefined> = [];
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: vi.fn(async () => ({ status: 0, stdout: PROFILE_SCOPED_SERVER_HELP, stderr: '' })),
         runHappierJson: vi.fn(async (args: readonly string[], opts?: Readonly<{ env?: NodeJS.ProcessEnv }>) => {
@@ -193,7 +264,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
     // URL the app reaches it on (RV3-C2). Setup owns no field of an existing profile.
     const jsonCalls: string[][] = [];
     const textCalls: string[][] = [];
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: vi.fn(async (args: readonly string[]) => {
           textCalls.push([...args]);
@@ -221,7 +292,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
     // select the Home (switching the terminal) and reply without a saved profile. Its own
     // `server help` usage line for `server set` is the read-only proof that it lacks `--no-use`.
     const calls: string[][] = [];
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: vi.fn(async (args: readonly string[]) => {
           calls.push([...args]);
@@ -240,7 +311,7 @@ describe('createSetupMachineRecipeExecutorFromHappierJsonExecutor', () => {
     expect(calls).toEqual([['server', 'help']]);
   });
   it('names a server set reply without a saved, unselected profile as a missing capability', async () => {
-    const executor = createSetupMachineRecipeExecutorFromHappierJsonExecutor({
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({
       executor: {
         runHappierText: vi.fn(async () => ({ status: 0, stdout: PROFILE_SCOPED_SERVER_HELP, stderr: '' })),
         runHappierJson: vi.fn(async () => RELEASED_0_2_SERVER_SET_REPLY),

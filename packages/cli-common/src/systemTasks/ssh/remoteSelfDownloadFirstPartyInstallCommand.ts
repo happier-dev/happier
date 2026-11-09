@@ -123,6 +123,9 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
     buildRemoteFirstPartyPromotionCommand({
       layout,
       payloadRootExpression: '"$payload_root"',
+      ...(params.componentId === 'happier-cli' || params.componentId === 'happier-daemon'
+        ? { cliInstall: { componentId: params.componentId, channel, versionId: params.versionId } }
+        : {}),
     }),
   ].join('; ');
 }

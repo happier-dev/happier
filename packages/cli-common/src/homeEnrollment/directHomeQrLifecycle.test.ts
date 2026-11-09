@@ -15,6 +15,7 @@ import {
   type DirectHomeQrLifecycleAdapters,
   type DirectHomeQrPairingStatus,
 } from './directHomeQrLifecycle.js';
+import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestRedirectPolicy.js';
 
 const NOW = 1_900_000_000_000;
 const DESCRIPTOR: HomeConnectionDescriptorV1 = {
@@ -62,6 +63,7 @@ function harness(input: Readonly<{
   status?: readonly DirectHomeQrPairingStatus[];
   qrAvailable?: boolean;
   nowValues?: readonly number[];
+  now?: DirectHomeQrLifecycleAdapters['now'];
   start?: DirectHomeQrLifecycleAdapters['start'];
   poll?: DirectHomeQrLifecycleAdapters['poll'];
   consume?: DirectHomeQrLifecycleAdapters['consume'];
@@ -77,7 +79,7 @@ function harness(input: Readonly<{
   const sleep = vi.fn<DirectHomeQrLifecycleAdapters['sleep']>(async () => undefined);
   const adapters: DirectHomeQrLifecycleAdapters = {
     randomBytes: () => new Uint8Array(32).fill(7),
-    now: () => nowValues.shift() ?? NOW,
+    now: input.now ?? (() => nowValues.shift() ?? NOW),
     start,
     poll,
     consume,
@@ -92,6 +94,61 @@ function harness(input: Readonly<{
 }
 
 describe('direct Home QR lifecycle', () => {
+  it.each(['start', 'poll', 'complete'] as const)('preserves a closed redirect refusal from %s without polling, cleanup mutation, or retry', async (phase) => {
+    const refusal = new CredentialRequestRedirectError(307);
+    let now = NOW;
+    const fail = async (): Promise<never> => { now = NOW + 60_001; throw refusal; };
+    const h = harness({ [phase]: fail, now: () => now });
+    const started = startDirectHomeQrLifecycle({ features: features(true), descriptor: DESCRIPTOR, adapters: h.adapters });
+    if (phase === 'start') {
+      await expect(started).rejects.toBe(refusal);
+      expect(h.poll).not.toHaveBeenCalled();
+    } else {
+      const result = await started;
+      if (result.kind !== 'started') throw new Error('Expected a started lifecycle');
+      await expect(result.completion).rejects.toBe(refusal);
+      expect(h.poll).toHaveBeenCalledOnce();
+      if (phase === 'complete') expect(h.complete).toHaveBeenCalledOnce();
+    }
+    expect(h.sleep).not.toHaveBeenCalled();
+    expect(h.consume).not.toHaveBeenCalled();
+    expect(h.close).toHaveBeenCalledOnce();
+  });
+
+  it('preserves cancellation redirect refusal and closes the active transport without retrying', async () => {
+    const refusal = new CredentialRequestRedirectError(307);
+    const h = harness({
+      poll: async ({ signal }) => await new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      }),
+      consume: async () => { throw refusal; },
+    });
+    const result = await startDirectHomeQrLifecycle({ features: features(true), descriptor: DESCRIPTOR, adapters: h.adapters });
+    if (result.kind !== 'started') throw new Error('Expected a started lifecycle');
+    const completionRefusal = expect(result.completion).rejects.toBe(refusal);
+    await expect(result.cancel()).rejects.toBe(refusal);
+    await completionRefusal;
+    expect(h.poll).toHaveBeenCalledOnce();
+    expect(h.consume).toHaveBeenCalledOnce();
+    expect(h.sleep).not.toHaveBeenCalled();
+    expect(h.complete).not.toHaveBeenCalled();
+    expect(h.close).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a redirect refusal during expired-start cleanup and still closes its transport', async () => {
+    const refusal = new CredentialRequestRedirectError(307);
+    const h = harness({
+      start: async () => ({ ok: true, pairId: 'pair-1', expiresAt: new Date(NOW).toISOString() }),
+      consume: async () => { throw refusal; },
+    });
+    await expect(startDirectHomeQrLifecycle({
+      features: features(true), descriptor: DESCRIPTOR, adapters: h.adapters,
+    })).rejects.toBe(refusal);
+    expect(h.consume).toHaveBeenCalledOnce();
+    expect(h.close).toHaveBeenCalledOnce();
+    expect(h.poll).not.toHaveBeenCalled();
+  });
+
   it('returns cancelled without starting pairing when the caller already aborted', async () => {
     const controller = new AbortController();
     controller.abort();

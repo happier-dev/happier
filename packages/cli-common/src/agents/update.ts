@@ -26,6 +26,8 @@ export type AgentCliUpdateFacts = Readonly<{
   updateCommand: string | null;
   /** Arguments for the vendor updater, run against the resolved executable. */
   nativeUpdateArgs: ReadonlyArray<string> | null;
+  /** Proven npm package identity, retained for the owner's latest-version lookup. */
+  npmPackageName?: string;
 }>;
 
 export type AgentCliLatestVersionSource =
@@ -64,23 +66,31 @@ function resolveUserHomeDir(env: NodeJS.ProcessEnv, platform: AgentCliInstallPla
 function packageManagerFacts(
   installSource: Extract<AgentCliInstallSource, 'npm' | 'pnpm' | 'bun' | 'brew'>,
   updateCommand: string,
+  npmPackageName?: string,
 ): AgentCliUpdateFacts {
   // Happier does not spawn package managers from product runtime paths; the owner's command is
   // surfaced for the person to run.
-  return { installSource, updateSupported: false, updateCommand, nativeUpdateArgs: null };
+  return { installSource, updateSupported: false, updateCommand, nativeUpdateArgs: null,
+    ...(npmPackageName ? { npmPackageName } : {}) };
 }
 
-/** The npm package that attributes an npm/pnpm/bun install: the managed package, else the vendor's. */
+/** The default npm package candidate: the managed package, else the vendor's. */
 export function resolveAgentCliNpmPackageName(runtimeSpec: AgentCliRuntimeDescriptor): string | null {
   if (runtimeSpec.managedInstall?.kind === 'managed_package') return runtimeSpec.managedInstall.packageName;
   return runtimeSpec.npmPackageName ?? null;
 }
 
 /**
- * Where "latest" comes from: the source the managed install owner would install from, else the
- * vendor's npm package. `null` means the manifest declares no verified latest source.
+ * Where "latest" comes from: a proven external package, otherwise the declared managed source
+ * or vendor npm package. `null` means the manifest declares no verified latest source.
  */
-export function resolveAgentCliLatestVersionSource(runtimeSpec: AgentCliRuntimeDescriptor): AgentCliLatestVersionSource | null {
+export function resolveAgentCliLatestVersionSource(
+  runtimeSpec: AgentCliRuntimeDescriptor,
+  install?: Pick<AgentCliUpdateFacts, 'installSource' | 'npmPackageName'>,
+): AgentCliLatestVersionSource | null {
+  if (install?.installSource !== 'managed' && install?.npmPackageName) {
+    return { kind: 'npm', packageName: install.npmPackageName };
+  }
   if (runtimeSpec.managedInstall?.kind === 'github_release_binary') {
     return {
       kind: 'github_release',
@@ -140,12 +150,23 @@ export function classifyAgentCliInstall(params: Readonly<{
     }
   }
 
-  const packageName = resolveAgentCliNpmPackageName(runtimeSpec);
-  if (packageName) {
-    const packageSegment = `/node_modules/${toComparablePath(packageName, platform)}/`;
-    const insidePackage = paths.some((path) => `${path}/`.includes(packageSegment));
+  const packages = [...new Set([resolveAgentCliNpmPackageName(runtimeSpec), runtimeSpec.npmPackageName])]
+    .flatMap((packageName) => packageName ? [{
+      packageName,
+      insidePackage: paths.some((path) => `${path}/`.includes(`/node_modules/${toComparablePath(packageName, platform)}/`)),
+      // POSIX npm links into the package; Windows shims sit beside node_modules.
+      windowsShimProof: existsSync(join(dirname(params.command), 'node_modules', ...packageName.split('/'), 'package.json')),
+    }] : []);
+  // Prove the package before using a generic manager-directory hint. A legacy
+  // package's real path must win over the manifest's current managed package.
+  const installedPackage = packages.find((entry) => entry.insidePackage)
+    ?? packages.find((entry) => entry.windowsShimProof) ?? packages[0];
+  if (installedPackage) {
+    const { packageName, insidePackage, windowsShimProof } = installedPackage;
+    const allowBuild = runtimeSpec.managedInstall?.kind === 'managed_package'
+      && runtimeSpec.managedInstall.packageName === packageName && runtimeSpec.managedInstall.allowBuild === true;
     if (insidePackage && paths.some((path) => path.includes('/.bun/install/global/'))) {
-      return packageManagerFacts('bun', `bun add -g ${packageName}@latest`);
+      return packageManagerFacts('bun', `bun add -g ${allowBuild ? '--trust ' : ''}${packageName}@latest`, packageName);
     }
     const pnpmHome = typeof env.PNPM_HOME === 'string' && env.PNPM_HOME.trim()
       ? toComparablePath(env.PNPM_HOME.trim(), platform)
@@ -154,13 +175,10 @@ export function classifyAgentCliInstall(params: Readonly<{
       (insidePackage && paths.some((path) => path.includes('/pnpm/global/')))
       || (pnpmHome !== null && toComparablePath(dirname(params.command), platform) === pnpmHome)
     ) {
-      return packageManagerFacts('pnpm', `pnpm add -g ${packageName}@latest`);
+      return packageManagerFacts('pnpm', `pnpm add -g ${allowBuild ? `--allow-build=${packageName} ` : ''}${packageName}@latest`, packageName);
     }
-    // POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is the proof;
-    // Windows npm writes a `.cmd` shim beside `node_modules/<pkg>`.
-    const windowsShimProof = existsSync(join(dirname(params.command), 'node_modules', ...packageName.split('/'), 'package.json'));
     if (insidePackage || windowsShimProof) {
-      return packageManagerFacts('npm', `npm install -g ${packageName}@latest`);
+      return packageManagerFacts('npm', `npm install -g ${packageName}@latest`, packageName);
     }
   }
 
@@ -237,6 +255,7 @@ function selectManagedPackageVersion(params: Readonly<{
 export async function fetchAgentCliLatestVersion(params: Readonly<{
   runtimeSpec: AgentCliRuntimeDescriptor;
   installSource: AgentCliInstallSource;
+  npmPackageName?: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
@@ -247,7 +266,7 @@ export async function fetchAgentCliLatestVersion(params: Readonly<{
   }>;
 }>): Promise<AgentCliLatestVersionFacts> {
   params.signal?.throwIfAborted();
-  const source = resolveAgentCliLatestVersionSource(params.runtimeSpec);
+  const source = resolveAgentCliLatestVersionSource(params.runtimeSpec, params);
   if (!source) return { latestVersion: null, heldVersion: null };
   const env = params.env ?? process.env;
 

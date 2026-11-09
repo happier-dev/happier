@@ -204,6 +204,9 @@ export function createPluginRegistrationScope(
             fail(`Plugin '${params.pluginId}' registered conflicting contribution 'providers/${localId}'`);
         }
         const current = existing?.value as StagedProviderRuntimeRegistration | undefined;
+        if (fields.requestCostParser !== undefined && current?.requestCostParser !== undefined) {
+            fail(`Plugin '${params.pluginId}' registered duplicate request cost parser for Provider '${localId}'`);
+        }
         if (fields.managedRuntime !== undefined && current?.managedRuntime !== undefined) {
             fail(`Plugin '${params.pluginId}' registered duplicate ${duplicateLabel} for Provider '${localId}'`);
         }
@@ -225,6 +228,8 @@ export function createPluginRegistrationScope(
             family: REGISTRATION_FAMILY.providers,
             localId,
             value: Object.freeze({
+                ...(fields.requestCostParser !== undefined ? { requestCostParser: fields.requestCostParser }
+                    : current?.requestCostParser !== undefined ? { requestCostParser: current.requestCostParser } : {}),
                 ...(Object.keys(usageParsers).length > 0 ? { usageParsers: Object.freeze(usageParsers) } : {}),
                 ...(fields.managedRuntime !== undefined
                     ? { managedRuntime: fields.managedRuntime }
@@ -421,6 +426,8 @@ export function createPluginRegistrationScope(
                 register(REGISTRATION_FAMILY.connectedAccounts, id, runtime),
         }),
         providers: Object.freeze({
+            registerRequestCostParser: (id: string, parse: unknown) =>
+                registerProviderFields(id, Object.freeze({ requestCostParser: parse }), 'Provider request cost parser'),
             registerUsageParser: (id: string, parserId: string, parse: unknown) => {
                 assertRegistrationLocalId(parserId);
                 return registerProviderFields(id, Object.freeze({ usageParsers: Object.freeze({ [parserId]: parse }) }), 'Provider usage parser');
@@ -563,3 +570,18 @@ export function createPluginRegistrationScope(
         },
     });
 }
+
+export {
+    AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
+    invalidAgentExternalSessionHooks,
+    readAgentExternalSessionHookRecord,
+    readAgentExternalSessionHookArray,
+    normalizeAgentExternalSessionHookString,
+    readBoundedAgentExternalSessionHookString,
+    readAgentExternalSessionHookSafeInteger,
+    requireUniqueAgentExternalSessionHookValues,
+    validateAgentExternalSessionHooksContribution,
+    snapshotVariant as snapshotAgentExternalSessionHookInstallationVariant,
+} from './externalSessionHooks.js';
+export type { AgentExternalSessionHookInstallationVariant } from './externalSessionHooks.js';
+export { validateAgentExternalSessionTakeoverContribution } from './externalSessionTakeover.js';

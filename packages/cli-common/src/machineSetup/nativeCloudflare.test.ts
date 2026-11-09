@@ -118,7 +118,8 @@ it('does not treat User 0 or a matching image label as reader or actual-version 
     expect(await observeNativeCloudflareConnector(input, { run: f.run })).toEqual({ status: 'unavailable', reason: 'native_effect_failed' });
     f.version('2025.3.0');
     const before = f.commands.length;
-    expect(await observeNativeCloudflareConnector(input, { run: f.run })).toEqual({ status: 'unavailable', reason: 'required_fact_unavailable' });
+    expect(await observeNativeCloudflareConnector(input, { run: f.run })).toEqual({ status: 'unavailable', reason: 'required_fact_unavailable',
+        details: { requiredFact: 'cloudflare_connector_version' } });
     expect(f.commands.slice(before).some(command => command.args.at(-1) === 'ready')).toBe(false);
 });
 

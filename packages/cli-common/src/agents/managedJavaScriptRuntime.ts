@@ -273,6 +273,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
   const fetchNodeRelease = deps.fetchNodeRuntimeReleaseAsset ?? fetchNodeRuntimeReleaseAsset;
   const downloadAsset = deps.downloadGitHubReleaseAsset ?? downloadGitHubReleaseAsset;
   const extractAsset = deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset;
+  let waitReported = false;
 
   try {
     return await withWorkspaceBundleLock(async () => {
@@ -282,6 +283,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
         return managedAfterLock;
       }
 
+      options.onProgress?.({ t: 'log', line: 'Resolving managed JavaScript runtime release.' });
       const release = await fetchNodeRelease({ processEnv, signal });
       signal?.throwIfAborted();
       const scratchDir = await createManagedToolScratchDir({
@@ -294,6 +296,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
         const nextRuntimeDir = join(nextDir, 'runtime');
         const nextNodeBinaryPath = resolveNextManagedNodeBinaryPath(processEnv, release.binaryRelativePath);
 
+        options.onProgress?.({ t: 'log', line: 'Downloading managed JavaScript runtime.' });
         await downloadAsset({
           signal,
           onProgress: options.onProgress,
@@ -304,6 +307,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
         });
 
         signal?.throwIfAborted();
+        options.onProgress?.({ t: 'log', line: 'Installing managed JavaScript runtime.' });
         await rm(nextDir, { recursive: true, force: true });
         await extractAsset({
           signal,
@@ -334,8 +338,14 @@ export async function ensureManagedJavaScriptRuntimeCommand(
     }, {
       signal,
       lockPath: resolveManagedJavaScriptRuntimeBootstrapLockPath(processEnv),
+      timeoutMs: null,
       staleAfterMs: JS_RUNTIME_BOOTSTRAP_LOCK_STALE_MS,
       errorLabel: 'managed JavaScript runtime bootstrap lock',
+      onWait: () => {
+        if (waitReported) return;
+        waitReported = true;
+        options.onProgress?.({ t: 'log', line: 'Waiting for managed JavaScript runtime bootstrap lock.' });
+      },
     });
   } catch (error) {
     signal?.throwIfAborted();

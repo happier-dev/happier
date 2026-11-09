@@ -1,7 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { extractFirstPartyReleaseArchiveToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractFirstPartyReleaseArchiveToDirectory, resolveReleaseArchiveFormat } from '@happier-dev/release-runtime/archiveExtraction';
 
 export async function extractReleasePayloadRootFromArchive(params: Readonly<{
   archivePath: string;
@@ -33,7 +33,8 @@ export async function extractReleasePayloadRootFromArchive(params: Readonly<{
     return join(params.extractDir, dirEntries[0]!);
   }
 
-  const archiveStem = params.archiveName.replace(/(\.tar\.gz|\.tar\.xz|\.zip)$/u, '');
+  const format = resolveReleaseArchiveFormat(params.archiveName);
+  const archiveStem = format ? params.archiveName.slice(0, -format.suffix.length) : params.archiveName;
   if (dirEntries.includes(archiveStem)) {
     return join(params.extractDir, archiveStem);
   }

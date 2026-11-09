@@ -9,6 +9,9 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net",
       tailnetName: "tailnet.ts.net",
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       tailscaleIps: [],
       loggedIn: true,
       running: true, daemonReachable: true,
@@ -22,6 +25,9 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       authUrl: null,
       dnsName: "my-machine.tailnet.ts.net.",
       tailnetName: "tailnet.ts.net",
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       tailscaleIps: [],
       loggedIn: true,
       running: true, daemonReachable: true,
@@ -33,6 +39,9 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
       authUrl: null,
       dnsName: "evil.example.test/path",
       tailnetName: "tailnet.ts.net",
+      magicDnsEnabled: null,
+      interfaceName: null,
+      sourceRanges: [],
       tailscaleIps: [],
       loggedIn: true,
       running: true, daemonReachable: true,
@@ -47,6 +56,9 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
         authUrl: null,
         dnsName: null,
         tailnetName: null,
+        magicDnsEnabled: null,
+        interfaceName: null,
+        sourceRanges: [],
         tailscaleIps: [],
         loggedIn: false,
         running: true, daemonReachable: true,
@@ -54,4 +66,3 @@ describe("resolveTailscaleMachineHttpsUrlFromStatusSnapshot", () => {
     ).toBeNull();
   });
 });
-

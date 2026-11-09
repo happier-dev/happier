@@ -312,7 +312,7 @@ describe('renderSelfHostServerEnvText', () => {
         }));
 
         expect(rendered).toContain(
-            'DATABASE_URL=file:C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
+            'DATABASE_URL=file:C:\\Users\\me\\Happier QA\\self-host\\data\\happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
         );
     });
 
@@ -327,7 +327,7 @@ describe('renderSelfHostServerEnvText', () => {
         }));
 
         expect(rendered).toContain(
-            'DATABASE_URL=file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
+            'DATABASE_URL=file:/tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1',
         );
     });
 

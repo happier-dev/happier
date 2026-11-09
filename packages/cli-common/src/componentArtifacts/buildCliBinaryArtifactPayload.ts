@@ -60,6 +60,7 @@ import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from './copyCliNod
 import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
 import { stageCliProxyApiManagedRuntime } from './stageCliProxyApiManagedRuntime.js';
 import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
+import { readValidatedWindowsServiceLauncher, WINDOWS_SERVICE_LAUNCHER_FILE_NAME } from '../service/windowsLauncher.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
 import { stageCliTargetRuntimeDependencies } from './stageCliTargetRuntimeDependencies.js';
@@ -495,6 +496,7 @@ export function readCliBinaryArtifactSupportIdentity({
     'packages/cli-common/nodePtySpawnHelperPermissions.cjs',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
     'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
+    'packages/cli-common/src/service/windowsLauncher.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
     'packages/cli-common/workspaceRuntimeDependencies.mjs',
@@ -599,7 +601,8 @@ export async function buildCliBinaryArtifactCodePayload({
   try {
     if (daemonProjectionRoot) {
       await runCommand(process.execPath, [
-        '--conditions=happier-source', '--experimental-strip-types', generatorPath,
+        '--conditions=happier-source', '--experimental-strip-types',
+        '--import', join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'), generatorPath,
         '--daemon-projections', '--daemon-output-root', daemonProjectionRoot,
       ], { cwd: repoRoot });
       await ensureFileExists(join(daemonProjectionRoot,
@@ -992,6 +995,10 @@ async function stageCliBinaryArtifactSupportPayload({
     runCommand,
     prebuiltExecutablePath: processCustodyRuntimeExecutablePath,
   });
+  if (target.os === 'windows' && target.arch === 'x64') {
+    const launcher = join(repoRoot, 'packages', 'cli-common', 'native', 'windows', 'bin', 'windows-x64', WINDOWS_SERVICE_LAUNCHER_FILE_NAME);
+    await writeFile(join(payloadDir, WINDOWS_SERVICE_LAUNCHER_FILE_NAME), await readValidatedWindowsServiceLauncher(launcher));
+  }
   await stageIrohNativeReleaseEvidence({
     repoRoot,
     payloadDir,
@@ -1120,22 +1127,6 @@ export async function buildCliBinaryArtifactPayload({
   includeIrohNativeReleaseEvidence?: boolean;
 }): Promise<{ executableName: string; entrypoint: string; identity: string }> {
   assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
-  const publicationFailuresPath = join(
-    repoRoot,
-    'apps',
-    'cli',
-    BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
-  );
-  if (
-    existsSync(publicationFailuresPath) &&
-    parseBundledPluginPublicationFailures(
-      readFileSync(publicationFailuresPath, 'utf8'),
-    ).length > 0
-  ) {
-    throw new Error(
-      '[component-artifacts] release payload requires a complete bundled-plugin publication',
-    );
-  }
   await rm(payloadDir, { recursive: true, force: true });
   await mkdir(payloadDir, { recursive: true });
   const code = await buildCliBinaryArtifactCodePayload({
@@ -1147,6 +1138,20 @@ export async function buildCliBinaryArtifactPayload({
     commandProbe,
     compileBinary,
   });
+  // The code payload publishes its projections and diagnostics together from
+  // current source. Checkout-local diagnostics may belong to an older build
+  // (and are not mirrored); only this payload's publication can admit release.
+  const publicationFailuresPath = join(payloadDir, BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
+  if (
+    existsSync(publicationFailuresPath) &&
+    parseBundledPluginPublicationFailures(
+      readFileSync(publicationFailuresPath, 'utf8'),
+    ).length > 0
+  ) {
+    throw new Error(
+      '[component-artifacts] release payload requires a complete bundled-plugin publication',
+    );
+  }
   const support = await buildCliBinaryArtifactSupportPayload({
     repoRoot,
     payloadDir,
@@ -1166,6 +1171,9 @@ export async function buildCliBinaryArtifactPayload({
     relativePath: support.runtimeAssetRelativePath,
     workspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
   });
+  if (target.os === 'windows' && target.arch === 'x64') {
+    writeCliBinaryArtifactRuntimeAssetBuildManifest({ payloadDir, relativePath: WINDOWS_SERVICE_LAUNCHER_FILE_NAME });
+  }
   // Hash the complete finalized output after runtime-asset manifests are written.
   // This does not promise deterministic compiler output from identical source.
   const identityHash = createHash('sha256');

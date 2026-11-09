@@ -12,7 +12,8 @@ export type NativeCloudflareConnectorInput = Readonly<{
 export type NativeCloudflareConnectorObservation =
     | Readonly<{ status: 'ready' | 'stopped'; containerId: string }>
     | Readonly<{ status: 'needs_setup' }>
-    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' }>;
+    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed';
+        details?: Readonly<{ requiredFact: string }> }>;
 export type NativeCloudflareConnectorResult = NativeCloudflareConnectorObservation
     | Readonly<{ status: 'outcome_unknown'; reason: 'native_effect_failed' }>;
 export type NativeCloudflareConnectorRemovalResult =
@@ -31,8 +32,8 @@ const tokenStepId = 'cloudflare-connector-token';
 // The vendor's documented first metrics port, fixed only inside this private
 // connector namespace. No host publish, host listener, allocator or poller.
 const metricsAddress = '127.0.0.1:20241';
-const unavailable = (reason: Extract<NativeCloudflareConnectorObservation, { status: 'unavailable' }>['reason']) =>
-    ({ status: 'unavailable' as const, reason });
+const unavailable = (reason: Extract<NativeCloudflareConnectorObservation, { status: 'unavailable' }>['reason'], requiredFact?: string) =>
+    ({ status: 'unavailable' as const, reason, ...(requiredFact ? { details: { requiredFact } } : {}) });
 function isObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -79,21 +80,21 @@ async function inspect(input: ContainerInput, options: NativeOptions): Promise<O
     const name = containerName(input.tunnelId);
     const listed = await runDocker(options, ['container', 'ls', '--all', '--no-trunc', '--filter',
         `name=^/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, '--format', '{{json .ID}}']);
-    if (listed.code !== 0) return unavailable('required_fact_unavailable');
+    if (listed.code !== 0) return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory');
     let ids: unknown[];
     try { ids = listed.stdout.trim() ? listed.stdout.trim().split('\n').map(line => JSON.parse(line)) : []; }
-    catch { return unavailable('required_fact_unavailable'); }
-    if (ids.length !== 1) return ids.length === 0 ? { status: 'needs_setup' } : unavailable('required_fact_unavailable');
-    if (typeof ids[0] !== 'string' || !ids[0]) return unavailable('required_fact_unavailable');
+    catch { return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory'); }
+    if (ids.length !== 1) return ids.length === 0 ? { status: 'needs_setup' } : unavailable('required_fact_unavailable', 'unique_cloudflare_connector');
+    if (typeof ids[0] !== 'string' || !ids[0]) return unavailable('required_fact_unavailable', 'cloudflare_connector_identity');
     const result = await runDocker(options, ['container', 'inspect', '--', ids[0]]);
-    if (result.code !== 0) return unavailable('required_fact_unavailable');
+    if (result.code !== 0) return unavailable('required_fact_unavailable', 'cloudflare_connector_inspection');
     let raw: unknown;
-    try { raw = JSON.parse(result.stdout); } catch { return unavailable('required_fact_unavailable'); }
+    try { raw = JSON.parse(result.stdout); } catch { return unavailable('required_fact_unavailable', 'cloudflare_connector_inspection'); }
     const row = Array.isArray(raw) && raw.length === 1 ? object(raw[0]) : undefined;
     const config = object(row?.Config), host = object(row?.HostConfig), state = object(row?.State);
     const networks = object(object(row?.NetworkSettings)?.Networks);
     if (!row || row.Id !== ids[0] || typeof state?.Running !== 'boolean' || !config || !host || !networks) {
-        return unavailable('required_fact_unavailable');
+        return unavailable('required_fact_unavailable', 'cloudflare_connector_configuration');
     }
     const mounts = Array.isArray(host.Mounts) ? host.Mounts : [];
     const mount = mounts.length === 1 ? object(mounts[0]) : undefined;
@@ -123,14 +124,14 @@ async function observe(input: NativeCloudflareConnectorInput,
         if (!container.running) return { status: 'stopped', containerId: container.containerId };
         const version = await runDocker(options, ['exec', '--user', '0:0', container.containerId, 'cloudflared', '--version']);
         const observed = /^cloudflared version (\d+\.\d+\.\d+)(?:[ \t].*)?\r?\n?$/.exec(version.stdout)?.[1];
-        if (version.code !== 0 || observed !== input.connector.version) return unavailable('required_fact_unavailable');
+        if (version.code !== 0 || observed !== input.connector.version) return unavailable('required_fact_unavailable', 'cloudflare_connector_version');
         const ready = await runDocker(options, ['exec', '--user', '0:0', container.containerId,
             'cloudflared', 'tunnel', '--metrics', metricsAddress, 'ready']);
         if (ready.code !== 0) return unavailable('native_effect_failed');
         return { status: 'ready', containerId: container.containerId };
     } catch {
         options.signal?.throwIfAborted();
-        return unavailable('required_fact_unavailable');
+        return unavailable('required_fact_unavailable', 'cloudflare_native_observation');
     }
 }
 /** Config.User is reviewed intent, not a rootless/userns access proof. The
@@ -138,7 +139,7 @@ async function observe(input: NativeCloudflareConnectorInput,
  * token-file startup; the real unreadable-mount counterexample is required. */
 export async function observeNativeCloudflareConnector(input: NativeCloudflareConnectorInput,
     options: NativeOptions): Promise<NativeCloudflareConnectorObservation> {
-    if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable');
+    if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable', 'supported_cloudflare_connector_version');
     return observe(input, options);
 }
 /** Same admitted native operation, after the real P20 file result. No service
@@ -151,7 +152,7 @@ export async function ensureNativeCloudflareConnector(input: NativeCloudflareCon
     options: NativeOptions & Readonly<{ setupResult: MachineSetupApplyResultV1 }>): Promise<NativeCloudflareConnectorResult> {
     options.signal?.throwIfAborted();
     if (options.setupResult.status !== 'applied') return { status: 'needs_setup' };
-    if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable');
+    if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable', 'supported_cloudflare_connector_version');
     let issued = false;
     try {
         const container = await inspect(input, options);
@@ -182,7 +183,7 @@ export async function ensureNativeCloudflareConnector(input: NativeCloudflareCon
         return verified.status === 'ready' || !issued ? verified : { status: 'outcome_unknown', reason: 'native_effect_failed' };
     } catch {
         options.signal?.throwIfAborted();
-        return issued ? { status: 'outcome_unknown', reason: 'native_effect_failed' } : unavailable('required_fact_unavailable');
+        return issued ? { status: 'outcome_unknown', reason: 'native_effect_failed' } : unavailable('required_fact_unavailable', 'cloudflare_native_observation');
     }
 }
 /** Call only after the owning reviewed Domain operation chose retirement.
@@ -206,6 +207,6 @@ export async function removeNativeCloudflareConnector(input: ContainerInput,
         return removed.code === 0 ? { status: 'removed' } : { status: 'outcome_unknown', reason: 'native_effect_failed' };
     } catch {
         options.signal?.throwIfAborted();
-        return issued ? { status: 'outcome_unknown', reason: 'native_effect_failed' } : unavailable('required_fact_unavailable');
+        return issued ? { status: 'outcome_unknown', reason: 'native_effect_failed' } : unavailable('required_fact_unavailable', 'cloudflare_native_observation');
     }
 }

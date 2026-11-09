@@ -1,6 +1,7 @@
 import { AccountDirectoryHomeEntryV1Schema, createHomeCredentialDestinationDigestV1, createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { AccountDirectoryHomeEntryV1, HomeConnectionDescriptorV1, HomeCredentialDestinationSelectionV1, HomeLoginAssertionV1, HomeLoginRedemptionResultV1, HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
 import type { HomeTargetInput } from '../homeTarget/homeTarget.js';
+import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestRedirectPolicy.js';
 
 export type EffectiveSignInService =
   | Readonly<{ kind: 'not_offered' }>
@@ -230,6 +231,7 @@ export async function adoptAccountServiceDirectoryHomes(input: Readonly<{
       await input.adoptHome(home);
       adopted.push(target);
     } catch (error) {
+      if (error instanceof CredentialRequestRedirectError) throw error;
       failures.push({ ...target, error });
     }
   }
@@ -414,6 +416,7 @@ export async function continueAccountServiceHomeEnrollment<SecretKey, Transport,
   try {
     opened = await input.adapters.openHomeTransport(input.home);
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return input.shouldCancel?.()
       ? { kind: 'cancelled' }
       : { kind: 'unavailable', error };
@@ -516,7 +519,8 @@ export async function continueAccountServiceHomeEnrollment<SecretKey, Transport,
         assertion: input.assertion,
         observation,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof CredentialRequestRedirectError) throw error;
       return input.shouldCancel?.()
         ? { kind: 'cancelled' }
         : {
@@ -536,6 +540,7 @@ export async function continueAccountServiceHomeEnrollment<SecretKey, Transport,
     });
     return { kind: 'enrolled', commit };
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return !credentialCommitStarted && input.shouldCancel?.()
       ? { kind: 'cancelled' }
       : { kind: 'unavailable', error };
@@ -562,6 +567,7 @@ export async function enrollAccountServiceHome<SecretKey, Transport, HomeCredent
       clientBoxPublicKeyBase64: keyPair.publicKeyBase64,
     });
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return { kind: 'unavailable', error };
   }
   const verification = verifyAccountServiceHomeAssertionRequest({
@@ -818,6 +824,7 @@ export async function publishAccountServiceHomeLink<HomeCredential, AccountServi
     });
     return { kind: 'linked', homeServerIdentityId: input.home.homeServerIdentityId };
   } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return { kind: 'failed', error };
   }
 }

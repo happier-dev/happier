@@ -88,6 +88,7 @@ describe('uninstallManagedFirstPartyComponent', () => {
         processEnv: {
           ...process.env,
           HAPPIER_HOME_DIR: happyHomeDir,
+          HAPPIER_FIRST_PARTY_INSTALL_HOME: happyHomeDir,
         },
       });
 
@@ -105,6 +106,7 @@ describe('uninstallManagedFirstPartyComponent', () => {
     const processEnv = {
       ...process.env,
       HAPPIER_HOME_DIR: happyHomeDir,
+      HAPPIER_FIRST_PARTY_INSTALL_HOME: happyHomeDir,
     };
     const layout = resolveFirstPartyInstallLayout({
       componentId: 'happier-cli',
@@ -157,6 +159,7 @@ describe('uninstallManagedFirstPartyComponent', () => {
     const processEnv = {
       ...process.env,
       HAPPIER_HOME_DIR: happyHomeDir,
+      HAPPIER_FIRST_PARTY_INSTALL_HOME: happyHomeDir,
     };
     const layout = resolveFirstPartyInstallLayout({
       componentId: 'happier-cli',
@@ -216,6 +219,7 @@ describe('uninstallManagedFirstPartyComponent', () => {
     const processEnv = {
       ...process.env,
       HAPPIER_HOME_DIR: happyHomeDir,
+      HAPPIER_FIRST_PARTY_INSTALL_HOME: happyHomeDir,
     };
     const layout = resolveFirstPartyInstallLayout({
       componentId: 'happier-cli',

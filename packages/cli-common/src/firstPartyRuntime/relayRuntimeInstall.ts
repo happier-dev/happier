@@ -11,6 +11,7 @@ import {
     applyServicePlan,
     buildServiceDefinition,
     planServiceAction,
+    preflightServiceInstallAssets,
     resolveServiceBackend,
     type ServiceBackend,
     type ServiceSpec,
@@ -2314,6 +2315,8 @@ export async function installOrUpdateRelayRuntimeLocal(
             });
             const installUnderHeldLocks = async () => {
                 await params.assertPersonalHomeMutationPrecondition?.();
+                // Activation and recovery require the task host before incumbent cleanup or stop.
+                await preflightServiceInstallAssets({ backend: resolveServiceBackend({ platform, mode }) });
                 if (params.purpose?.kind !== 'personal-home') {
                     await params.cleanupLegacyServiceBeforeInstall?.();
                 }

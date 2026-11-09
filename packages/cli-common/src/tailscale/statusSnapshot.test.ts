@@ -14,6 +14,72 @@ const nodeIdentity = {
 };
 
 describe('parseTailscaleStatusSnapshot', () => {
+  it.each([true, false, undefined, 'true'])('keeps MagicDNS %s distinct from unknown', (value) => {
+    expect(parseTailscaleStatusSnapshot({
+      ...nodeIdentity,
+      BackendState: 'Running',
+      CurrentTailnet: { Name: 'tailnet.ts.net', MagicDNSEnabled: value },
+    })).toMatchObject({ magicDnsEnabled: typeof value === 'boolean' ? value : null });
+  });
+
+  it('matches equivalent IPv6 spelling while ignoring invalid and scoped addresses', () => {
+    const snapshot = parseTailscaleStatusSnapshot({
+      ...nodeIdentity, BackendState: 'Running', TUN: true, TailscaleIPs: ['FD7A:115C:A1E0:0:0:0:0:1234', 'not-an-ip'],
+    }, {
+      utun9: [{ address: 'fd7a:115c:a1e0::1234', family: 'IPv6', internal: false }],
+      invalid: [
+        { address: 'not-an-ip', family: 'IPv4', internal: false },
+        { address: 'fe80::1%eth0', family: 'IPv6', internal: false },
+      ],
+    });
+    expect(snapshot).toMatchObject({ interfaceName: 'utun9', sourceRanges: ['fd7a:115c:a1e0::/48'] });
+  });
+
+  it('uses the observed interface and matching address families, never the interface name', () => {
+    const interfaces = {
+      eth0: [{ address: '192.0.2.4', family: 'IPv4' as const, internal: false }],
+      'private-overlay-7': [
+        { address: '100.64.0.10', family: 'IPv4' as const, internal: false },
+        { address: 'fd7a:115c:a1e0::1234', family: 'IPv6' as const, internal: false },
+      ],
+    };
+    expect(parseTailscaleStatusSnapshot({
+      ...nodeIdentity, BackendState: 'Running', TUN: true,
+      TailscaleIPs: ['100.64.0.10', 'fd7a:115c:a1e0::1234'],
+    }, interfaces)).toMatchObject({
+      interfaceName: 'private-overlay-7',
+      sourceRanges: ['100.64.0.0/10', 'fd7a:115c:a1e0::/48'],
+    });
+    expect(parseTailscaleStatusSnapshot({
+      ...nodeIdentity, BackendState: 'Running', TUN: true,
+    }, interfaces)).toMatchObject({ interfaceName: 'private-overlay-7', sourceRanges: ['100.64.0.0/10'] });
+  });
+
+  it.each([
+    { BackendState: 'Running', TUN: false },
+    { BackendState: 'Stopped', TUN: true },
+    { BackendState: 'NeedsMachineAuth', TUN: true },
+  ])('keeps native scope unavailable for %s despite retained membership addresses', (state) => {
+    expect(parseTailscaleStatusSnapshot({ ...nodeIdentity, ...state }, {
+      tailscale0: [{ address: '100.64.0.10', family: 'IPv4', internal: false }],
+    })).toMatchObject({ interfaceName: null, sourceRanges: [] });
+  });
+
+  it('never infers native scope from a conventional name, loopback or ambiguous interfaces', () => {
+    for (const interfaces of [
+      {},
+      { tailscale0: [{ address: '192.0.2.4', family: 'IPv4' as const, internal: false }] },
+      { loop: [{ address: '100.64.0.10', family: 'IPv4' as const, internal: true }] },
+      {
+        overlayA: [{ address: '100.64.0.10', family: 'IPv4' as const, internal: false }],
+        overlayB: [{ address: '100.64.0.10', family: 'IPv4' as const, internal: false }],
+      },
+    ]) {
+      expect(parseTailscaleStatusSnapshot({ ...nodeIdentity, BackendState: 'Running', TUN: true }, interfaces))
+        .toMatchObject({ interfaceName: null, sourceRanges: [] });
+    }
+  });
+
   it('reports running for a live backend', () => {
     const snapshot = parseTailscaleStatusSnapshot({ ...nodeIdentity, BackendState: 'Running' });
 
@@ -65,6 +131,7 @@ describe('tailscaleStatusSnapshotForUnreachableDaemon', () => {
   it('reports a daemon that never answered as neither reachable, running, nor logged in', () => {
     const snapshot = tailscaleStatusSnapshotForUnreachableDaemon();
 
+    expect(snapshot).toMatchObject({ magicDnsEnabled: null, interfaceName: null, sourceRanges: [] });
     expect(snapshot.daemonReachable).toBe(false);
     expect(snapshot.running).toBe(false);
     expect(snapshot.loggedIn).toBe(false);

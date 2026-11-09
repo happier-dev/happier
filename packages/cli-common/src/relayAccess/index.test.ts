@@ -15,6 +15,8 @@ describe('relayAccess public entrypoint', () => {
             'tailscaleServe',
             'tailscaleFunnel',
             'cloudflareNamed',
+            'tailscale',
+            'caddy',
         ]);
         expect(relayAccessProviderDescriptors.map((descriptor) => descriptor.id)).toEqual(relayAccessProviderIds);
         expect(relayAccessProviders.map((provider) => provider.descriptor.id)).toEqual(relayAccessProviderIds);

@@ -67,6 +67,34 @@ describe('managed JavaScript runtime bootstrap lock', () => {
     await Promise.all(tempDirs.splice(0).map((path) => rm(path, { recursive: true, force: true })));
   });
 
+  it('reports contention before a caller cancels a live legacy runtime lock', async () => {
+    const homeDir = await createHomeDir();
+    const processEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' };
+    const lockPath = join(managedJavaScriptRuntimeInstallDir(processEnv), '.lock', 'bootstrap.lock');
+    const owner = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 600_000 });
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, owner);
+    const controller = new AbortController();
+    const reason = new Error('stop waiting for runtime');
+    const events: string[] = [];
+    const watchdog = setTimeout(() => controller.abort(reason), 500);
+    try {
+      await expect(ensureManagedJavaScriptRuntimeCommand(processEnv, {}, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          if (event.t === 'log') {
+            events.push(event.line);
+            controller.abort(reason);
+          }
+        },
+      })).rejects.toBe(reason);
+      expect(events.length).toBeGreaterThan(0);
+      expect(await readFile(lockPath, 'utf8')).toBe(owner);
+    } finally {
+      clearTimeout(watchdog);
+    }
+  });
+
   it('cancels a waiting bootstrap without disturbing the current lock owner', async () => {
     const homeDir = await createHomeDir();
     const processEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' };

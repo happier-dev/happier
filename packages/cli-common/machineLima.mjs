@@ -84,7 +84,10 @@ export async function inspectLimaCapabilities({ executor }) {
       || !Array.isArray(info.vmTypes) || info.vmTypes.some((value) => typeof value !== 'string')) {
       throw new Error('invalid native capability facts');
     }
-    return { hostOS: info.hostOS, hostArch: info.hostArch, vmTypes: info.vmTypes };
+    return { hostOS: info.hostOS, hostArch: info.hostArch, vmTypes: info.vmTypes,
+      ...(typeof info.limaHome === 'string' ? { limaHome: info.limaHome } : {}),
+      ...(info.defaultTemplate && typeof info.defaultTemplate === 'object' && !Array.isArray(info.defaultTemplate)
+        ? { defaultTemplate: info.defaultTemplate } : {}) };
   } catch (cause) { throw limaError('LIMA_INSPECT_UNAVAILABLE', 'native Lima capabilities unavailable', cause); }
 }
 

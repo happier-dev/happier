@@ -81,6 +81,8 @@ export type HappierService = Readonly<{
    * created it and may change or remove it. `null`: user-owned. Absent from producers that do not read it.
    */
   managedBy?: 'desktop' | null;
+  /** Current-user Windows task action or staged launcher needs a supported reinstall. */
+  windowsLauncherUpgradeNeeded?: boolean;
   installed: boolean;
   /** null when the service manager could not establish activity. */
   running: boolean | null;

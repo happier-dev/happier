@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
@@ -6,8 +7,10 @@ import { basename, join, win32 as win32Path } from 'node:path';
 import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
+import { runWindowsScheduledTaskQuery } from '../../service/runWindowsScheduledTaskQuery.js';
 import { readDefaultManagedReleaseChannelSync } from '../../firstPartyRuntime/defaultReleaseChannelState.js';
-import { buildListWindowsScheduledTaskFolderPowerShellCommand, parseWindowsScheduledTaskFolderPowerShellJson, splitQualifiedWindowsScheduledTaskName } from '../../service/windows.js';
+import { buildListWindowsScheduledTaskFolderPowerShellCommand, parseWindowsScheduledTaskFolderPowerShellJson, splitQualifiedWindowsScheduledTaskName, parseWindowsScheduledTaskDefinitionFromXml, parseWindowsScheduledTaskDefinitionFromTaskToRun, isWindowsScheduledTaskLauncherActionExpected, type WindowsScheduledTaskDefinition } from '../../service/windows.js';
+import { resolveInstalledWindowsServiceLauncherPaths, resolvePackagedWindowsServiceLauncherInstallSpec, validateWindowsServiceLauncherPe, type WindowsServiceLauncherInstallSpec } from '../../service/windowsLauncher.js';
 import {
     listKnownServiceDefinitionFiles,
     parseLaunchdPlist,
@@ -336,16 +339,18 @@ function readSystemdUnitFileEnabled(unitFileState: string | null): boolean | nul
     return null;
 }
 
-function defaultCommandRunner(input: Readonly<{ cmd: string; args: readonly string[] }>): ReturnType<NonNullable<DiscoverCommandRunner['run']>> {
-    const requestedTimeout = Number(process.env.HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS);
-    const result = spawnSync(input.cmd, [...input.args], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        env: process.env,
-        encoding: 'utf8',
-        // Preserve the Scheduler discovery owner's existing configurable deadline.
-        ...((input.cmd === 'schtasks' || input.cmd === 'powershell.exe') ? { timeout: Number.isInteger(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : 15_000 } : {}),
-    });
+function defaultCommandRunner(input: Readonly<{ cmd: string; args: readonly string[] }>, deadlineMs?: number): ReturnType<NonNullable<DiscoverCommandRunner['run']>> {
+    const timeout = deadlineMs === undefined ? undefined : deadlineMs - Date.now();
+    if (timeout !== undefined && timeout <= 0) throw Object.assign(new Error('Service inventory deadline elapsed'), { code: 'ETIMEDOUT' });
+    const result = input.cmd === 'schtasks' || input.cmd === 'powershell.exe'
+        ? runWindowsScheduledTaskQuery(input.cmd, input.args, deadlineMs)
+        : spawnSync(input.cmd, [...input.args], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            env: process.env,
+            encoding: 'utf8',
+            ...(timeout === undefined ? {} : { timeout }),
+        });
     return { stdout: String(result.stdout ?? ''), stderr: String(result.stderr ?? ''), status: result.status, error: result.error };
 }
 
@@ -382,15 +387,15 @@ function listScheduledTaskNames(runner: DiscoverCommandRunner): string[] {
     });
 }
 
-export function readWindowsScheduledTaskWrapperPath(taskName: string, runner: DiscoverCommandRunner = { run: defaultCommandRunner }): string | null {
+function readWindowsScheduledTaskDefinition(taskName: string, runner: DiscoverCommandRunner): WindowsScheduledTaskDefinition | null {
     let cause: unknown = new Error('Task inspection returned no wrapper path');
     for (const format of ['xml', 'list'] as const) {
         try {
             const output = runScheduledTaskCommand(runner, ['/Query', '/TN', taskName, ...(format === 'xml' ? ['/XML'] : ['/FO', 'LIST', '/V'])]);
-            const argumentsText = format === 'xml' ? /<Arguments>([\s\S]*?)<\/Arguments>/iu.exec(output)?.[1] ?? '' : output;
-            const decoded = argumentsText.replaceAll('&quot;', '"').replaceAll('&apos;', "'").replaceAll('&amp;', '&');
-            const path = /-File\s+"([^"]+\.ps1)"/iu.exec(decoded)?.[1] ?? /-File\s+([^\s]+\.ps1)/iu.exec(decoded)?.[1];
-            if (path) return path.trim();
+            const definition = format === 'xml'
+                ? parseWindowsScheduledTaskDefinitionFromXml(output)
+                : parseWindowsScheduledTaskDefinitionFromTaskToRun(output);
+            if (definition) return definition;
         } catch (error) {
             cause = error;
         }
@@ -402,6 +407,31 @@ export function readWindowsScheduledTaskWrapperPath(taskName: string, runner: Di
         throw inventoryUnavailable(taskName, error);
     }
     throw inventoryUnavailable(taskName, cause);
+}
+
+export function readWindowsScheduledTaskWrapperPath(taskName: string, runner?: DiscoverCommandRunner, deadlineMs?: number): string | null {
+    return readWindowsScheduledTaskDefinition(taskName, runner ?? { run: input => defaultCommandRunner(input, deadlineMs) })?.wrapperPath ?? null;
+}
+
+function isWindowsLauncherActionHealthy(definition: WindowsScheduledTaskDefinition, launcher: WindowsServiceLauncherInstallSpec): boolean {
+    if (definition.actionKind !== 'native-launcher' || !definition.launcherPath || definition.hasSingleExecAction === false) return false;
+    const expected = resolveInstalledWindowsServiceLauncherPaths({
+        definitionPath: definition.wrapperPath,
+        label: win32Path.basename(definition.wrapperPath, '.ps1'),
+        version: launcher.version,
+    });
+    if (!isWindowsScheduledTaskLauncherActionExpected({
+        taskToRun: `${definition.launcherPath} ${definition.launcherArguments ?? ''}`,
+        launcherPath: expected.launcherPath,
+        definitionPath: definition.wrapperPath,
+        diagnosticLogPath: expected.diagnosticLogPath,
+    })) return false;
+    try {
+        validateWindowsServiceLauncherPe(readFileSync(expected.launcherPath), expected.launcherPath);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function syntheticTaskDefinition(file: ServiceDefinitionFile): ParsedWindowsScheduledTaskWrapperPs1 {
@@ -451,23 +481,29 @@ export async function discoverHappierServices(params: Readonly<{
     fs?: DiscoverFs;
     commands?: DiscoverCommandRunner;
     deep?: boolean;
+    windowsLauncher?: WindowsServiceLauncherInstallSpec;
     /** The user whose launchd `gui/<uid>` domain holds user agents; defaults to this process's. */
     uid?: number | null;
+    /** A caller's containing operation budget; standalone discovery adds no POSIX deadline. */
+    deadlineMs?: number;
 }> = {}): Promise<HappierServiceInventory> {
     const uid = params.uid !== undefined ? params.uid : typeof process.getuid === 'function' ? process.getuid() : null;
     const processEnv = params.processEnv ?? process.env;
     const platform = normalizePlatform(params.platform);
     const roots = params.roots ?? resolveDefaultRoots({ platform, processEnv });
-    const runner = params.commands ?? { run: defaultCommandRunner };
+    const runner = params.commands ?? { run: input => defaultCommandRunner(input, params.deadlineMs) };
     const definitionFiles = [...await listKnownServiceDefinitionFiles({ roots }).catch((cause: unknown) => { throw inventoryUnavailable('service definition directories', cause); })];
     const scheduledPaths = new Set<string>();
+    const scheduledDefinitions = new Map<string, WindowsScheduledTaskDefinition>();
     if (platform === 'win32') {
         try {
             for (const taskName of listScheduledTaskNames(runner)) {
-                const path = readWindowsScheduledTaskWrapperPath(taskName, runner);
-                if (!path) continue;
+                const registeredDefinition = readWindowsScheduledTaskDefinition(taskName, runner);
+                if (!registeredDefinition) continue;
+                const path = registeredDefinition.wrapperPath;
                 const pathKey = path.replaceAll('\\', '/').toLowerCase();
                 scheduledPaths.add(pathKey);
+                scheduledDefinitions.set(pathKey, registeredDefinition);
                 if (!definitionFiles.some((file) => file.path.replaceAll('\\', '/').toLowerCase() === pathKey)) {
                     const scope = path.replaceAll('/', '\\').toLowerCase().startsWith(`${WINDOWS_SYSTEM_HAPPIER_SERVICES_DIR.toLowerCase()}\\`) ? 'system' : 'user';
                     definitionFiles.push({ path, scope, kind: 'windows-wrapper-ps1', label: taskName.slice('Happier\\'.length) });
@@ -477,6 +513,9 @@ export async function discoverHappierServices(params: Readonly<{
             throw inventoryUnavailable('Happier scheduled tasks', cause);
         }
     }
+    const windowsLauncher = platform === 'win32'
+        ? params.windowsLauncher ?? resolvePackagedWindowsServiceLauncherInstallSpec()
+        : null;
     const services: HappierService[] = [];
 
     for (const definitionFile of definitionFiles) {
@@ -500,6 +539,7 @@ export async function discoverHappierServices(params: Readonly<{
             uid,
         });
 
+        const registeredDefinition = scheduledDefinitions.get(definitionFile.path.replaceAll('\\', '/').toLowerCase());
         const service: HappierService = {
             id: `${backend}:${definition.label}`,
             serviceType: identity.serviceType,
@@ -520,6 +560,7 @@ export async function discoverHappierServices(params: Readonly<{
             serverUrl: String(definition.env.HAPPIER_SERVER_URL ?? '').trim() || null,
             publicServerUrl: String(definition.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim() || null,
             managedBy: String(definition.env.HAPPIER_DAEMON_SERVICE_MANAGED_BY ?? '').trim() === 'desktop' ? 'desktop' : null,
+            ...(platform === 'win32' && windowsLauncher && definitionFile.scope === 'user' ? { windowsLauncherUpgradeNeeded: !registeredDefinition || !isWindowsLauncherActionHealthy(registeredDefinition, windowsLauncher) } : {}),
             installed: status.installed,
             running: status.running,
             enabled: status.enabled,

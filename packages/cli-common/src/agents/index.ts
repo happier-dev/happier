@@ -119,6 +119,7 @@ export {
 } from './managedPnpm.js';
 export { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
 export { resolveInstalledJavaScriptTool, type InstalledJavaScriptTool } from './installedJavaScriptTool.js';
+export { resolveManagedPackageJavaScriptEntry } from './managedPackageBin.js';
 export { resolveManagedDependencyCommand, validateManagedDependencyCommand } from './managedDependencyCommand.js';
 export type { ManagedDependencyCommand, ManagedDependencyLaunchDeclaration } from './managedDependencyCommand.js';
 export { selectManagedDependencyReleaseAsset } from './managedDependencyRelease.js';
