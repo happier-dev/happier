@@ -130,7 +130,8 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   expect(effects).toBe(1);
   // Manual input is retained by its original invocation. Approval can be
   // acknowledged before that invocation finishes its native authentication.
-  nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'connected', account: { service, accountId: 'manual-account' } });
+  nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'connected', attemptId: 'connect-attempt',
+    account: { service, accountId: 'manual-account' } });
   let finishManual!: () => void;
   nativeCompletion = new Promise<void>(resolve => { finishManual = resolve; });
   decision = undefined;
