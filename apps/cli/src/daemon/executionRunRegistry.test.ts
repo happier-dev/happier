@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
 import { reloadConfiguration } from '@/configuration';
+import * as executionRunRegistry from './executionRunRegistry';
 import { createManagedActivityInventory } from './lifecycle/managedActivity';
 import { projectMachineWorkSummary } from './machines/machineWorkSummary';
 import type { RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
@@ -117,7 +118,7 @@ describe('executionRunRegistry', () => {
 
   it('writes and lists execution run markers', async () => {
     const { configuration } = await import('@/configuration');
-    const { listExecutionRunMarkers, writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { listExecutionRunMarkers, writeExecutionRunMarker } = executionRunRegistry;
 
     const marker = {
       pid: 123,
@@ -169,7 +170,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('retains long worker identities with immutable publication and exact acceptance', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
       sessionId: 'session', localId: `execution-run-worker-update:${'identity/雪:'.repeat(100)}`, update: {
         v: 1, workerKind: 'execution_run', workerId: 'run_long_delivery',
@@ -188,7 +189,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('retains and lists state and visibility markers for long Run identities', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const runId = `run_${'x'.repeat(220)}`;
     // An exact absent identity has no discovery consumer, even when its former
     // basename would exceed the filesystem's per-component limit.
@@ -211,7 +212,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('reopens the typed terminal issue from sealed Run custody', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { classifyPrimarySessionRuntimeIssue } = await import('@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue');
     const runtimeIssueV1 = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 20,
       error: { code: 'provider_usage_exhausted', severity: 'error', details: { runtimeAuthClassification: {
@@ -228,8 +229,48 @@ describe('executionRunRegistry', () => {
     expect(await registry.readRetainedExecutionRunRecords()).toMatchObject([{ terminalEventId: 'terminal-limit', state: { error } }]);
   });
 
+  it('invalidates a detached Run once per retained output revision and permission identity change', async () => {
+    const registry = executionRunRegistry;
+    const { createScmDiffSummaryResultStore } = await import('@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore');
+    const { ScmDiffSummaryGenerateOutputSchema } = await import('@happier-dev/protocol/scm/diffSummary');
+    const transport = await import('./controlHttp');
+    const post = vi.spyOn(transport, 'daemonPost').mockResolvedValue({ ok: true });
+    const state = { runId: 'detached-output-source', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+      status: 'running', startedAtMs: 1,
+    } as const;
+    const store = createScmDiffSummaryResultStore({ directory: join(happyHomeDir, 'saved-results') });
+    const saved = await store.create({ cwd: happyHomeDir, output: ScmDiffSummaryGenerateOutputSchema.parse({
+      success: true, sourceKey: 'comparison', metadata: { sourceKey: 'comparison', source: { kind: 'workingTree' } },
+      comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: happyHomeDir },
+        endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+      requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } },
+    }) });
+    const output = (payload: typeof saved.output) => ({ kind: 'scm_diff_summary.v1', payload });
+    try {
+      await registry.retainExecutionRunState(state);
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(saved.output) });
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(saved.output), summary: 'Unrelated checkpoint' });
+      const published = await store.publishProgress({ cwd: happyHomeDir, resultId: saved.resultId, expectedRevision: saved.revision,
+        output: { ...saved.output, outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Ready output' } } } } });
+      expect(published.success).toBe(true);
+      if (!published.success) throw new Error(published.error);
+      expect(published.result.revision).toBeGreaterThan(saved.revision);
+      expect(published.result.output.revision).toBe(published.result.revision);
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(published.result.output) });
+      const attention = { kind: 'permission_required' as const, requestIds: ['permission'], requests: [{ requestId: 'permission', createdAt: 1 }] };
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(published.result.output), attention });
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(published.result.output), attention });
+      await registry.retainExecutionRunState({ ...state, structuredMeta: output(published.result.output) });
+      expect(post.mock.calls.filter(([path]) => path === '/session-activity-changed').map(([, body]) => body))
+        .toEqual(Array.from({ length: 4 }, () => ({ sessionId: null, executionRunId: state.runId })));
+    } finally { post.mockRestore(); }
+  });
+
   it('notifies Follow from the retained terminal original and from recovered host loss', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { SessionFollowOccurrenceNotificationSchema } = await import('./sessions/sessionActivityChangedContract');
     const transport = await import('./controlHttp');
     const post = vi.spyOn(transport, 'daemonPost').mockResolvedValue({ ok: true });
@@ -253,7 +294,7 @@ describe('executionRunRegistry', () => {
       await registry.reconcileRetainedExecutionRunRecords({ nowMs: 3, isPidAlive: () => false });
       const recovered = await registry.readRetainedExecutionRunRecord('lost-follow-source');
       expect(post.mock.calls).toContainEqual(['/session-activity-changed', {
-        sessionId: state.sessionId, followOccurrence: {
+        sessionId: state.sessionId, executionRunId: 'lost-follow-source', followOccurrence: {
           original: { source: { kind: 'execution_run', sessionId: state.sessionId, runId: 'lost-follow-source' },
             terminalEventId: recovered?.state.terminalOccurrenceId }, event: { kind: 'failed_or_stopped' },
         },
@@ -262,7 +303,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('projects running and settled execution markers while retaining material delivery custody', async () => {
-    const { createExecutionRunLiveWorkProducer, writeExecutionRunMarker, removeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { createExecutionRunLiveWorkProducer, writeExecutionRunMarker, removeExecutionRunMarker } = executionRunRegistry;
     mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
     const producer = createExecutionRunLiveWorkProducer();
     const unsubscribe = producer.subscribe(() => {});
@@ -275,7 +316,7 @@ describe('executionRunRegistry', () => {
       ] });
       await writeExecutionRunMarker({ ...marker, status: 'succeeded', finishedAtMs: 2, updatedAtMs: 2 });
       expect(await producer.read()).toMatchObject({ coverage: 'complete', items: [{ ownerRef: 'live-run', state: 'settled' }] });
-      const { retainExecutionRunWorkerUpdate, acknowledgeExecutionRunWorkerUpdate } = await import('./executionRunRegistry');
+      const { retainExecutionRunWorkerUpdate, acknowledgeExecutionRunWorkerUpdate } = executionRunRegistry;
       const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
         sessionId: 'session', localId: 'completion', update: {
           v: 1, workerKind: 'execution_run', workerId: marker.runId, ownerState: 'succeeded', wake: 'finished',
@@ -293,7 +334,7 @@ describe('executionRunRegistry', () => {
 
   it('retains admitted marker attribution for the sole inventory but strips it from public Run listings', async () => {
     const { createExecutionRunLiveWorkProducer, writeExecutionRunMarker, listExecutionRunMarkers,
-      listExecutionRunMarkersForRehydration, removeExecutionRunMarker } = await import('./executionRunRegistry');
+      listExecutionRunMarkersForRehydration, removeExecutionRunMarker } = executionRunRegistry;
     const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
     const requesterWorkAttributionV1 = { ...target, accountId: 'bob' };
     mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
@@ -325,7 +366,7 @@ describe('executionRunRegistry', () => {
 
   it('preserves admitted attribution through private retained Run state and pending delivery after its marker is absent', async () => {
     const { createExecutionRunLiveWorkProducer, retainExecutionRunState, retainExecutionRunWorkerUpdate,
-      acknowledgeExecutionRunWorkerUpdate, readRetainedExecutionRunRecords } = await import('./executionRunRegistry');
+      acknowledgeExecutionRunWorkerUpdate, readRetainedExecutionRunRecords } = executionRunRegistry;
     const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
     const attribution = { ...target, accountId: 'bob' };
     mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
@@ -368,7 +409,7 @@ describe('executionRunRegistry', () => {
   });
 
   it.each(['legacy', 'conflicting'] as const)('does not hide %s active custody behind an attributed duplicate Run', async (duplicate) => {
-    const { createExecutionRunLiveWorkProducer, retainExecutionRunState, writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { createExecutionRunLiveWorkProducer, retainExecutionRunState, writeExecutionRunMarker } = executionRunRegistry;
     const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
     const attribution = { ...target, accountId: 'bob' };
     const state = { runId: 'duplicated-run', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0, intent: 'review',
@@ -397,7 +438,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('observes external marker writes and fails coverage closed after native watcher failure or corrupt markers', async () => {
-    const { createExecutionRunLiveWorkProducer } = await import('./executionRunRegistry');
+    const { createExecutionRunLiveWorkProducer } = executionRunRegistry;
     const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(directory, { recursive: true });
     const producer = createExecutionRunLiveWorkProducer();
@@ -422,7 +463,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('cannot prove an absent watch idle and still exposes retained running work without a visibility marker', async () => {
-    const { createExecutionRunLiveWorkProducer, retainExecutionRunState } = await import('./executionRunRegistry');
+    const { createExecutionRunLiveWorkProducer, retainExecutionRunState } = executionRunRegistry;
     const producer = createExecutionRunLiveWorkProducer();
     let armed!: () => void;
     const watchEstablished = new Promise<void>(resolve => { armed = resolve; });
@@ -446,16 +487,125 @@ describe('executionRunRegistry', () => {
     } finally { unsubscribe(); }
   });
 
+  it('shares one pending retained-state read for concurrent live-work observations of unchanged files', async () => {
+    const registry = executionRunRegistry;
+    const state = { runId: 'large-live-work', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+      instructions: 'evidence'.repeat(128 * 1024), permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 1,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    await registry.retainExecutionRunState(state);
+    const producer = registry.createExecutionRunLiveWorkProducer();
+    const unsubscribe = producer.subscribe(() => {});
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const firstRead = new Promise<void>(resolve => { entered = resolve; });
+    let bodyReads = 0;
+    filesystemBoundary.afterProtectedRead = async path => {
+      if (String(path).endsWith('.sealed')) { bodyReads++; entered(); await held; }
+    };
+    const inventory = createManagedActivityInventory({ producers: [producer] });
+    const observations = [inventory.read()];
+    try {
+      await firstRead;
+      // Native filesystem invalidations are the system boundary. A burst can
+      // arrive while a protected body read is outstanding; inventory and Run
+      // projection remain real, including their normal subscription wiring.
+      for (let event = 0; event < 32; event++) {
+        for (const watcher of filesystemBoundary.watchers) watcher.emit('change', 'change', 'state-large.sealed');
+      }
+      await new Promise<void>(resolve => setImmediate(resolve));
+      release();
+      const results = await Promise.all(observations);
+      expect(results.every(result => result.items[0]?.ownerRef === state.runId)).toBe(true);
+      await inventory.read();
+      // One active observation plus one fresh pass after the invalidations;
+      // a new settled confirmation remains a separate fresh read.
+      expect(bodyReads).toBeLessThanOrEqual(3);
+    } finally { release(); await Promise.allSettled(observations); filesystemBoundary.afterProtectedRead = null; inventory.dispose(); unsubscribe(); }
+  });
+
+  it.each(['settled', 'removed'] as const)('catches a retained Run becoming %s during an outstanding body read', async outcome => {
+    const registry = executionRunRegistry;
+    const state = { runId: 'changed-during-read', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      status: 'running', startedAtMs: 1,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    await registry.retainExecutionRunState(state);
+    const producer = registry.createExecutionRunLiveWorkProducer();
+    const unsubscribe = producer.subscribe(() => {});
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const firstRead = new Promise<void>(resolve => { entered = resolve; });
+    filesystemBoundary.afterProtectedRead = async path => {
+      if (String(path).endsWith('.sealed')) { entered(); await held; }
+    };
+    const reading = producer.read();
+    try {
+      await firstRead;
+      filesystemBoundary.afterProtectedRead = null;
+      if (outcome === 'settled') await registry.retainExecutionRunState({ ...state, status: 'succeeded', finishedAtMs: 2 });
+      else {
+        const file = join(happyHomeDir, 'tmp', 'daemon-execution-runs',
+          `state-${createHash('sha256').update(JSON.stringify([state.runId])).digest('hex')}.sealed`);
+        unlinkSync(file);
+        for (const watcher of filesystemBoundary.watchers) watcher.emit('change', 'rename', basename(file));
+      }
+      release();
+      const observed = await reading;
+      expect(observed.coverage).toBe('complete');
+      expect(observed.items).toEqual(outcome === 'removed' ? [] : [expect.objectContaining({ ownerRef: state.runId, state: 'settled' })]);
+    } finally { release(); await reading; filesystemBoundary.afterProtectedRead = null; unsubscribe(); }
+  });
+
+  it('opens only the changed retained Run on a passive edge and all Runs for a fresh confirmation', async () => {
+    const registry = executionRunRegistry;
+    const state = { runId: 'projected-0', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+      instructions: 'evidence'.repeat(1024), permissionMode: 'read_only', retentionPolicy: 'resumable',
+      runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 1,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    for (let index = 0; index < 85; index++) await registry.retainExecutionRunState({ ...state, runId: `projected-${index}` });
+    const producer = registry.createExecutionRunLiveWorkProducer();
+    const inventory = createManagedActivityInventory({ producers: [producer] });
+    let notifications = 0;
+    const unsubscribe = inventory.subscribeFacts(() => { notifications++; });
+    try {
+      expect((await inventory.read()).items).toHaveLength(85);
+      let bodyReads = 0;
+      filesystemBoundary.afterProtectedRead = async path => { if (String(path).endsWith('.sealed')) bodyReads++; };
+      const beforeIgnored = notifications;
+      for (const watcher of filesystemBoundary.watchers) watcher.emit('change', 'rename', 'state-unpublished.sealed.tmp-fixture');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(notifications).toBe(beforeIgnored);
+      expect(bodyReads).toBe(0);
+      await registry.retainExecutionRunState({ ...state, status: 'succeeded', finishedAtMs: 2 });
+      await vi.waitFor(() => expect(notifications).toBeGreaterThan(beforeIgnored));
+      // One existing-body read by the writer, one changed-body admission by
+      // the observer. Unchanged files retain only compact lifecycle facts.
+      expect(bodyReads).toBe(2);
+      bodyReads = 0;
+      const confirmed = await inventory.read();
+      expect(confirmed.items.find(item => item.ownerRef === state.runId)?.state).toBe('settled');
+      expect(bodyReads).toBe(85);
+    } finally { filesystemBoundary.afterProtectedRead = null; unsubscribe(); inventory.dispose(); }
+  });
+
   it('does not certify a replaced canonical directory through the watcher still attached to its former inode', async () => {
-    const { createExecutionRunLiveWorkProducer } = await import('./executionRunRegistry');
+    const { createExecutionRunLiveWorkProducer } = executionRunRegistry;
     const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(directory, { recursive: true });
     const producer = createExecutionRunLiveWorkProducer();
-    const unsubscribe = producer.subscribe(() => {});
+    const invalidated = vi.fn();
+    const unsubscribe = producer.subscribe(invalidated);
     try {
       expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
       renameSync(directory, `${directory}-moved`);
       mkdirSync(directory);
+      await vi.waitFor(() => expect(invalidated).toHaveBeenCalled());
       expect(await producer.read()).toEqual({ coverage: 'unknown', items: [] });
       expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
     } finally { unsubscribe(); }
@@ -463,7 +613,7 @@ describe('executionRunRegistry', () => {
 
   it('opens additive persisted marker fields but refuses corrupt known facts', async () => {
     const { configuration } = await import('@/configuration');
-    const { listExecutionRunMarkers, listExecutionRunMarkersForRehydration } = await import('./executionRunRegistry');
+    const { listExecutionRunMarkers, listExecutionRunMarkersForRehydration } = executionRunRegistry;
     const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(directory, { recursive: true });
     const file = join(directory, 'run-run_stored.json');
@@ -485,7 +635,7 @@ describe('executionRunRegistry', () => {
   it('opens additive stored fields and isolates mismatched or corrupt retained records without discarding custody', async () => {
     const { configuration } = await import('@/configuration');
     const { readRetainedExecutionRunRecords, readRetainedExecutionRunHomeKeys, createExecutionRunLiveWorkProducer,
-      gcExecutionRunMarkers } = await import('./executionRunRegistry');
+      gcExecutionRunMarkers } = executionRunRegistry;
     const { readOrCreateDeviceLocalSecretStorage } = await import('./deviceLocalSecretStorage');
     const { RetainedExecutionRunRecordSchema } = await import('@/agent/runtime/bridges/executionRun/retainedState');
     const { writeProtectedLocalStateFileAtomic } = await import('@/utils/fs/protectedLocalState');
@@ -538,7 +688,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('reports an unchanged unavailable retained entry once while keeping inventory fail-closed and recovering repaired state', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { configuration } = await import('@/configuration');
     const { readdir } = await import('node:fs/promises');
     const state = { runId: 'unavailable-entry', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
@@ -583,8 +733,37 @@ describe('executionRunRegistry', () => {
     } finally { inventory.dispose(); diagnostic.mockRestore(); }
   });
 
+  it('deletes history after queued checkpoints, including prior retained and marker filenames', async () => {
+    const registry = executionRunRegistry;
+    const state = { runId: 'deleted-history', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      status: 'cancelled', startedAtMs: 1, finishedAtMs: 2,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    await registry.retainExecutionRunState(state);
+    const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
+    const currentPath = join(directory, `state-${createHash('sha256').update(JSON.stringify([state.runId])).digest('hex')}.sealed`);
+    const priorPath = join(directory, `state-${Buffer.from(state.runId).toString('base64url')}.sealed`);
+    writeFileSync(priorPath, readFileSync(currentPath), { mode: 0o600 });
+    await registry.writeExecutionRunMarker({ runId: state.runId, pid: process.pid, happySessionId: null,
+      callId: state.callId, sidechainId: state.sidechainId, intent: state.intent,
+      backendId: state.backendId, backendTarget: state.backendTarget, permissionMode: state.permissionMode,
+      retentionPolicy: state.retentionPolicy, runClass: state.runClass, ioMode: state.ioMode,
+      status: state.status, startedAtMs: state.startedAtMs, finishedAtMs: state.finishedAtMs, updatedAtMs: 2 });
+    const priorMarker = join(directory, `run-${state.runId}.json`);
+    writeFileSync(priorMarker, readFileSync(join(directory, markerEntry(state.runId))));
+    const checkpoint = registry.retainExecutionRunState({ ...state, finishedAtMs: 3 });
+    await registry.deleteRetainedExecutionRunHistory(state.runId);
+    await checkpoint;
+    expect(await registry.readRetainedExecutionRunRecord(state.runId)).toBeNull();
+    expect(await registry.listExecutionRunMarkers()).toEqual([]);
+    expect(existsSync(currentPath)).toBe(false);
+    expect(existsSync(priorPath)).toBe(false);
+    expect(existsSync(priorMarker)).toBe(false);
+  });
+
   it('recovers the prior retained basename into the current owner without reviving a terminal event after acceptance', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { configuration } = await import('@/configuration');
     const state = { runId: 'prior-retained-entry', callId: 'call', sidechainId: 'side', sessionId: 'parent-session', depth: 0,
       intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
@@ -615,7 +794,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('recovers prior worker-update custody into the current basename and accepts it exactly once', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { configuration } = await import('@/configuration');
     const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
       sessionId: 'parent', localId: 'execution-run-worker-update:prior-worker-terminal', update: {
@@ -638,7 +817,7 @@ describe('executionRunRegistry', () => {
   });
 
   it('does not republish accepted worker custody from an older overlapping basename scan', async () => {
-    const registry = await import('./executionRunRegistry');
+    const registry = executionRunRegistry;
     const { configuration } = await import('@/configuration');
     const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
       sessionId: 'parent', localId: 'execution-run-worker-update:overlap-terminal', update: {
@@ -675,7 +854,7 @@ describe('executionRunRegistry', () => {
 
   it('strips raw output summaries and diagnostics before marker persistence', async () => {
     const { configuration } = await import('@/configuration');
-    const { listExecutionRunMarkers, writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { listExecutionRunMarkers, writeExecutionRunMarker } = executionRunRegistry;
     const marker = DaemonExecutionRunMarkerSchema.parse({
       pid: 123,
       happySessionId: null,
@@ -730,7 +909,7 @@ describe('executionRunRegistry', () => {
     const {
       listExecutionRunMarkers,
       listExecutionRunMarkersForRehydration,
-    } = await import('./executionRunRegistry');
+    } = executionRunRegistry;
     const runId = 'run_22222222-2222-4222-8222-222222222222';
     const markerDir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(markerDir, { recursive: true });
@@ -804,7 +983,7 @@ describe('executionRunRegistry', () => {
       listExecutionRunMarkersForRehydration,
       writeExecutionRunMarker,
       clearExecutionRunConnectedServicesCleanupReceipt,
-    } = await import('./executionRunRegistry');
+    } = executionRunRegistry;
     const runId = 'run_terminal_cleanup_receipt';
     const receipt = {
       v: 1 as const,
@@ -845,7 +1024,7 @@ describe('executionRunRegistry', () => {
     reloadConfiguration();
 
     const { configuration } = await import('@/configuration');
-    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { writeExecutionRunMarker } = executionRunRegistry;
 
     await writeExecutionRunMarker({
       pid: 123,
@@ -880,7 +1059,7 @@ describe('executionRunRegistry', () => {
       }
     };
     try {
-      const registry = await import('./executionRunRegistry');
+      const registry = executionRunRegistry;
       const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
         sessionId: 'session-1', localId: 'completion-1', update: {
           v: 1, workerKind: 'execution_run', workerId: 'run_ack_cleanup',
@@ -918,7 +1097,7 @@ describe('executionRunRegistry', () => {
   it('uses a unique temp file per marker write to avoid cross-write corruption', async () => {
     const writeFileSpy = filesystemBoundary.writeFileSpy;
 
-    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { writeExecutionRunMarker } = executionRunRegistry;
 
     await writeExecutionRunMarker({
       pid: 123,
@@ -954,7 +1133,7 @@ describe('executionRunRegistry', () => {
 
   it('allows an admitted successful resume marker to replace the prior terminal marker without clock inference', async () => {
     const { configuration } = await import('@/configuration');
-    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { writeExecutionRunMarker } = executionRunRegistry;
 
     await writeExecutionRunMarker({
       pid: 123,
@@ -991,7 +1170,7 @@ describe('executionRunRegistry', () => {
 
   it('does not allow ordinary late running markers to overwrite a terminal marker even with a newer clock', async () => {
     const { configuration } = await import('@/configuration');
-    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { writeExecutionRunMarker } = executionRunRegistry;
 
     const base = {
       pid: 123,
@@ -1019,13 +1198,13 @@ describe('executionRunRegistry', () => {
   });
 
   it('removeExecutionRunMarker should not throw if the marker does not exist', async () => {
-    const { removeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { removeExecutionRunMarker } = executionRunRegistry;
     await expect(removeExecutionRunMarker('run_missing')).resolves.toBeUndefined();
   });
 
   it('ignores markers with wrong happyHomeDir and tolerates invalid JSON', async () => {
     const { configuration } = await import('@/configuration');
-    const { listExecutionRunMarkers } = await import('./executionRunRegistry');
+    const { listExecutionRunMarkers } = executionRunRegistry;
 
     const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(dir, { recursive: true });
@@ -1042,7 +1221,7 @@ describe('executionRunRegistry', () => {
 
   it('recovers a valid orphan temp marker when the final marker file is missing', async () => {
     const { configuration } = await import('@/configuration');
-    const { listExecutionRunMarkers } = await import('./executionRunRegistry');
+    const { listExecutionRunMarkers } = executionRunRegistry;
 
     const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(dir, { recursive: true });
@@ -1074,7 +1253,7 @@ describe('executionRunRegistry', () => {
 
   it('removeExecutionRunMarker also removes orphan temp marker files for the run', async () => {
     const { configuration } = await import('@/configuration');
-    const { removeExecutionRunMarker } = await import('./executionRunRegistry');
+    const { removeExecutionRunMarker } = executionRunRegistry;
 
     const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
     mkdirSync(dir, { recursive: true });
@@ -1117,7 +1296,7 @@ describe('executionRunRegistry', () => {
       gcExecutionRunMarkers,
       listExecutionRunMarkers,
       writeExecutionRunMarker,
-    } = await import('./executionRunRegistry');
+    } = executionRunRegistry;
 
     const nowMs = Date.now();
     await writeExecutionRunMarker({

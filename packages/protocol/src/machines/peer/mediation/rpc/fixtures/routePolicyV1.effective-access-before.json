@@ -409,6 +409,7 @@
   ["execution.run.stream.cancel","custodian_only"],
   ["execution.run.cancelTurn.v1","custodian_only"],
   ["execution.run.stop","use"],
+  ["session.delete","use"],
   ["execution.run.list","use"],
   ["execution.run.get","use"],
   ["execution.run.followFrontier","custodian_only"],

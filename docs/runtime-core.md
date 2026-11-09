@@ -1758,18 +1758,39 @@ activation preserves its retryable disposition and leaves the message queued
 (the composer never marks it Blocked); the client submit result retains the detail.
 The daemon's automatic respawn treats a `held_by_person` or `archived` refusal as
 terminal: it logs one "Respawn suppressed" warning and stops, since only a
-person's Resume or unarchive can change that admission. The composer reads the canonical
-persisted admission to show “Stopped by you” with the existing Resume action,
-instead of a generic queued message or a retained Guard wake promise. None of
+person's Resume, a new message send, or unarchive can change that admission. The composer reads the canonical
+persisted admission to show “Stopped by you” with the existing Resume action when a stopped Session
+still has queued input, instead of a generic queued message or a retained Guard wake promise. None of
 these presentation facts can clear a hold or admit a launch. A loaded-daemon
 replay remains separate from source validation.
+
+Any explicit message send into a held Session resumes it, whoever sends it: the
+app composer, phone, queued-message send-now, review and plan surfaces, the
+terminal CLI, an agent or manager Session, Actions and automation or workflow
+sends. The two send owners, `submitSessionUserMessage` and `sendSessionMessage`
+(with `explicitMessageSend`), apply that one rule from the Protocol admission
+reader and attach the existing `user_request` Resume authority for that send only.
+A consequence: an agent or automation that keeps sending to a Session can resume
+it after a person stopped it. Everything that is not a new send stays held:
+daemon restart and respawn, machine reconnect, unattended pending activation,
+connected-service continuations, Session Follow occurrences, returned answers and
+Runs started by automation, such as the memory worker's hint Runs. The Resume owner
+treats a request that names no authority as automatic, so only a named person's
+Resume, or a new send, crosses a hold. Stop keeps the opposite default on purpose:
+a Stop with no authority still records the hold.
+Sends do not delegate to unattended daemon activation, which stays automatic. The
+daemon's fresh explicit launch admission waits for the physical Stop and clears
+the observed hold only after an exact successful launch; an archive still refuses.
+A failed resume (machine unreachable, spawn failure) leaves the row queued and the
+hold in place and shows the true reason, not a raw code; the next send or Resume delivers
+queued input in its existing order.
 
 Processes and widget Session Stop use the existing `lifecycle_control` intent
 through the same exact-runner Stop owner as Guard: they free resources and let
 the next ordinary message request wake. `recordSessionStopIntent` owns whether
 an admitted Stop writes the durable hold. These resource controls neither write
 nor clear a person/manager hold; Info → Stop session retains its `explicit_stop`
-hold and still requires an admitted Resume. A Session's Start again/Undo result
+hold and still requires an admitted Resume or a new message send. A Session's Start again/Undo result
 remains `already_wakes_on_next_message`, without changing Stop metadata.
 The physical Stop barrier, requester custody and later-Stop launch fencing
 apply to both intents. This describes development source; loaded-daemon replay
@@ -2037,7 +2058,7 @@ Plain and encrypted HTTP roots carry the same control projection. Native
 controller roots retain their existing Manage admission and guest transport.
 This is an unreleased 0.3 contract; it adds no signer or stored authority.
 
-The daemon's managed-policy runtime rereads the current installation-signed controller census on controller-specific managed-row Account hints, its own Machine changes, targeted accepted Pending/Run work, Team admission changes and reconnect/recovery edges. The existing Account-feed reader classifies these wakes; unrelated Account, Pending and Run traffic does not schedule a census. Changes to an origin already held by a driver still reconcile that work. Managed controller replacement also invalidates the former Machine, so coalescing the managed Account row cannot hide retirement from its old controller. Daemon startup mounts that single subscription owner with the current Machine transport and retires it on replacement or shutdown. Replacing the retained native resource or enrollment retires the old held policy lifetime; the driver's own intent/submission progress does not. Selected idle/deadline waits remain with the native driver, not a polling loop. Automatic policy effects still pass through current Actions policy and its existing approval Artifact lifetime; installation signatures do not substitute for human Ask approval. Approval retains the same host operation and approved execution context. These development-source paths still require composed and loaded-runtime validation.
+The daemon's managed-policy runtime rereads the exact installation-signed managed row and its current wake targets when a controller-specific Account hint names a known managed Machine. Its own Machine changes, reconnect/recovery edges and hints without a known managed identity reread the complete controller census. Targeted accepted Pending/Run work and Team admission changes use the same invalidation owner. The existing Account-feed reader classifies these wakes; unrelated Account, Pending and Run traffic does not schedule a census. Changes to an origin already held by a driver still reconcile that work. Managed controller replacement also invalidates the former Machine, so coalescing the managed Account row cannot hide retirement from its old controller. Daemon startup mounts that single subscription owner with the current Machine transport and retires it on replacement or shutdown. Replacing the retained native resource or enrollment retires the old held policy lifetime; the driver's own intent/submission progress does not. Selected idle/deadline waits remain with the native driver, not a polling loop. Automatic policy effects still pass through current Actions policy and its existing approval Artifact lifetime; installation signatures do not substitute for human Ask approval. Approval retains the same host operation and approved execution context. These development-source paths still require composed and loaded-runtime validation.
 
 Policy preparation reviews the native effect without admitting a new desired
 intent. The approved callback rechecks the retained row and then commits that
@@ -3264,6 +3285,21 @@ declaration, including configured ACP and installed plugin Agents. Keep going
 owns continuation for those Sessions; the host objective adds no native Goal
 capability or second continuation loop.
 
+`session.goal.clear` owns clearing the Goal and removing its Session-scoped
+Keep going triggers through the existing trigger owner. UI and agent callers
+consume that same Action result; the Goal control has no separate removal step.
+Other Session Habits remain attached. Native Goal adapters continue to own only
+the native Goal mutation. A prerequisite-read or native-clear refusal retains
+the attachment; a detach refusal is returned after the Goal clear, and an
+explicit Clear retry can finish detaching it. The open Goal control reads Keep going from the
+Automation trigger projection and refreshes through its existing change signal;
+only unsaved field edits and pending writes belong to the control.
+
+Within one Workflow condition or stop evaluation, the existing Session value
+resolver lazily reads each demanded source (Session and usage) once. Short-circuited
+fields do not read their sources. The scope ends with that evaluation; the next
+evaluation reads new Goal and usage facts, without a TTL or shared cache.
+
 In unreleased 0.3 source, attaching Keep going to an opened Session checks its
 native Goal owner through the existing Goal Action. A native owner refuses the
 attachment with `native_goal_owner`; unavailable ownership returns
@@ -3555,6 +3591,17 @@ Local Agent/MCP tool execution copies the cause
 from the same active-turn witness as its permission and input facts; the daemon
 Action channel carries that witness through its existing projection. Neither path
 derives the requester from the executing Account or the child Session's ownership.
+Signed Session Action origins retain the same protected cause through both socket
+RPC and external Action receivers. A receiver uses that admitted value when it
+creates an approval and its continuation; transport authentication identifies the
+immediate sender and does not replace the original requester.
+The private Account invocation carrier retains a host/MCP cause only when its
+qualified requester matches the genuine admitted Account and Home. Unknown
+requesters stay null; mismatching people or Homes and terminal, API-token,
+Session, Workflow or Plugin callers are refused by the shared invocation
+classifier. This preserves an own-Account approval continuation without letting
+its sender name another person. Mixed-person requester approvals keep their
+existing original-Session decision route and signed cause.
 Credentialed CLI hosts stamp the separate execution Account in their shared Action
 context; Session-only transport credentials do not supply Account authority.
 
@@ -4333,6 +4380,12 @@ exact input observations and native resume identity; they do not retain active
 turn authority or materialized credentials. Scoped reads and resume admission
 recover this state at the bridge owner. A live foreign host's record does not
 authorize another bridge to recreate its controller.
+
+In 0.3 development, terminal detached history is removable through the existing
+[`session.delete` Action](actions.md). The bridge owns Account scope and terminal
+admission; the registry's existing per-Run writer joins pending checkpoints and
+removes the retained state and visibility marker, including predecessor filenames.
+Deletion leaves the native conversation at the Agent untouched.
 
 Current development readers also recover the registry's former identity-encoded
 sealed basenames. After checking the payload identity, the existing per-Run

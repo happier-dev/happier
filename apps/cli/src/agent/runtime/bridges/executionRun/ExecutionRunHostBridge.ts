@@ -10,6 +10,7 @@ import {
   type ExecutionRunHostRuntimeEvent,
 } from './executionRunHostRuntime';
 import type {
+  ExecutionRunHistoryDeleteResult,
   ExecutionRunObservedInputTurn,
   ExecutionRunPermissionResponseBridgeResult,
 } from './executionRunBridgeContract';
@@ -99,6 +100,7 @@ import { publishExecutionRunTurn } from './publishExecutionRunTurn';
 import { projectExecutionRunTranscriptBody } from './sidechainStreamText';
 import {
   acknowledgeExecutionRunWorkerUpdate,
+  deleteRetainedExecutionRunHistory,
   readPendingExecutionRunWorkerUpdates,
   reconcileRetainedExecutionRunRecords,
   retainExecutionRunState,
@@ -1701,6 +1703,24 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (!this.runs.has(runId)) await this.recoverRetainedRuns();
     const run = this.runs.get(runId);
     return run && this.isRunInRequestScope(run, scopeSessionId, requester) ? run : null;
+  }
+
+  async deleteForRequest(runId: string, requester: ExecutionRunState['requesterWorkAttributionV1']): Promise<ExecutionRunHistoryDeleteResult> {
+    const run = await this.getForRequest(runId, null, requester);
+    if (!run) return { ok: false, errorCode: 'session_absent', error: 'Session not found or not owned by user' };
+    if (run.status === 'running') return { ok: false, errorCode: 'session_active', error: 'Session is active' };
+    // Join existing terminal/checkpoint writes before removing their retained
+    // destination. Deletion never stops or opens the provider conversation.
+    const controller = this.controllers.get(runId);
+    await controller?.terminalPromise;
+    await controller?.terminalMarkerWritePromise?.catch(() => {});
+    await this.terminalMarkerWritePromises.get(runId)?.catch(() => {});
+    await this.markerWriteChains.get(runId);
+    await deleteRetainedExecutionRunHistory(runId);
+    this.runs.delete(runId);
+    this.terminalMarkerWritePromises.delete(runId);
+    this.emitPublicStateUpdated(runId);
+    return { success: true };
   }
 
   private isRunInRequestScope(run: ExecutionRunState, scopeSessionId: string | null, requester: ExecutionRunState['requesterWorkAttributionV1']): boolean {

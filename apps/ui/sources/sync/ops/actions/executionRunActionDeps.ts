@@ -4,7 +4,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
-import { machineCapabilitiesDetect } from '@/sync/ops/capabilities';
+import { machineCapabilitiesDescribe } from '@/sync/ops/capabilities';
 import { readExecutionRunProtocolV2Support } from '@happier-dev/protocol/execution/runs/protocolSupport';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import {
@@ -31,6 +31,7 @@ type UiExecutionRunActionDeps = Required<Pick<
     | 'executionRunList'
     | 'executionRunGet'
     | 'detachedExecutionRunSend'
+    | 'detachedSessionDelete'
     | 'executionRunStop'
     | 'executionRunCancelTurn'
     | 'executionRunEnsure'
@@ -111,14 +112,59 @@ async function callDetachedExecutionRunRpc(
 export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, account?: LazyActionAccountContext): UiExecutionRunActionDeps {
     const withRunRequestSignal = <T>(opts: ExecutionRunOptions, run: (opts: NonNullable<ExecutionRunOptions>) => Promise<T>) =>
         withActionAccountRequestSignal(account, opts?.signal, signal => run({ ...opts, signal }));
+    const readOptions = (opts: NonNullable<ExecutionRunOptions>) => ({ serverId: opts.serverId,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(account ? { account, scope: account.accountLifetime.scope, context: { ...opts,
+            serverId: opts.serverId ?? undefined, callerPermissionMode: opts.effectiveCallerPermissionMode } } : {}),
+    });
     const requesterAction = account ? createUiAccountActionTransport({ account, resolveFallbackMachineId: () => null,
-        transport: async request => await executeOriginalAccountMachineAction({ account, actionId: 'execution.run.start',
+        transport: async request => await executeOriginalAccountMachineAction({ account, actionId: request.actionId,
             machineId: request.machineId, machineTarget: request.target, input: request.payload,
             requestId: request.requestId, authority: request.invocation.authority, invocation: request.invocation,
             ...(request.onTransportIssued ? { onTransportIssued: request.onTransportIssued } : {}),
             ...(request.signal ? { signal: request.signal } : {}) }),
     }) : null;
+    const requesterRunAction = async (
+        actionId: 'execution.run.start' | 'execution.run.send' | 'execution.run.ensure',
+        input: unknown,
+        opts: NonNullable<ExecutionRunOptions>,
+    ) => {
+        const refuse = (code: string) => actionId === 'execution.run.start'
+            ? { ...executionRunFailure(code), details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') }
+            : executionRunFailure(code);
+        const machineId = resolveExactExecutionRunMachineId(null, opts);
+        if (!machineId) return refuse('execution_run_target_not_selected');
+        if (!requesterAction || !account) return refuse('admission_unavailable');
+        if (opts.serverId && !areServerProfileIdentifiersEquivalent(opts.serverId, account.serverId)
+            || opts.runtimeAccountId && opts.runtimeAccountId !== account.accountId) return refuse('content_unavailable');
+        if (opts.externalActionTarget && (opts.externalActionTarget.kind !== 'machine'
+            || opts.externalActionTarget.machineId !== machineId)) return refuse('target_not_local');
+        let issued = false;
+        const result = await requesterAction({ actionId, input,
+            context: { serverId: account.serverId, runtimeAccountId: account.accountId,
+                surface: opts.surface, authority: opts.authority, actionCaller: opts.actionCaller,
+                actionRequestId: opts.actionRequestId, externalActionTarget: opts.externalActionTarget ?? { kind: 'machine', machineId },
+                onTransportIssued: () => { issued = true; opts.onTransportIssued?.(); },
+                ...(opts.externalActionCredential ? { externalActionCredential: opts.externalActionCredential } : {}),
+                ...(opts.effectiveCallerPermissionMode !== undefined ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
+                ...(opts.callerInputConstraints ? { callerInputConstraints: opts.callerInputConstraints } : {}),
+                ...(opts.workspaceWrites ? { workspaceWrites: opts.workspaceWrites } : {}),
+                ...(opts.originSessionId ? { defaultSessionId: opts.originSessionId } : {}),
+                ...(opts.signal ? { signal: opts.signal } : {}),
+            } });
+        const failure = actionId === 'execution.run.start' && !issued ? ActionExecuteFailureSchema.safeParse(result) : null;
+        if (failure?.success) return { ...failure.data,
+            details: withExecutionRunStartFailureDetails(failure.data.details, 'noRunCreated') };
+        return result && typeof result === 'object' && 'ok' in result && result.ok === true && 'result' in result
+            ? result.result : result;
+    };
     return {
+        detachedSessionDelete: ({ input, context }) => withActionAccountRequestSignal(account, context.signal,
+            signal => machineRpcWithServerScope({
+                machineId: input.machineId, method: SESSION_RPC_METHODS.SESSION_DELETE, payload: input,
+                serverId: context.serverId, accountId: context.runtimeAccountId, preferScoped: true,
+                signal, onIssued: context.onTransportIssued,
+            })),
         executionRunCheckProtocolV2: (sessionId, requirement, options) => withRunRequestSignal(options, async opts => {
             if (
                 !requirement.detachedScope
@@ -131,9 +177,8 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             }
             const machineId = resolveExactExecutionRunMachineId(sessionId, opts);
             if (!machineId) return executionRunFailure('execution_run_target_not_selected');
-            const capability = await machineCapabilitiesDetect(
+            const capability = await machineCapabilitiesDescribe(
                 machineId,
-                { requests: [{ id: 'tool.executionRuns' }] },
                 {
                     serverId: opts?.serverId,
                     ...(scope ? { accountId: scope.accountId } : {}),
@@ -146,36 +191,10 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
         }),
         executionRunStart: (sessionId, request, options) => withRunRequestSignal(options, async opts => {
             if (sessionId === null) {
-                const refuse = (code: string) => ({ ...executionRunFailure(code),
-                    details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') });
-                const machineId = resolveExactExecutionRunMachineId(null, opts);
-                if (!machineId) return refuse('execution_run_target_not_selected');
-                if (!requesterAction || !account) return refuse('admission_unavailable');
-                if (opts?.serverId && !areServerProfileIdentifiersEquivalent(opts.serverId, account.serverId)
-                    || opts?.runtimeAccountId && opts.runtimeAccountId !== account.accountId) return refuse('content_unavailable');
-                if (opts?.externalActionTarget && (opts.externalActionTarget.kind !== 'machine'
-                    || opts.externalActionTarget.machineId !== machineId)) return refuse('target_not_local');
                 // Launch provenance belongs to the receiving host. The original
                 // Action ingress re-admits the public input for this exact target.
                 const { launchOrigin: _launchOrigin, ...input } = request;
-                let issued = false;
-                const result = await requesterAction({ actionId: 'execution.run.start', input: { ...input, sessionId: null },
-                    context: { serverId: account.serverId, runtimeAccountId: account.accountId,
-                        surface: opts?.surface, authority: opts?.authority, actionCaller: opts?.actionCaller,
-                        actionRequestId: opts?.actionRequestId, externalActionTarget: opts?.externalActionTarget ?? { kind: 'machine', machineId },
-                        onTransportIssued: () => { issued = true; opts?.onTransportIssued?.(); },
-                        ...(opts?.externalActionCredential ? { externalActionCredential: opts.externalActionCredential } : {}),
-                        ...(opts?.effectiveCallerPermissionMode !== undefined ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
-                        ...(opts?.callerInputConstraints ? { callerInputConstraints: opts.callerInputConstraints } : {}),
-                        ...(opts?.workspaceWrites ? { workspaceWrites: opts.workspaceWrites } : {}),
-                        ...(opts?.originSessionId ? { defaultSessionId: opts.originSessionId } : {}),
-                        ...(opts?.signal ? { signal: opts.signal } : {}),
-                    } });
-                const failure = !issued ? ActionExecuteFailureSchema.safeParse(result) : null;
-                if (failure?.success) return { ...failure.data,
-                    details: withExecutionRunStartFailureDetails(failure.data.details, 'noRunCreated') };
-                return result && typeof result === 'object' && 'ok' in result && result.ok === true && 'result' in result
-                    ? result.result : result;
+                return await requesterRunAction('execution.run.start', { ...input, sessionId: null }, opts);
             }
             return await sessionExecutionRunStart(sessionId, request, {
                 serverId: opts?.serverId,
@@ -189,14 +208,12 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
         }),
         executionRunList: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, request, opts)
-            : await sessionExecutionRunList(sessionId, request, { serverId: opts?.serverId,
-                ...(opts?.signal ? { signal: opts.signal } : {}) })),
+            : await sessionExecutionRunList(sessionId, request, readOptions(opts))),
         executionRunGet: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_GET, request, opts)
-            : await sessionExecutionRunGet(sessionId, request, { serverId: opts?.serverId,
-                ...(opts?.signal ? { signal: opts.signal } : {}) })),
-        detachedExecutionRunSend: (_sessionId, request, options) => withRunRequestSignal(options, async opts =>
-            await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, request, opts)),
+            : await sessionExecutionRunGet(sessionId, request, readOptions(opts))),
+        detachedExecutionRunSend: (sessionId, request, options) => withRunRequestSignal(options, async opts =>
+            await requesterRunAction('execution.run.send', { ...request, sessionId }, opts)),
         executionRunStop: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, request, opts)
             : await sessionExecutionRunStop(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
@@ -207,7 +224,7 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             : await sessionExecutionRunCancelTurn(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),
         executionRunEnsure: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
-            ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, request, opts)
+            ? await requesterRunAction('execution.run.ensure', { ...request, sessionId }, opts)
             : await sessionExecutionRunEnsure(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),
         executionRunAction: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
@@ -234,9 +251,6 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
         },
         executionRunWait: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, request, opts)
-            : await sessionExecutionRunWait(sessionId, request, {
-                serverId: opts?.serverId,
-                ...(opts?.signal ? { signal: opts.signal } : {}),
-            })),
+            : await sessionExecutionRunWait(sessionId, request, readOptions(opts))),
     };
 }

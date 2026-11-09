@@ -7,10 +7,14 @@ import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } f
 export async function executeSessionDelete(params: Readonly<{
   input: AdmittedActionInputById['session.delete'];
   context: ActionExecutorContext;
-  deps: Pick<ActionExecutorDeps, 'homeDomainAction'>;
+  deps: Pick<ActionExecutorDeps, 'homeDomainAction' | 'detachedSessionDelete'>;
   isDeferredApprovalResult(result: ActionExecuteResult): boolean;
 }>): Promise<ActionExecuteResult> {
   const { input, context, deps } = params;
+  if ('runId' in input) {
+    if (!deps.detachedSessionDelete) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.delete' };
+    return completeActionResult(await deps.detachedSessionDelete({ input, context }));
+  }
   const home = deps.homeDomainAction;
   if (!home) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.delete' };
   const remove = async () => completeActionResult(await home({ actionId: 'session.delete', input, context,

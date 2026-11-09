@@ -29,6 +29,7 @@ function createUnusedExecutionRunBridge(): ExecutionRunHostBridgeContract {
     recoverRetainedRuns: async () => {},
     get: () => null,
     getForRequest: async () => null,
+    deleteForRequest: async () => unusedBridgeMethod(),
     hasAttachedRun: () => false,
     projectPublicState: () => unusedBridgeMethod(),
     getRunningCount: () => 0,

@@ -511,6 +511,49 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         await screen.pressByTestIdAsync('session-run-details-gone-action');
         expect(close).toHaveBeenCalledOnce();
     });
+    it.each(['succeeded', 'failed', 'cancelled', 'timeout'] as const)('deletes a %s detached conversation from its exact Machine after confirmation', async status => {
+        runState = liveRun({ status });
+        const original = boundary.call.getMockImplementation()!;
+        boundary.call.mockImplementation(async (method, input) => {
+            if (method !== 'session.delete') return original(method, input);
+            getActionSpec('session.delete').inputSchema.parse(input);
+            getReply = async () => ({ ok: false, errorCode: 'execution_run_not_found', error: 'Run not found' });
+            return { success: true };
+        });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await mount({ sessionId: null, workspace: { machineId: 'm1' } });
+        await loaded(); await menu();
+        await screen.pressByTestIdAsync('session-run-details-delete');
+        await vi.waitFor(() => expect(screen.findByTestId('session-run-details-gone')).not.toBeNull());
+        expect(Modal.confirm).toHaveBeenCalledWith('sessionInfo.deleteSession', 'sessionInfo.deleteSessionWarning',
+            expect.objectContaining({ destructive: true }));
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(boundary.requests.filter(request => request.method === 'session.delete')).toEqual([
+            { serverUrl: home.homes.home!.serverUrl, targetId: 'm1', method: 'session.delete',
+                payload: { machineId: 'm1', runId: 'run_1' } },
+        ]);
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
+    });
+    it.each(['cancel', 'refusal'] as const)('preserves detached conversation history after deletion %s', async outcome => {
+        runState = liveRun({ status: 'cancelled' });
+        const original = boundary.call.getMockImplementation()!;
+        boundary.call.mockImplementation(async (method, input) => method === 'session.delete'
+            ? { ok: false, errorCode: 'execution_run_not_found', error: 'history_delete_failed' }
+            : original(method, input));
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(outcome !== 'cancel');
+        await mount({ sessionId: null, workspace: { machineId: 'm1' } });
+        await loaded(); await menu(); await screen.pressByTestIdAsync('session-run-details-delete');
+        if (outcome === 'refusal') await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'history_delete_failed'));
+        expect(info().run).toEqual(runState);
+        expect(screen.findByTestId('session-run-details-gone')).toBeNull();
+        expect(calls('session.delete')).toHaveLength(outcome === 'cancel' ? 0 : 1);
+    });
+    it.each(['attached', 'running'] as const)('withholds detached-history Delete from an %s conversation', async kind => {
+        runState = liveRun({ status: kind === 'running' ? 'running' : 'cancelled' });
+        await mount(kind === 'running' ? { sessionId: null, workspace: { machineId: 'm1' } } : {});
+        await loaded(); await menu();
+        expect(screen.findByTestId('session-run-details-delete')).toBeNull();
+    });
     it('reads and replies to a detached Run through its exact Machine without Session input', async () => {
         runState = liveRun();
         latestToolResult = { text: 'The selected line is safe.' };

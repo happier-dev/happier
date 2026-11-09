@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { DaemonExecutionRunEntrySchema, DaemonExecutionRunListResponseSchema, type DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
 import { ExecutionRunStopRequestSchema} from '@happier-dev/protocol/execution/runs/index';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { publishMachineWorkSummaryChanged } from '@/sync/store/domains/machines';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -210,6 +211,28 @@ describe('Runs screen', () => {
         if (waitForLoaded) await waitForHomeGovernance(() => expect(screen.findAllByType(Item).some(item => item.props.title === 'common.loading')).toBe(false));
         return screen;
     }
+
+    it('removes deleted history on a work-summary push by rereading only the affected Machine', async () => {
+        const otherMachine = createMachineFixture({ id: 'machine-2', activeAt: Date.now() });
+        machineListState.byServerId[HOME_B] = [otherMachine];
+        let deleted = false;
+        daemonListRpc.mockImplementation(async machineId => ({ runs: machineId === 'machine-1'
+            ? deleted ? [] : [createExecutionRun({ runId: 'removed-history', happySessionId: null, status: 'cancelled' })]
+            : [createExecutionRun({ runId: 'retained-history', happySessionId: null, status: 'succeeded' })] }));
+        const screen = await renderRunsScreen();
+        const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
+        await act(async () => screen.findByType(SegmentedTabBar).props.onSelectTab('all'));
+        const ids = () => screen.findAllByType(ExecutionRunRow).map(row => row.props.run.runId).sort();
+        expect(ids()).toEqual(['removed-history', 'retained-history']);
+        daemonListRpc.mockClear();
+        deleted = true;
+        await act(async () => publishMachineWorkSummaryChanged(HOME_A, 'machine-1'));
+        await vi.waitFor(() => expect(ids()).toEqual(['retained-history']));
+        expect(daemonListRpc.mock.calls.map(([machineId, options]) => ({ machineId, serverId: options?.serverId }))).toEqual([
+            { machineId: 'machine-1', serverId: HOME_A },
+        ]);
+        expect(screen.findByType(SegmentedTabBar).props.activeTabId).toBe('all');
+    });
 
     it('keeps the exact native Run read alive across Machine presence and metadata publications', async () => {
         routerMock.state.router.setParams({ serverId: HOME_A, machineId: 'machine-1', runId: 'run-live' });

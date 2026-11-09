@@ -610,6 +610,35 @@ describe("registerSocketRpcHandlers", () => {
             }
         });
 
+    it.each(['owner', 'foreign'] as const)('admits detached history deletion without a Session row only for Machine access: %s', async scenario => {
+        machineFindFirstMock.mockImplementation(async args => (args as { where: { id: string } }).where.id === 'machine-1'
+            ? { revokedAt: null, replacedByMachineId: null, installationId: 'installation-1', kind: 'persistent' } : null);
+        sessionFindUniqueMock.mockResolvedValue(null);
+        const method = 'machine-1:session.delete';
+        const { io, rooms, addToRoom, createRoomAwareSocket } = createRoomAwareIo();
+        const effect = vi.fn(async () => ({ success: true }));
+        const daemon = createRoomAwareSocket({ id: 'delete-daemon', data: { clientType: 'machine-scoped',
+            machineId: 'machine-1', verifiedMachineInstallationId: 'installation-1' }, timeout: () => ({ emitWithAck: effect }) });
+        addToRoom(daemon.id, daemon);
+        registerSocketRpcHandlers({ userId: 'user-1', socket: daemon as unknown as Socket, io });
+        await triggerSocketHandler(daemon, SOCKET_RPC_EVENTS.REGISTER, { method });
+        const caller = createRoomAwareSocket({ id: 'deleter', data: { clientType: 'user-scoped' } });
+        registerSocketRpcHandlers({ userId: scenario === 'owner' ? 'user-1' : 'other-user', socket: caller as unknown as Socket, io });
+        const ack = vi.fn();
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method,
+            params: { machineId: 'machine-1', runId: 'retained-run' } }, ack);
+        if (scenario === 'owner') {
+            expect(rooms.get(`rpc:user-1:${method}`)?.has(daemon)).toBe(true);
+            expect(ack).toHaveBeenCalledWith({ ok: true, result: { success: true } });
+            expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                machineAdmission: expect.objectContaining({ actorAccountId: 'user-1', machineId: 'machine-1', installationId: 'installation-1' }),
+            }));
+        } else {
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(effect).not.toHaveBeenCalled();
+        }
+    });
+
     it.each([
         { clientType: 'user-scoped', method: SESSION_RPC_METHODS.EXECUTION_RUN_GET },
         { clientType: 'user-scoped', method: `machine-1:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}` },

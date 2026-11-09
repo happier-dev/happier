@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-const machineCapabilitiesDetectMock = vi.hoisted(() => vi.fn());
+const machineCapabilitiesDescribeMock = vi.hoisted(() => vi.fn());
 const readMachineControlTargetForSessionMock = vi.hoisted(() => vi.fn());
 const sessionExecutionRunStartMock = vi.hoisted(() => vi.fn());
 const sessionExecutionRunListMock = vi.hoisted(() => vi.fn());
@@ -15,7 +15,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 vi.mock('@/sync/ops/capabilities', () => ({
-    machineCapabilitiesDetect: machineCapabilitiesDetectMock,
+    machineCapabilitiesDescribe: machineCapabilitiesDescribeMock,
 }));
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineControlTargetForSession: readMachineControlTargetForSessionMock,
@@ -37,22 +37,34 @@ const V2_EXECUTION_RUN_CAPABILITY = {
     supported: true,
     response: {
         protocolVersion: 1,
-        results: {
-            'tool.executionRuns': {
-                ok: true,
-                checkedAt: 1,
-                data: {
-                    protocolVersion: 2,
-                    features: { detachedScope: true, startAndWait: true },
-                },
-            },
-        },
+        capabilities: [{ id: 'tool.executionRuns', kind: 'tool', protocol: {
+            version: 2, available: true, features: { detachedScope: true, startAndWait: true },
+        } }],
+        checklists: {},
     },
 } as const;
 
 describe('UI execution.run Action dependencies', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('deletes detached history on the exact Account and Machine using the session delete Action', async () => {
+        const input = { machineId: 'machine-1', runId: 'run-1' };
+        const controller = new AbortController();
+        const onTransportIssued = vi.fn();
+        machineRpcWithServerScopeMock.mockImplementation(async request => {
+            request.onIssued?.();
+            return { success: true };
+        });
+        await expect(createUiExecutionRunActionDeps().detachedSessionDelete({ input, context: {
+            serverId: 'home-1', runtimeAccountId: 'account-1', signal: controller.signal, onTransportIssued,
+        } })).resolves.toEqual({ success: true });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1', serverId: 'home-1', accountId: 'account-1', method: 'session.delete',
+            payload: input, signal: controller.signal, onIssued: onTransportIssued, preferScoped: true,
+        });
+        expect(onTransportIssued).toHaveBeenCalledOnce();
     });
 
     it('preserves the exact Home, Account, Machine and issuance witness when answering a detached request', async () => {
@@ -88,7 +100,7 @@ describe('UI execution.run Action dependencies', () => {
     });
 
     it('keeps detached controls on the one exact machine selected by V2 preflight', async () => {
-        machineCapabilitiesDetectMock.mockResolvedValue(V2_EXECUTION_RUN_CAPABILITY);
+        machineCapabilitiesDescribeMock.mockResolvedValue(V2_EXECUTION_RUN_CAPABILITY);
         machineRpcWithServerScopeMock
             .mockResolvedValueOnce({ run: { runId: 'run_1', status: 'running' } })
             .mockResolvedValueOnce({ ok: true })
@@ -116,9 +128,8 @@ describe('UI execution.run Action dependencies', () => {
         await expect(deps.executionRunWait(null, { runId: 'run_1', timeoutSeconds: 10 }, exactOptions))
             .resolves.toEqual({ ok: true, status: 'succeeded', result: { run: { runId: 'run_1', status: 'succeeded' } } });
 
-        expect(machineCapabilitiesDetectMock).toHaveBeenCalledWith(
+        expect(machineCapabilitiesDescribeMock).toHaveBeenCalledWith(
             'machine_mounted',
-            { requests: [{ id: 'tool.executionRuns' }] },
             expect.objectContaining({ serverId: 'server_1' }),
         );
         expect(machineRpcWithServerScopeMock.mock.calls.map(([request]) => request.machineId)).toEqual([
@@ -173,7 +184,7 @@ describe('UI execution.run Action dependencies', () => {
 
     it('uses the contextual Session only to resolve a detached target when no mounted target was stamped', async () => {
         readMachineControlTargetForSessionMock.mockReturnValue({ machineId: 'machine_context' });
-        machineCapabilitiesDetectMock.mockResolvedValue(V2_EXECUTION_RUN_CAPABILITY);
+        machineCapabilitiesDescribeMock.mockResolvedValue(V2_EXECUTION_RUN_CAPABILITY);
         const deps = createUiExecutionRunActionDeps();
 
         await expect(deps.executionRunCheckProtocolV2?.(
@@ -191,9 +202,8 @@ describe('UI execution.run Action dependencies', () => {
             serverId: 'server_1',
             sessionId: 'session_context',
         });
-        expect(machineCapabilitiesDetectMock).toHaveBeenCalledWith(
+        expect(machineCapabilitiesDescribeMock).toHaveBeenCalledWith(
             'machine_context',
-            { requests: [{ id: 'tool.executionRuns' }] },
             expect.objectContaining({ serverId: 'server_1' }),
         );
     });

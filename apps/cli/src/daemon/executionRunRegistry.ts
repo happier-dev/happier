@@ -342,8 +342,8 @@ async function acknowledgeRetainedRunTerminal(input: RetainedExecutionRunWorkerU
 }
 
 export async function retainExecutionRunState(state: ExecutionRunState, terminalEventId?: string, requesterWorkAttributionV1?: RequesterWorkAttributionV1): Promise<void> {
-  const identity = await readProcessIdentityByPid(process.pid);
   await serializeRetainedStateWrite(state.runId, async () => {
+    const identity = await readProcessIdentityByPid(process.pid);
     const current = await readRetainedExecutionRunRecord(state.runId);
     const attribution = requesterWorkAttributionV1 ?? state.requesterWorkAttributionV1 ?? current?.requesterWorkAttributionV1;
     const pendingEventId = terminalEventId ?? (state.status !== 'running'
@@ -843,17 +843,14 @@ export async function writeExecutionRunMarker(marker: DaemonExecutionRunMarkerOw
   notifyExecutionRunLiveWorkChanged();
 }
 
-export async function removeExecutionRunMarker(runId: string): Promise<void> {
-  const dir = resolveExecutionRunMarkerDir();
-  try {
-    await unlink(resolveExecutionRunMarkerPath(runId));
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err?.code !== 'ENOENT') {
-      logger.debug(`[executionRunRegistry] Failed to remove marker run-${runId}.json`, e);
-    }
-  }
+async function unlinkExecutionRunMarkerIfPresent(path: string): Promise<void> {
+  try { await unlink(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
+}
 
+async function removeExecutionRunMarkerFiles(runId: string): Promise<void> {
+  const dir = resolveExecutionRunMarkerDir();
+  await unlinkExecutionRunMarkerIfPresent(resolveExecutionRunMarkerPath(runId));
   try {
     const entries = await readdir(dir);
     const currentEntry = `run-${digestEntryIdentity([runId])}.json`;
@@ -870,23 +867,35 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
             const marker = await readExecutionRunMarkerFile(path);
             if (marker?.runId !== runId) return;
           }
-          try {
-            await unlink(path);
-          } catch (error) {
-            const unlinkErr = error as NodeJS.ErrnoException;
-            if (unlinkErr?.code !== 'ENOENT') {
-              logger.debug(`[executionRunRegistry] Failed to remove temp marker ${entry}`, error);
-            }
-          }
+          await unlinkExecutionRunMarkerIfPresent(path);
         }),
     );
   } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err?.code !== 'ENOENT') {
-      logger.debug(`[executionRunRegistry] Failed to scan temp markers for run-${runId}.json`, e);
-    }
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') throw e;
+  }
+}
+
+export async function removeExecutionRunMarker(runId: string): Promise<void> {
+  try { await removeExecutionRunMarkerFiles(runId); }
+  catch (error) {
+    logger.debug('[executionRunRegistry] Failed to remove execution run marker', error);
   }
   notifyExecutionRunLiveWorkChanged();
+}
+
+/** The bridge admits deletion; this writer removes only Happier-owned history. */
+export async function deleteRetainedExecutionRunHistory(runId: string): Promise<void> {
+  await serializeRetainedStateWrite(runId, async () => {
+    await removeExecutionRunMarkerFiles(runId);
+    for (const path of [retainedStatePath(runId), priorRetainedStatePath(runId)]) {
+      try { await removeProtectedLocalStateFile(path); }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code !== 'ENOENT' && code !== 'ENAMETOOLONG') throw error;
+      }
+    }
+    notifyExecutionRunLiveWorkChanged();
+  });
 }
 
 export async function clearExecutionRunConnectedServicesCleanupReceipt(

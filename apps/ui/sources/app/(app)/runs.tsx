@@ -41,6 +41,8 @@ import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenEx
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 
 type MachineRunsState =
@@ -113,6 +115,7 @@ export default function RunsScreen() {
   const requestedRunId = requestedTarget?.runId
     ?? (routeParams.serverId === undefined && routeParams.machineId === undefined ? routeRunId : null);
   const shouldContinue = useMountedShouldContinue();
+  const presented = useLayoutPresentationActive();
   const inventory = useAllProfileMachineInventorySnapshots();
   const machineScopeBindings = useServerCredentialAccountScopeBindings(inventory.flatMap(snapshot =>
     snapshot.kind === 'resolved' ? [snapshot.serverIdentityId] : []));
@@ -162,23 +165,35 @@ export default function RunsScreen() {
     readTargets: nextReadTargets, machineAddresses: nextMachineAddresses,
   }), [readTargetsKey]);
 
-  const load = React.useCallback(async (intent?: 'retry') => {
-    loadControllerRef.current?.abort();
-    const controller = new AbortController();
-    loadControllerRef.current = controller;
-    setState({ status: 'loading' });
+  const load = React.useCallback(async (intent?: 'retry', changedMachine?: Readonly<{ serverId: string; machineId: string }>) => {
+    const targets = changedMachine ? readTargets.filter(target => target.serverId === changedMachine.serverId
+      && target.machineId === changedMachine.machineId) : readTargets;
+    if (changedMachine && targets.length === 0) return;
+    // Push reads share this presentation's admitted lifetime; they do not cancel
+    // another Machine's update or replace the list with a loading state.
+    if (!changedMachine) loadControllerRef.current?.abort();
+    const controller = changedMachine ? loadControllerRef.current : new AbortController();
+    if (!controller || controller.signal.aborted) return;
+    if (!changedMachine) {
+      loadControllerRef.current = controller;
+      setState({ status: 'loading' });
+    }
+    const addresses = changedMachine ? [changedMachine] : machineAddresses;
 
     const readsByMachineAddressKey: Record<string, MachineExecutionRunsListResult> = {};
-    const retirements = [...machineScopeBindings.values()].map(binding => binding.onRetire(() => controller.abort()));
+    const retirements = [...new Set(targets.map(target => target.serverId))].flatMap(serverId => {
+      const binding = machineScopeBindings.get(serverId);
+      return binding ? [binding.onRetire(() => controller.abort())] : [];
+    });
 
     try {
       await Promise.all(
-        readTargets.map(async ({ serverId, machineId, accountId, automatic }) => {
+        targets.map(async ({ serverId, machineId, accountId, automatic }) => {
           const binding = machineScopeBindings.get(serverId);
           if (!binding?.isCurrent() || binding.scope.accountId !== accountId) return;
           // Opening one exact Run is a user-requested read, like Refresh.
           // A previous request failure must not turn that navigation into an empty list.
-          if (intent !== 'retry' && !automatic) return;
+          if (intent !== 'retry' && !changedMachine && !automatic) return;
 
           const res = await machineExecutionRunsList(machineId, { serverId, accountId, signal: controller.signal });
           if (!controller.signal.aborted && binding.isCurrent()) {
@@ -187,20 +202,34 @@ export default function RunsScreen() {
         }),
       );
 
-      if (!controller.signal.aborted) setState(aggregateMachineRunReads(machineAddresses.map(address => ({
+      if (!controller.signal.aborted) setState(previous => aggregateMachineRunReads(addresses.map(address => ({
         ...address, result: readsByMachineAddressKey[executionRunMachineAddressKey(address.serverId, address.machineId)],
-      }))));
+      })), changedMachine && 'unavailableMachines' in previous ? previous : undefined));
     } catch (error) {
-      if (!controller.signal.aborted) setState({ status: 'error', error: error instanceof Error ? error.message : t('runs.failedToLoad') });
+      if (!controller.signal.aborted) {
+        const message = error instanceof Error ? error.message : t('runs.failedToLoad');
+        setState(previous => changedMachine ? aggregateMachineRunReads([
+          { ...changedMachine, result: { ok: false, error: message } },
+        ], 'unavailableMachines' in previous ? previous : undefined) : { status: 'error', error: message });
+      }
     } finally {
       for (const retirement of retirements) retirement.dispose();
     }
   }, [machineScopeBindings, readTargets, machineAddresses]);
 
   React.useEffect(() => {
+    if (!presented) return;
     void load();
     return () => loadControllerRef.current?.abort();
-  }, [load]);
+  }, [load, presented]);
+
+  React.useEffect(() => {
+    if (!presented) return;
+    return subscribeMachineUpdates((serverId, machineIds, facts) => {
+      if (!facts?.workSummaryChanged) return;
+      for (const machineId of machineIds) void load(undefined, { serverId, machineId });
+    }, { workSummary: true });
+  }, [load, presented]);
 
   React.useEffect(() => {
     if (requestedRunId === null) {

@@ -1,6 +1,6 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -100,6 +100,8 @@ import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSession
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
+import { Modal } from '@/modal';
 
 type LoadState =
     | { status: 'loading' }
@@ -206,6 +208,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     /** The Run's machine did not confirm a stop: the whole-session fallback is on offer. */
     const [stopUnconfirmed, setStopUnconfirmed] = React.useState(false);
     const [isStopping, setIsStopping] = React.useState(false);
+    const [isDeleting, setIsDeleting] = React.useState(false);
     const [interactionError, setInteractionError] = React.useState<string | null>(null);
     const [pendingInteraction, setPendingInteraction] = React.useState<'cancel_turn' | 'resume' | null>(null);
     const [rawToolResultExpanded, setRawToolResultExpanded] = React.useState(false);
@@ -672,6 +675,28 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             }
         })(), { tag: 'SessionExecutionRunDetailsView.stopRun' });
     }, [actionScopeIsCurrent, executeAction, runOperation, isStopping, load, props.runId, props.sessionId]);
+    const deleteRun = React.useCallback(() => {
+        const machineId = props.workspace?.machineId;
+        if (isDeleting || !machineId) return;
+        fireAndForget((async () => {
+            setIsDeleting(true);
+            try {
+                if (!await confirmSessionDelete() || !actionScopeIsCurrent()) return;
+                const result = await executeAction('session.delete', { machineId, runId: props.runId }, { ...runOperation, confirmed: true });
+                if (!actionScopeIsCurrent() || isExecutionRunMutationCancelled(result)) return;
+                if (!result.ok) {
+                    Modal.alert(t('common.error'), result.error || t('sessionInfo.failedToDeleteSession'));
+                    return;
+                }
+                await load();
+            } catch (error) {
+                if (!actionScopeIsCurrent() || isExecutionRunMutationCancelled(error)) return;
+                Modal.alert(t('common.error'), error instanceof Error ? error.message : t('sessionInfo.failedToDeleteSession'));
+            } finally {
+                setIsDeleting(false);
+            }
+        })(), { tag: 'SessionExecutionRunDetailsView.deleteRun' });
+    }, [actionScopeIsCurrent, executeAction, isDeleting, load, props.runId, props.workspace?.machineId, runOperation]);
     const onSessionStopped = React.useCallback(() => {
         setStopUnconfirmed(false);
         setStopError(null);
@@ -899,6 +924,9 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                         attention={runAttention}
                         stopAction={canMutateRunViaSessionRpc && state.run.status === 'running'
                             ? { stopping: isStopping, onStop: stopRun }
+                            : null}
+                        deleteAction={canMutateRunViaSessionRpc && props.sessionId === null && props.workspace && !isExecutionRunActive(state.run)
+                            ? { pending: isDeleting, onDelete: deleteRun }
                             : null}
                         cancelResponseAction={canMutateRunViaSessionRpc && interactionAffordances.canCancelTurn && cancellableInputTurn
                             ? { pending: pendingInteraction !== null, onCancel: () => invokeInteraction('cancel_turn') }

@@ -149,6 +149,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ]: 'execution.run.stream.read',
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL]: 'execution.run.stream.cancel',
   [SESSION_RPC_METHODS.EXECUTION_RUN_STOP]: 'execution.run.stop',
+  [SESSION_RPC_METHODS.SESSION_DELETE]: 'session.delete',
   [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION]: 'execution.run.action',
   [RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST]: 'sessions.external.candidates.list',
   [RPC_METHODS.DAEMON_EXTERNAL_SESSION_CANDIDATE_DELETE]: 'sessions.external.candidate.delete',

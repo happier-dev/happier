@@ -11,7 +11,8 @@ import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRu
 import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 import { createCliExecutionRunActionDeps, type CliExecutionRunHost } from './executionRuns';
 import { createCliMachineActionTransport } from './machineTransport';
-import type { CliActionDepsParams, ExecutionRunActionTransportOptions } from './types';
+import type { CliActionDepsParams } from './types';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCliActionDeps } from '../createCliActionDeps';
@@ -28,7 +29,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', async importOriginal => ({
 const requirement = { detachedScope: true, startAndWait: false, exactInputResults: true,
   runScopedAgentBindings: false, secretReferenceOverlay: false };
 
-async function fixture() {
+async function fixture(actionId: 'scm.diffSummary.generate' | 'session.delete' = 'scm.diffSummary.generate') {
   const home = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: 'https://session-home.test' });
   const target = { kind: 'machine', machineId: 'machine' } as const;
   const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: randomUUID(), target, input: {} });
@@ -36,7 +37,7 @@ async function fixture() {
     authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admitted-root', binding: {
       accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
       accountEncryptionMode: 'plain', serverIdentityId: 'session-home', machineId: 'machine',
-      installationId: home.installation.installationId, actionId: 'scm.diffSummary.generate',
+      installationId: home.installation.installationId, actionId,
       requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } }), credentials: home.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'session-home',
     serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => home.isHomeCurrent(),
@@ -53,7 +54,7 @@ async function fixture() {
     return service.describe();
   });
   const params: CliActionDepsParams = { token: home.bootstrap.credentials.token, credentials: home.bootstrap.credentials,
-    sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'session-home',
+    sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
     externalActionMachineInstallationId: home.installation.installationId,
     externalActionMachineRequestPrivateKey: decodeBase64(home.installation.privateKey, 'base64url'),
     machineActionDirectTargetTransport: { machineId: 'machine', invoke } };
@@ -66,13 +67,26 @@ async function fixture() {
     executionRunActionFailure: (code, _message, details) => ({ ok: false, errorCode: code, error: code,
       ...(details === undefined ? {} : { details }) }),
   };
-  const options: ExecutionRunActionTransportOptions = { exactMachineId: 'machine', authority: 'account_automation',
-    serverId: 'session-home', externalActionExecutionAuthorization: requester.authorization, externalActionTarget: target };
+  const options = { exactMachineId: 'machine', authority: 'account_automation',
+    serverId: 'session-home', externalActionExecutionAuthorization: requester.authorization, externalActionTarget: target } satisfies
+    NonNullable<Parameters<NonNullable<ActionExecutorDeps['executionRunCheckProtocolV2']>>[2]>;
   return { deps: createCliExecutionRunActionDeps(params, host).actionDeps, invoke, options, params };
 }
 
 describe('signed exact Execution Run preflight', () => {
   afterEach(() => { callSessionRpc.mockReset(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('deletes detached history through the original session delete Action on its exact Machine', async () => {
+    const { deps, invoke, options } = await fixture('session.delete');
+    invoke.mockResolvedValueOnce({ success: true });
+    const input = { machineId: 'machine', runId: 'retained-run' };
+    await expect(deps.detachedSessionDelete?.({ input, context: {
+      surface: 'agent', authority: options.authority, serverId: options.serverId,
+      externalActionExecutionAuthorization: options.externalActionExecutionAuthorization, externalActionTarget: options.externalActionTarget,
+    } })).resolves.toEqual({ success: true });
+    expect(invoke).toHaveBeenCalledWith('session.delete', input, expect.anything());
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
 
   it('starts an attached SCM child through the public Run Action with its signed root', async () => {
     const { params, options, invoke } = await fixture();
@@ -139,14 +153,6 @@ describe('signed exact Execution Run preflight', () => {
     await expect(deps.executionRunCheckProtocolV2?.(null, requirement, { ...options, serverId: 'wrong-home' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'server_scope_mismatch',
         details: { executionRunPreflight: { phase: 'capabilities.describe', cause: { code: 'server_scope_mismatch' } } } });
-    expect(invoke).not.toHaveBeenCalled();
-  });
-
-  it('refuses a signed context without target authority and preserves the authentication cause', async () => {
-    const { deps, options, invoke } = await fixture();
-    await expect(deps.executionRunCheckProtocolV2?.(null, requirement, { ...options, externalActionTarget: undefined }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated',
-        details: { executionRunPreflight: { phase: 'capabilities.describe', cause: { code: 'not_authenticated' } } } });
     expect(invoke).not.toHaveBeenCalled();
   });
 

@@ -35,7 +35,7 @@ const DETACHED_EXECUTION_RUN_CALLER_LIFECYCLE_METHODS = new Set<string>([
   SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
   SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
 ]);
-export type CliExecutionRunActionDeps = Pick<ActionExecutorDeps, "executionRunCheckProtocolV2" | "executionRunStart" | "executionRunList" | "executionRunGet" | "detachedExecutionRunSend" | "executionRunEnsure" | "executionRunEnsureOrStart" | "executionRunStreamStart" | "executionRunStreamRead" | "executionRunStreamCancel" | "executionRunCancelTurn" | "executionRunStop" | "executionRunAction" | "executionRunPermissionRespond" | "executionRunWait"> & Required<Pick<ActionExecutorDeps, 'executionRunStart' | 'executionRunList' | 'executionRunGet' | 'detachedExecutionRunSend' | 'executionRunWait'>>;
+export type CliExecutionRunActionDeps = Pick<ActionExecutorDeps, "executionRunCheckProtocolV2" | "executionRunStart" | "executionRunList" | "executionRunGet" | "detachedExecutionRunSend" | "detachedSessionDelete" | "executionRunEnsure" | "executionRunEnsureOrStart" | "executionRunStreamStart" | "executionRunStreamRead" | "executionRunStreamCancel" | "executionRunCancelTurn" | "executionRunStop" | "executionRunAction" | "executionRunPermissionRespond" | "executionRunWait"> & Required<Pick<ActionExecutorDeps, 'executionRunStart' | 'executionRunList' | 'executionRunGet' | 'detachedExecutionRunSend' | 'executionRunWait'>>;
 export type CliExecutionRunHost = Readonly<{
   resolveTransportForSession: (idOrPrefix: string, signal?: AbortSignal, caller?: Readonly<{ context: ActionExecutorContext; actionId: ActionId }>, expectedSessionAddress?: ActionExecutorContext['expectedSessionAddress']) => Promise<ResolvedSessionTransport | Readonly<{
     ok: false;
@@ -255,6 +255,14 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
     return await describeExecutionRunProtocolV2(callMachineAction, target.machineId, requirement, opts);
   };
   const actionDeps: CliExecutionRunActionDeps = {
+    detachedSessionDelete: async ({ input, context }) => readMachineActionRpcResult(await callMachineAction({
+      machineId: input.machineId, method: SESSION_RPC_METHODS.SESSION_DELETE, request: input,
+      effectActionId: 'session.delete', exactMachine: true, context,
+      ...(context.authority ? { authority: context.authority } : {}),
+      ...(context.serverId ? { serverId: context.serverId } : {}),
+      ...(context.signal ? { signal: context.signal } : {}),
+      ...(context.actionRequestId ? { requestId: context.actionRequestId } : {}),
+    })),
     executionRunCheckProtocolV2: async (sessionId, requirement, opts) => {
       if (
         !requirement.detachedScope

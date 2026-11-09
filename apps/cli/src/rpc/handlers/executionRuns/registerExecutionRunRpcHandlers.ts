@@ -3,6 +3,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunUserTranscriptCommitRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { ExecutionRunPublicState, SessionTranscriptObservationProvenanceV1, ActionExecutorDeps, ReviewCommentPrincipalHeaderV1, ActionId } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExecutionRunFollowFrontierRequestSchema, ExecutionRunFollowFrontierResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
@@ -30,7 +31,7 @@ import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 import type {
   BrowserRecordingComposerAttachInput,
   BrowserRecordingComposerAttachResult,
-} from '@/daemon/browser/recording/attachToComposer';
+} from '../../../daemon/recording/attachToComposer';
 import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
@@ -112,7 +113,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
     sendAgentMessageEphemeralDelta?: (
       provider: ACPProvider,
       body: ACPMessageData,
-      opts: { localId: string; tick: number; baseLength: number; meta?: Record<string, unknown>; createdAt: number; updatedAt?: number },
+      opts: { localId: string; tick: number; baseLength: number; meta?: Record<string, unknown>; createdAt: number; updatedAt?: number; snapshotBody?: ACPMessageData },
     ) => EphemeralSendResult;
     getEphemeralStreamConnectionEpoch?: () => number;
     enqueueAgentMessageCommitted?: (
@@ -338,6 +339,15 @@ export function registerExecutionRunRpcHandlers(
     approvalDeps: ctx.actionApprovalDeps,
   });
   canonicalActionExecutor = actionExecutor;
+
+  if (ctx.sessionId === null) rpc.registerHandler(SESSION_RPC_METHODS.SESSION_DELETE,
+    async (request: unknown, rpcContext) => {
+      const parsed = getActionSpec('session.delete').inputSchema.safeParse(request);
+      if (!parsed.success || !('runId' in parsed.data)) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'Invalid params' };
+      }
+      return manager.deleteForRequest(parsed.data.runId, projectRpcRequesterWorkAttribution(rpcContext, ctx.serverId));
+    });
 
   // This content-free source read belongs to the daemon's retained owner, not
   // the live Session handler or detached Run GET. The Home checks source grants

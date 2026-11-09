@@ -12,6 +12,10 @@ export type ExecutionRunObservedInputTurn = Readonly<{
   turn: ExecutionRunInputTurnV1;
 }>;
 
+export type ExecutionRunHistoryDeleteResult =
+  | Readonly<{ success: true }>
+  | Readonly<{ ok: false; errorCode: 'session_absent' | 'session_active'; error: string }>;
+
 import type {
   ExecutionRunActionParams,
   ExecutionRunActionResult,
@@ -20,10 +24,11 @@ import type {
   ExecutionRunState,
 } from './executionRunTypes';
 import type { ExecutionRunUserTranscriptDirective } from '@happier-dev/protocol';
-import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
+import type { AgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { RuntimePermissionResponseOutcome } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStore } from './executionRunPermissionResponseTarget';
+import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 
 export type ExecutionRunPermissionResponseBridgeResult =
   | Readonly<{ ok: true; delivery: RuntimePermissionResponseOutcome }>
@@ -43,6 +48,7 @@ export interface ExecutionRunHostBridgeContract {
   recoverRetainedRuns(): Promise<void>;
   get(runId: string): ExecutionRunState | null;
   getForRequest(runId: string, scopeSessionId: string | null, requester: RequesterWorkAttributionV1 | undefined): Promise<ExecutionRunState | null>;
+  deleteForRequest(runId: string, requester: RequesterWorkAttributionV1 | undefined): Promise<ExecutionRunHistoryDeleteResult>;
   hasAttachedRun(runId: string): boolean;
   projectPublicState(run: ExecutionRunState): ExecutionRunPublicState;
   getRunningCount(): number;
@@ -89,7 +95,7 @@ export interface ExecutionRunHostBridgeContract {
   ensure(
     runId: string,
     params: Readonly<{ resume?: boolean; signal?: AbortSignal; causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 }>,
-  ): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
+  ): Promise<{ ok: boolean; errorCode?: string; error?: string; details?: AgentStartupFailureDetails }>;
   ensureOrStart(params: Readonly<{
     runId?: string | null;
     start?: ExecutionRunManagerStartParams;
@@ -98,7 +104,7 @@ export interface ExecutionRunHostBridgeContract {
   }>): Promise<
     | { ok: true; runId: string; created: false }
     | (ExecutionRunStartResult & { ok: true; created: true })
-    | { ok: false; errorCode?: string; error: string }
+    | { ok: false; errorCode?: string; error: string; details?: AgentStartupFailureDetails }
   >;
   startTurnStream(
     runId: string,
@@ -115,7 +121,7 @@ export interface ExecutionRunHostBridgeContract {
     runId: string,
     params: Readonly<{ streamId: string; cursor: number; maxEvents?: number; waitForEvents?: boolean; signal?: AbortSignal }>,
   ): Promise<
-    | { ok: true; streamId: string; events: any[]; nextCursor: number; done: boolean }
+    | ({ ok: true } & Omit<import('@/agent/voice/agent/voiceAgentTypes').VoiceAgentTurnStreamReadResult, 'terminalEvent'>)
     | { ok: false; errorCode: string; error: string }
   >;
   cancelTurnStream(
@@ -149,6 +155,8 @@ export interface ExecutionRunHostBridgeContract {
     opts?: Readonly<{
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       effectiveCallerPermissionMode?: string;
+      projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
+      resolveAccountSettingsSnapshot?: import('@/settings/accountSettings/activeAccountSettingsSnapshot').AccountSettingsSnapshotResolver;
     }>,
   ): Promise<ExecutionRunActionResult>;
 }

@@ -568,6 +568,8 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
   optionalSessionScope?: true;
   /** The same method also serves detached Runs under exact Machine admission. */
   machineScope?: true;
+  /** A new provider operation requires the Session owner's current Machine access at RPC admission. */
+  startsAgentWork?: true;
   /** Token calls are admitted only when the canonical row declares an Action. */
   actionId?: ActionId;
   serverMintedContext?: 'session.read' | 'session.permission.respond' | 'session.presentation.origin';
@@ -591,7 +593,7 @@ type RpcMethodValue = (typeof RPC_METHODS)[keyof typeof RPC_METHODS]
   | Extract<(typeof import('./methods.js'))[keyof typeof import('./methods.js')], string>;
 type DeclaredSessionRpcMethod = (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS];
 type DeclaredSessionRpcAuthority = SocketRpcSessionWriteAuthorityV1 | (
-  Pick<SocketRpcSessionWriteClassificationV1, 'authority' | 'actionId' | 'machineScope' | 'serverMintedContext' | 'sessionIdParam'>
+  Pick<SocketRpcSessionWriteClassificationV1, 'authority' | 'actionId' | 'machineScope' | 'startsAgentWork' | 'serverMintedContext' | 'sessionIdParam'>
   & Partial<Pick<SocketRpcSessionWriteClassificationV1, 'routeToSessionOwnerDaemon' | 'optionalSessionScope'>>
 ) | null;
 
@@ -601,7 +603,7 @@ type DeclaredSessionRpcAuthority = SocketRpcSessionWriteAuthorityV1 | (
  * than silently granting submitAgentInput.
  */
 const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
-  [SESSION_RPC_METHODS.SESSION_COMPACT]: { authority: 'submitAgentInput', actionId: 'session.compact' },
+  [SESSION_RPC_METHODS.SESSION_COMPACT]: { authority: 'submitAgentInput', actionId: 'session.compact', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_WORKFLOW_STEP_WITHDRAW]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND]: { authority: 'submitAgentInput', actionId: 'session.message.send' },
   [SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1]: 'sessionOwner',
@@ -617,7 +619,7 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_NEEDS_YOU_RAISE]: { authority: 'submitAgentInput', actionId: 'session.needs_you.raise' },
   [SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1]: { authority: 'submitAgentInput', actionId: 'session.user_action.answer', serverMintedContext: 'session.permission.respond' },
   [SESSION_RPC_METHODS.SESSION_GOAL_GET]: 'readTranscript',
-  [SESSION_RPC_METHODS.SESSION_GOAL_SET]: 'submitAgentInput',
+  [SESSION_RPC_METHODS.SESSION_GOAL_SET]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_GOAL_CLEAR]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION]: 'sessionOwner',
@@ -637,40 +639,41 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_MATERIALIZE_NEXT]: 'sessionOwner',
   [SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE]: 'submitAgentInput',
+  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT]: 'submitAgentInput',
+  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW]: { authority: 'submitAgentInput', startsAgentWork: true },
+  [SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_INPUT_CANCEL_EXACT_TURN_V1]: 'submitAgentInput',
-  [SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE]: 'submitAgentInput',
+  [SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE]: { authority: 'submitAgentInput', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_VENDOR_PLUGIN_CATALOG_LIST]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_SKILL_CATALOG_LIST]: 'readTranscript',
-  [SESSION_RPC_METHODS.EXECUTION_RUN_START]: { authority: 'submitAgentInput', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE]: { authority: 'submitAgentInput', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START]: { authority: 'sessionOwner', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1]: { authority: 'sessionOwner', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_SEND]: { authority: 'submitAgentInput', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START]: { authority: 'sessionOwner', machineScope: true },
-  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2]: { authority: 'sessionOwner', machineScope: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_START]: { authority: 'submitAgentInput', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE]: { authority: 'submitAgentInput', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_SEND]: { authority: 'submitAgentInput', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1]: { authority: 'sessionOwner', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL]: { authority: 'sessionOwner', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1]: { authority: 'sessionOwner', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_STOP]: { authority: 'sessionOwner', machineScope: true },
+  [SESSION_RPC_METHODS.SESSION_DELETE]: { authority: 'sessionOwner', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_LIST]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_GET]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_FOLLOW_FRONTIER]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_WAIT]: { authority: 'readTranscript', machineScope: true },
   [SESSION_RPC_METHODS.EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE_V1]: 'sessionOwner',
-  [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION]: { authority: 'sessionOwner', machineScope: true },
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION]: { authority: 'sessionOwner', machineScope: true, startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_ROLLBACK]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_CHECKPOINT]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_RESTORE]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT]: 'readTranscript',
-  [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START]: 'sessionOwner',
+  [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START]: { authority: 'sessionOwner', startsAgentWork: true },
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP]: 'submitAgentInput',
   [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_OPEN_V1]: 'readTranscript',

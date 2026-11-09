@@ -25,29 +25,31 @@ export type MachineRunReadAggregate =
         unavailableMachines: readonly RunListUnavailableMachine[] }>
     | Readonly<{ status: 'error'; error: string; unavailableMachines: readonly RunListUnavailableMachine[] }>;
 
-/** A refused registry read withdraws only that Machine's coverage, never another Machine's rows. */
+/** A partial registry read replaces only those Machines' coverage, retaining other observed rows and failures. */
 export function aggregateMachineRunReads(reads: readonly Readonly<{
     serverId: string;
     machineId: string;
     result: MachineExecutionRunsListResult | undefined;
-}>[]): MachineRunReadAggregate {
-    const runsByMachineAddressKey: Record<string, readonly DaemonExecutionRunEntry[]> = {};
-    const unavailableMachines: RunListUnavailableMachine[] = [];
-    let successfulReadCount = 0;
-    let firstFailure: Extract<MachineExecutionRunsListResult, { ok: false }> | undefined;
+}>[], previous?: MachineRunReadAggregate): MachineRunReadAggregate {
+    const runsByMachineAddressKey: Record<string, readonly DaemonExecutionRunEntry[]> = {
+        ...(previous?.status === 'loaded' ? previous.runsByMachineAddressKey : {}),
+    };
+    const changedKeys = new Set(reads.map(({ serverId, machineId }) => executionRunMachineAddressKey(serverId, machineId)));
+    for (const key of changedKeys) delete runsByMachineAddressKey[key];
+    const unavailableMachines = (previous?.unavailableMachines ?? []).filter(machine =>
+        !changedKeys.has(executionRunMachineAddressKey(machine.serverId, machine.machineId)));
     for (const { serverId, machineId, result } of reads) {
         if (result?.ok) {
-            successfulReadCount += 1;
             runsByMachineAddressKey[executionRunMachineAddressKey(serverId, machineId)] = result.runs;
         } else {
             unavailableMachines.push({ serverId, machineId,
                 reason: result?.notOffered ? 'not_offered' : result ? 'read_failed' : 'not_read',
                 error: result?.error ?? null, errorCode: result?.errorCode ?? null });
-            if (result && !result.notOffered && !firstFailure) firstFailure = result;
         }
     }
-    return firstFailure && successfulReadCount === 0
-        ? { status: 'error', error: machineRunReadFailureDetail(firstFailure.errorCode, firstFailure.error), unavailableMachines }
+    const firstFailure = unavailableMachines.find(machine => machine.reason === 'read_failed');
+    return firstFailure && Object.keys(runsByMachineAddressKey).length === 0
+        ? { status: 'error', error: machineRunReadFailureDetail(firstFailure.errorCode, firstFailure.error ?? t('runs.failedToLoad')), unavailableMachines }
         : { status: 'loaded', runsByMachineAddressKey, unavailableMachines };
 }
 

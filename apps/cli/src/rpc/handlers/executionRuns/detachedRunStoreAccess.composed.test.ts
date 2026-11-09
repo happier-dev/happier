@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -6,7 +6,7 @@ import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/Exe
 import type { ExecutionRunRequestBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { reloadConfiguration } from '@/configuration';
-import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
+import { listExecutionRunMarkers, readRetainedExecutionRunRecord, retainExecutionRunState, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -27,6 +27,54 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   reloadConfiguration();
   if (directory) await rm(directory, { recursive: true, force: true });
+});
+
+it('deletes only the owning Account detached history through Session delete and keeps the provider conversation', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'happier-detached-history-delete-'));
+  vi.stubEnv('HAPPIER_HOME_DIR', directory);
+  reloadConfiguration();
+  const providerConversation = join(directory, 'provider-conversation');
+  await writeFile(providerConversation, 'provider-owned-conversation');
+  const run: ExecutionRunState = {
+    runId: 'retained-run', callId: 'call', sidechainId: 'sidechain', sessionId: null,
+    depth: 0, intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+    instructions: '', permissionMode: 'read_only', retentionPolicy: 'resumable',
+    runClass: 'bounded', ioMode: 'request_response', status: 'cancelled', startedAtMs: 1, finishedAtMs: 2,
+    resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: 'codex' }),
+      providerSessionId: providerConversation },
+    requesterWorkAttributionV1: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
+  };
+  await retainExecutionRunState(run);
+  await writeExecutionRunMarker({ pid: process.pid, happySessionId: null, runId: run.runId, callId: run.callId,
+    sidechainId: run.sidechainId, intent: run.intent, backendTarget: readBackendTargetRefV2(run.backendTarget),
+    permissionMode: run.permissionMode, retentionPolicy: run.retentionPolicy, runClass: run.runClass, ioMode: run.ioMode,
+    status: run.status, startedAtMs: run.startedAtMs, finishedAtMs: run.finishedAtMs, updatedAtMs: 2,
+    requesterWorkAttributionV1: run.requesterWorkAttributionV1 });
+  await retainExecutionRunState({ ...run, runId: 'attached-history', sessionId: 'attached-session' });
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
+  registration = registerExecutionRunRpcHandlers(rpc, {
+    sessionId: null, machineId: 'machine', serverId: 'home', parentProvider: 'daemon.executionRuns', cwd: directory,
+    runtimeAccountId: 'owner', sendAcp: async () => {}, onManagerCreated: created => { manager = created; },
+  });
+  const requester = (accountId: string): RpcHandlerContext => ({ signal: new AbortController().signal,
+    machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage', encryptionMode: 'plain' } });
+  const remove = (runId: string, accountId: string) => rpc.invokeLocal('session.delete', { machineId: 'machine', runId },
+    { rpcContext: requester(accountId) });
+  expect(await remove(run.runId, 'other-account')).toMatchObject({ ok: false, errorCode: 'session_absent' });
+  expect(await readRetainedExecutionRunRecord(run.runId)).not.toBeNull();
+  expect(await remove('attached-history', 'owner')).toMatchObject({ ok: false, errorCode: 'session_absent' });
+  expect(await readRetainedExecutionRunRecord('attached-history')).not.toBeNull();
+  expect(await remove(run.runId, 'owner')).toEqual({ success: true });
+  expect(await readRetainedExecutionRunRecord(run.runId)).toBeNull();
+  expect((await listExecutionRunMarkers()).some(marker => marker.runId === run.runId)).toBe(false);
+  expect(await manager!.getForRequest(run.runId, null, run.requesterWorkAttributionV1)).toBeNull();
+  const restarted = new ExecutionRunHostBridge({ parentProvider: 'daemon.executionRuns', cwd: directory,
+    runtimeAccountId: 'owner', sendAcp: async () => {} });
+  try {
+    expect(await restarted.getForRequest(run.runId, null, run.requesterWorkAttributionV1)).toBeNull();
+  } finally { await restarted.dispose(); }
+  expect(await readFile(providerConversation, 'utf8')).toBe('provider-owned-conversation');
 });
 
 it('a newly registered detached Run reader inherits store isolation without an ingress predicate', async () => {
@@ -147,6 +195,10 @@ it('keeps an unattributed 0.2-shaped retained Run readable, resumable and stoppa
       .toEqual({ ok: true });
     expect(resumedThread).toBe('original-thread');
     expect(store.get(run.runId)).toMatchObject({ status: 'running', launch: run.launch, resumeHandle: run.resumeHandle });
+    expect(await invoke('session.delete', { machineId: 'machine', runId: run.runId }, foreign))
+      .toMatchObject({ ok: false, errorCode: 'session_absent' });
+    expect(await invoke('session.delete', { machineId: 'machine', runId: run.runId }, owner))
+      .toMatchObject({ ok: false, errorCode: 'session_active' });
     expect(await invoke('execution.run.stop', { runId: run.runId }, foreign))
       .toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
     expect(store.get(run.runId)?.status).toBe('running');
@@ -155,6 +207,9 @@ it('keeps an unattributed 0.2-shaped retained Run readable, resumable and stoppa
       .toMatchObject({ ok: true });
     expect(store.get(run.runId)?.status).toBe('cancelled');
     expect(cancelled).toBe(true);
+    expect(await invoke('session.delete', { machineId: 'machine', runId: run.runId }, owner))
+      .toEqual({ success: true });
+    expect(await readRetainedExecutionRunRecord(run.runId)).toBeNull();
   } finally {
     await runtime.dispose();
   }

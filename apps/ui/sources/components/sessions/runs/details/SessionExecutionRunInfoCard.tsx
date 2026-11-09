@@ -126,6 +126,7 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     /** The machine the Run works on, by name. A walkthrough conversation names it beside its model (lab WT3-D3). */
     machineName?: string | null;
     stopAction?: Readonly<{ stopping: boolean; onStop: () => void }> | null;
+    deleteAction?: Readonly<{ pending: boolean; onDelete: () => void }> | null;
     cancelResponseAction?: Readonly<{ pending: boolean; onCancel: () => void }> | null;
     /** The Run's result as text, when it has one to copy. */
     copyResultText?: string | null;
@@ -227,6 +228,7 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
                     resultPending={running}
                     onShowInTranscript={props.onShowInTranscript}
                     sendToSession={props.sendToSession ?? null}
+                    deleteAction={props.deleteAction}
                     facts={facts}
             />}
         />

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { executeSessionSectionActionV1, type SessionSectionActionPortV1 } from './sessionSections.js';
+import { projectUnexpectedActionFailureV1 } from './actionExecutionResult.js';
 
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
@@ -17,6 +19,15 @@ import { SessionGoalControlFailureV1Schema } from '../sessions/work/state/sessio
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
 import { resolveSocketRpcSessionAuthorization } from '../rpc/socket.js';
+import { SessionModelSetResultV1Schema } from '../sessions/control/modelTransitionV1.js';
+import { createEmptyWorkflowActionHost } from './executor/emptyWorkflowActionHost.testkit.js';
+
+function modelSetSuccess(request: Parameters<NonNullable<ActionExecutorDeps['sessionModelSet']>>[0]) {
+  const modelId = request.teamCredentialModel?.modelId ?? request.modelId;
+  return SessionModelSetResultV1Schema.parse({ ok: true, status: 'applied', sessionId: request.sessionId, modelId,
+    activeSelection: { agentTargetKey: request.teamCredentialModel?.agentTargetKey ?? 'agent:happier.agent.codex/codex',
+      providerConnectionId: request.providerConnectionId ?? null, modelId } });
+}
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -87,6 +98,122 @@ describe('createActionExecutor (session control)', () => {
     expect(spec.inputSchema.safeParse({ sessionId: 's1', face: { style: 'solid', finish: 'gloss' } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ sessionId: 's1', face, bot: { kind: 'bot' } }).success).toBe(false);
     expect(getActionSpec('session.bot.set').inputSchema.safeParse({ sessionId: 's1', bot: null, face }).success).toBe(false);
+  });
+  it('keeps an opaque native model id through the public setter boundary', async () => {
+    const models: string[] = [];
+    const executor = createExecutor({ sessionModelSet: async request => {
+      if (request.modelId === undefined) throw new Error('Expected native model selection');
+      models.push(request.modelId);
+      return { ok: true, status: 'applied', sessionId: request.sessionId, modelId: request.modelId,
+        activeSelection: { agentTargetKey: 'agent:happier.agent.fx/fx', providerConnectionId: null, modelId: request.modelId } };
+    } });
+    const result = await executor.execute('session.model.set', { sessionId: 's1', modelId: ' native/model ' },
+      { surface: 'ui', defaultSessionId: 's1' });
+    expect(models).toEqual([' native/model ']);
+    expect(result).toMatchObject({ ok: true, result: { modelId: ' native/model ' } });
+  });
+  it.each([' selected ', '', ' ', null])('carries opaque config identity and choice value %j to the client Action boundary', async valueId => {
+    const inputs: unknown[] = [];
+    const executor = createExecutor({ clientActionExecute: async request => {
+      inputs.push(request.input);
+      return { ok: true, result: { ok: true } };
+    } });
+    const input = { sessionId: 's1', configId: ' custom ', valueId };
+    expect(await executor.execute('session.config_option.set', input, { surface: 'agent', defaultSessionId: 's1' }))
+      .toMatchObject({ ok: true });
+    expect(inputs).toEqual([input]);
+    expect(getActionSpec('session.config_option.set').inputSchema.safeParse({ ...input, configId: ' ' }).success).toBe(false);
+  });
+  it('preserves explicit configuration withdrawal through local Action execution', async () => {
+    const inputs: unknown[] = [];
+    const executor = createExecutor({ sessionConfigOptionSet: async input => {
+      inputs.push(input);
+      return { ok: true };
+    } });
+    const input = { sessionId: 's1', configId: 'reasoning_effort', valueId: null };
+    expect(await executor.execute('session.config_option.set', input, { surface: 'ui' })).toMatchObject({ ok: true });
+    expect(inputs).toEqual([input]);
+  });
+  it('reads one exact input result through the public Action with host-stamped plugin identity', async () => {
+    const read = vi.fn(async () => ({ ok: true as const, sessionId: 's1', localId: 'input-1',
+      acceptedTurnId: 'turn-1', turnStartWitnessId: 'turn-1', turnStatus: 'waiting' as const,
+      result: { kind: 'pending' as const } }));
+    const executor = createExecutor({ sessionInputResultGet: read });
+    const context: ActionExecutorContext = { surface: 'plugin', actionCaller: { kind: 'plugin', pluginId: 'acme.watch', contributionLocalId: 'watch' } };
+    const result = await executor.execute('session.input.result.get', { sessionId: 's1', localId: 'input-1' }, context);
+    expect(result).toEqual({ ok: true, result: expect.objectContaining({ turnStatus: 'waiting', result: { kind: 'pending' } }) });
+    expect(read).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', localId: 'input-1', callerPluginId: 'acme.watch' }));
+    expect(getActionSpec('session.input.result.get').inputSchema.safeParse({ sessionId: 's1', localId: 'input-1', callerPluginId: 'foreign' }).success).toBe(false);
+  });
+
+  it('archives exact deduplicated section membership through ordinary member admission and reports partial outcomes', async () => {
+    const membershipReads: unknown[] = [];
+    const port: SessionSectionActionPortV1 = {
+      assertCurrent: () => {}, allocateFolderId: () => 'unused',
+      readSnapshot: async request => {
+        membershipReads.push(request);
+        return { folders: [{ folderId: 'launch', folderKey: 'launch', parentFolderId: null, parentFolderKey: null,
+          sortKey: 'a0', display: { t: 'plain', v: { name: 'Launch', icon: null } },
+          displayState: { status: 'available', value: { name: 'Launch', icon: null } }, archivedAt: null, createdAt: 1, updatedAt: 1 }],
+        folderAssignments: [{ sessionId: 'unloaded', folderId: 'launch' }, { sessionId: 'failed', folderId: 'launch' },
+          { sessionId: 'not-admitted', folderId: 'launch' },
+          { sessionId: 'unknown', folderId: 'launch' }, { sessionId: 'transport-unknown', folderId: 'launch' },
+          { sessionId: 'unloaded', folderId: 'launch' }, { sessionId: 'foreign', folderId: 'other' }] };
+      },
+      upsertFolder: async () => { throw new Error('unexpected_definition_write'); },
+      deleteFolder: async () => { throw new Error('unexpected_delete'); },
+      setAssignment: async () => { throw new Error('unexpected_assignment'); },
+    };
+    const archived: string[] = [];
+    const executor = createExecutor({
+      homeDomainAction: ({ actionId, input, archiveSession }) => {
+        if (actionId !== 'session.sections.archive') throw new Error('unexpected_action');
+        return executeSessionSectionActionV1(actionId, input, { ...port, archiveSession });
+      },
+      sessionArchiveSet: async ({ sessionId }) => {
+        archived.push(sessionId);
+        if (sessionId === 'failed') return { ok: false, errorCode: 'session_access_denied', error: 'session_access_denied' };
+        if (sessionId === 'not-admitted') return projectUnexpectedActionFailureV1(false);
+        if (sessionId === 'unknown') return projectUnexpectedActionFailureV1(null);
+        if (sessionId === 'transport-unknown') return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+        return { sessionId, archivedAt: 1 };
+      },
+    });
+    const context = { surface: 'cli', serverId: 'home', authority: 'present_user', actionRequestId: 'section-archive' } as const;
+    expect(await executor.execute('session.sections.archive', { sectionId: 'launch' }, context)).toEqual({ ok: true, result: {
+      archivedSessionIds: ['unloaded'], failures: [{ sessionId: 'failed', code: 'session_access_denied' },
+        { sessionId: 'not-admitted', code: 'action_not_admitted' }], unknownSessionIds: ['unknown', 'transport-unknown'],
+    } });
+    expect(archived).toEqual(['unloaded', 'failed', 'not-admitted', 'unknown', 'transport-unknown']);
+    expect(membershipReads).toEqual([{ includeFolders: true, includeTags: false, includeLabels: false, folderIds: ['launch'], includeAllFolderAssignments: false }]);
+    archived.length = 0;
+    // Membership is not authority: an Agent without a proved led subtree may
+    // still archive only its admitted current Session through ordinary scope.
+    expect(await executor.execute('session.sections.archive', { sectionId: 'launch' }, {
+      surface: 'agent', serverId: 'home', defaultSessionId: 'unloaded',
+    })).toEqual({ ok: true, result: { archivedSessionIds: ['unloaded'], failures: [
+      { sessionId: 'failed', code: 'unsupported_action' }, { sessionId: 'not-admitted', code: 'unsupported_action' },
+      { sessionId: 'unknown', code: 'unsupported_action' }, { sessionId: 'transport-unknown', code: 'unsupported_action' },
+    ], unknownSessionIds: [] } });
+    expect(archived).toEqual(['unloaded']);
+    archived.length = 0;
+    let approvalAction: string | undefined;
+    const withApproval = createExecutor({ homeDomainAction: ({ actionId, input, archiveSession }) => {
+      if (actionId !== 'session.sections.archive') throw new Error('unexpected_action');
+      return executeSessionSectionActionV1(actionId, input, { ...port, archiveSession });
+    }, sessionArchiveSet: async ({ sessionId }) => { archived.push(sessionId); return { sessionId, archivedAt: 1 }; },
+    isActionApprovalRequired: actionId => actionId === 'session.archive',
+    approvalsCreate: async ({ request }) => { approvalAction = request.actionId; return { artifactId: 'archive-approval' }; },
+    });
+    expect(await withApproval.execute('session.sections.archive', { sectionId: 'launch' }, { ...context,
+      bypassApprovals: true, presentUserConfirmation: { actionId: 'session.sections.archive' },
+    })).toMatchObject({ ok: true, result: {
+      archivedSessionIds: [], failures: [{ sessionId: 'unloaded', code: 'approval_pending' }, { sessionId: 'failed', code: 'approval_pending' },
+        { sessionId: 'not-admitted', code: 'approval_pending' }, { sessionId: 'unknown', code: 'approval_pending' },
+        { sessionId: 'transport-unknown', code: 'approval_pending' }], unknownSessionIds: [],
+    } });
+    expect(approvalAction).toBe('session.archive');
+    expect(archived).toEqual([]);
   });
   it('discovers control switching and applies Off, Ask and Allowed without changing the mode neighbour', async () => {
     const id = ActionIdSchema.parse('session.control.switch');
@@ -183,12 +310,12 @@ describe('createActionExecutor (session control)', () => {
         .toMatchObject({ ok: false, errorCode: 'action_disabled' });
       expect(writes).toEqual([]);
     }
+    // An approved CLI invocation is not refused by a present-user floor.
     expect(await executor.execute('session.view.toolCalls.set', { sessionId: 's1', showToolCalls: false },
       { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' }, bypassApprovals: true }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(writes).toEqual([]);
+      .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
   });
-  it('refuses Agent and MCP Account tool visibility set, reset and invoke before the settings host', async () => {
+  it('reaches the settings host for waived Agent and MCP Account tool visibility set, reset and invoke', async () => {
     const settingsDeclarationAction = vi.fn(async () => ({ ok: true as const, result: {} }));
     const executor = createExecutor({ settingsDeclarationAction });
     for (const surface of ['agent', 'mcp'] as const) {
@@ -197,16 +324,10 @@ describe('createActionExecutor (session control)', () => {
         const context = { surface, authority: 'account_automation', actionCaller: { kind: 'host' },
           actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } }) } as const;
         expect(await executor.execute(actionId, input, context))
-          .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+          .not.toMatchObject({ ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` });
       }
     }
-    for (const actionId of ['settings.set', 'settings.reset', 'settings.invoke'] as const) {
-      const input = { anchor: 'transcript.showToolCalls', ...(actionId === 'settings.set' ? { value: false } : {}) };
-      expect(await executor.execute(actionId, input,
-        { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' }, bypassApprovals: true }))
-        .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    }
-    expect(settingsDeclarationAction).not.toHaveBeenCalled();
+    expect(settingsDeclarationAction).toHaveBeenCalled();
   });
   it.each([
     { kind: 'typed domain refusal', failure: new RpcError('native refused', 'permission_request_not_found'),
@@ -409,17 +530,17 @@ describe('createActionExecutor (session control)', () => {
         ]) } });
     }
   });
-  it('refuses autonomous detached prompt answers before transport', async () => {
+  it('lets an approved (bypass) Agent answer reach the detached prompt transport', async () => {
     const responseAction = 'execution.run.permission.respond';
     for (const surface of ['agent', 'mcp'] as const) {
       const transport = vi.fn(async () => ({ ok: true }));
       const executor = createExecutor({ executionRunPermissionRespond: transport });
       expect(await executor.execute(ActionIdSchema.parse(responseAction), {
         runId: 'run-1', requestId: 'request-1', approved: true,
-      }, { surface, authority: 'account_automation', bypassApprovals: true })).toMatchObject({
+      }, { surface, authority: 'account_automation', bypassApprovals: true })).not.toMatchObject({
         ok: false, errorCode: 'present_user_required',
       });
-      expect(transport).not.toHaveBeenCalled();
+      expect(transport).toHaveBeenCalledOnce();
     }
   });
 
@@ -601,6 +722,8 @@ describe('createActionExecutor (session control)', () => {
     expect(uiFindAction).toHaveBeenCalledWith(expect.objectContaining({ input: { op: 'set', query: 'needle', target: 'chat:1' } }));
     await expect(createExecutor().execute('ui.find', { op: 'read' }, { surface: 'agent' }))
       .resolves.toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
+    await expect(createExecutor().execute('ui.find', { op: 'read' }, { surface: 'cli' }))
+      .resolves.toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
   });
 
   it('opens prompts through the mounted client adapter and returns typed absence on headless hosts', async () => {
@@ -638,7 +761,7 @@ describe('createActionExecutor (session control)', () => {
       ['session.tags.set', { sessionId: 's1', tagIds: ['tag-1'] }],
     ] as const) {
       await expect(executor.execute(actionId, input, {
-        surface: 'agent', serverId: 'home-1', defaultSessionId: 's1',
+        surface: 'agent', serverId: 'home-1', defaultSessionId: 's1', actionsSettings: normalizeActionsSettingsV1({ v: 1 }),
       })).resolves.toMatchObject({ ok: true });
       expect(homeDomainAction).toHaveBeenLastCalledWith(expect.objectContaining({ actionId, input }));
     }
@@ -655,12 +778,45 @@ describe('createActionExecutor (session control)', () => {
     }
   });
 
+  it.each(['ui', 'agent'] as const)('deletes detached history through its exact Machine owner on %s without Home or Stop', async surface => {
+    const homeDomainAction = vi.fn(async () => { throw new Error('Detached history has no Home Session row'); });
+    const stop = vi.fn(async () => { throw new Error('Deletion must not stop an active Run'); });
+    const detachedSessionDelete = vi.fn<NonNullable<ActionExecutorDeps['detachedSessionDelete']>>(async () => ({ success: true }));
+    const executor = createExecutor({ homeDomainAction, detachedSessionDelete });
+    const input = { machineId: 'machine-1', runId: 'run-1' };
+    const context = { surface, authority: 'present_user' as const, serverId: 'home-1',
+      presentUserConfirmation: { actionId: 'session.delete' as const },
+      hostReviewedChild: { invoke: stop } };
+    await expect(executor.execute('session.delete', input, context)).resolves.toEqual({ ok: true, result: { success: true } });
+    expect(detachedSessionDelete).toHaveBeenCalledWith(expect.objectContaining({ input, context: expect.objectContaining({ surface }) }));
+    expect(homeDomainAction).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    detachedSessionDelete.mockResolvedValueOnce({ ok: false, errorCode: 'session_active', error: 'session_active' });
+    await expect(executor.execute('session.delete', input, context)).resolves.toMatchObject({ ok: false, errorCode: 'session_active' });
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('declares detached history deletion as a Machine-scoped write under the existing Action', async () => {
+    const { resolveMachineRpcRoutePolicy } = await import('../machines/peer/mediation/rpc/routePolicyV1.js');
+    expect(getActionSpec('session.delete').bindings?.rpcMethod).toBe('session.delete');
+    expect(getActionSpec('session.delete').surfaces.rpc).toBe(false);
+    expect(resolveSocketRpcSessionAuthorization('machine-1:session.delete')).toMatchObject({ method: 'session.delete', machineScope: true });
+    expect(resolveMachineRpcRoutePolicy('session.delete')).toMatchObject({
+      rpcClassification: 'action_spec_bound', actionSpecId: 'session.delete', sharedMachineAccess: 'use', routeClass: 'server_required',
+    });
+  });
+
   it('marks a plugin tool answer delivery on the canonical message metadata', async () => {
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'input-1' }));
     const executor = createExecutor({ sessionSendMessage });
+    const forgeEvidence = { v: 1, items: [{
+      source: { kind: 'pullRequest', label: 'PR #42' },
+      author: { kind: 'bot', label: 'Review bot' }, text: 'Please review the failed check.',
+    }] } as const;
     const result = await executor.execute('session.message.send' as any, {
       sessionId: 's1', message: 'encoded answer', idempotencyKey: 'reply-1',
       toolAnswerDelivery: { toolCallId: 'question-1' },
+      forgeEvidence,
     }, {
       surface: 'plugin',
       actionCaller: {
@@ -672,7 +828,26 @@ describe('createActionExecutor (session control)', () => {
 
     expect(result.ok).toBe(true);
     expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      messageMeta: { happier: { kind: 'tool-answer-delivery.v1', payload: { toolCallId: 'question-1' } } },
+      messageMeta: { forgeEvidence, happier: { kind: 'tool-answer-delivery.v1', payload: { toolCallId: 'question-1' } } },
+    }));
+  });
+
+  it('delivers authored forge evidence beside structured input without parsing the prompt', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'input-1' }));
+    const executor = createExecutor({ sessionSendMessage });
+    const forgeEvidence = { v: 1, items: [{
+      source: { kind: 'hostedCi', label: 'Linux checks', url: 'https://ci.example/run/42' },
+      author: { kind: 'process' }, text: 'A test failed.',
+    }] } as const;
+    const structuredInput = { v: 1 } as const;
+    const result = await executor.execute('session.message.send', {
+      sessionId: 's1', message: 'Unrelated rendered prompt', structuredInput, forgeEvidence,
+    }, { surface: 'cli', defaultSessionId: 's1' });
+
+    expect(result).toEqual({ ok: true, result: { status: 'accepted', localId: 'input-1' } });
+    expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Unrelated rendered prompt',
+      messageMeta: { forgeEvidence, happierStructuredInputV1: structuredInput },
     }));
   });
 
@@ -1143,7 +1318,7 @@ describe('createActionExecutor (session control)', () => {
           via: 'action',
         },
       },
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
@@ -1153,7 +1328,7 @@ describe('createActionExecutor (session control)', () => {
       'session.message.send' as any,
       { sessionId: 'target', message: 'Continue', source },
       { surface: 'cli' },
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
@@ -1197,7 +1372,7 @@ describe('createActionExecutor (session control)', () => {
       'session.message.send' as any,
       { sessionId: 's1', message: 'Fix it', attachments },
       { surface: 'cli', defaultSessionId: null },
-    )).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    )).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
     expect(sessionSendMessage).not.toHaveBeenCalled();
   });
 
@@ -1542,7 +1717,7 @@ describe('createActionExecutor (session control)', () => {
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
 
-  it('executes session.stop via deps.sessionStop', async () => {
+  it.each([undefined, 'explicit_stop', 'lifecycle_control'] as const)('classifies session.stop intent at its public front door (%s)', async stopIntent => {
     const sessionStop = vi.fn(async () => ({ ok: true, stopped: true }));
     const executor = createExecutor({
       sessionStop,
@@ -1550,13 +1725,22 @@ describe('createActionExecutor (session control)', () => {
     });
 
     const res = await executor.execute(
-      'session.stop' as any,
-      { sessionId: 's1' },
+      'session.stop',
+      { sessionId: 's1', ...(stopIntent ? { stopIntent } : {}) },
       { surface: 'cli', defaultSessionId: null },
     );
 
     expect(res).toEqual({ ok: true, result: { ok: true, stopped: true } });
-    expect(sessionStop).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'server-a' }));
+    expect(sessionStop).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'server-a', stopIntent: stopIntent ?? 'explicit_stop' }));
+    expect(await executor.execute('session.stop', { sessionId: 's1', serverId: 'server-b',
+      ...(stopIntent ? { stopIntent } : {}) }, { surface: 'cli' })).toEqual({ ok: true, result: { ok: true, stopped: true } });
+    expect(sessionStop).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'server-b',
+      stopIntent: stopIntent ?? 'explicit_stop' }));
+    expect(await executor.execute('session.stop', { sessionId: 's1', serverId: 'server-b' },
+      { surface: 'cli', serverId: 'server-a' })).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(sessionStop).toHaveBeenCalledTimes(2);
+    expect(getActionSpec('session.stop').inputSchema.safeParse({ sessionId: 's1', stopIntent: 'resource' }).success).toBe(false);
+    expect(getActionSpec('session.stop').inputSchema.safeParse({ sessionId: 's1', entryPoint: 'resource' }).success).toBe(false);
   });
 
   it('preserves structured session.stop outcomes as top-level action success', async () => {
@@ -1704,19 +1888,19 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('executes session.model.set via deps.sessionModelSet', async () => {
-    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const sessionModelSet = vi.fn<NonNullable<ActionExecutorDeps['sessionModelSet']>>(async request => modelSetSuccess(request));
     const executor = createExecutor({
       sessionModelSet,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     });
 
     const res = await executor.execute(
-      'session.model.set' as any,
+      'session.model.set',
       { sessionId: 's1', modelId: 'default' },
       { surface: 'cli', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(res).toEqual({ ok: true, result: modelSetSuccess({ sessionId: 's1', modelId: 'default' }) });
     expect(sessionModelSet).toHaveBeenCalledWith({
       sessionId: 's1', modelId: 'default', serverId: 'server-a',
       context: { surface: 'cli', defaultSessionId: null },
@@ -1724,16 +1908,16 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('preserves provider connection identity through session.model.set', async () => {
-    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const sessionModelSet = vi.fn<NonNullable<ActionExecutorDeps['sessionModelSet']>>(async request => modelSetSuccess(request));
     const executor = createExecutor({ sessionModelSet });
 
     const res = await executor.execute(
-      'session.model.set' as any,
+      'session.model.set',
       { sessionId: 's1', modelId: 'model-a', providerConnectionId: 'pc_work' },
       { surface: 'cli', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(res).toEqual({ ok: true, result: modelSetSuccess({ sessionId: 's1', modelId: 'model-a', providerConnectionId: 'pc_work' }) });
     expect(sessionModelSet).toHaveBeenCalledWith({
       sessionId: 's1',
       modelId: 'model-a',
@@ -1743,7 +1927,7 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('preserves the exact Team resource catalog selection through session.model.set', async () => {
-    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const sessionModelSet = vi.fn<NonNullable<ActionExecutorDeps['sessionModelSet']>>(async request => modelSetSuccess(request));
     const executor = createExecutor({
       sessionModelSet,
       resolveServerIdForSessionId: () => 'server-team',
@@ -1759,12 +1943,12 @@ describe('createActionExecutor (session control)', () => {
     };
 
     const res = await executor.execute(
-      'session.model.set' as any,
+      'session.model.set',
       { sessionId: 's1', teamCredentialModel, teamVisibilityGrantConsent: { teamId: 'team-1' } },
       { surface: 'ui', defaultSessionId: 's1' },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(res).toEqual({ ok: true, result: modelSetSuccess({ sessionId: 's1', teamCredentialModel }) });
     expect(sessionModelSet).toHaveBeenCalledWith({
       sessionId: 's1',
       teamCredentialModel,
@@ -1802,16 +1986,16 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('preserves a literal provider model id named default', async () => {
-    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const sessionModelSet = vi.fn<NonNullable<ActionExecutorDeps['sessionModelSet']>>(async request => modelSetSuccess(request));
     const executor = createExecutor({ sessionModelSet });
 
     const res = await executor.execute(
-      'session.model.set' as any,
+      'session.model.set',
       { sessionId: 's1', modelId: 'default', providerConnectionId: 'pc_work' },
       { surface: 'cli', defaultSessionId: null },
     );
 
-    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(res).toEqual({ ok: true, result: modelSetSuccess({ sessionId: 's1', modelId: 'default', providerConnectionId: 'pc_work' }) });
     expect(sessionModelSet).toHaveBeenCalledWith({
       sessionId: 's1',
       modelId: 'default',
@@ -2302,6 +2486,7 @@ describe('createActionExecutor (session control)', () => {
       sessionGoalGet,
       sessionGoalSet,
       sessionGoalClear,
+      workflowAction: createEmptyWorkflowActionHost(),
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     });
 
@@ -2312,7 +2497,8 @@ describe('createActionExecutor (session control)', () => {
       { sessionId: 's1', objective: 'Ship goals', status: 'active', tokenBudget: null },
       { surface: 'cli' },
     );
-    await executor.execute('session.goal.clear' as any, { sessionId: 's1' }, { surface: 'cli' });
+    expect(await executor.execute('session.goal.clear', { sessionId: 's1' }, { surface: 'cli' }))
+      .toMatchObject({ ok: true });
 
     expect(sessionWorkStateGet).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
     expect(sessionGoalGet).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
@@ -2496,6 +2682,40 @@ describe('createActionExecutor (session control)', () => {
       errorCode: 'invalid_parameters',
     });
     expect(sessionUsageLimitConsumeResetCredit).not.toHaveBeenCalled();
+  });
+
+  it('maps a public birth section into the retained creation placement and projects the acknowledged result', async () => {
+    const requests: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
+    const executor = createExecutor({ sessionSpawnNew: async request => {
+      requests.push(request);
+      return { type: 'success', disposition: 'created', sessionId: 'new-session',
+        executionTarget: canonicalSessionSpawnInput.executionTarget,
+        organizationPlacement: { folderId: 'section-1', tagIds: ['tag-1'] },
+        initialInput: { status: 'notRequested' } };
+    } });
+    const result = await executor.execute('session.spawn_new', {
+      ...canonicalSessionSpawnInput,
+      organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] },
+    }, { surface: 'cli', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: true, result: {
+      organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] },
+    } });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].organizationPlacement).toEqual({ folderId: 'section-1', tagIds: ['tag-1'] });
+    expect(requests[0].admittedInput?.organizationPlacement).toEqual({ folderId: 'section-1', tagIds: ['tag-1'] });
+    const spec = getActionSpec('session.spawn_new');
+    expect(spec.inputSchema.safeParse({ ...canonicalSessionSpawnInput,
+      organizationPlacement: { folderId: 'section-1', tagIds: [] } }).success).toBe(false);
+    const rpc = spec.surfaceBindings?.rpc;
+    if (!rpc?.decodeInput || !rpc.encodeOutput || !result.ok) throw new Error('Missing admitted spawn/RPC contract');
+    const rpcInput = rpc.inputSchema.parse({ ...canonicalSessionSpawnInput,
+      organizationPlacement: { folderId: 'section-1', tagIds: ['tag-1'] } });
+    expect(spec.inputSchema.parse(rpc.decodeInput(rpcInput))).toMatchObject({
+      organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] },
+    });
+    expect(rpc.outputSchema.parse(rpc.encodeOutput(result.result))).toMatchObject({
+      organizationPlacement: { folderId: 'section-1', tagIds: ['tag-1'] },
+    });
   });
 
   it('rejects retired Session spawn fields before the canonical dependency', async () => {
@@ -3236,8 +3456,9 @@ describe('createActionExecutor (session control)', () => {
       surface: 'plugin', authority: 'account_automation', defaultSessionId: 's1',
       actionCaller: { kind: 'plugin', pluginId: 'acme.test' },
       actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.user_action.answer': ['plugin'] } }),
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    })).not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(approvalsCreate).not.toHaveBeenCalled();
+    sessionUserActionAnswer.mockClear();
     const result = await executor.execute('session.user_action.answer', input, {
       surface: 'plugin', authority: 'account_automation', serverId: 'home-1', defaultSessionId: 's1',
       actionRequestId: 'plugin-answer-request-1',

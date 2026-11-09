@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -48,6 +48,41 @@ function createRpcHarness() {
 
 describe('ActionSpec-derived RPC registrar', () => {
     const module = registrarModule;
+
+    it('keeps only the declared reachability facts at the Action RPC failure sink', () => {
+        const busy = { ok: false as const, errorCode: 'effect_in_progress', error: 'effect_in_progress',
+            effectAttempted: false, details: { actionOperationId: 'held-owner-compose' } };
+        const setup = { ok: false as const, errorCode: 'plan_changed', error: 'plan_changed',
+            effectAttempted: true, details: { setupOutcome: 'applied' } };
+        for (const failure of [busy, setup]) {
+            for (const effectAttempted of [false, true, undefined]) {
+                const parsed = ActionExecuteFailureSchema.parse({ ...failure, effectAttempted });
+                expect(module.unwrapActionResultForRpc('machines.reachability.configure', parsed)).toEqual(parsed);
+            }
+            const parsed = ActionExecuteFailureSchema.parse(failure);
+            expect(module.unwrapActionResultForRpc('machines.reachability.inspect', parsed)).not.toHaveProperty('details');
+            expect(module.unwrapActionResultForRpc('machines.reachability.configure', { ...parsed,
+                details: { ...failure.details, credential: 'must-not-cross' } })).not.toHaveProperty('details');
+        }
+        for (const refused of [
+            { ...busy, errorCode: 'plan_changed' },
+            { ...busy, details: { actionOperationId: '' } },
+            { ...setup, errorCode: 'effect_in_progress' },
+            { ...setup, details: { setupOutcome: 'not-applied' } },
+        ]) {
+            expect(module.unwrapActionResultForRpc('machines.reachability.configure', refused)).not.toHaveProperty('details');
+        }
+    });
+
+    it('keeps only closed filesystem custody details at the Action RPC failure sink', () => {
+        const failure = { ok: false as const, errorCode: 'filesystem_identity_custody_unavailable',
+            error: 'Filesystem admission refused', details: { reason: 'requester_identity_unavailable' } };
+        expect(module.unwrapActionResultForRpc('daemon.filesystem.readFile', failure)).toEqual(failure);
+        expect(module.unwrapActionResultForRpc('daemon.filesystem.readFile', { ...failure,
+            details: { ...failure.details, path: '/private' } })).not.toHaveProperty('details');
+        expect(module.unwrapActionResultForRpc('daemon.filesystem.readFile', { ...failure,
+            errorCode: 'request_failed' })).not.toHaveProperty('details');
+    });
 
     it('retains only strict declared machine-skill acknowledgements in RPC failures', () => {
         for (const [actionId, details] of [
@@ -643,6 +678,18 @@ describe('ActionSpec-derived RPC registrar', () => {
                 input: { machineId: 'machine-1' },
             },
         ]);
+    });
+
+    it('leaves detached history deletion with its retained Run registrar', () => {
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        const retainedRunOwner = async () => ({ success: true });
+        rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_DELETE, retainedRunOwner);
+        expect(() => module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute: async () => { throw new Error('Must not recurse through the host Action transport'); } },
+            methods: [SESSION_RPC_METHODS.SESSION_DELETE],
+        })).not.toThrow();
+        expect(handlers.get(SESSION_RPC_METHODS.SESSION_DELETE)).toBe(retainedRunOwner);
     });
 
     it('skips canonical typed exceptions and rejects duplicate ActionSpec RPC bindings', async () => {

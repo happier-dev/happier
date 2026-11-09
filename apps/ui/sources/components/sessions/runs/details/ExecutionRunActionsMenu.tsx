@@ -1,18 +1,18 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
 
-const MINIMUM_TARGET = resolveMinimumInteractiveTargetSize(Platform.OS);
 /** The menu's width: a label column and a value column that fits "Claude Code · Opus 5.5". */
 const RUN_MENU_WIDTH = 340;
 
@@ -25,16 +25,6 @@ export type ExecutionRunMenuFact = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     anchor: {
         flexShrink: 0,
-    },
-    trigger: {
-        minWidth: MINIMUM_TARGET,
-        minHeight: MINIMUM_TARGET,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: MINIMUM_TARGET / 2,
-    },
-    triggerOpen: {
-        backgroundColor: theme.colors.surface.selected,
     },
     factValue: {
         color: theme.colors.text.primary,
@@ -60,14 +50,18 @@ export const ExecutionRunActionsMenu = React.memo((props: Readonly<{
     onShowInTranscript?: (() => void) | null;
     /** Hands the result to the lead Session's composer (the canonical send-to-session handoff). */
     sendToSession?: Readonly<{ sessionTitle: string; onSend: (resultText: string) => void }> | null;
+    deleteAction?: Readonly<{ pending: boolean; onDelete: () => void }> | null;
     facts: readonly ExecutionRunMenuFact[];
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
+    const writeClipboard = useClipboardWrite(undefined, { enabled: open });
     const close = React.useCallback(() => setOpen(false), []);
     const iconColor = theme.colors.text.secondary;
+    // This is the run header's `⋯`, so the rows its pane lends (a phone group's other pages, close) are drawn here.
+    const lentRows = useLentHeaderMenuRows();
 
     const actions = React.useMemo<ActionListItem[]>(() => {
         const items: ActionListItem[] = [];
@@ -111,7 +105,7 @@ export const ExecutionRunActionsMenu = React.memo((props: Readonly<{
                 onPress: () => {
                     if (!copyText) return;
                     close();
-                    void setClipboardStringSafe(copyText);
+                    void writeClipboard(copyText);
                 },
             });
         }
@@ -143,8 +137,35 @@ export const ExecutionRunActionsMenu = React.memo((props: Readonly<{
                 },
             });
         }
+        for (const row of lentRows ?? []) {
+            items.push({
+                id: `lent:${row.id}`,
+                testID: row.testID,
+                label: row.title,
+                icon: <Icon name={row.iconName} size={ICON_SIZE.sm} color={iconColor} />,
+                onPress: () => {
+                    close();
+                    row.onSelect();
+                },
+            });
+        }
+        const deleteAction = props.deleteAction;
+        if (deleteAction) {
+            items.push({
+                id: 'delete',
+                testID: 'session-run-details-delete',
+                label: t('sessionInfo.deleteSession'),
+                icon: <Icon name="trash" size={ICON_SIZE.sm} color={iconColor} />,
+                destructive: true,
+                disabled: deleteAction.pending,
+                onPress: () => {
+                    close();
+                    deleteAction.onDelete();
+                },
+            });
+        }
         return items;
-    }, [close, iconColor, props.cancelResponse, props.cancelRun, props.copyResultText, props.onShowInTranscript, props.resultPending, props.sendToSession]);
+    }, [close, iconColor, lentRows, props.cancelResponse, props.cancelRun, props.copyResultText, props.deleteAction, props.onShowInTranscript, props.resultPending, props.sendToSession, writeClipboard]);
 
     const factRows = React.useMemo<ActionListItem[]>(() => props.facts.map((fact) => ({
         id: fact.id,
@@ -155,16 +176,16 @@ export const ExecutionRunActionsMenu = React.memo((props: Readonly<{
 
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-            <Pressable
-                accessibilityRole="button"
+            <IconButton
+                iconName="dots-three"
+                variant="plain"
                 accessibilityLabel={t('common.moreActions')}
-                accessibilityState={{ expanded: open }}
+                selected={open}
+                expanded={open}
+                hasPopup="menu"
                 testID="session-run-details-actions-menu"
                 onPress={() => setOpen((current) => !current)}
-                style={[styles.trigger, open ? styles.triggerOpen : null]}
-            >
-                <Icon name="dots-three" size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-            </Pressable>
+            />
             {open ? (
                 <Popover
                     open

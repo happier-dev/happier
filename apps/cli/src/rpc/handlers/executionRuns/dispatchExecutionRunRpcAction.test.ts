@@ -13,6 +13,7 @@ import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/exe
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
 import type { BrowserUiAutomationRouteOwner } from '@/daemon/runtimeActionExecutor';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
+import { createBrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/automation/reverseDispatch';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -45,6 +46,7 @@ function createUnusedExecutionRunBridge(
       const run = this.get(runId);
       return run?.sessionId === sessionId ? run : null;
     },
+    deleteForRequest: async () => unusedBridgeMethod(),
     hasAttachedRun(runId) { return this.get(runId)?.sessionId != null; },
     projectPublicState(run) {
       const projected = this.getPublic(run.runId);
@@ -313,9 +315,11 @@ describe('execution-run RPC Action settings provider', () => {
       serverId: 'server-1',
       runtimeAccountId: 'account-1',
       actionRequestId: 'execution-run-list-request-1',
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    })).resolves.toMatchObject({ ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'approval_execution_run_list',
+    } });
     expect(approvalsCreate).toHaveBeenCalledOnce();
-    expect(approvalsWaitForDecision).toHaveBeenCalledOnce();
+    expect(approvalsWaitForDecision).not.toHaveBeenCalled();
     expect(listPublicForRequest).not.toHaveBeenCalled();
   });
 
@@ -1991,12 +1995,23 @@ describe('createExecutionRunRpcActionExecutor', () => {
         events: [],
       };
     });
+    const broker = createBrowserDaemonControlBroker();
+    broker.registerAdapter({
+      adapterKind: 'chromiumSidecar',
+      ownsView: view => view.browserSessionId === 'sess_1' && view.viewId === 'view_1',
+      supportsOpenView: () => false,
+      dispatchCommand,
+    });
     const executor = createExecutionRunRpcActionExecutor({
       manager: createUnusedExecutionRunBridge(),
       context: {
         sessionId: 'sess_1',
         cwd: '/workspace',
-        browserControl: { dispatchCommand, listViews: () => { throw new Error('Unexpected browser view listing'); } },
+        browserControl: createBrowserDaemonControlRoutes({ broker }),
+        getBrowserUiAutomation: () => ({
+          ownsAutomationView: broker.ownsView,
+          uiAutomation: createBrowserAutomationReverseDispatcher({ getMachineClient: () => null }),
+        }),
         getServerFeaturesSnapshot: () => BROWSER_CONTROL_RUNTIME_ACTIONS_ENABLED,
       },
       policy: resolveExecutionRunPolicy({
@@ -2033,7 +2048,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         events: [],
       },
     });
-    expect(dispatchCommand).toHaveBeenCalledWith(command, APPROVED_INTERNAL_RUNTIME_ACTION_CONTEXT);
+    expect(dispatchCommand).toHaveBeenCalledWith(command, { signal: undefined });
   });
 
   it('routes execution.run.action runtime ids through the canonical daemon runtime executor', async () => {
@@ -2090,6 +2105,37 @@ describe('createExecutionRunRpcActionExecutor', () => {
       viewId: 'view_1',
     });
     expect(applyAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['builtin:read-propose', null])('binds child Action approval to retained Run selection (%s)', async approvalProfileId => {
+    const original = createExecutionRunBridgeWithRun();
+    const run = original.get('run_1')!;
+    const diagnostics = { dispatch: vi.fn(async () => ({ v: 1 as const, machineId: 'machine_1',
+      generatedAt: 2_000, refreshState: 'idle' as const, events: [], diagnostics: [] })) };
+    const deps = createExecutionRunRpcActionDeps({
+      manager: { ...original, get: id => id === run.runId ? { ...run, approvalProfileId } : null },
+      context: { sessionId: 'sess_1', cwd: '/workspace', browserDiagnostics: diagnostics,
+        getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED },
+      policy: resolveExecutionRunPolicy({ defaults: { maxConcurrentRuns: null, boundedTimeoutMs: null,
+        reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      isExecutionRunsEnabled: () => true,
+      actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false }),
+      approvalDeps: {
+        approvalsCreate: async () => ({ artifactId: 'approval_profile_child' }),
+        approvalsWaitForDecision: async ({ request }) => ({ decision: 'reject', request: {
+          ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 }, updatedAtMs: 2,
+        } }),
+        approvalsUpdate: async () => ({ ok: true }),
+      },
+    });
+    const result = await deps.executionRunAction?.('sess_1', { runId: run.runId,
+      actionId: 'browser.diagnostics.snapshot', input: { browserSessionId: 'sess_1', viewId: 'view_1' },
+    }, { authority: 'account_automation', runtimeAccountId: 'account-1', serverId: 'server-1',
+      actionRequestId: 'profile-child', approvalProfileId: 'builtin:full-trust' });
+    expect(result).toMatchObject(approvalProfileId
+      ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval_profile_child' } }
+      : { ok: true });
+    expect(diagnostics.dispatch).toHaveBeenCalledTimes(approvalProfileId ? 0 : 1);
   });
 
   it('refuses execution.run.action mutating browser runtime ids until agent approval is granted', async () => {
@@ -2164,11 +2210,9 @@ describe('createExecutionRunRpcActionExecutor', () => {
       actionRequestId: 'browser-click-request-1',
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'approval_rejected',
-      error: 'approval_rejected',
-    });
+    expect(result).toMatchObject({ ok: true, result: { ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'approval_browser_click',
+    } } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'browser.automation.click',
@@ -2176,7 +2220,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
         requestedSurface: 'agent',
       }),
     }));
-    expect(approvalsWaitForDecision).toHaveBeenCalledOnce();
+    expect(approvalsWaitForDecision).not.toHaveBeenCalled();
     expect(automationDispatch).not.toHaveBeenCalled();
   });
 
