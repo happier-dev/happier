@@ -27,6 +27,8 @@ export async function readManagedPresetPoolCandidatesInTx(tx: Tx, context: Conte
     if (!pool.ok) throw new ManagedMachineError('controller_unavailable');
     const { custodianAccountId, snapshot } = pool.value;
     const machineIds = snapshot.members.filter(member => member.enabled).map(member => member.machineId);
+    // No enabled member is the pool's state, which its managers can change; it is not an unavailable controller.
+    if (!machineIds.length) throw new ManagedMachineError('pool_no_available_machine');
     const controllers: ManagedControllerV1[] = [];
     for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 1 })) {
         const rows = await tx.machine.findMany({ where: { id: { in: [...ids] }, accountId: custodianAccountId },
@@ -102,7 +104,7 @@ export async function resolveManagedPresetPool(params: Context & Readonly<{
             if (!pool.ok) throw new ManagedMachineError('controller_unavailable');
             return pool.value;
         });
-        if (!initial.snapshot.members.some(member => member.enabled)) return unavailable('controller_unavailable', 'empty');
+        if (!initial.snapshot.members.some(member => member.enabled)) return unavailable('pool_no_available_machine', 'empty');
         const presence = await getMachineDaemonPresenceInventory({ accountId: initial.custodianAccountId, io: params.io,
             machineIds: initial.snapshot.members.filter(member => member.enabled).map(member => member.machineId) });
         if (presence.state === 'unavailable') return unavailable('controller_unavailable', 'presence_unavailable');

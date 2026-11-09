@@ -15,6 +15,11 @@ describe('resolveSystemTaskFailureMessage', () => {
         expect(resolveSystemTaskFailureMessage({ code: 'managed_controller_request_failed', message: 'managed_controller_request_failed' }))
             .toBe(t('managedMachines.detail.controllerRequestFailed'));
     });
+    it.each([['preset_limit_reached', 'machinePresets.limitWaits'], ['pool_no_available_machine', 'machinePresets.poolNoMachine']] as const)(
+        'says what a refused Preset acquire means instead of its code (%s)', async (code, key) => {
+        const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
+        expect(resolveSystemTaskFailureMessage({ code, message: null })).toBe(t(key));
+    });
     it('replaces a remote guest update failure with actionable app copy', async () => {
         const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
         const message = resolveSystemTaskFailureMessage({ code: 'remote_cli_update_required', message: 'legacy daemon diagnostic' });

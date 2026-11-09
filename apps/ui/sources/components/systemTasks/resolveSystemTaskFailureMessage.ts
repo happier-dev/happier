@@ -11,6 +11,7 @@ const SYSTEM_TASK_FAILURE_TRANSLATION_KEYS: Readonly<Record<string, TranslationK
     managed_controller_request_failed: 'managedMachines.detail.controllerRequestFailed',
     home_not_guest_reachable: 'managedMachines.creation.homeNotGuestReachable',
     preset_limit_reached: 'machinePresets.limitWaits',
+    pool_no_available_machine: 'machinePresets.poolNoMachine',
     remote_cli_update_required: 'setupOnboarding.remoteSshChecklist.remoteCliUpdateRequired',
     system_task_setup_in_progress: 'machine.thisComputer.setupAlreadyRunning',
     service_reconciliation_declined: 'machine.backgroundServicePrompt.replaceDeclined',

@@ -903,6 +903,11 @@ describe("Machine preset relational owner", () => {
             { requirement: { kind: 'systemTool', id: 'shell' }, status: 'unknown' },
         ]);
         expect(JSON.stringify(projected)).not.toContain(controller.machineId);
+        // A pool with no enabled member is the pool's own state, not an unavailable controller.
+        await db.machinePoolMember.updateMany({ where: { poolId }, data: { enabled: false } });
+        expect((await requestPreset(member, 'get', { homeId, id: definition.id })).json().preset.delegatedAcquire)
+            .toEqual({ kind: 'unavailable', code: 'pool_no_available_machine' });
+        await db.machinePoolMember.updateMany({ where: { poolId }, data: { enabled: true } });
         const select = (accountId: string) => inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId,
             homeId, id: definition.id, revision: 0, boundController: controller }));
         expect(await select(stranger)).toEqual({ kind: 'refused', code: 'preset_not_found' });

@@ -42,7 +42,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { getPreferredLanguage, t } from '@/text';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { useManagedMachineAccountSettings } from './useManagedMachineAccountSettings';
-import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, ManagedProvisionerRepairFailureNotice, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost, projectManagedPresetProvisioner, type ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
+import { describeManagedProvisionerFailure, ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, ManagedProvisionerRepairFailureNotice, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost, projectManagedPresetProvisioner, type ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 import { createPluginSurfaceActionFailure } from '@/components/plugins/surfaces/actionFailure';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
@@ -219,6 +219,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const reviewed = React.useRef<ManagedConfigurationFactsV1 | null>(null);
     const delegatedProvisioner = React.useMemo(() => delegatedAcquire ? projectManagedPresetProvisioner(preset) : undefined, [preset, delegatedAcquire]);
     const catalogProvisioner = delegatedProvisioner ?? catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner);
+    // Retry refreshes every read behind this form, including a refused schema.
     const retry = () => {
         bumpReadRevision();
         if (catalog.binding && catalog.homeId && catalogProvisioner) refreshManagedProvisionerAvailability(catalog.binding,
@@ -537,7 +538,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedAcquire, pooledDraft, accountHostPending, accountHostUnreadable, needsApp]);
 
     React.useEffect(() => { readOptions(); return () => optionsAbort.current?.abort(); }, [readOptions]);
-    // Retry re-reads everything the form shows: the provider's presentation and preset, then its options.
 
     const effectiveDraft = React.useMemo(() => presetQuery.sameScope && draft && accountSettings.settings
         ? { ...draft, categoryPreferences: accountSettings.settings.machineRetentionDefaultsV1 } : null, [presetQuery.sameScope, draft, accountSettings.settings]);
@@ -874,7 +874,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // A read that failed names the controller it could not read and offers Retry, as Add does; on a phone the
         // header folds the chip into its overflow, so the scope leads as its own row and the way to another machine stays in view.
         const unreadableController = !loadingCatalog && catalog.error ? knownControllerName : undefined;
-        const readError = presetQuery.state.error ?? catalog.error;
+        // A refused delegated review (a pool with no machine, an unavailable controller) is this page's read failure too.
+        const readError = presetQuery.state.error ?? catalog.error ?? (error?.during === 'read' ? error.code : undefined);
         return <ItemList pageColumn="wide">
             <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip} />
             {creationDisabledNotice}
@@ -883,7 +884,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 <SurfaceStateCard kind={loadingCatalog ? 'loading' : readError ? 'error' : 'empty'} size="line"
                     title={presetQuery.state.error && !loadingCatalog ? t('machinePresets.loadFailed')
                         : unreadableController ? t('managedMachines.add.controllerUnreadable', { controller: unreadableController })
-                        : t(loadingCatalog ? 'managedMachines.providers.loading' : 'managedMachines.providers.unavailable')}
+                        : loadingCatalog ? t('managedMachines.providers.loading') : readError ? describeManagedProvisionerFailure(readError) : t('managedMachines.providers.unavailable')}
                     diagnosticCode={readError} testID="managed-config.catalog"
                     {...(readError && !loadingCatalog ? { action: { label: t('common.retry'),
                         onPress: presetQuery.state.error ? retry : catalog.refresh } } : {})} />

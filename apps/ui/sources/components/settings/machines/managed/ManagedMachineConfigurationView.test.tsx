@@ -1184,9 +1184,10 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() =>
       expect({
         size: screen.findByTestId('managed-config.sizes:small') !== null,
+        lists: screen.findByTestId('managed-config.sizes:small') ? [] : screen.tree.findAll(node => typeof node.type === 'string' && /List/.test(node.type)).map(node => ({ type: node.type, data: node.props.data?.length, sections: node.props.sections?.length })),
         failures: screen.tree.findAll(node => typeof node.props?.diagnosticCode === 'string').map(node => node.props.diagnosticCode),
         text: screen.findByTestId('managed-config.sizes:small') ? '' : screen.getTextContent(),
-      }).toEqual({ size: true, failures: [], text: '' }),
+      }).toEqual({ size: true, lists: [], failures: [], text: '' }),
     );
     if (choose)
       await act(async () =>
@@ -3224,6 +3225,17 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
+    // An unanswered fixture is an immediate HTTP 404, not an in-flight inventory read.
+    const inventoryRead = createDeferred<void>();
+    onTestFinished(() => inventoryRead.resolve());
+    harness.answer(serverId, '/v1/machines', { select: async () => {
+      await inventoryRead.promise;
+      return { body: [] };
+    } });
+    harness.answer(serverId, `/v1/machines/${defaultController.machineId}`, { select: async () => {
+      await inventoryRead.promise;
+      return { status: 404, body: { error: 'not_found' } };
+    } });
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
@@ -3248,6 +3260,7 @@ describe('mounted managed configurator', () => {
     // Once the Home's list has really synced without the named controller, the empty verdict is true.
     await act(async () => {
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+      inventoryRead.resolve();
     });
     await flushHookEffects();
     expect(catalogState()).toContain('empty');
@@ -3290,7 +3303,9 @@ describe('mounted managed configurator', () => {
       expect(errorCards().length).toBeGreaterThan(0),
     );
     expect(errorCards()[0]!.props.action?.label).toBeTruthy();
-    expect(String(errorCards()[0]!.props.title)).toContain('tester.local');
+    const text = await import('@/text');
+    expect(String(errorCards()[0]!.props.title), JSON.stringify({ language: text.getPreferredLanguage(),
+      translationType: typeof text.getTranslationValue('managedMachines.add.controllerUnreadable') })).toContain('tester.local');
     await screen.unmount();
   });
   it('refuses a schema-less options Action without probing native options or losing the configurator', async () => {
